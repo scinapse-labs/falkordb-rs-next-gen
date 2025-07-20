@@ -34,7 +34,7 @@ class testAccessDelNode():
         deleted_node = res.result_set[0][0]
 
         self.env.assertEquals(n.properties, deleted_node.properties)
-        self.env.assertEquals(deleted_node.labels, None)
+        self.env.assertEquals(deleted_node.labels, ['A'])
 
     def test03_deleted_node_as_argument(self):
         # try to invoke a function on a deleted node
@@ -47,7 +47,7 @@ class testAccessDelNode():
         # invoke function on a deleted node
         q = "MATCH (n) DELETE n RETURN labels(n)"
         res = self.graph.query(q)
-        self.env.assertEquals(res.result_set[0][0], [])
+        self.env.assertEquals(res.result_set[0][0], ['A'])
 
         #-----------------------------------------------------------------------
 
@@ -205,10 +205,10 @@ class testAccessDelNode():
 
         # assert individual nodes
         self.env.assertEquals(nodes[0].properties['v'], 'a')
-        self.env.assertIn('A', nodes[0].labels);
+        self.env.assertIn('A', nodes[0].labels)
 
         self.env.assertEquals(nodes[1].properties['v'], 'b')
-        self.env.assertEquals(nodes[1].labels, None)
+        self.env.assertEquals(nodes[1].labels, ['B'])
 
         self.env.assertEquals(nodes[2].properties['v'], 'c')
         self.env.assertIn('C', nodes[2].labels)

@@ -341,6 +341,17 @@ pub fn init_functions() -> Result<(), Functions> {
         FnType::Function,
     );
     funcs.add(
+        "properties",
+        properties,
+        false,
+        vec![Type::Union(vec![
+            Type::Node,
+            Type::Relationship,
+            Type::Null,
+        ])],
+        FnType::Function,
+    );
+    funcs.add(
         "startnode",
         start_node,
         false,
@@ -933,6 +944,26 @@ fn id(
     match iter.next() {
         Some(Value::Node(id)) => Ok(Value::Int(u64::from(id) as i64)),
         Some(Value::Relationship(id, _, _)) => Ok(Value::Int(u64::from(id) as i64)),
+        Some(Value::Null) => Ok(Value::Null),
+
+        _ => unreachable!(),
+    }
+}
+
+fn properties(
+    runtime: &Runtime,
+    args: Vec<Value>,
+) -> Result<Value, String> {
+    let mut iter = args.into_iter();
+    match iter.next() {
+        Some(Value::Node(id)) => {
+            let properties = runtime.get_node_attrs(id);
+            Ok(Value::Map(Rc::new(properties)))
+        }
+        Some(Value::Relationship(id, _, _)) => {
+            let properties = runtime.get_relationship_attrs(id);
+            Ok(Value::Map(Rc::new(properties)))
+        }
         Some(Value::Null) => Ok(Value::Null),
 
         _ => unreachable!(),

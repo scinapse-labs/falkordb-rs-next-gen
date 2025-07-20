@@ -2055,6 +2055,16 @@ impl<'a> Runtime<'a> {
                 };
                 (from_id, to_id)
             };
+
+            if self.g.borrow().is_node_deleted(from_id)
+                || self.pending.borrow().is_node_deleted(from_id)
+                || self.g.borrow().is_node_deleted(to_id)
+                || self.pending.borrow().is_node_deleted(to_id)
+            {
+                return Err(String::from(
+                    "Failed to create relationship; endpoint was not found.",
+                ));
+            }
             let id = self.g.borrow_mut().reserve_relationship();
             self.pending.borrow_mut().created_relationship(
                 id,
