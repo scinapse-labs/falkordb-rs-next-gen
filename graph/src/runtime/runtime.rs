@@ -334,6 +334,20 @@ impl<'a> Runtime<'a> {
                         (Value::List(_), v) => {
                             return Err(format!("Type mismatch: expected Bool but was {v:?}"));
                         }
+                        (Value::Node(id), Value::String(key)) => {
+                            if let Some(value) = self.get_node_attribute(id, &key) {
+                                res.push(value.clone());
+                            } else {
+                                res.push(Value::Null);
+                            }
+                        }
+                        (Value::Relationship(id, _, _), Value::String(key)) => {
+                            if let Some(value) = self.get_relationship_attribute(id, &key) {
+                                res.push(value.clone());
+                            } else {
+                                res.push(Value::Null);
+                            }
+                        }
                         (Value::Map(map), Value::String(key)) => {
                             res.push(map.get(&key).map_or(Value::Null, std::clone::Clone::clone));
                         }

@@ -345,6 +345,7 @@ pub fn init_functions() -> Result<(), Functions> {
         properties,
         false,
         vec![Type::Union(vec![
+            Type::Map,
             Type::Node,
             Type::Relationship,
             Type::Null,
@@ -956,6 +957,7 @@ fn properties(
 ) -> Result<Value, String> {
     let mut iter = args.into_iter();
     match iter.next() {
+        Some(Value::Map(map)) => Ok(Value::Map(map.clone())),
         Some(Value::Node(id)) => {
             let properties = runtime.get_node_attrs(id);
             Ok(Value::Map(Rc::new(properties)))
