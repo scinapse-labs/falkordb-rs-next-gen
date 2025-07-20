@@ -1,7 +1,7 @@
-test_aggregation
-test_empty_query
-test_filters
-test_mix_labels
-test_multi_pattern
-test_multiple_edges
-test_reversed_patterns
+tests/flow/test_aggregation
+tests/flow/test_empty_query
+tests/flow/test_filters
+tests/flow/test_mix_labels
+tests/flow/test_multi_pattern
+tests/flow/test_multiple_edges
+tests/flow/test_reversed_patterns

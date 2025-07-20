@@ -88,6 +88,11 @@ jobs:
         run: |
           . /data/venv/bin/activate
           pytest tests/test_e2e.py tests/test_functions.py -vv
+      - name: Run Flow tests
+        run: |
+          . /data/venv/bin/activate
+          pip install git+https://github.com/falkordb/RLTest.git@master
+          ./flow.sh
       - name: Run TCK tests
         run: |
           . /data/venv/bin/activate

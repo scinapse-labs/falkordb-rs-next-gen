@@ -5,3 +5,4 @@ pytest
 pytest-benchmark
 textual
 textual-dev
+git+https://github.com/falkordb/RLTest.git@master
