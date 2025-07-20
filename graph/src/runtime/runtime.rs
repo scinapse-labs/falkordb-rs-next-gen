@@ -801,17 +801,42 @@ impl<'a> Runtime<'a> {
         idx: &NodeIdx<Dyn<IR>>,
     ) -> Result<Box<dyn Iterator<Item = Result<Env, String>> + 'a>, String> {
         let child0_idx = self.plan.node(idx).get_child(0).map(|n| n.idx());
+        let iter = if matches!(self.plan.node(idx).data(), IR::Optional(_) | IR::Merge(_)) {
+            if let Some(child_idx) = child0_idx
+                && self.plan.node(idx).num_children() > 1
+            {
+                self.run(&child_idx)?
+            } else {
+                Box::new(once(Ok(Env::default())))
+            }
+        } else if matches!(self.plan.node(idx).data(), IR::Delete(_, _))
+            && self.plan.node(idx).num_children() == 0
+        {
+            return Err(String::from(
+                "DELETE can only be called on nodes, paths and relationships",
+            ));
+        } else if matches!(
+            self.plan.node(idx).data(),
+            IR::Set(_)
+                | IR::Remove(_)
+                | IR::PathBuilder(_)
+                | IR::Filter(_)
+                | IR::Sort(_)
+                | IR::Skip(_)
+                | IR::Limit(_)
+                | IR::Distinct
+                | IR::Commit
+        ) && self.plan.node(idx).num_children() == 0
+        {
+            unreachable!();
+        } else if let Some(child_idx) = child0_idx {
+            self.run(&child_idx)?
+        } else {
+            Box::new(once(Ok(Env::default())))
+        };
         match self.plan.node(idx).data() {
             IR::Empty => Ok(Box::new(empty())),
             IR::Optional(vars) => {
-                let iter = if let Some(child_idx) = child0_idx
-                    && self.plan.node(idx).num_children() > 1
-                {
-                    self.run(&child_idx)?
-                } else {
-                    Box::new(once(Ok(Env::default())))
-                };
-
                 let idx = idx.clone();
                 let child_idx = if self.plan.node(&idx).num_children() == 1 {
                     self.plan.node(&idx).child(0).idx()
@@ -864,12 +889,6 @@ impl<'a> Runtime<'a> {
                 }
             }
             IR::Unwind(tree, name) => {
-                let iter = if let Some(child_idx) = child0_idx {
-                    self.run(&child_idx)?
-                } else {
-                    Box::new(once(Ok(Env::default())))
-                };
-
                 let idx = idx.clone();
                 Ok(iter
                     .try_flat_map(move |vars| {
@@ -885,12 +904,6 @@ impl<'a> Runtime<'a> {
                     }))
             }
             IR::Create(pattern) => {
-                let iter = if let Some(child_idx) = child0_idx {
-                    self.run(&child_idx)?
-                } else {
-                    Box::new(once(Ok(Env::default())))
-                };
-
                 let mut parent_commit = false;
                 if let Some(parent) = self.plan.node(idx).parent()
                     && matches!(parent.data(), IR::Commit)
@@ -918,14 +931,6 @@ impl<'a> Runtime<'a> {
                     }))
             }
             IR::Merge(pattern) => {
-                let iter = if let Some(child_idx) = child0_idx
-                    && self.plan.node(idx).num_children() > 1
-                {
-                    self.run(&child_idx)?
-                } else {
-                    Box::new(once(Ok(Env::default())))
-                };
-
                 let idx = idx.clone();
                 let child_idx = if self.plan.node(&idx).num_children() == 1 {
                     self.plan.node(&idx).child(0).idx()
@@ -957,61 +962,39 @@ impl<'a> Runtime<'a> {
                     }))
             }
             IR::Delete(trees, _) => {
-                if let Some(child_idx) = child0_idx {
-                    let idx = idx.clone();
-                    return Ok(self
-                        .run(&child_idx)?
-                        .try_map(move |mut vars| {
-                            self.delete(trees, &mut vars)?;
-                            Ok(vars)
-                        })
-                        .cond_inspect(self.inspect, move |res| {
-                            self.record.borrow_mut().push((idx.clone(), res.clone()));
-                        }));
-                }
-                Err(String::from(
-                    "DELETE can only be called on nodes, paths and relationships",
-                ))
+                let idx = idx.clone();
+                Ok(iter
+                    .try_map(move |vars| {
+                        self.delete(trees, &vars)?;
+                        Ok(vars)
+                    })
+                    .cond_inspect(self.inspect, move |res| {
+                        self.record.borrow_mut().push((idx.clone(), res.clone()));
+                    }))
             }
             IR::Set(items) => {
-                if let Some(child_idx) = child0_idx {
-                    let idx = idx.clone();
-                    return Ok(self
-                        .run(&child_idx)?
-                        .try_map(move |vars| {
-                            self.set(items, &vars)?;
-                            Ok(vars)
-                        })
-                        .cond_inspect(self.inspect, move |res| {
-                            self.record.borrow_mut().push((idx.clone(), res.clone()));
-                        }));
-                }
-
-                unreachable!();
+                let idx = idx.clone();
+                Ok(iter
+                    .try_map(move |vars| {
+                        self.set(items, &vars)?;
+                        Ok(vars)
+                    })
+                    .cond_inspect(self.inspect, move |res| {
+                        self.record.borrow_mut().push((idx.clone(), res.clone()));
+                    }))
             }
             IR::Remove(items) => {
-                if let Some(child_idx) = child0_idx {
-                    let idx = idx.clone();
-                    return Ok(self
-                        .run(&child_idx)?
-                        .try_map(move |vars| {
-                            self.remove(items, &vars)?;
-                            Ok(vars)
-                        })
-                        .cond_inspect(self.inspect, move |res| {
-                            self.record.borrow_mut().push((idx.clone(), res.clone()));
-                        }));
-                }
-
-                unreachable!();
+                let idx = idx.clone();
+                Ok(iter
+                    .try_map(move |vars| {
+                        self.remove(items, &vars)?;
+                        Ok(vars)
+                    })
+                    .cond_inspect(self.inspect, move |res| {
+                        self.record.borrow_mut().push((idx.clone(), res.clone()));
+                    }))
             }
             IR::NodeScan(node_pattern) => {
-                let iter = if let Some(child_idx) = child0_idx {
-                    self.run(&child_idx)?
-                } else {
-                    Box::new(once(Ok(Env::default())))
-                };
-
                 let idx = idx.clone();
                 Ok(iter
                     .try_flat_map(move |vars| self.node_scan(node_pattern, vars))
@@ -1020,12 +1003,6 @@ impl<'a> Runtime<'a> {
                     }))
             }
             IR::RelationshipScan(relationship_pattern) => {
-                let iter = if let Some(child_idx) = child0_idx {
-                    self.run(&child_idx)?
-                } else {
-                    Box::new(once(Ok(Env::default())))
-                };
-
                 let idx = idx.clone();
                 Ok(iter
                     .try_flat_map(move |vars| self.relationship_scan(relationship_pattern, vars))
@@ -1034,12 +1011,6 @@ impl<'a> Runtime<'a> {
                     }))
             }
             IR::ExpandInto(relationship_pattern) => {
-                let iter = if let Some(child_idx) = child0_idx {
-                    self.run(&child_idx)?
-                } else {
-                    Box::new(once(Ok(Env::default())))
-                };
-
                 let idx = idx.clone();
                 Ok(iter
                     .try_flat_map(move |vars| self.expand_into(relationship_pattern, vars))
@@ -1048,75 +1019,62 @@ impl<'a> Runtime<'a> {
                     }))
             }
             IR::PathBuilder(paths) => {
-                if let Some(child_idx) = child0_idx {
-                    let idx = idx.clone();
-                    return Ok(self
-                        .run(&child_idx)?
-                        .try_map(move |mut vars| {
-                            let mut paths = paths.clone();
-                            for path in &mut paths {
-                                let p = path
-                                    .vars
-                                    .iter()
-                                    .map(|v| {
-                                        vars.get(v).map_or_else(
-                                            || Err(format!("Variable {} not found", v.as_str())),
-                                            Ok,
-                                        )
-                                    })
-                                    .collect::<Result<_, String>>()?;
-                                vars.insert(&path.var, Value::Path(p));
-                            }
-                            Ok(vars)
-                        })
-                        .cond_inspect(self.inspect, move |res| {
-                            self.record.borrow_mut().push((idx.clone(), res.clone()));
-                        }));
-                }
-
-                unreachable!();
+                let idx = idx.clone();
+                Ok(iter
+                    .try_map(move |mut vars| {
+                        let mut paths = paths.clone();
+                        for path in &mut paths {
+                            let p = path
+                                .vars
+                                .iter()
+                                .map(|v| {
+                                    vars.get(v).map_or_else(
+                                        || Err(format!("Variable {} not found", v.as_str())),
+                                        Ok,
+                                    )
+                                })
+                                .collect::<Result<_, String>>()?;
+                            vars.insert(&path.var, Value::Path(p));
+                        }
+                        Ok(vars)
+                    })
+                    .cond_inspect(self.inspect, move |res| {
+                        self.record.borrow_mut().push((idx.clone(), res.clone()));
+                    }))
             }
             IR::Filter(tree) => {
-                if let Some(child_idx) = child0_idx {
-                    let idx = idx.clone();
-                    return Ok(self
-                        .run(&child_idx)?
-                        .filter_map(move |vars| match vars {
-                            Ok(vars) => match self.run_expr(tree, tree.root().idx(), &vars, None) {
-                                Ok(Value::Bool(true)) => Some(Ok(vars)),
-                                Ok(Value::Bool(false) | Value::Null) => None,
-                                Err(e) => Some(Err(e)),
-                                _ => Some(Err(String::from("Expected boolean predicate."))),
-                            },
+                let idx = idx.clone();
+                Ok(iter
+                    .filter_map(move |vars| match vars {
+                        Ok(vars) => match self.run_expr(tree, tree.root().idx(), &vars, None) {
+                            Ok(Value::Bool(true)) => Some(Ok(vars)),
+                            Ok(Value::Bool(false) | Value::Null) => None,
                             Err(e) => Some(Err(e)),
-                        })
-                        .cond_inspect(self.inspect, move |res| {
-                            self.record.borrow_mut().push((idx.clone(), res.clone()));
-                        }));
-                }
-
-                unreachable!();
+                            _ => Some(Err(String::from("Expected boolean predicate."))),
+                        },
+                        Err(e) => Some(Err(e)),
+                    })
+                    .cond_inspect(self.inspect, move |res| {
+                        self.record.borrow_mut().push((idx.clone(), res.clone()));
+                    }))
             }
             IR::CartesianProduct => {
-                if let Some(child_idx) = child0_idx {
-                    let mut iter = self.run(&child_idx)?;
-                    let node = self.plan.node(idx);
-                    for child in node.children().skip(1) {
-                        let idx = child.idx();
-                        iter = Box::new(iter.try_flat_map(move |vars1| {
-                            Ok(self.run(&idx)?.try_map(move |vars2| {
-                                let mut vars = vars1.clone();
-                                vars.merge(vars2);
-                                Ok(vars)
-                            }))
-                        }));
-                    }
-                    let idx = idx.clone();
-                    return Ok(iter.cond_inspect(self.inspect, move |res| {
-                        self.record.borrow_mut().push((idx.clone(), res.clone()));
+                let mut iter = iter;
+                let node = self.plan.node(idx);
+                for child in node.children().skip(1) {
+                    let idx = child.idx();
+                    iter = Box::new(iter.try_flat_map(move |vars1| {
+                        Ok(self.run(&idx)?.try_map(move |vars2| {
+                            let mut vars = vars1.clone();
+                            vars.merge(vars2);
+                            Ok(vars)
+                        }))
                     }));
                 }
-                unreachable!();
+                let idx = idx.clone();
+                Ok(iter.cond_inspect(self.inspect, move |res| {
+                    self.record.borrow_mut().push((idx.clone(), res.clone()));
+                }))
             }
             IR::LoadCsv {
                 file_path,
@@ -1124,12 +1082,6 @@ impl<'a> Runtime<'a> {
                 delimiter,
                 var,
             } => {
-                let iter = if let Some(child_idx) = child0_idx {
-                    self.run(&child_idx)?
-                } else {
-                    Box::new(once(Ok(Env::default())))
-                };
-
                 let idx = idx.clone();
                 Ok(iter
                     .try_flat_map(move |vars| {
@@ -1181,45 +1133,38 @@ impl<'a> Runtime<'a> {
                     }))
             }
             IR::Sort(trees) => {
-                if let Some(child_idx) = child0_idx {
-                    let mut items = self
-                        .run(&child_idx)?
-                        .try_map(|env| {
-                            Ok((
-                                env.clone(),
-                                trees
-                                    .iter()
-                                    .map(|(tree, desc)| {
-                                        Ok((
-                                            self.run_expr(tree, tree.root().idx(), &env, None)?,
-                                            desc,
-                                        ))
-                                    })
-                                    .collect::<Result<Vec<_>, String>>()?,
-                            ))
-                        })
-                        .collect::<Result<Vec<_>, String>>()?;
-                    items.sort_by(|(_, a), (_, b)| {
-                        a.iter()
-                            .zip(b)
-                            .fold(Ordering::Equal, |acc, ((a, desc), (b, _))| {
-                                if acc != Ordering::Equal {
-                                    return acc;
-                                }
+                let mut items = iter
+                    .try_map(|env| {
+                        Ok((
+                            env.clone(),
+                            trees
+                                .iter()
+                                .map(|(tree, desc)| {
+                                    Ok((self.run_expr(tree, tree.root().idx(), &env, None)?, desc))
+                                })
+                                .collect::<Result<Vec<_>, String>>()?,
+                        ))
+                    })
+                    .collect::<Result<Vec<_>, String>>()?;
+                items.sort_by(|(_, a), (_, b)| {
+                    a.iter()
+                        .zip(b)
+                        .fold(Ordering::Equal, |acc, ((a, desc), (b, _))| {
+                            if acc != Ordering::Equal {
+                                return acc;
+                            }
 
-                                let (ordering, _) = a.compare_value(b);
-                                if **desc { ordering.reverse() } else { ordering }
-                            })
-                    });
-                    let idx = idx.clone();
-                    return Ok(items.into_iter().map(|(env, _)| Ok(env)).cond_inspect(
-                        self.inspect,
-                        move |res| {
-                            self.record.borrow_mut().push((idx.clone(), res.clone()));
-                        },
-                    ));
-                }
-                unreachable!();
+                            let (ordering, _) = a.compare_value(b);
+                            if **desc { ordering.reverse() } else { ordering }
+                        })
+                });
+                let idx = idx.clone();
+                Ok(items.into_iter().map(|(env, _)| Ok(env)).cond_inspect(
+                    self.inspect,
+                    move |res| {
+                        self.record.borrow_mut().push((idx.clone(), res.clone()));
+                    },
+                ))
             }
             IR::Skip(skip) => {
                 let Value::Int(skip) =
@@ -1227,16 +1172,12 @@ impl<'a> Runtime<'a> {
                 else {
                     return Err(String::from("Skip operator requires an integer argument"));
                 };
-                if let Some(child_idx) = child0_idx {
-                    let idx = idx.clone();
-                    return Ok(self.run(&child_idx)?.skip(skip as usize).cond_inspect(
-                        self.inspect,
-                        move |res| {
-                            self.record.borrow_mut().push((idx.clone(), res.clone()));
-                        },
-                    ));
-                }
-                unreachable!();
+                let idx = idx.clone();
+                Ok(iter
+                    .skip(skip as usize)
+                    .cond_inspect(self.inspect, move |res| {
+                        self.record.borrow_mut().push((idx.clone(), res.clone()));
+                    }))
             }
             IR::Limit(limit) => {
                 let Value::Int(limit) =
@@ -1244,16 +1185,12 @@ impl<'a> Runtime<'a> {
                 else {
                     return Err(String::from("Limit operator requires an integer argument"));
                 };
-                if let Some(child_idx) = child0_idx {
-                    let idx = idx.clone();
-                    return Ok(self.run(&child_idx)?.take(limit as usize).cond_inspect(
-                        self.inspect,
-                        move |res| {
-                            self.record.borrow_mut().push((idx.clone(), res.clone()));
-                        },
-                    ));
-                }
-                unreachable!();
+                let idx = idx.clone();
+                Ok(iter
+                    .take(limit as usize)
+                    .cond_inspect(self.inspect, move |res| {
+                        self.record.borrow_mut().push((idx.clone(), res.clone()));
+                    }))
             }
             IR::Aggregate(_, keys, agg) => {
                 let mut cache = HashMap::new();
@@ -1270,11 +1207,6 @@ impl<'a> Runtime<'a> {
                     let k = hasher.finish();
                     cache.insert(k, (key, Ok(env.clone())));
                 }
-                let iter = if let Some(child_idx) = child0_idx {
-                    self.run(&child_idx)?
-                } else {
-                    Box::new(once(Ok(Env::default())))
-                };
                 let idx = idx.clone();
                 Ok(iter
                     .aggregate(
@@ -1317,12 +1249,6 @@ impl<'a> Runtime<'a> {
                     }))
             }
             IR::Project(trees) => {
-                let iter = if let Some(child_idx) = child0_idx {
-                    self.run(&child_idx)?
-                } else {
-                    Box::new(once(Ok(Env::default())))
-                };
-
                 let idx = idx.clone();
                 Ok(iter
                     .try_map(move |vars| {
@@ -1338,39 +1264,35 @@ impl<'a> Runtime<'a> {
                     }))
             }
             IR::Distinct => {
-                if let Some(child_idx) = child0_idx {
-                    let deduper = ValuesDeduper::default();
-                    let idx = idx.clone();
-                    return Ok(self
-                        .run(&child_idx)?
-                        .filter_map(move |item| {
-                            // Propagate errors immediately
-                            let vars = match item {
-                                Err(e) => return Some(Err(e)),
-                                Ok(vars) => vars,
-                            };
+                let deduper = ValuesDeduper::default();
+                let idx = idx.clone();
+                Ok(iter
+                    .filter_map(move |item| {
+                        // Propagate errors immediately
+                        let vars = match item {
+                            Err(e) => return Some(Err(e)),
+                            Ok(vars) => vars,
+                        };
 
-                            // compute the hash of all the values in return_names
-                            // by order
-                            let mut hasher = DefaultHasher::new();
-                            for name in &self.return_names {
-                                vars.get(name)
-                                    .unwrap_or_else(|| {
-                                        unreachable!("Variable {} not found", name.as_str())
-                                    })
-                                    .hash(&mut hasher);
-                            }
-                            if deduper.has_hash(hasher.finish()) {
-                                None
-                            } else {
-                                Some(Ok(vars))
-                            }
-                        })
-                        .cond_inspect(self.inspect, move |res| {
-                            self.record.borrow_mut().push((idx.clone(), res.clone()));
-                        }));
-                }
-                unreachable!();
+                        // compute the hash of all the values in return_names
+                        // by order
+                        let mut hasher = DefaultHasher::new();
+                        for name in &self.return_names {
+                            vars.get(name)
+                                .unwrap_or_else(|| {
+                                    unreachable!("Variable {} not found", name.as_str())
+                                })
+                                .hash(&mut hasher);
+                        }
+                        if deduper.has_hash(hasher.finish()) {
+                            None
+                        } else {
+                            Some(Ok(vars))
+                        }
+                    })
+                    .cond_inspect(self.inspect, move |res| {
+                        self.record.borrow_mut().push((idx.clone(), res.clone()));
+                    }))
             }
             IR::Commit => {
                 if !self.write {
@@ -1378,8 +1300,7 @@ impl<'a> Runtime<'a> {
                         "graph.RO_QUERY is to be executed only on read-only queries",
                     ));
                 }
-                let iter = self
-                    .run(&child0_idx.ok_or("nothing to commit")?)?
+                let iter = iter
                     .collect::<Result<Vec<_>, String>>()?
                     .into_iter()
                     .map(Ok);
