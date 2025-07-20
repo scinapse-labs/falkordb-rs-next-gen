@@ -1,7 +1,22 @@
 #!/bin/bash
-cargo build
 if [[ "$(uname -s)" == "Darwin" ]]; then
-  RLTest -f flow_tests_done.txt --module target/debug/libfalkordb.dylib --no-progress --parallelism 8 --clear-logs --log-dir tests/flow/logs
+  TARGET=libfalkordb.dylib
 else
-  RLTest -f flow_tests_done.txt --module target/debug/libfalkordb.so --no-progress --parallelism 8 --clear-logs --log-dir tests/flow/logs
+  TARGET=libfalkordb.so
 fi
+
+if [[ "$RELEASE" == 1 ]]; then
+  TARGET_DIR=target/release
+  cargo build -r
+else
+  TARGET_DIR=target/debug
+  cargo build
+fi
+
+if [[ "$VERBOSE" == 1 ]]; then
+  V=-v
+else
+  V=
+fi
+
+RLTest -f flow_tests_done.txt --module $TARGET_DIR/$TARGET --no-progress --parallelism 8 --clear-logs --log-dir tests/flow/logs $V
