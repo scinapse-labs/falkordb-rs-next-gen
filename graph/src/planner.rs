@@ -77,7 +77,7 @@ impl Display for IR {
             Self::ExpandInto(rel) => write!(f, "ExpandInto {rel}"),
             Self::PathBuilder(_) => write!(f, "PathBuilder"),
             Self::Filter(_) => write!(f, "Filter"),
-            Self::CartesianProduct => write!(f, "CartesianProduct"),
+            Self::CartesianProduct => write!(f, "Cartesian Product"),
             Self::LoadCsv { .. } => write!(f, "LoadCsv"),
             Self::Sort(_) => write!(f, "Sort"),
             Self::Skip(_) => write!(f, "Skip"),

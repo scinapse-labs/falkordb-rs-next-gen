@@ -20,6 +20,7 @@ use crate::{
 use once_cell::unsync::Lazy;
 use ordermap::{OrderMap, OrderSet};
 use orx_tree::{Bfs, Dyn, DynNode, DynTree, NodeIdx, NodeRef};
+use reqwest::blocking::get;
 use std::{
     cell::RefCell,
     cmp::Ordering,
@@ -1144,28 +1145,36 @@ impl<'a> Runtime<'a> {
                         let Value::String(path) = path else {
                             return Err(String::from("File path must be a string"));
                         };
-                        let Some(path) = path.strip_prefix("file://") else {
+                        let path = if let Some(path) = path.strip_prefix("file://") {
+                            let path = self.import_folder.clone() + path;
+                            let import_folder =
+                                Path::new(&self.import_folder).canonicalize().map_err(|e| {
+                                    format!(
+                                        "Failed to canonicalize import folder path '{}': {e}",
+                                        self.import_folder
+                                    )
+                                })?;
+                            let cpath = Path::new(&path).canonicalize().map_err(|e| {
+                                format!("Failed to canonicalize file path '{path}': {e}")
+                            })?;
+                            if !cpath.starts_with(&import_folder) {
+                                return Err(format!(
+                                    "File path '{path}' is not within the import folder '{}'",
+                                    self.import_folder
+                                ));
+                            }
+                            path
+                        } else if path.starts_with("https://") {
+                            String::from(path.as_str())
+                        } else {
                             return Err(String::from("File path must start with 'file://' prefix"));
                         };
-                        let path = self.import_folder.clone() + path;
-                        let import_folder =
-                            Path::new(&self.import_folder).canonicalize().map_err(|e| {
-                                format!(
-                                    "Failed to canonicalize import folder path '{}': {e}",
-                                    self.import_folder
-                                )
-                            })?;
-                        let cpath = Path::new(&path).canonicalize().map_err(|e| {
-                            format!("Failed to canonicalize file path '{path}': {e}")
-                        })?;
-                        if !cpath.starts_with(&import_folder) {
-                            return Err(format!(
-                                "File path '{path}' is not within the import folder '{}'",
-                                self.import_folder
-                            ));
-                        }
 
-                        self.load_csv(&path, *headers, delimiter, var, &vars)
+                        if path.starts_with("https://") {
+                            self.load_csv_url(&path, *headers, delimiter, var, &vars)
+                        } else {
+                            self.load_csv_file(&path, *headers, delimiter, var, &vars)
+                        }
                     })
                     .cond_inspect(self.inspect, move |res| {
                         self.record.borrow_mut().push((idx.clone(), res.clone()));
@@ -1401,7 +1410,7 @@ impl<'a> Runtime<'a> {
         }
     }
 
-    fn load_csv(
+    fn load_csv_file(
         &'a self,
         path: &str,
         headers: bool,
@@ -1414,6 +1423,87 @@ impl<'a> Runtime<'a> {
             .delimiter(delimiter.as_bytes()[0])
             .from_path(path)
             .map_err(|e| format!("Failed to read CSV file: {e}"))?;
+
+        let vars = vars.clone();
+        if headers {
+            let headers = reader
+                .headers()
+                .map_err(|e| format!("Failed to read CSV headers: {e}"))?
+                .iter()
+                .map(|s| Rc::new(String::from(s)))
+                .collect::<Vec<_>>();
+            Ok(Box::new(reader.into_records().map(
+                move |record| match record {
+                    Ok(record) => {
+                        let mut env = vars.clone();
+                        env.insert(
+                            var,
+                            Value::Map(Rc::new(
+                                record
+                                    .iter()
+                                    .enumerate()
+                                    .filter_map(|(i, field)| {
+                                        if field.is_empty() {
+                                            None
+                                        } else {
+                                            Some((
+                                                headers
+                                                    .get(i)
+                                                    .cloned()
+                                                    .unwrap_or_else(|| Rc::new(format!("col_{i}"))),
+                                                Value::String(Rc::new(String::from(field))),
+                                            ))
+                                        }
+                                    })
+                                    .collect::<OrderMap<_, _>>(),
+                            )),
+                        );
+                        Ok(env)
+                    }
+                    Err(e) => Err(format!("Failed to read CSV record: {e}")),
+                },
+            )))
+        } else {
+            Ok(Box::new(reader.into_records().map(
+                move |record| match record {
+                    Ok(record) => {
+                        let mut env = vars.clone();
+                        env.insert(
+                            var,
+                            Value::List(
+                                record
+                                    .iter()
+                                    .map(|field| {
+                                        if field.is_empty() {
+                                            Value::Null
+                                        } else {
+                                            Value::String(Rc::new(String::from(field)))
+                                        }
+                                    })
+                                    .collect(),
+                            ),
+                        );
+                        Ok(env)
+                    }
+                    Err(e) => Err(format!("Failed to read CSV record: {e}")),
+                },
+            )))
+        }
+    }
+
+    fn load_csv_url(
+        &'a self,
+        path: &str,
+        headers: bool,
+        delimiter: Rc<String>,
+        var: &'a Variable,
+        vars: &Env,
+    ) -> Result<Box<dyn Iterator<Item = Result<Env, String>> + 'a>, String> {
+        let response = get(path).map_err(|e| format!("Failed to fetch CSV file: {e}"))?;
+        let mut reader = csv::ReaderBuilder::new()
+            .has_headers(headers)
+            .delimiter(delimiter.as_bytes()[0])
+            .from_reader(response);
 
         let vars = vars.clone();
         if headers {
