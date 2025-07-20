@@ -14,9 +14,24 @@ use ordermap::OrderMap;
 
 use crate::{
     ast::Variable,
-    graph::graph::{NodeId, RelationshipId, TypeId},
+    graph::graph::{LabelId, NodeId, RelationshipId, TypeId},
     runtime::functions::Type,
 };
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct DeletedNode {
+    pub labels: HashSet<LabelId>,
+    pub attrs: OrderMap<Rc<String>, Value>,
+}
+
+impl DeletedNode {
+    pub fn new(
+        labels: HashSet<LabelId>,
+        attrs: OrderMap<Rc<String>, Value>,
+    ) -> Self {
+        Self { labels, attrs }
+    }
+}
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct DeletedRelationship {

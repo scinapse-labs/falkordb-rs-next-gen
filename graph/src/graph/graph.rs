@@ -690,6 +690,13 @@ impl Graph {
         }
     }
 
+    pub fn is_node_deleted(
+        &self,
+        id: NodeId,
+    ) -> bool {
+        self.deleted_nodes.contains(id.0)
+    }
+
     pub fn is_relationship_deleted(
         &self,
         id: RelationshipId,

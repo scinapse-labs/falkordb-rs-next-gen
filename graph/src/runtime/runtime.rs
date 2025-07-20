@@ -12,7 +12,8 @@ use crate::{
         iter::{Aggregate, CondInspectIter, LazyReplace, TryFlatMap, TryMap},
         pending::Pending,
         value::{
-            CompareValue, Contains, DeletedRelationship, DisjointOrNull, Env, Value, ValuesDeduper,
+            CompareValue, Contains, DeletedNode, DeletedRelationship, DisjointOrNull, Env, Value,
+            ValuesDeduper,
         },
     },
 };
@@ -64,6 +65,7 @@ pub struct Runtime<'a> {
     inspect: bool,
     pub record: RefCell<Vec<(NodeIdx<Dyn<IR>>, Result<Env, String>)>>,
     import_folder: String,
+    pub deleted_nodes: RefCell<HashMap<NodeId, DeletedNode>>,
     pub deleted_relationships: RefCell<HashMap<RelationshipId, DeletedRelationship>>,
 }
 
@@ -191,6 +193,7 @@ impl<'a> Runtime<'a> {
             inspect,
             record: RefCell::new(vec![]),
             import_folder,
+            deleted_nodes: RefCell::new(HashMap::new()),
             deleted_relationships: RefCell::new(HashMap::new()),
         }
     }
@@ -1885,12 +1888,19 @@ impl<'a> Runtime<'a> {
     ) -> Result<(), String> {
         match value {
             Value::Node(id) => {
-                for (src, dest, id) in self.g.borrow().get_node_relationships(id) {
-                    self.pending
+                if !self.g.borrow().is_node_deleted(id) {
+                    for (src, dest, id) in self.g.borrow().get_node_relationships(id) {
+                        self.pending
+                            .borrow_mut()
+                            .deleted_relationship(id, src, dest);
+                    }
+                    self.pending.borrow_mut().deleted_node(id);
+                    let labels = self.g.borrow().get_node_label_ids(id).collect();
+                    let attrs = self.get_node_attrs(id);
+                    self.deleted_nodes
                         .borrow_mut()
-                        .deleted_relationship(id, src, dest);
+                        .insert(id, DeletedNode::new(labels, attrs));
                 }
-                self.pending.borrow_mut().deleted_node(id);
             }
             Value::Relationship(id, src, dest) => {
                 if !self.g.borrow().is_relationship_deleted(id) {

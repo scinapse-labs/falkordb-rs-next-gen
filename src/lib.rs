@@ -157,18 +157,37 @@ fn reply_compact_value(
             raw::reply_with_long_long(ctx.ctx, 8);
             raw::reply_with_array(ctx.ctx, 3);
             raw::reply_with_long_long(ctx.ctx, u64::from(id) as _);
-            let bg = runtime.g.borrow();
-            let labels = bg.get_node_label_ids(id).collect::<Vec<_>>();
-            raw::reply_with_array(ctx.ctx, labels.len() as _);
-            for label in labels {
-                raw::reply_with_long_long(ctx.ctx, usize::from(label) as _);
-            }
-            let props = bg.get_node_attrs(id);
-            raw::reply_with_array(ctx.ctx, props.len() as _);
-            for (key, value) in props {
-                raw::reply_with_array(ctx.ctx, 3);
-                raw::reply_with_long_long(ctx.ctx, usize::from(*key) as _);
-                reply_compact_value(ctx, runtime, value.clone());
+            let dn = runtime.deleted_nodes.borrow();
+            if let Some(x) = dn.get(&id) {
+                raw::reply_with_array(ctx.ctx, x.labels.len() as _);
+                for label in &x.labels {
+                    raw::reply_with_long_long(ctx.ctx, usize::from(*label) as _);
+                }
+                raw::reply_with_array(ctx.ctx, x.attrs.len() as _);
+                for (key, value) in &x.attrs {
+                    raw::reply_with_array(ctx.ctx, 3);
+                    let key = runtime
+                        .g
+                        .borrow()
+                        .get_node_attribute_id(key.as_str())
+                        .unwrap();
+                    raw::reply_with_long_long(ctx.ctx, usize::from(key) as _);
+                    reply_compact_value(ctx, runtime, value.clone());
+                }
+            } else {
+                let bg = runtime.g.borrow();
+                let labels = bg.get_node_label_ids(id).collect::<Vec<_>>();
+                raw::reply_with_array(ctx.ctx, labels.len() as _);
+                for label in labels {
+                    raw::reply_with_long_long(ctx.ctx, usize::from(label) as _);
+                }
+                let attrs = bg.get_node_attrs(id);
+                raw::reply_with_array(ctx.ctx, attrs.len() as _);
+                for (key, value) in attrs {
+                    raw::reply_with_array(ctx.ctx, 3);
+                    raw::reply_with_long_long(ctx.ctx, usize::from(*key) as _);
+                    reply_compact_value(ctx, runtime, value.clone());
+                }
             }
         }
         Value::Relationship(id, from, to) => {
@@ -306,27 +325,49 @@ fn reply_verbose_value(
             raw::reply_with_array(ctx.ctx, 3);
             raw::reply_with_long_long(ctx.ctx, u64::from(id) as _);
             let bg = runtime.g.borrow();
-            let labels = bg.get_node_label_ids(id).collect::<Vec<_>>();
-            raw::reply_with_array(ctx.ctx, labels.len() as _);
-            for label in labels {
-                let label = bg.get_label_by_id(label);
-                raw::reply_with_string_buffer(
-                    ctx.ctx,
-                    label.as_ptr().cast::<c_char>(),
-                    label.len(),
-                );
-            }
-            let props = bg.get_node_attrs(id);
-            raw::reply_with_array(ctx.ctx, props.len() as _);
-            for (key, value) in props {
-                raw::reply_with_array(ctx.ctx, 2);
-                let key_name = bg.get_node_attribute_string(*key).unwrap();
-                raw::reply_with_string_buffer(
-                    ctx.ctx,
-                    key_name.as_ptr().cast::<c_char>(),
-                    key_name.len(),
-                );
-                reply_verbose_value(ctx, runtime, value.clone());
+            let dn = runtime.deleted_nodes.borrow();
+            if let Some(x) = dn.get(&id) {
+                raw::reply_with_array(ctx.ctx, x.labels.len() as _);
+                for label in &x.labels {
+                    let label = bg.get_label_by_id(*label);
+                    raw::reply_with_string_buffer(
+                        ctx.ctx,
+                        label.as_ptr().cast::<c_char>(),
+                        label.len(),
+                    );
+                }
+                raw::reply_with_array(ctx.ctx, x.attrs.len() as _);
+                for (key, value) in &x.attrs {
+                    raw::reply_with_array(ctx.ctx, 2);
+                    raw::reply_with_string_buffer(
+                        ctx.ctx,
+                        key.as_ptr().cast::<c_char>(),
+                        key.len(),
+                    );
+                    reply_verbose_value(ctx, runtime, value.clone());
+                }
+            } else {
+                let labels = bg.get_node_labels(id).collect::<Vec<_>>();
+                raw::reply_with_array(ctx.ctx, labels.len() as _);
+                for label in labels {
+                    raw::reply_with_string_buffer(
+                        ctx.ctx,
+                        label.as_ptr().cast::<c_char>(),
+                        label.len(),
+                    );
+                }
+                let attrs = bg.get_node_attrs(id);
+                raw::reply_with_array(ctx.ctx, attrs.len() as _);
+                for (key, value) in attrs {
+                    raw::reply_with_array(ctx.ctx, 2);
+                    let key_name = bg.get_node_attribute_string(*key).unwrap();
+                    raw::reply_with_string_buffer(
+                        ctx.ctx,
+                        key_name.as_ptr().cast::<c_char>(),
+                        key_name.len(),
+                    );
+                    reply_verbose_value(ctx, runtime, value.clone());
+                }
             }
         }
         Value::Relationship(id, from, to) => {
