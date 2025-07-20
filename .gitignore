@@ -26,4 +26,4 @@ out
 outg
 data
 tests/flow/logs
-git+https://github.com/falkordb/RLTest.git@master
+tests/flow/csvs

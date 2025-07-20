@@ -38,7 +38,7 @@ EMPTY_CELL_CSV_HEADER                   = ["FirstName", "LastName", "Age"]
 EMPTY_COLUMN_CSV                        = "empty_column.csv"
 
 # Get the absolute path to the current file
-IMPORT_DIR = os.path.dirname(os.path.abspath(__file__)) + '/'
+IMPORT_DIR = os.path.dirname(os.path.abspath(__file__)) + '/csvs/'
 
 # write a CSV file using 'name' as the file name
 # 'header' [optional] as the first row
