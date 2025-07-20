@@ -11,7 +11,9 @@ use crate::{
         functions::{FnType, Functions, Type, get_functions},
         iter::{Aggregate, CondInspectIter, LazyReplace, TryFlatMap, TryMap},
         pending::Pending,
-        value::{CompareValue, Contains, DisjointOrNull, Env, Value, ValuesDeduper},
+        value::{
+            CompareValue, Contains, DeletedRelationship, DisjointOrNull, Env, Value, ValuesDeduper,
+        },
     },
 };
 use once_cell::unsync::Lazy;
@@ -52,7 +54,7 @@ pub struct QueryStatistics {
 pub struct Runtime<'a> {
     functions: &'static Functions,
     parameters: HashMap<String, Value>,
-    g: &'a RefCell<Graph>,
+    pub g: &'a RefCell<Graph>,
     write: bool,
     pending: Lazy<RefCell<Pending>>,
     stats: RefCell<QueryStatistics>,
@@ -62,6 +64,7 @@ pub struct Runtime<'a> {
     inspect: bool,
     pub record: RefCell<Vec<(NodeIdx<Dyn<IR>>, Result<Env, String>)>>,
     import_folder: String,
+    pub deleted_relationships: RefCell<HashMap<RelationshipId, DeletedRelationship>>,
 }
 
 pub trait GetVariables {
@@ -188,6 +191,7 @@ impl<'a> Runtime<'a> {
             inspect,
             record: RefCell::new(vec![]),
             import_folder,
+            deleted_relationships: RefCell::new(HashMap::new()),
         }
     }
 
@@ -793,25 +797,29 @@ impl<'a> Runtime<'a> {
         idx: &NodeIdx<Dyn<IR>>,
     ) -> Result<Box<dyn Iterator<Item = Result<Env, String>> + 'a>, String> {
         let child0_idx = self.plan.node(idx).get_child(0).map(|n| n.idx());
-        let child1_idx = self.plan.node(idx).get_child(1).map(|n| n.idx());
         match self.plan.node(idx).data() {
             IR::Empty => Ok(Box::new(empty())),
             IR::Optional(vars) => {
-                let iter = if let Some(child_idx) = child1_idx {
+                let iter = if let Some(child_idx) = child0_idx
+                    && self.plan.node(idx).num_children() > 1
+                {
                     self.run(&child_idx)?
                 } else {
                     Box::new(once(Ok(Env::default())))
                 };
 
                 let idx = idx.clone();
+                let child_idx = if self.plan.node(&idx).num_children() == 1 {
+                    self.plan.node(&idx).child(0).idx()
+                } else {
+                    self.plan.node(&idx).child(1).idx()
+                };
                 Ok(iter
                     .try_flat_map(move |mut env| {
                         for v in vars {
                             env.insert(v, Value::Null);
                         }
-                        Ok(self
-                            .run(child0_idx.as_ref().unwrap())?
-                            .lazy_replace(move || once(Ok(env))))
+                        Ok(self.run(&child_idx)?.lazy_replace(move || once(Ok(env))))
                     })
                     .cond_inspect(self.inspect, move |res| {
                         self.record.borrow_mut().push((idx.clone(), res.clone()));
@@ -906,18 +914,26 @@ impl<'a> Runtime<'a> {
                     }))
             }
             IR::Merge(pattern) => {
-                let iter = if let Some(child_idx) = child1_idx {
+                let iter = if let Some(child_idx) = child0_idx
+                    && self.plan.node(idx).num_children() > 1
+                {
                     self.run(&child_idx)?
                 } else {
                     Box::new(once(Ok(Env::default())))
                 };
 
                 let idx = idx.clone();
+                let child_idx = if self.plan.node(&idx).num_children() == 1 {
+                    self.plan.node(&idx).child(0).idx()
+                } else {
+                    self.plan.node(&idx).child(1).idx()
+                };
                 Ok(iter
                     .try_flat_map(move |vars| {
                         let cvars = vars.clone();
+
                         let iter = self
-                            .run(child0_idx.as_ref().unwrap())?
+                            .run(&child_idx)?
                             .try_map(move |v| {
                                 let mut vars = vars.clone();
                                 vars.merge(v);
@@ -941,8 +957,8 @@ impl<'a> Runtime<'a> {
                     let idx = idx.clone();
                     return Ok(self
                         .run(&child_idx)?
-                        .try_map(move |vars| {
-                            self.delete(trees, &vars)?;
+                        .try_map(move |mut vars| {
+                            self.delete(trees, &mut vars)?;
                             Ok(vars)
                         })
                         .cond_inspect(self.inspect, move |res| {
@@ -1857,7 +1873,7 @@ impl<'a> Runtime<'a> {
     ) -> Result<(), String> {
         for tree in trees {
             let value = self.run_expr(tree, tree.root().idx(), vars, None)?;
-            self.delete_entity(value)?;
+            self.delete_entity(value, vars)?;
         }
         Ok(())
     }
@@ -1865,6 +1881,7 @@ impl<'a> Runtime<'a> {
     fn delete_entity(
         &self,
         value: Value,
+        vars: &Env,
     ) -> Result<(), String> {
         match value {
             Value::Node(id) => {
@@ -1880,11 +1897,16 @@ impl<'a> Runtime<'a> {
                     self.pending
                         .borrow_mut()
                         .deleted_relationship(id, src, dest);
+                    let type_id = self.g.borrow().get_relationship_type_id(id);
+                    let attrs = self.get_relationship_attrs(id);
+                    self.deleted_relationships
+                        .borrow_mut()
+                        .insert(id, DeletedRelationship::new(type_id, attrs));
                 }
             }
             Value::Path(values) => {
                 for value in values {
-                    self.delete_entity(value)?;
+                    self.delete_entity(value, vars)?;
                 }
             }
             Value::Null => {}

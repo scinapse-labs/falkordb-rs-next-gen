@@ -1,14 +1,11 @@
 test_access_del_entity
-test_aggregation - work
 test_bound_variables
 test_cache
 test_comprehension_functions
 test_create_clause
 test_distinct
-test_empty_query - work
 test_entity_update
 test_expand_into
-test_filters - work
 test_foreach
 test_function_calls
 test_graph_create
@@ -20,14 +17,10 @@ test_index_delete
 test_index_scans
 test_index_updates
 test_intern_string
-test_list - work
 test_load_csv
 test_maintain_record_order
 test_map
-test_mix_labels - work
 test_multi_label
-test_multi_pattern - work
-test_multiple_edges - work
 test_node_by_id
 test_null_handling
 test_opening_node

@@ -1,6 +1,6 @@
 use std::{collections::HashSet, fmt::Display, rc::Rc};
 
-use orx_tree::{DynTree, NodeRef};
+use orx_tree::{DynTree, NodeRef, Side};
 
 use crate::{
     ast::{
@@ -229,24 +229,30 @@ impl Planner {
         let mut iter = plans.into_iter().rev();
         let mut res = iter.next().unwrap();
         let mut idx = res.root().idx();
-        while matches!(res.node(&idx).data(), IR::Commit)
-            || matches!(res.node(&idx).data(), IR::Sort(_))
-            || matches!(res.node(&idx).data(), IR::Skip(_))
-            || matches!(res.node(&idx).data(), IR::Limit(_))
-            || matches!(res.node(&idx).data(), IR::Distinct)
-            || matches!(res.node(&idx).data(), IR::Filter(_))
-        {
+        while matches!(
+            res.node(&idx).data(),
+            IR::Commit | IR::Sort(_) | IR::Skip(_) | IR::Limit(_) | IR::Distinct | IR::Filter(_)
+        ) {
             idx = res.node(&idx).child(0).idx();
         }
         for n in iter {
-            idx = res.node_mut(&idx).push_child_tree(n);
-            while matches!(res.node(&idx).data(), IR::Commit)
-                || matches!(res.node(&idx).data(), IR::Sort(_))
-                || matches!(res.node(&idx).data(), IR::Skip(_))
-                || matches!(res.node(&idx).data(), IR::Limit(_))
-                || matches!(res.node(&idx).data(), IR::Distinct)
-                || matches!(res.node(&idx).data(), IR::Filter(_))
-            {
+            if res.node(&idx).num_children() > 0 {
+                idx = res
+                    .node_mut(&idx)
+                    .child_mut(0)
+                    .push_sibling_tree(Side::Left, n);
+            } else {
+                idx = res.node_mut(&idx).push_child_tree(n);
+            }
+            while matches!(
+                res.node(&idx).data(),
+                IR::Commit
+                    | IR::Sort(_)
+                    | IR::Skip(_)
+                    | IR::Limit(_)
+                    | IR::Distinct
+                    | IR::Filter(_)
+            ) {
                 idx = res.node(&idx).child(0).idx();
             }
         }

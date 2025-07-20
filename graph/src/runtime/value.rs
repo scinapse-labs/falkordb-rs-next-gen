@@ -14,9 +14,25 @@ use ordermap::OrderMap;
 
 use crate::{
     ast::Variable,
-    graph::graph::{NodeId, RelationshipId},
+    graph::graph::{NodeId, RelationshipId, TypeId},
     runtime::functions::Type,
 };
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct DeletedRelationship {
+    pub type_id: TypeId,
+    pub attrs: OrderMap<Rc<String>, Value>,
+}
+
+impl DeletedRelationship {
+    #[must_use]
+    pub const fn new(
+        type_id: TypeId,
+        attrs: OrderMap<Rc<String>, Value>,
+    ) -> Self {
+        Self { type_id, attrs }
+    }
+}
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub enum Value {

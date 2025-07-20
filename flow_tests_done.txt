@@ -1,0 +1,7 @@
+test_aggregation
+test_empty_query
+test_filters
+test_mix_labels
+test_multi_pattern
+test_multiple_edges
+test_reversed_patterns

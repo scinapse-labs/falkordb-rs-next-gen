@@ -718,6 +718,10 @@ impl Graph {
 
         for (type_id, rels) in r {
             let label = self.relationship_types.get(type_id.0).cloned().unwrap();
+            for (id, _, _) in &rels {
+                self.relationship_type_matrix.remove(*id, type_id.0 as u64);
+                self.relationship_attrs.remove(&RelationshipId(*id));
+            }
             let t = self.get_relationship_matrix_mut(&label);
             t.remove_all(rels);
         }
