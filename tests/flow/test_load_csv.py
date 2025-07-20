@@ -332,7 +332,7 @@ class testLoadRemoteCSV():
         current_folder_path = Path(__file__).parent
 
         # build the path to the target file
-        target_file_path = current_folder_path / ".." / ".." / "demo" / "social" / "resources" / "friends.csv"
+        target_file_path = current_folder_path / "social" / "friends.csv"
         target_file_path = target_file_path.resolve()  # Convert to absolute path
 
         # Read the CSV file into a list of lists

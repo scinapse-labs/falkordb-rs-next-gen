@@ -16,7 +16,6 @@ class testCache():
         # Have only one thread handling queries
         self.env, self.db = Env(moduleArgs=f"THREAD_COUNT 8 CACHE_SIZE {CACHE_SIZE}")
         self.conn = self.env.getConnection()
-        self.conn.config_set("falkordb.CACHE_SIZE", CACHE_SIZE)
 
     def setUp(self):
         self.conn.delete(*GRAPH_IDS)
