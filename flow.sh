@@ -8,10 +8,8 @@ fi
 if [[ "$TARGET_DIR" == "" ]]; then
   if [[ "$RELEASE" == 1 ]]; then
     TARGET_DIR=target/release
-    cargo build -r
   else
     TARGET_DIR=target/debug
-    cargo build
   fi
 fi
 
