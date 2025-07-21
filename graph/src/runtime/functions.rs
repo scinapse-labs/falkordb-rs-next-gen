@@ -1297,7 +1297,7 @@ fn stdev(
         (val, Value::List(vec)) => {
             let val = val.get_numeric();
             let (Value::Float(sum), Value::List(vec)) = (&vec[0], &vec[1]) else {
-                unreachable!("avg accumulator should be [sum, count, overflow]");
+                unreachable!("stdev accumulator should be [sum, values]");
             };
 
             let mut vec = vec.clone();
@@ -1350,7 +1350,7 @@ fn finalize_stdevp(ctx: Value) -> Value {
             diff * diff
         })
         .sum::<f64>()
-        / (values.len() - 1) as f64;
+        / values.len() as f64;
     Value::Float(variance.sqrt())
 }
 

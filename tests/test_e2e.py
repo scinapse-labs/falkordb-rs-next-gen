@@ -1343,6 +1343,30 @@ def test_max(a):
         assert res.result_set == [[max(x for x in a if x is not None)]]
 
 
+@given(st.lists(st.none() | st.integers(-10, 10)))
+def test_stdev(a):
+    res = query("UNWIND $a AS x RETURN stdev(x)", params={"a": a})
+    valid_values = [x for x in a if x is not None]
+    if len(valid_values) < 2:
+        assert res.result_set == [[0.0]]
+    else:
+        mean = sum(valid_values) / len(valid_values)
+        variance = sum((x - mean) ** 2 for x in valid_values) / (len(valid_values) - 1)
+        assert_float_equal(res.result_set[0][0], math.sqrt(variance))
+
+
+@given(st.lists(st.none() | st.integers(-10, 10)))
+def test_stdevp(a):
+    res = query("UNWIND $a AS x RETURN stdevp(x)", params={"a": a})
+    valid_values = [x for x in a if x is not None]
+    if len(valid_values) < 2:
+        assert res.result_set == [[0.0]]
+    else:
+        mean = sum(valid_values) / len(valid_values)
+        variance = sum((x - mean) ** 2 for x in valid_values) / len(valid_values)
+        assert_float_equal(res.result_set[0][0], math.sqrt(variance))
+
+
 def test_aggregation():
     res = query("UNWIND range(1, 10) AS x RETURN sum(x / 10.0)")
     assert_result_set_equal_no_order(res, [[5.5]])
