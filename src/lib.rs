@@ -386,7 +386,7 @@ fn reply_verbose_value(
                         key.as_ptr().cast::<c_char>(),
                         key.len(),
                     );
-                    reply_compact_value(ctx, runtime, value.clone());
+                    reply_verbose_value(ctx, runtime, value.clone());
                 }
             } else {
                 let bg = runtime.g.borrow();
