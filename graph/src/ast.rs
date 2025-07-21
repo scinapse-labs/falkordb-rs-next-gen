@@ -570,7 +570,11 @@ pub enum QueryIR {
         optional: bool,
     },
     Unwind(DynTree<ExprIR>, Variable),
-    Merge(QueryGraph),
+    Merge(
+        QueryGraph,
+        Vec<(DynTree<ExprIR>, DynTree<ExprIR>, bool)>,
+        Vec<(DynTree<ExprIR>, DynTree<ExprIR>, bool)>,
+    ),
     Create(QueryGraph),
     Delete(Vec<DynTree<ExprIR>>, bool),
     Set(Vec<(DynTree<ExprIR>, DynTree<ExprIR>, bool)>),
@@ -628,7 +632,7 @@ impl Display for QueryIR {
                 writeln!(f, "UNWIND {}:", v.as_str())?;
                 write!(f, "{l}")
             }
-            Self::Merge(p) => writeln!(f, "MERGE {p}"),
+            Self::Merge(p, _, _) => writeln!(f, "MERGE {p}"),
             Self::Create(p) => write!(f, "CREATE {p}"),
             Self::Delete(exprs, _) => {
                 writeln!(f, "DELETE:")?;
@@ -740,7 +744,7 @@ impl QueryIR {
                         "Query cannot conclude with UNWIND (must be a RETURN clause, an update clause, a procedure call or a non-returning subquery)",
                     )), |first| first.inner_validate(iter, env))
             }
-            Self::Merge(p) => {
+            Self::Merge(p, on_create_set_items, on_match_set_items) => {
                 for node in p.nodes.values() {
                     if env.contains(&node.alias.id) && p.relationships.is_empty() {
                         return Err(format!(
@@ -761,6 +765,14 @@ impl QueryIR {
                     }
                     relationship.attrs.validate(false, env)?;
                     env.insert(relationship.alias.id);
+                }
+                for set_item in on_match_set_items {
+                    set_item.0.validate(false, env)?;
+                    set_item.1.validate(false, env)?;
+                }
+                for set_item in on_create_set_items {
+                    set_item.0.validate(false, env)?;
+                    set_item.1.validate(false, env)?;
                 }
                 iter.next()
                     .map_or(Ok(()), |first| first.inner_validate(iter, env))

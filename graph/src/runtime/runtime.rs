@@ -88,7 +88,7 @@ impl GetVariables for DynNode<'_, IR> {
                     ty: Type::Any,
                 }),
                 IR::Unwind(_, variable) => vars.push(variable.clone()),
-                IR::Create(query_graph) | IR::Merge(query_graph) => {
+                IR::Create(query_graph) | IR::Merge(query_graph, _, _) => {
                     for node in query_graph.nodes() {
                         vars.push(node.alias.clone());
                     }
@@ -817,7 +817,10 @@ impl<'a> Runtime<'a> {
         idx: &NodeIdx<Dyn<IR>>,
     ) -> Result<Box<dyn Iterator<Item = Result<Env, String>> + 'a>, String> {
         let child0_idx = self.plan.node(idx).get_child(0).map(|n| n.idx());
-        let iter = if matches!(self.plan.node(idx).data(), IR::Optional(_) | IR::Merge(_)) {
+        let iter = if matches!(
+            self.plan.node(idx).data(),
+            IR::Optional(_) | IR::Merge(_, _, _)
+        ) {
             if let Some(child_idx) = child0_idx
                 && self.plan.node(idx).num_children() > 1
             {
@@ -946,7 +949,7 @@ impl<'a> Runtime<'a> {
                         self.record.borrow_mut().push((idx.clone(), res.clone()));
                     }))
             }
-            IR::Merge(pattern) => {
+            IR::Merge(pattern, on_create_set_items, on_match_set_items) => {
                 let idx = idx.clone();
                 let child_idx = if self.plan.node(&idx).num_children() == 1 {
                     self.plan.node(&idx).child(0).idx()
@@ -962,12 +965,16 @@ impl<'a> Runtime<'a> {
                             .try_map(move |v| {
                                 let mut vars = vars.clone();
                                 vars.merge(v);
+                                self.set(on_match_set_items, &vars)?;
                                 Ok(vars)
                             })
                             .lazy_replace(move || {
                                 let mut vars = cvars.clone();
                                 match self.create(pattern, &mut vars) {
-                                    Ok(()) => once(Ok(vars)),
+                                    Ok(()) => {
+                                        self.set(on_create_set_items, &vars);
+                                        once(Ok(vars))
+                                    }
                                     Err(e) => once(Err(e)),
                                 }
                             });

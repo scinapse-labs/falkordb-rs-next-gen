@@ -17,7 +17,11 @@ pub enum IR {
     Call(Rc<String>, Vec<DynTree<ExprIR>>),
     Unwind(DynTree<ExprIR>, Variable),
     Create(QueryGraph),
-    Merge(QueryGraph),
+    Merge(
+        QueryGraph,
+        Vec<(DynTree<ExprIR>, DynTree<ExprIR>, bool)>,
+        Vec<(DynTree<ExprIR>, DynTree<ExprIR>, bool)>,
+    ),
     Delete(Vec<DynTree<ExprIR>>, bool),
     Set(Vec<(DynTree<ExprIR>, DynTree<ExprIR>, bool)>),
     Remove(Vec<DynTree<ExprIR>>),
@@ -68,7 +72,7 @@ impl Display for IR {
                 write!(f, "Unwind({})", alias.as_str())
             }
             Self::Create(pattern) => write!(f, "Create {pattern}"),
-            Self::Merge(pattern) => write!(f, "Merge {pattern}"),
+            Self::Merge(pattern, _, _) => write!(f, "Merge {pattern}"),
             Self::Delete(_, _) => write!(f, "Delete"),
             Self::Set(_) => write!(f, "Set"),
             Self::Remove(_) => write!(f, "Remove"),
@@ -291,8 +295,12 @@ impl Planner {
                 }
             }
             QueryIR::Unwind(expr, alias) => tree!(IR::Unwind(expr, alias)),
-            QueryIR::Merge(pattern) => tree!(
-                IR::Merge(pattern.filter_visited(&self.visited)),
+            QueryIR::Merge(pattern, on_create_set_items, on_match_set_items) => tree!(
+                IR::Merge(
+                    pattern.filter_visited(&self.visited),
+                    on_create_set_items,
+                    on_match_set_items
+                ),
                 self.plan_match(&pattern, None)
             ),
             QueryIR::Create(pattern) => {

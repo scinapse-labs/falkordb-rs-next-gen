@@ -996,7 +996,25 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_merge_clause(&mut self) -> Result<QueryIR, String> {
-        Ok(QueryIR::Merge(self.parse_pattern(&Keyword::Merge)?))
+        let pattern = self.parse_pattern(&Keyword::Merge)?;
+        let mut on_match_set_items = vec![];
+        let mut on_create_set_items = vec![];
+        while optional_match_token!(self.lexer => On) {
+            if optional_match_token!(self.lexer => Match) {
+                match_token!(self.lexer => Set);
+                self.parse_set_items(&mut on_match_set_items)?;
+            } else if optional_match_token!(self.lexer => Create) {
+                match_token!(self.lexer => Set);
+                self.parse_set_items(&mut on_create_set_items)?;
+            } else {
+                return Err(self.lexer.format_error("Expected MATCH or CREATE after ON"));
+            }
+        }
+        Ok(QueryIR::Merge(
+            pattern,
+            on_create_set_items,
+            on_match_set_items,
+        ))
     }
 
     fn parse_delete_clause(
@@ -1965,6 +1983,14 @@ impl<'a> Parser<'a> {
 
     fn parse_set_clause(&mut self) -> Result<QueryIR, String> {
         let mut set_items = vec![];
+        self.parse_set_items(&mut set_items)?;
+        Ok(QueryIR::Set(set_items))
+    }
+
+    fn parse_set_items(
+        &mut self,
+        set_items: &mut Vec<(DynTree<ExprIR>, DynTree<ExprIR>, bool)>,
+    ) -> Result<(), String> {
         loop {
             let (mut expr, recurse) = self.parse_primary_expr()?;
             if recurse {
@@ -2023,10 +2049,9 @@ impl<'a> Parser<'a> {
             }
 
             if !optional_match_token!(self.lexer, Comma) {
-                break;
+                return Ok(());
             }
         }
-        Ok(QueryIR::Set(set_items))
     }
 
     fn parse_remove_clause(&mut self) -> Result<QueryIR, String> {
