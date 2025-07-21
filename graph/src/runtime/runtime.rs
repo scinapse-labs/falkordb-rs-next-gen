@@ -49,6 +49,8 @@ pub struct QueryStatistics {
     pub relationships_deleted: usize,
     pub properties_set: usize,
     pub properties_removed: usize,
+    pub indexes_created: usize,
+    pub indexes_dropped: usize,
     pub execution_time: f64,
     pub cached: bool,
 }
@@ -1330,6 +1332,7 @@ impl<'a> Runtime<'a> {
                         "graph.RO_QUERY is to be executed only on read-only queries",
                     ));
                 }
+                self.stats.borrow_mut().indexes_created += attrs.len();
                 self.g.borrow_mut().create_node_index(label, attrs);
                 Ok(Box::new(empty()))
             }
@@ -1339,6 +1342,7 @@ impl<'a> Runtime<'a> {
                         "graph.RO_QUERY is to be executed only on read-only queries",
                     ));
                 }
+                self.stats.borrow_mut().indexes_dropped += attrs.len();
                 self.g.borrow_mut().drop_node_index(label, attrs);
                 Ok(Box::new(empty()))
             }

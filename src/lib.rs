@@ -524,6 +524,12 @@ fn reply_stats(
     if stats.relationships_deleted > 0 {
         stats_len += 1;
     }
+    if stats.indexes_created > 0 {
+        stats_len += 1;
+    }
+    if stats.indexes_dropped > 0 {
+        stats_len += 1;
+    }
 
     raw::reply_with_array(ctx.ctx, stats_len.into());
     if stats.labels_added > 0 {
@@ -552,6 +558,14 @@ fn reply_stats(
     }
     if stats.relationships_deleted > 0 {
         let str = format!("Relationships deleted: {}", stats.relationships_deleted);
+        raw::reply_with_string_buffer(ctx.ctx, str.as_ptr().cast::<c_char>(), str.len());
+    }
+    if stats.indexes_created > 0 {
+        let str = format!("Indices created: {}", stats.indexes_created);
+        raw::reply_with_string_buffer(ctx.ctx, str.as_ptr().cast::<c_char>(), str.len());
+    }
+    if stats.indexes_dropped > 0 {
+        let str = format!("Indices deleted: {}", stats.indexes_dropped);
         raw::reply_with_string_buffer(ctx.ctx, str.as_ptr().cast::<c_char>(), str.len());
     }
     let str = format!("Cached execution: {}", i32::from(stats.cached));
