@@ -1922,10 +1922,10 @@ impl<'a> Parser<'a> {
             } else {
                 self.create_var(None, Type::Relationship)?
             };
-            let mut types = vec![];
+            let mut types = HashSet::new();
             if optional_match_token!(self.lexer, Colon) {
                 loop {
-                    types.push(self.parse_ident()?);
+                    types.insert(self.parse_ident()?);
                     let pipe = optional_match_token!(self.lexer, Pipe);
                     let colon = optional_match_token!(self.lexer, Colon);
                     if pipe || colon {
@@ -1967,7 +1967,7 @@ impl<'a> Parser<'a> {
                 self.parse_map()?
             };
             match_token!(self.lexer, RBrace);
-            (alias, types, attrs)
+            (alias, types.into_iter().collect(), attrs)
         } else {
             (
                 self.create_var(None, Type::Relationship)?,

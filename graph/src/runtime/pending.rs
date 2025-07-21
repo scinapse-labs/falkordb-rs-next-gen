@@ -5,7 +5,11 @@ use roaring::RoaringTreemap;
 
 use crate::{
     graph::graph::{Graph, NodeId, RelationshipId},
-    runtime::{runtime::QueryStatistics, value::Value},
+    runtime::{
+        functions::Type,
+        runtime::QueryStatistics,
+        value::{Value, ValueTypeOf},
+    },
 };
 
 pub struct PendingRelationship {
@@ -55,8 +59,31 @@ impl Pending {
         &mut self,
         id: NodeId,
         attrs: OrderMap<Rc<String>, Value>,
-    ) {
+    ) -> Result<(), String> {
+        for (_, value) in &attrs {
+            if value
+                .value_of_type(&Type::Union(vec![
+                    Type::Bool,
+                    Type::Int,
+                    Type::Float,
+                    Type::String,
+                    Type::Null,
+                    Type::List(Box::new(Type::Union(vec![
+                        Type::Bool,
+                        Type::Int,
+                        Type::Float,
+                        Type::String,
+                    ]))),
+                ]))
+                .is_some()
+            {
+                return Err(
+                    "Property values can only be of primitive types or arrays of primitive types",
+                )?;
+            }
+        }
         self.set_nodes_attrs.insert(id, attrs);
+        Ok(())
     }
 
     pub fn set_node_attribute(
@@ -64,11 +91,32 @@ impl Pending {
         id: NodeId,
         key: Rc<String>,
         value: Value,
-    ) {
+    ) -> Result<(), String> {
+        if value
+            .value_of_type(&Type::Union(vec![
+                Type::Bool,
+                Type::Int,
+                Type::Float,
+                Type::String,
+                Type::Null,
+                Type::List(Box::new(Type::Union(vec![
+                    Type::Bool,
+                    Type::Int,
+                    Type::Float,
+                    Type::String,
+                ]))),
+            ]))
+            .is_some()
+        {
+            return Err(
+                "Property values can only be of primitive types or arrays of primitive types",
+            )?;
+        }
         self.set_nodes_attrs
             .entry(id)
             .or_default()
             .insert(key, value);
+        Ok(())
     }
 
     #[must_use]

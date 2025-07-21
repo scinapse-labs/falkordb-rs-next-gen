@@ -1563,7 +1563,7 @@ impl<'a> Runtime<'a> {
                             node,
                             property.clone(),
                             Value::Null,
-                        );
+                        )?;
                     }
                     if let Some(labels) = labels {
                         self.pending.borrow_mut().remove_node_labels(node, labels);
@@ -1647,9 +1647,11 @@ impl<'a> Runtime<'a> {
                             continue;
                         }
 
-                        self.pending
-                            .borrow_mut()
-                            .set_node_attribute(id, property.clone(), value);
+                        self.pending.borrow_mut().set_node_attribute(
+                            id,
+                            property.clone(),
+                            value,
+                        )?;
                     } else if let Value::Map(map) = value {
                         if *replace {
                             for key in self.g.borrow().get_node_attrs(id).keys() {
@@ -1657,7 +1659,7 @@ impl<'a> Runtime<'a> {
                                     id,
                                     self.g.borrow().get_node_attribute_string(*key).unwrap(),
                                     Value::Null,
-                                );
+                                )?;
                             }
                         }
                         for (key, value) in map.iter() {
@@ -1665,7 +1667,7 @@ impl<'a> Runtime<'a> {
                                 id,
                                 key.clone(),
                                 value.clone(),
-                            );
+                            )?;
                         }
                     } else if let Value::Node(id) = value {
                         let g = self.g.borrow();
@@ -1676,13 +1678,13 @@ impl<'a> Runtime<'a> {
                                     id,
                                     g.get_node_attribute_string(*key).unwrap(),
                                     Value::Null,
-                                );
+                                )?;
                             }
                         }
                         for (key, value) in attrs {
                             self.pending
                                 .borrow_mut()
-                                .set_node_attribute(id, key, value.clone());
+                                .set_node_attribute(id, key, value.clone())?;
                         }
                     }
                     if let Some(labels) = labels {
@@ -2003,7 +2005,7 @@ impl<'a> Runtime<'a> {
                 Value::Map(attrs) => {
                     self.pending
                         .borrow_mut()
-                        .set_node_attributes(id, Rc::unwrap_or_clone(attrs));
+                        .set_node_attributes(id, Rc::unwrap_or_clone(attrs))?;
                 }
                 _ => unreachable!(),
             }
