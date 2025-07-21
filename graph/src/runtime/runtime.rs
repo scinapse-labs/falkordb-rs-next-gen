@@ -1623,6 +1623,11 @@ impl<'a> Runtime<'a> {
             };
             match entity {
                 Value::Node(id) => {
+                    if self.g.borrow().is_node_deleted(id)
+                        || self.pending.borrow().is_node_deleted(id)
+                    {
+                        continue;
+                    }
                     if let Some(property) = property {
                         if let Some(attr_id) = self.g.borrow().get_node_attribute_id(property)
                             && let Some(v) = self.g.borrow().get_node_attribute(id, attr_id)
@@ -1630,6 +1635,7 @@ impl<'a> Runtime<'a> {
                         {
                             continue;
                         }
+
                         self.pending
                             .borrow_mut()
                             .set_node_attribute(id, property.clone(), value);
@@ -1656,6 +1662,11 @@ impl<'a> Runtime<'a> {
                     }
                 }
                 Value::Relationship(id, src, dest) => {
+                    if self.g.borrow().is_relationship_deleted(id)
+                        || self.pending.borrow().is_relationship_deleted(id, src, dest)
+                    {
+                        continue;
+                    }
                     if let Some(property) = property {
                         if let Some(attr_id) =
                             self.g.borrow().get_relationship_attribute_id(property)
@@ -1664,11 +1675,7 @@ impl<'a> Runtime<'a> {
                         {
                             continue;
                         }
-                        if self.g.borrow().is_relationship_deleted(id)
-                            || self.pending.borrow().is_relationship_deleted(id, src, dest)
-                        {
-                            continue;
-                        }
+
                         self.pending.borrow_mut().set_relationship_attribute(
                             id,
                             property.clone(),
