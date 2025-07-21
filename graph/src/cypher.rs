@@ -488,15 +488,90 @@ impl<'a> Lexer<'a> {
         pos: usize,
         mut len: usize,
     ) -> (Token, usize) {
-        while let Some(c) = chars.next() {
-            if c == '.' && chars.clone().next() == Some('.') {
-                break; // Stop when encountering `..`
-            }
-            if c.is_ascii_alphanumeric() || c == '_' || c == '$' || c == '+' || c == '-' || c == '.'
-            {
+        let mut radix = 10;
+        let mut is_float = false;
+        let mut is_e = false;
+        if &str[pos..=pos] == "0" && pos + 1 < str.len() {
+            if &str[pos + 1..pos + 2] == "x" {
+                radix = 16;
                 len += 1;
+                chars.next();
+            } else if &str[pos + 1..pos + 2] == "o" {
+                radix = 8;
+                len += 1;
+                chars.next();
+            } else if &str[pos + 1..pos + 2] == "b" {
+                radix = 2;
+                len += 1;
+                chars.next();
+            }
+        } else if &str[pos..=pos] == "." {
+            is_float = true;
+        }
+        while let Some(c) = chars.next() {
+            if c.is_alphanumeric() {
+                if (c == 'e' || c == 'E') && radix == 10 {
+                    is_float = true;
+                    is_e = true;
+                    len += 1;
+                    if pos + len < str.len()
+                        && (&str[pos + len..=pos + len] == "-"
+                            || &str[pos + len..=pos + len] == "+")
+                    {
+                        chars.next();
+                        len += 1;
+                    }
+                    break;
+                }
+                len += 1;
+            } else if c == '.' && radix == 10 {
+                if is_float {
+                    return (
+                        Token::Error(format!("Invalid numeric value at pos: {pos} in {str}")),
+                        len,
+                    );
+                }
+                if pos + len + 1 < str.len() && &str[pos + len + 1..=pos + len + 1] == "." {
+                    break;
+                }
+                is_float = true;
+                len += 1;
+                break;
             } else {
                 break;
+            }
+        }
+        if is_float {
+            while let Some(c) = chars.next() {
+                if c.is_digit(radix) {
+                    len += 1;
+                } else if c == 'e' || c == 'E' {
+                    if is_e {
+                        return (
+                            Token::Error(format!("Invalid numeric value at pos: {pos} in {str}")),
+                            len,
+                        );
+                    }
+                    is_e = true;
+                    len += 1;
+                    if pos + len < str.len()
+                        && (&str[pos + len..=pos + len] == "-"
+                            || &str[pos + len..=pos + len] == "+")
+                    {
+                        chars.next();
+                        len += 1;
+                    }
+                    for c in chars.by_ref() {
+                        if c.is_digit(radix) {
+                            len += 1;
+                        } else {
+                            break;
+                        }
+                    }
+                    break;
+                } else {
+                    break;
+                }
             }
         }
         let str = String::from(&str[pos..pos + len]);

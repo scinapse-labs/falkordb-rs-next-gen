@@ -1658,7 +1658,7 @@ fn string_right(
             if n < 0 {
                 Err(String::from("length must be a non-negative integer"))
             } else {
-                let start = s.len().saturating_sub(n as usize);
+                let start = s.chars().count().saturating_sub(n as usize);
                 Ok(Value::String(Rc::new(s.chars().skip(start).collect())))
             }
         }

@@ -286,10 +286,17 @@ impl Mul for Value {
             (Self::Float(a), Self::Float(b)) => Ok(Self::Float(a * b)),
             (Self::Float(a), Self::Int(b)) => Ok(Self::Float(a * b as f64)),
             (Self::Int(a), Self::Float(b)) => Ok(Self::Float(a as f64 * b)),
-            (a, b) => Err(format!(
-                "Unexpected types for mul operator ({}, {})",
+            (a, Self::Int(_) | Self::Float(_)) => Err(format!(
+                "Type mismatch: expected Integer, Float, or Null but was {}",
                 a.name(),
-                b.name()
+            )),
+            (Self::Int(_) | Self::Float(_), b) => Err(format!(
+                "Type mismatch: expected Integer, Float, or Null but was {}",
+                b.name(),
+            )),
+            (a, b) => Err(format!(
+                "Type mismatch: expected Integer, Float, or Null but was {}",
+                a.name(),
             )),
         }
     }
