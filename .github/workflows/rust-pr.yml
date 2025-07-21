@@ -119,7 +119,7 @@ jobs:
           TARGET=../target/debug/libfalkordb.so pytest ../tests/test_e2e.py ../tests/test_functions.py -vv
           TARGET=../target/debug/libfalkordb.so TCK_FEATURES=../tests/tck/features/ TCK_DONE=../tck_done.txt pytest ../tests/tck/test_tck.py -s
           pip install git+https://github.com/falkordb/RLTest.git@master
-          TARGET_DIR=../target/debug ../flow.sh
+          TARGET_DIR=../target/debug TESTS=../flow_tests_done.txt ../flow.sh
           llvm-profdata-20 merge --sparse `find . -name "*.profraw"` -o cov.profdata
           llvm-cov-20 export --format=lcov --instr-profile cov.profdata ../target/debug/libfalkordb.so > codecov.txt.all
           lcov --ignore-errors unused -r codecov.txt.all -o codecov.txt

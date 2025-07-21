@@ -1656,6 +1656,23 @@ impl<'a> Runtime<'a> {
                                 value.clone(),
                             );
                         }
+                    } else if let Value::Node(id) = value {
+                        let g = self.g.borrow();
+                        let attrs = self.get_node_attrs(id);
+                        if *replace {
+                            for key in g.get_node_attrs(id).keys() {
+                                self.pending.borrow_mut().set_node_attribute(
+                                    id,
+                                    g.get_node_attribute_string(*key).unwrap(),
+                                    Value::Null,
+                                );
+                            }
+                        }
+                        for (key, value) in attrs {
+                            self.pending
+                                .borrow_mut()
+                                .set_node_attribute(id, key, value.clone());
+                        }
                     }
                     if let Some(labels) = labels {
                         self.pending.borrow_mut().set_node_labels(id, labels);
@@ -2075,6 +2092,9 @@ impl<'a> Runtime<'a> {
         &self,
         id: NodeId,
     ) -> OrderMap<Rc<String>, Value> {
+        if let Some(dn) = self.deleted_nodes.borrow().get(&id) {
+            return dn.attrs.clone();
+        }
         let g = self.g.borrow();
         let mut actual: OrderMap<Rc<String>, Value> = g
             .get_node_attrs(id)
