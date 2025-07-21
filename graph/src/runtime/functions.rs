@@ -1512,7 +1512,7 @@ fn substring(
             }
             let start = start as usize;
 
-            Ok(Value::String(Rc::new(String::from(&s[start..]))))
+            Ok(Value::String(Rc::new(s.chars().skip(start).collect())))
         }
 
         // Three-argument version: (string, start, length)
