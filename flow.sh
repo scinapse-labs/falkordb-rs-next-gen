@@ -22,7 +22,7 @@ else
 fi
 
 if [[ "$TESTS_FILE" == "" ]]; then
-  TESTS=flow_tests_done.txt
+  TESTS_FILE=flow_tests_done.txt
 fi
 
-RLTest -f $TESTS --module $TARGET_DIR/$TARGET --no-progress --parallelism 8 --clear-logs --log-dir tests/flow/logs $V
+RLTest -f $TESTS_FILE --module $TARGET_DIR/$TARGET --no-progress --parallelism 8 --clear-logs --log-dir tests/flow/logs $V
