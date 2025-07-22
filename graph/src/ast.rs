@@ -210,7 +210,7 @@ impl Validate for DynTree<ExprIR> {
                         | ExprIR::List
                         | ExprIR::Map) = expr.data()
                         {
-                            return Err("Type mismatch: expected bool".to_string());
+                            return Err(String::from("Type mismatch: expected bool"));
                         }
                     }
                 }
@@ -570,7 +570,11 @@ pub enum QueryIR {
         optional: bool,
     },
     Unwind(DynTree<ExprIR>, Variable),
-    Merge(QueryGraph),
+    Merge(
+        QueryGraph,
+        Vec<(DynTree<ExprIR>, DynTree<ExprIR>, bool)>,
+        Vec<(DynTree<ExprIR>, DynTree<ExprIR>, bool)>,
+    ),
     Create(QueryGraph),
     Delete(Vec<DynTree<ExprIR>>, bool),
     Set(Vec<(DynTree<ExprIR>, DynTree<ExprIR>, bool)>),
@@ -628,7 +632,7 @@ impl Display for QueryIR {
                 writeln!(f, "UNWIND {}:", v.as_str())?;
                 write!(f, "{l}")
             }
-            Self::Merge(p) => writeln!(f, "MERGE {p}"),
+            Self::Merge(p, _, _) => writeln!(f, "MERGE {p}"),
             Self::Create(p) => write!(f, "CREATE {p}"),
             Self::Delete(exprs, _) => {
                 writeln!(f, "DELETE:")?;
@@ -740,7 +744,7 @@ impl QueryIR {
                         "Query cannot conclude with UNWIND (must be a RETURN clause, an update clause, a procedure call or a non-returning subquery)",
                     )), |first| first.inner_validate(iter, env))
             }
-            Self::Merge(p) => {
+            Self::Merge(p, on_create_set_items, on_match_set_items) => {
                 for node in p.nodes.values() {
                     if env.contains(&node.alias.id) && p.relationships.is_empty() {
                         return Err(format!(
@@ -762,6 +766,14 @@ impl QueryIR {
                     relationship.attrs.validate(false, env)?;
                     env.insert(relationship.alias.id);
                 }
+                for set_item in on_match_set_items {
+                    set_item.0.validate(false, env)?;
+                    set_item.1.validate(false, env)?;
+                }
+                for set_item in on_create_set_items {
+                    set_item.0.validate(false, env)?;
+                    set_item.1.validate(false, env)?;
+                }
                 iter.next()
                     .map_or(Ok(()), |first| first.inner_validate(iter, env))
             }
@@ -773,7 +785,6 @@ impl QueryIR {
                             path.var.as_str()
                         ));
                     }
-                    env.insert(path.var.id);
                 }
                 for node in p.nodes.values() {
                     if env.contains(&node.alias.id) && p.relationships.is_empty() {
@@ -783,9 +794,6 @@ impl QueryIR {
                         ));
                     }
                     node.attrs.validate(false, env)?;
-                }
-                for node in p.nodes.values() {
-                    env.insert(node.alias.id);
                 }
                 for relationship in p.relationships.values() {
                     if env.contains(&relationship.alias.id) {
@@ -800,6 +808,14 @@ impl QueryIR {
                         ));
                     }
                     relationship.attrs.validate(false, env)?;
+                }
+                for path in p.paths.values() {
+                    env.insert(path.var.id);
+                }
+                for node in p.nodes.values() {
+                    env.insert(node.alias.id);
+                }
+                for relationship in p.relationships.values() {
                     env.insert(relationship.alias.id);
                 }
                 iter.next()
@@ -871,7 +887,7 @@ impl QueryIR {
                 .map_or(Ok(()), |first| first.inner_validate(iter, env)),
             Self::Query(q, _) => {
                 let mut iter = q.iter();
-                let first = iter.next().ok_or("Empty query")?;
+                let first = iter.next().ok_or("Error: empty query.")?;
                 first.inner_validate(iter, env)
             }
         }

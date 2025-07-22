@@ -206,15 +206,27 @@ impl<'a> Lexer<'a> {
     fn new(str: &'a str) -> Self {
         Self {
             str,
-            pos: Self::read_spaces(str, 0),
+            pos: 0,
             cached_current: Self::get_token(str, Self::read_spaces(str, 0)),
         }
     }
 
     fn next(&mut self) {
-        self.pos += self.cached_current.1;
         self.pos += Self::read_spaces(self.str, self.pos);
-        self.cached_current = Self::get_token(self.str, self.pos);
+        self.pos += self.cached_current.1;
+        let pos = self.pos + Self::read_spaces(self.str, self.pos);
+        self.cached_current = Self::get_token(self.str, pos);
+    }
+
+    fn pos(
+        &self,
+        before_whitespaces: bool,
+    ) -> usize {
+        if before_whitespaces {
+            self.pos
+        } else {
+            self.pos + Self::read_spaces(self.str, self.pos)
+        }
     }
 
     fn read_spaces(
@@ -223,8 +235,57 @@ impl<'a> Lexer<'a> {
     ) -> usize {
         let mut len = 0;
         let mut chars = str[pos..].chars();
-        while let Some(' ' | '\t' | '\n') = chars.next() {
+        let mut next = chars.next();
+
+        while let Some(' ' | '\t' | '\n' | '/') = next {
+            if next == Some('/') {
+                len += 1;
+                next = chars.next();
+                if next.is_none() {
+                    break;
+                }
+                len += 1;
+                if next == Some('/') {
+                    next = chars.next();
+                    loop {
+                        if next.is_none() {
+                            break;
+                        }
+                        len += 1;
+                        if next == Some('\n') {
+                            next = chars.next();
+                            break;
+                        }
+                        next = chars.next();
+                    }
+                } else if next == Some('*') {
+                    next = chars.next();
+                    loop {
+                        if next.is_none() {
+                            break;
+                        }
+                        while next == Some('*') {
+                            len += 1;
+                            next = chars.next();
+                        }
+                        if next.is_none() {
+                            break;
+                        }
+                        len += 1;
+                        if next == Some('/') {
+                            next = chars.next();
+                            break;
+                        }
+                        next = chars.next();
+                    }
+                } else {
+                    len -= 2;
+                    break;
+                }
+                continue;
+            }
             len += 1;
+            next = chars.next();
         }
         len
     }
@@ -427,15 +488,90 @@ impl<'a> Lexer<'a> {
         pos: usize,
         mut len: usize,
     ) -> (Token, usize) {
-        while let Some(c) = chars.next() {
-            if c == '.' && chars.clone().next() == Some('.') {
-                break; // Stop when encountering `..`
-            }
-            if c.is_ascii_alphanumeric() || c == '_' || c == '$' || c == '+' || c == '-' || c == '.'
-            {
+        let mut radix = 10;
+        let mut is_float = false;
+        let mut is_e = false;
+        if &str[pos..=pos] == "0" && pos + 1 < str.len() {
+            if &str[pos + 1..pos + 2] == "x" {
+                radix = 16;
                 len += 1;
+                chars.next();
+            } else if &str[pos + 1..pos + 2] == "o" {
+                radix = 8;
+                len += 1;
+                chars.next();
+            } else if &str[pos + 1..pos + 2] == "b" {
+                radix = 2;
+                len += 1;
+                chars.next();
+            }
+        } else if &str[pos..=pos] == "." {
+            is_float = true;
+        }
+        while let Some(c) = chars.next() {
+            if c.is_alphanumeric() {
+                if (c == 'e' || c == 'E') && radix == 10 {
+                    is_float = true;
+                    is_e = true;
+                    len += 1;
+                    if pos + len < str.len()
+                        && (&str[pos + len..=pos + len] == "-"
+                            || &str[pos + len..=pos + len] == "+")
+                    {
+                        chars.next();
+                        len += 1;
+                    }
+                    break;
+                }
+                len += 1;
+            } else if c == '.' && radix == 10 {
+                if is_float {
+                    return (
+                        Token::Error(format!("Invalid numeric value at pos: {pos} in {str}")),
+                        len,
+                    );
+                }
+                if pos + len + 1 < str.len() && &str[pos + len + 1..=pos + len + 1] == "." {
+                    break;
+                }
+                is_float = true;
+                len += 1;
+                break;
             } else {
                 break;
+            }
+        }
+        if is_float {
+            while let Some(c) = chars.next() {
+                if c.is_digit(radix) {
+                    len += 1;
+                } else if c == 'e' || c == 'E' {
+                    if is_e {
+                        return (
+                            Token::Error(format!("Invalid numeric value at pos: {pos} in {str}")),
+                            len,
+                        );
+                    }
+                    is_e = true;
+                    len += 1;
+                    if pos + len < str.len()
+                        && (&str[pos + len..=pos + len] == "-"
+                            || &str[pos + len..=pos + len] == "+")
+                    {
+                        chars.next();
+                        len += 1;
+                    }
+                    for c in chars.by_ref() {
+                        if c.is_digit(radix) {
+                            len += 1;
+                        } else {
+                            break;
+                        }
+                    }
+                    break;
+                } else {
+                    break;
+                }
             }
         }
         let str = String::from(&str[pos..pos + len]);
@@ -507,6 +643,7 @@ impl<'a> Lexer<'a> {
         pos: usize,
     ) {
         self.pos = pos;
+        let pos = pos + Self::read_spaces(self.str, pos);
         self.cached_current = Self::get_token(self.str, pos);
     }
 }
@@ -934,7 +1071,25 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_merge_clause(&mut self) -> Result<QueryIR, String> {
-        Ok(QueryIR::Merge(self.parse_pattern(&Keyword::Merge)?))
+        let pattern = self.parse_pattern(&Keyword::Merge)?;
+        let mut on_match_set_items = vec![];
+        let mut on_create_set_items = vec![];
+        while optional_match_token!(self.lexer => On) {
+            if optional_match_token!(self.lexer => Match) {
+                match_token!(self.lexer => Set);
+                self.parse_set_items(&mut on_match_set_items)?;
+            } else if optional_match_token!(self.lexer => Create) {
+                match_token!(self.lexer => Set);
+                self.parse_set_items(&mut on_create_set_items)?;
+            } else {
+                return Err(self.lexer.format_error("Expected MATCH or CREATE after ON"));
+            }
+        }
+        Ok(QueryIR::Merge(
+            pattern,
+            on_create_set_items,
+            on_match_set_items,
+        ))
     }
 
     fn parse_delete_clause(
@@ -1019,6 +1174,12 @@ impl<'a> Parser<'a> {
             None
         };
         let filter = self.parse_where()?;
+        self.vars.clear();
+        for (var, _) in &exprs {
+            if let Some(name) = &var.name {
+                self.vars.insert(name.clone(), var.clone());
+            }
+        }
         Ok(QueryIR::With {
             distinct,
             exprs,
@@ -1154,13 +1315,19 @@ impl<'a> Parser<'a> {
                 while let Token::Dash | Token::LessThan = self.lexer.current() {
                     let (relationship, right) = self.parse_relationship_pattern(left, clause)?;
                     left = right.clone();
-                    if !query_graph.add_relationship(relationship.clone())
-                        && clause == &Keyword::Match
-                    {
-                        return Err(format!(
-                            "Cannot use the same relationship variable '{}' for multiple patterns.",
-                            relationship.alias.as_str()
-                        ));
+                    if !query_graph.add_relationship(relationship.clone()) {
+                        if clause == &Keyword::Match {
+                            return Err(format!(
+                                "Cannot use the same relationship variable '{}' for multiple patterns.",
+                                relationship.alias.as_str()
+                            ));
+                        }
+                        if clause == &Keyword::Create {
+                            return Err(format!(
+                                "Variable `{}` already declared",
+                                relationship.alias.as_str()
+                            ));
+                        }
                     }
                     if nodes_alias.insert(right.alias.clone()) {
                         query_graph.add_node(right);
@@ -1616,7 +1783,7 @@ impl<'a> Parser<'a> {
     fn parse_named_exprs(&mut self) -> Result<Vec<(Variable, DynTree<ExprIR>)>, String> {
         let mut named_exprs = Vec::new();
         loop {
-            let pos = self.lexer.pos;
+            let pos = self.lexer.pos(false);
             let expr = self.parse_expr()?;
             if let Token::Keyword(Keyword::As, _) = self.lexer.current() {
                 self.lexer.next();
@@ -1627,7 +1794,9 @@ impl<'a> Parser<'a> {
             } else {
                 named_exprs.push((
                     self.create_var(
-                        Some(Rc::new(String::from(&self.lexer.str[pos..self.lexer.pos]))),
+                        Some(Rc::new(String::from(
+                            &self.lexer.str[pos..self.lexer.pos(true)],
+                        ))),
                         Type::Any,
                     )?,
                     expr,
@@ -1753,10 +1922,10 @@ impl<'a> Parser<'a> {
             } else {
                 self.create_var(None, Type::Relationship)?
             };
-            let mut types = vec![];
+            let mut types = HashSet::new();
             if optional_match_token!(self.lexer, Colon) {
                 loop {
-                    types.push(self.parse_ident()?);
+                    types.insert(self.parse_ident()?);
                     let pipe = optional_match_token!(self.lexer, Pipe);
                     let colon = optional_match_token!(self.lexer, Colon);
                     if pipe || colon {
@@ -1798,7 +1967,7 @@ impl<'a> Parser<'a> {
                 self.parse_map()?
             };
             match_token!(self.lexer, RBrace);
-            (alias, types, attrs)
+            (alias, types.into_iter().collect(), attrs)
         } else {
             (
                 self.create_var(None, Type::Relationship)?,
@@ -1889,6 +2058,14 @@ impl<'a> Parser<'a> {
 
     fn parse_set_clause(&mut self) -> Result<QueryIR, String> {
         let mut set_items = vec![];
+        self.parse_set_items(&mut set_items)?;
+        Ok(QueryIR::Set(set_items))
+    }
+
+    fn parse_set_items(
+        &mut self,
+        set_items: &mut Vec<(DynTree<ExprIR>, DynTree<ExprIR>, bool)>,
+    ) -> Result<(), String> {
         loop {
             let (mut expr, recurse) = self.parse_primary_expr()?;
             if recurse {
@@ -1925,15 +2102,15 @@ impl<'a> Parser<'a> {
                 set_items.push((expr, tree!(ExprIR::Null), false));
             } else {
                 if let ExprIR::Variable(id) = expr.root().data() {
-                    if id.ty != Type::Node {
-                        return Err(self
-                            .lexer
-                            .format_error("Cannot set labels on non-node variables"));
+                    if id.ty != Type::Node && id.ty != Type::Relationship {
+                        return Err(self.lexer.format_error(
+                            "Cannot set properties on non-node or non-relationship variables",
+                        ));
                     }
                 } else {
-                    return Err(self
-                        .lexer
-                        .format_error("Cannot set labels on non-node expressions"));
+                    return Err(self.lexer.format_error(
+                        "Cannot set properties on non-node or non-relationship expressions",
+                    ));
                 }
                 let equals = optional_match_token!(self.lexer, Equal);
                 let plus_equals = if equals {
@@ -1947,10 +2124,9 @@ impl<'a> Parser<'a> {
             }
 
             if !optional_match_token!(self.lexer, Comma) {
-                break;
+                return Ok(());
             }
         }
-        Ok(QueryIR::Set(set_items))
     }
 
     fn parse_remove_clause(&mut self) -> Result<QueryIR, String> {

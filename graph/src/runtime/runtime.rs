@@ -11,12 +11,16 @@ use crate::{
         functions::{FnType, Functions, Type, get_functions},
         iter::{Aggregate, CondInspectIter, LazyReplace, TryFlatMap, TryMap},
         pending::Pending,
-        value::{CompareValue, Contains, DisjointOrNull, Env, Value, ValuesDeduper},
+        value::{
+            CompareValue, Contains, DeletedNode, DeletedRelationship, DisjointOrNull, Env, Value,
+            ValuesDeduper,
+        },
     },
 };
 use once_cell::unsync::Lazy;
 use ordermap::{OrderMap, OrderSet};
 use orx_tree::{Bfs, Dyn, DynNode, DynTree, NodeIdx, NodeRef};
+use reqwest::blocking::get;
 use std::{
     cell::RefCell,
     cmp::Ordering,
@@ -45,13 +49,16 @@ pub struct QueryStatistics {
     pub relationships_deleted: usize,
     pub properties_set: usize,
     pub properties_removed: usize,
+    pub indexes_created: usize,
+    pub indexes_dropped: usize,
     pub execution_time: f64,
+    pub cached: bool,
 }
 
 pub struct Runtime<'a> {
     functions: &'static Functions,
     parameters: HashMap<String, Value>,
-    g: &'a RefCell<Graph>,
+    pub g: &'a RefCell<Graph>,
     write: bool,
     pending: Lazy<RefCell<Pending>>,
     stats: RefCell<QueryStatistics>,
@@ -61,6 +68,8 @@ pub struct Runtime<'a> {
     inspect: bool,
     pub record: RefCell<Vec<(NodeIdx<Dyn<IR>>, Result<Env, String>)>>,
     import_folder: String,
+    pub deleted_nodes: RefCell<HashMap<NodeId, DeletedNode>>,
+    pub deleted_relationships: RefCell<HashMap<RelationshipId, DeletedRelationship>>,
 }
 
 pub trait GetVariables {
@@ -79,7 +88,7 @@ impl GetVariables for DynNode<'_, IR> {
                     ty: Type::Any,
                 }),
                 IR::Unwind(_, variable) => vars.push(variable.clone()),
-                IR::Create(query_graph) | IR::Merge(query_graph) => {
+                IR::Create(query_graph) | IR::Merge(query_graph, _, _) => {
                     for node in query_graph.nodes() {
                         vars.push(node.alias.clone());
                     }
@@ -187,6 +196,8 @@ impl<'a> Runtime<'a> {
             inspect,
             record: RefCell::new(vec![]),
             import_folder,
+            deleted_nodes: RefCell::new(HashMap::new()),
+            deleted_relationships: RefCell::new(HashMap::new()),
         }
     }
 
@@ -324,6 +335,20 @@ impl<'a> Runtime<'a> {
                         }
                         (Value::List(_), v) => {
                             return Err(format!("Type mismatch: expected Bool but was {v:?}"));
+                        }
+                        (Value::Node(id), Value::String(key)) => {
+                            if let Some(value) = self.get_node_attribute(id, &key) {
+                                res.push(value.clone());
+                            } else {
+                                res.push(Value::Null);
+                            }
+                        }
+                        (Value::Relationship(id, _, _), Value::String(key)) => {
+                            if let Some(value) = self.get_relationship_attribute(id, &key) {
+                                res.push(value.clone());
+                            } else {
+                                res.push(Value::Null);
+                            }
                         }
                         (Value::Map(map), Value::String(key)) => {
                             res.push(map.get(&key).map_or(Value::Null, std::clone::Clone::clone));
@@ -645,6 +670,7 @@ impl<'a> Runtime<'a> {
 
                             res.push(Self::eval_quantifier(quantifier, t, f, n));
                         }
+                        Value::Null => res.push(Value::Null),
                         value => {
                             return Err(format!(
                                 "Type mismatch: expected List but was {}",
@@ -791,25 +817,57 @@ impl<'a> Runtime<'a> {
         idx: &NodeIdx<Dyn<IR>>,
     ) -> Result<Box<dyn Iterator<Item = Result<Env, String>> + 'a>, String> {
         let child0_idx = self.plan.node(idx).get_child(0).map(|n| n.idx());
-        let child1_idx = self.plan.node(idx).get_child(1).map(|n| n.idx());
+        let iter = if matches!(
+            self.plan.node(idx).data(),
+            IR::Optional(_) | IR::Merge(_, _, _)
+        ) {
+            if let Some(child_idx) = child0_idx
+                && self.plan.node(idx).num_children() > 1
+            {
+                self.run(&child_idx)?
+            } else {
+                Box::new(once(Ok(Env::default())))
+            }
+        } else if matches!(self.plan.node(idx).data(), IR::Delete(_, _))
+            && self.plan.node(idx).num_children() == 0
+        {
+            return Err(String::from(
+                "DELETE can only be called on nodes, paths and relationships",
+            ));
+        } else if matches!(
+            self.plan.node(idx).data(),
+            IR::Set(_)
+                | IR::Remove(_)
+                | IR::PathBuilder(_)
+                | IR::Filter(_)
+                | IR::Sort(_)
+                | IR::Skip(_)
+                | IR::Limit(_)
+                | IR::Distinct
+                | IR::Commit
+        ) && self.plan.node(idx).num_children() == 0
+        {
+            unreachable!();
+        } else if let Some(child_idx) = child0_idx {
+            self.run(&child_idx)?
+        } else {
+            Box::new(once(Ok(Env::default())))
+        };
         match self.plan.node(idx).data() {
             IR::Empty => Ok(Box::new(empty())),
             IR::Optional(vars) => {
-                let iter = if let Some(child_idx) = child1_idx {
-                    self.run(&child_idx)?
-                } else {
-                    Box::new(once(Ok(Env::default())))
-                };
-
                 let idx = idx.clone();
+                let child_idx = if self.plan.node(&idx).num_children() == 1 {
+                    self.plan.node(&idx).child(0).idx()
+                } else {
+                    self.plan.node(&idx).child(1).idx()
+                };
                 Ok(iter
                     .try_flat_map(move |mut env| {
                         for v in vars {
                             env.insert(v, Value::Null);
                         }
-                        Ok(self
-                            .run(child0_idx.as_ref().unwrap())?
-                            .lazy_replace(move || once(Ok(env))))
+                        Ok(self.run(&child_idx)?.lazy_replace(move || once(Ok(env))))
                     })
                     .cond_inspect(self.inspect, move |res| {
                         self.record.borrow_mut().push((idx.clone(), res.clone()));
@@ -850,12 +908,6 @@ impl<'a> Runtime<'a> {
                 }
             }
             IR::Unwind(tree, name) => {
-                let iter = if let Some(child_idx) = child0_idx {
-                    self.run(&child_idx)?
-                } else {
-                    Box::new(once(Ok(Env::default())))
-                };
-
                 let idx = idx.clone();
                 Ok(iter
                     .try_flat_map(move |vars| {
@@ -871,12 +923,6 @@ impl<'a> Runtime<'a> {
                     }))
             }
             IR::Create(pattern) => {
-                let iter = if let Some(child_idx) = child0_idx {
-                    self.run(&child_idx)?
-                } else {
-                    Box::new(once(Ok(Env::default())))
-                };
-
                 let mut parent_commit = false;
                 if let Some(parent) = self.plan.node(idx).parent()
                     && matches!(parent.data(), IR::Commit)
@@ -903,28 +949,32 @@ impl<'a> Runtime<'a> {
                         self.record.borrow_mut().push((idx.clone(), res.clone()));
                     }))
             }
-            IR::Merge(pattern) => {
-                let iter = if let Some(child_idx) = child1_idx {
-                    self.run(&child_idx)?
-                } else {
-                    Box::new(once(Ok(Env::default())))
-                };
-
+            IR::Merge(pattern, on_create_set_items, on_match_set_items) => {
                 let idx = idx.clone();
+                let child_idx = if self.plan.node(&idx).num_children() == 1 {
+                    self.plan.node(&idx).child(0).idx()
+                } else {
+                    self.plan.node(&idx).child(1).idx()
+                };
                 Ok(iter
                     .try_flat_map(move |vars| {
                         let cvars = vars.clone();
+
                         let iter = self
-                            .run(child0_idx.as_ref().unwrap())?
+                            .run(&child_idx)?
                             .try_map(move |v| {
                                 let mut vars = vars.clone();
                                 vars.merge(v);
+                                self.set(on_match_set_items, &vars)?;
                                 Ok(vars)
                             })
                             .lazy_replace(move || {
                                 let mut vars = cvars.clone();
                                 match self.create(pattern, &mut vars) {
-                                    Ok(()) => once(Ok(vars)),
+                                    Ok(()) => {
+                                        self.set(on_create_set_items, &vars);
+                                        once(Ok(vars))
+                                    }
                                     Err(e) => once(Err(e)),
                                 }
                             });
@@ -935,59 +985,39 @@ impl<'a> Runtime<'a> {
                     }))
             }
             IR::Delete(trees, _) => {
-                if let Some(child_idx) = child0_idx {
-                    let idx = idx.clone();
-                    return Ok(self
-                        .run(&child_idx)?
-                        .try_map(move |vars| {
-                            self.delete(trees, &vars)?;
-                            Ok(vars)
-                        })
-                        .cond_inspect(self.inspect, move |res| {
-                            self.record.borrow_mut().push((idx.clone(), res.clone()));
-                        }));
-                }
-                unreachable!();
+                let idx = idx.clone();
+                Ok(iter
+                    .try_map(move |vars| {
+                        self.delete(trees, &vars)?;
+                        Ok(vars)
+                    })
+                    .cond_inspect(self.inspect, move |res| {
+                        self.record.borrow_mut().push((idx.clone(), res.clone()));
+                    }))
             }
             IR::Set(items) => {
-                if let Some(child_idx) = child0_idx {
-                    let idx = idx.clone();
-                    return Ok(self
-                        .run(&child_idx)?
-                        .try_map(move |vars| {
-                            self.set(items, &vars)?;
-                            Ok(vars)
-                        })
-                        .cond_inspect(self.inspect, move |res| {
-                            self.record.borrow_mut().push((idx.clone(), res.clone()));
-                        }));
-                }
-
-                unreachable!();
+                let idx = idx.clone();
+                Ok(iter
+                    .try_map(move |vars| {
+                        self.set(items, &vars)?;
+                        Ok(vars)
+                    })
+                    .cond_inspect(self.inspect, move |res| {
+                        self.record.borrow_mut().push((idx.clone(), res.clone()));
+                    }))
             }
             IR::Remove(items) => {
-                if let Some(child_idx) = child0_idx {
-                    let idx = idx.clone();
-                    return Ok(self
-                        .run(&child_idx)?
-                        .try_map(move |vars| {
-                            self.remove(items, &vars)?;
-                            Ok(vars)
-                        })
-                        .cond_inspect(self.inspect, move |res| {
-                            self.record.borrow_mut().push((idx.clone(), res.clone()));
-                        }));
-                }
-
-                unreachable!();
+                let idx = idx.clone();
+                Ok(iter
+                    .try_map(move |vars| {
+                        self.remove(items, &vars)?;
+                        Ok(vars)
+                    })
+                    .cond_inspect(self.inspect, move |res| {
+                        self.record.borrow_mut().push((idx.clone(), res.clone()));
+                    }))
             }
             IR::NodeScan(node_pattern) => {
-                let iter = if let Some(child_idx) = child0_idx {
-                    self.run(&child_idx)?
-                } else {
-                    Box::new(once(Ok(Env::default())))
-                };
-
                 let idx = idx.clone();
                 Ok(iter
                     .try_flat_map(move |vars| self.node_scan(node_pattern, vars))
@@ -996,12 +1026,6 @@ impl<'a> Runtime<'a> {
                     }))
             }
             IR::RelationshipScan(relationship_pattern) => {
-                let iter = if let Some(child_idx) = child0_idx {
-                    self.run(&child_idx)?
-                } else {
-                    Box::new(once(Ok(Env::default())))
-                };
-
                 let idx = idx.clone();
                 Ok(iter
                     .try_flat_map(move |vars| self.relationship_scan(relationship_pattern, vars))
@@ -1010,12 +1034,6 @@ impl<'a> Runtime<'a> {
                     }))
             }
             IR::ExpandInto(relationship_pattern) => {
-                let iter = if let Some(child_idx) = child0_idx {
-                    self.run(&child_idx)?
-                } else {
-                    Box::new(once(Ok(Env::default())))
-                };
-
                 let idx = idx.clone();
                 Ok(iter
                     .try_flat_map(move |vars| self.expand_into(relationship_pattern, vars))
@@ -1024,78 +1042,62 @@ impl<'a> Runtime<'a> {
                     }))
             }
             IR::PathBuilder(paths) => {
-                if let Some(child_idx) = child0_idx {
-                    let idx = idx.clone();
-                    return Ok(self
-                        .run(&child_idx)?
-                        .try_map(move |mut vars| {
-                            let mut paths = paths.clone();
-                            for path in &mut paths {
-                                let p = path
-                                    .vars
-                                    .iter()
-                                    .map(|v| {
-                                        vars.get(v).map_or_else(
-                                            || Err(format!("Variable {} not found", v.as_str())),
-                                            Ok,
-                                        )
-                                    })
-                                    .collect::<Result<_, String>>()?;
-                                vars.insert(&path.var, Value::Path(p));
-                            }
-                            Ok(vars)
-                        })
-                        .cond_inspect(self.inspect, move |res| {
-                            self.record.borrow_mut().push((idx.clone(), res.clone()));
-                        }));
-                }
-
-                unreachable!();
+                let idx = idx.clone();
+                Ok(iter
+                    .try_map(move |mut vars| {
+                        let mut paths = paths.clone();
+                        for path in &mut paths {
+                            let p = path
+                                .vars
+                                .iter()
+                                .map(|v| {
+                                    vars.get(v).map_or_else(
+                                        || Err(format!("Variable {} not found", v.as_str())),
+                                        Ok,
+                                    )
+                                })
+                                .collect::<Result<_, String>>()?;
+                            vars.insert(&path.var, Value::Path(p));
+                        }
+                        Ok(vars)
+                    })
+                    .cond_inspect(self.inspect, move |res| {
+                        self.record.borrow_mut().push((idx.clone(), res.clone()));
+                    }))
             }
             IR::Filter(tree) => {
-                if let Some(child_idx) = child0_idx {
-                    let idx = idx.clone();
-                    return Ok(self
-                        .run(&child_idx)?
-                        .filter_map(move |vars| match vars {
-                            Ok(vars) => {
-                                if self.run_expr(tree, tree.root().idx(), &vars, None)
-                                    == Ok(Value::Bool(true))
-                                {
-                                    Some(Ok(vars))
-                                } else {
-                                    None
-                                }
-                            }
+                let idx = idx.clone();
+                Ok(iter
+                    .filter_map(move |vars| match vars {
+                        Ok(vars) => match self.run_expr(tree, tree.root().idx(), &vars, None) {
+                            Ok(Value::Bool(true)) => Some(Ok(vars)),
+                            Ok(Value::Bool(false) | Value::Null) => None,
                             Err(e) => Some(Err(e)),
-                        })
-                        .cond_inspect(self.inspect, move |res| {
-                            self.record.borrow_mut().push((idx.clone(), res.clone()));
-                        }));
-                }
-
-                unreachable!();
+                            _ => Some(Err(String::from("Expected boolean predicate."))),
+                        },
+                        Err(e) => Some(Err(e)),
+                    })
+                    .cond_inspect(self.inspect, move |res| {
+                        self.record.borrow_mut().push((idx.clone(), res.clone()));
+                    }))
             }
             IR::CartesianProduct => {
-                if let Some(child_idx) = child0_idx {
-                    let mut iter = self.run(&child_idx)?;
-                    let node = self.plan.node(idx);
-                    for child in node.children().skip(1) {
-                        let idx = child.idx();
-                        iter = Box::new(iter.try_flat_map(move |vars1| {
-                            Ok(self.run(&idx)?.try_map(move |vars2| {
-                                let mut vars = vars1.clone();
-                                vars.merge(vars2);
-                                Ok(vars)
-                            }))
-                        }));
-                    }
-                    let idx = idx.clone();
-                    return Ok(iter.cond_inspect(self.inspect, move |res| {
-                        self.record.borrow_mut().push((idx.clone(), res.clone()));
+                let mut iter = iter;
+                let node = self.plan.node(idx);
+                for child in node.children().skip(1) {
+                    let idx = child.idx();
+                    iter = Box::new(iter.try_flat_map(move |vars1| {
+                        Ok(self.run(&idx)?.try_map(move |vars2| {
+                            let mut vars = vars1.clone();
+                            vars.merge(vars2);
+                            Ok(vars)
+                        }))
                     }));
                 }
-                unreachable!();
+                let idx = idx.clone();
+                Ok(iter.cond_inspect(self.inspect, move |res| {
+                    self.record.borrow_mut().push((idx.clone(), res.clone()));
+                }))
             }
             IR::LoadCsv {
                 file_path,
@@ -1103,12 +1105,6 @@ impl<'a> Runtime<'a> {
                 delimiter,
                 var,
             } => {
-                let iter = if let Some(child_idx) = child0_idx {
-                    self.run(&child_idx)?
-                } else {
-                    Box::new(once(Ok(Env::default())))
-                };
-
                 let idx = idx.clone();
                 Ok(iter
                     .try_flat_map(move |vars| {
@@ -1124,73 +1120,74 @@ impl<'a> Runtime<'a> {
                         let Value::String(path) = path else {
                             return Err(String::from("File path must be a string"));
                         };
-                        let Some(path) = path.strip_prefix("file://") else {
+                        let path = if let Some(path) = path.strip_prefix("file://") {
+                            let path = self.import_folder.clone() + path;
+                            let import_folder =
+                                Path::new(&self.import_folder).canonicalize().map_err(|e| {
+                                    format!(
+                                        "Failed to canonicalize import folder path '{}': {e}",
+                                        self.import_folder
+                                    )
+                                })?;
+                            let cpath = Path::new(&path).canonicalize().map_err(|e| {
+                                format!("Failed to canonicalize file path '{path}': {e}")
+                            })?;
+                            if !cpath.starts_with(&import_folder) {
+                                return Err(format!(
+                                    "File path '{path}' is not within the import folder '{}'",
+                                    self.import_folder
+                                ));
+                            }
+                            path
+                        } else if path.starts_with("https://") {
+                            String::from(path.as_str())
+                        } else {
                             return Err(String::from("File path must start with 'file://' prefix"));
                         };
-                        let path = self.import_folder.clone() + path;
-                        let import_folder =
-                            Path::new(&self.import_folder).canonicalize().map_err(|e| {
-                                format!(
-                                    "Failed to canonicalize import folder path '{}': {e}",
-                                    self.import_folder
-                                )
-                            })?;
-                        let cpath = Path::new(&path).canonicalize().map_err(|e| {
-                            format!("Failed to canonicalize file path '{path}': {e}")
-                        })?;
-                        if !cpath.starts_with(&import_folder) {
-                            return Err(format!(
-                                "File path '{path}' is not within the import folder '{}'",
-                                self.import_folder
-                            ));
-                        }
 
-                        self.load_csv(&path, *headers, delimiter, var, &vars)
+                        if path.starts_with("https://") {
+                            self.load_csv_url(&path, *headers, delimiter, var, &vars)
+                        } else {
+                            self.load_csv_file(&path, *headers, delimiter, var, &vars)
+                        }
                     })
                     .cond_inspect(self.inspect, move |res| {
                         self.record.borrow_mut().push((idx.clone(), res.clone()));
                     }))
             }
             IR::Sort(trees) => {
-                if let Some(child_idx) = child0_idx {
-                    let mut items = self
-                        .run(&child_idx)?
-                        .try_map(|env| {
-                            Ok((
-                                env.clone(),
-                                trees
-                                    .iter()
-                                    .map(|(tree, desc)| {
-                                        Ok((
-                                            self.run_expr(tree, tree.root().idx(), &env, None)?,
-                                            desc,
-                                        ))
-                                    })
-                                    .collect::<Result<Vec<_>, String>>()?,
-                            ))
-                        })
-                        .collect::<Result<Vec<_>, String>>()?;
-                    items.sort_by(|(_, a), (_, b)| {
-                        a.iter()
-                            .zip(b)
-                            .fold(Ordering::Equal, |acc, ((a, desc), (b, _))| {
-                                if acc != Ordering::Equal {
-                                    return acc;
-                                }
+                let mut items = iter
+                    .try_map(|env| {
+                        Ok((
+                            env.clone(),
+                            trees
+                                .iter()
+                                .map(|(tree, desc)| {
+                                    Ok((self.run_expr(tree, tree.root().idx(), &env, None)?, desc))
+                                })
+                                .collect::<Result<Vec<_>, String>>()?,
+                        ))
+                    })
+                    .collect::<Result<Vec<_>, String>>()?;
+                items.sort_by(|(_, a), (_, b)| {
+                    a.iter()
+                        .zip(b)
+                        .fold(Ordering::Equal, |acc, ((a, desc), (b, _))| {
+                            if acc != Ordering::Equal {
+                                return acc;
+                            }
 
-                                let (ordering, _) = a.compare_value(b);
-                                if **desc { ordering.reverse() } else { ordering }
-                            })
-                    });
-                    let idx = idx.clone();
-                    return Ok(items.into_iter().map(|(env, _)| Ok(env)).cond_inspect(
-                        self.inspect,
-                        move |res| {
-                            self.record.borrow_mut().push((idx.clone(), res.clone()));
-                        },
-                    ));
-                }
-                unreachable!();
+                            let (ordering, _) = a.compare_value(b);
+                            if **desc { ordering.reverse() } else { ordering }
+                        })
+                });
+                let idx = idx.clone();
+                Ok(items.into_iter().map(|(env, _)| Ok(env)).cond_inspect(
+                    self.inspect,
+                    move |res| {
+                        self.record.borrow_mut().push((idx.clone(), res.clone()));
+                    },
+                ))
             }
             IR::Skip(skip) => {
                 let Value::Int(skip) =
@@ -1198,16 +1195,12 @@ impl<'a> Runtime<'a> {
                 else {
                     return Err(String::from("Skip operator requires an integer argument"));
                 };
-                if let Some(child_idx) = child0_idx {
-                    let idx = idx.clone();
-                    return Ok(self.run(&child_idx)?.skip(skip as usize).cond_inspect(
-                        self.inspect,
-                        move |res| {
-                            self.record.borrow_mut().push((idx.clone(), res.clone()));
-                        },
-                    ));
-                }
-                unreachable!();
+                let idx = idx.clone();
+                Ok(iter
+                    .skip(skip as usize)
+                    .cond_inspect(self.inspect, move |res| {
+                        self.record.borrow_mut().push((idx.clone(), res.clone()));
+                    }))
             }
             IR::Limit(limit) => {
                 let Value::Int(limit) =
@@ -1215,16 +1208,12 @@ impl<'a> Runtime<'a> {
                 else {
                     return Err(String::from("Limit operator requires an integer argument"));
                 };
-                if let Some(child_idx) = child0_idx {
-                    let idx = idx.clone();
-                    return Ok(self.run(&child_idx)?.take(limit as usize).cond_inspect(
-                        self.inspect,
-                        move |res| {
-                            self.record.borrow_mut().push((idx.clone(), res.clone()));
-                        },
-                    ));
-                }
-                unreachable!();
+                let idx = idx.clone();
+                Ok(iter
+                    .take(limit as usize)
+                    .cond_inspect(self.inspect, move |res| {
+                        self.record.borrow_mut().push((idx.clone(), res.clone()));
+                    }))
             }
             IR::Aggregate(_, keys, agg) => {
                 let mut cache = HashMap::new();
@@ -1241,11 +1230,6 @@ impl<'a> Runtime<'a> {
                     let k = hasher.finish();
                     cache.insert(k, (key, Ok(env.clone())));
                 }
-                let iter = if let Some(child_idx) = child0_idx {
-                    self.run(&child_idx)?
-                } else {
-                    Box::new(once(Ok(Env::default())))
-                };
                 let idx = idx.clone();
                 Ok(iter
                     .aggregate(
@@ -1288,12 +1272,6 @@ impl<'a> Runtime<'a> {
                     }))
             }
             IR::Project(trees) => {
-                let iter = if let Some(child_idx) = child0_idx {
-                    self.run(&child_idx)?
-                } else {
-                    Box::new(once(Ok(Env::default())))
-                };
-
                 let idx = idx.clone();
                 Ok(iter
                     .try_map(move |vars| {
@@ -1309,39 +1287,35 @@ impl<'a> Runtime<'a> {
                     }))
             }
             IR::Distinct => {
-                if let Some(child_idx) = child0_idx {
-                    let deduper = ValuesDeduper::default();
-                    let idx = idx.clone();
-                    return Ok(self
-                        .run(&child_idx)?
-                        .filter_map(move |item| {
-                            // Propagate errors immediately
-                            let vars = match item {
-                                Err(e) => return Some(Err(e)),
-                                Ok(vars) => vars,
-                            };
+                let deduper = ValuesDeduper::default();
+                let idx = idx.clone();
+                Ok(iter
+                    .filter_map(move |item| {
+                        // Propagate errors immediately
+                        let vars = match item {
+                            Err(e) => return Some(Err(e)),
+                            Ok(vars) => vars,
+                        };
 
-                            // compute the hash of all the values in return_names
-                            // by order
-                            let mut hasher = DefaultHasher::new();
-                            for name in &self.return_names {
-                                vars.get(name)
-                                    .unwrap_or_else(|| {
-                                        unreachable!("Variable {} not found", name.as_str())
-                                    })
-                                    .hash(&mut hasher);
-                            }
-                            if deduper.has_hash(hasher.finish()) {
-                                None
-                            } else {
-                                Some(Ok(vars))
-                            }
-                        })
-                        .cond_inspect(self.inspect, move |res| {
-                            self.record.borrow_mut().push((idx.clone(), res.clone()));
-                        }));
-                }
-                unreachable!();
+                        // compute the hash of all the values in return_names
+                        // by order
+                        let mut hasher = DefaultHasher::new();
+                        for name in &self.return_names {
+                            vars.get(name)
+                                .unwrap_or_else(|| {
+                                    unreachable!("Variable {} not found", name.as_str())
+                                })
+                                .hash(&mut hasher);
+                        }
+                        if deduper.has_hash(hasher.finish()) {
+                            None
+                        } else {
+                            Some(Ok(vars))
+                        }
+                    })
+                    .cond_inspect(self.inspect, move |res| {
+                        self.record.borrow_mut().push((idx.clone(), res.clone()));
+                    }))
             }
             IR::Commit => {
                 if !self.write {
@@ -1349,8 +1323,7 @@ impl<'a> Runtime<'a> {
                         "graph.RO_QUERY is to be executed only on read-only queries",
                     ));
                 }
-                let iter = self
-                    .run(&child0_idx.ok_or("nothing to commit")?)?
+                let iter = iter
                     .collect::<Result<Vec<_>, String>>()?
                     .into_iter()
                     .map(Ok);
@@ -1366,6 +1339,7 @@ impl<'a> Runtime<'a> {
                         "graph.RO_QUERY is to be executed only on read-only queries",
                     ));
                 }
+                self.stats.borrow_mut().indexes_created += attrs.len();
                 self.g.borrow_mut().create_node_index(label, attrs);
                 Ok(Box::new(empty()))
             }
@@ -1375,13 +1349,14 @@ impl<'a> Runtime<'a> {
                         "graph.RO_QUERY is to be executed only on read-only queries",
                     ));
                 }
+                self.stats.borrow_mut().indexes_dropped += attrs.len();
                 self.g.borrow_mut().drop_node_index(label, attrs);
                 Ok(Box::new(empty()))
             }
         }
     }
 
-    fn load_csv(
+    fn load_csv_file(
         &'a self,
         path: &str,
         headers: bool,
@@ -1394,6 +1369,87 @@ impl<'a> Runtime<'a> {
             .delimiter(delimiter.as_bytes()[0])
             .from_path(path)
             .map_err(|e| format!("Failed to read CSV file: {e}"))?;
+
+        let vars = vars.clone();
+        if headers {
+            let headers = reader
+                .headers()
+                .map_err(|e| format!("Failed to read CSV headers: {e}"))?
+                .iter()
+                .map(|s| Rc::new(String::from(s)))
+                .collect::<Vec<_>>();
+            Ok(Box::new(reader.into_records().map(
+                move |record| match record {
+                    Ok(record) => {
+                        let mut env = vars.clone();
+                        env.insert(
+                            var,
+                            Value::Map(Rc::new(
+                                record
+                                    .iter()
+                                    .enumerate()
+                                    .filter_map(|(i, field)| {
+                                        if field.is_empty() {
+                                            None
+                                        } else {
+                                            Some((
+                                                headers
+                                                    .get(i)
+                                                    .cloned()
+                                                    .unwrap_or_else(|| Rc::new(format!("col_{i}"))),
+                                                Value::String(Rc::new(String::from(field))),
+                                            ))
+                                        }
+                                    })
+                                    .collect::<OrderMap<_, _>>(),
+                            )),
+                        );
+                        Ok(env)
+                    }
+                    Err(e) => Err(format!("Failed to read CSV record: {e}")),
+                },
+            )))
+        } else {
+            Ok(Box::new(reader.into_records().map(
+                move |record| match record {
+                    Ok(record) => {
+                        let mut env = vars.clone();
+                        env.insert(
+                            var,
+                            Value::List(
+                                record
+                                    .iter()
+                                    .map(|field| {
+                                        if field.is_empty() {
+                                            Value::Null
+                                        } else {
+                                            Value::String(Rc::new(String::from(field)))
+                                        }
+                                    })
+                                    .collect(),
+                            ),
+                        );
+                        Ok(env)
+                    }
+                    Err(e) => Err(format!("Failed to read CSV record: {e}")),
+                },
+            )))
+        }
+    }
+
+    fn load_csv_url(
+        &'a self,
+        path: &str,
+        headers: bool,
+        delimiter: Rc<String>,
+        var: &'a Variable,
+        vars: &Env,
+    ) -> Result<Box<dyn Iterator<Item = Result<Env, String>> + 'a>, String> {
+        let response = get(path).map_err(|e| format!("Failed to fetch CSV file: {e}"))?;
+        let mut reader = csv::ReaderBuilder::new()
+            .has_headers(headers)
+            .delimiter(delimiter.as_bytes()[0])
+            .from_reader(response);
 
         let vars = vars.clone();
         if headers {
@@ -1507,7 +1563,7 @@ impl<'a> Runtime<'a> {
                             node,
                             property.clone(),
                             Value::Null,
-                        );
+                        )?;
                     }
                     if let Some(labels) = labels {
                         self.pending.borrow_mut().remove_node_labels(node, labels);
@@ -1519,7 +1575,7 @@ impl<'a> Runtime<'a> {
                             relationship,
                             property.clone(),
                             Value::Null,
-                        );
+                        )?;
                     }
                 }
                 Value::Null => {}
@@ -1534,6 +1590,7 @@ impl<'a> Runtime<'a> {
         Ok(())
     }
 
+    #[allow(clippy::too_many_lines)]
     fn set(
         &self,
         items: &Vec<(DynTree<ExprIR>, DynTree<ExprIR>, bool)>,
@@ -1576,45 +1633,107 @@ impl<'a> Runtime<'a> {
                 }
             };
             match entity {
-                Value::Node(node) => {
+                Value::Node(id) => {
+                    if self.g.borrow().is_node_deleted(id)
+                        || self.pending.borrow().is_node_deleted(id)
+                    {
+                        continue;
+                    }
                     if let Some(property) = property {
                         if let Some(attr_id) = self.g.borrow().get_node_attribute_id(property)
-                            && let Some(v) = self.g.borrow().get_node_attribute(node, attr_id)
+                            && let Some(v) = self.g.borrow().get_node_attribute(id, attr_id)
                             && v == value
                         {
                             continue;
                         }
-                        self.pending
-                            .borrow_mut()
-                            .set_node_attribute(node, property.clone(), value);
+
+                        self.pending.borrow_mut().set_node_attribute(
+                            id,
+                            property.clone(),
+                            value,
+                        )?;
                     } else if let Value::Map(map) = value {
                         if *replace {
-                            for key in self.g.borrow().get_node_attrs(node).keys() {
+                            for key in self.g.borrow().get_node_attrs(id).keys() {
                                 self.pending.borrow_mut().set_node_attribute(
-                                    node,
+                                    id,
                                     self.g.borrow().get_node_attribute_string(*key).unwrap(),
                                     Value::Null,
-                                );
+                                )?;
                             }
                         }
                         for (key, value) in map.iter() {
                             self.pending.borrow_mut().set_node_attribute(
-                                node,
+                                id,
                                 key.clone(),
                                 value.clone(),
-                            );
+                            )?;
+                        }
+                    } else if let Value::Node(id) = value {
+                        let g = self.g.borrow();
+                        let attrs = self.get_node_attrs(id);
+                        if *replace {
+                            for key in g.get_node_attrs(id).keys() {
+                                self.pending.borrow_mut().set_node_attribute(
+                                    id,
+                                    g.get_node_attribute_string(*key).unwrap(),
+                                    Value::Null,
+                                )?;
+                            }
+                        }
+                        for (key, value) in attrs {
+                            self.pending
+                                .borrow_mut()
+                                .set_node_attribute(id, key, value.clone())?;
                         }
                     }
                     if let Some(labels) = labels {
-                        self.pending.borrow_mut().set_node_labels(node, labels);
+                        self.pending.borrow_mut().set_node_labels(id, labels);
                     }
                 }
-                Value::Relationship(relationship, _, _) => {
-                    self.pending.borrow_mut().set_relationship_attribute(
-                        relationship,
-                        property.unwrap().clone(),
-                        value,
-                    );
+                Value::Relationship(id, src, dest) => {
+                    if self.g.borrow().is_relationship_deleted(id)
+                        || self.pending.borrow().is_relationship_deleted(id, src, dest)
+                    {
+                        continue;
+                    }
+                    if let Some(property) = property {
+                        if let Some(attr_id) =
+                            self.g.borrow().get_relationship_attribute_id(property)
+                            && let Some(v) = self.g.borrow().get_relationship_attribute(id, attr_id)
+                            && v == value
+                        {
+                            continue;
+                        }
+
+                        self.pending.borrow_mut().set_relationship_attribute(
+                            id,
+                            property.clone(),
+                            value,
+                        )?;
+                    } else if let Value::Relationship(sid, _, _) = value {
+                        let g = self.g.borrow();
+                        let attrs = g.get_relationship_attrs(sid);
+                        if *replace {
+                            for key in g.get_relationship_attrs(id).keys() {
+                                self.pending.borrow_mut().set_relationship_attribute(
+                                    id,
+                                    g.get_relationship_attribute_string(*key).unwrap(),
+                                    Value::Null,
+                                )?;
+                            }
+                        }
+                        for (key, value) in attrs {
+                            let Some(key) = g.get_relationship_attribute_string(*key) else {
+                                continue;
+                            };
+                            self.pending.borrow_mut().set_relationship_attribute(
+                                id,
+                                key,
+                                value.clone(),
+                            )?;
+                        }
+                    }
                 }
                 Value::Null => {}
                 _ => {
@@ -1830,17 +1949,31 @@ impl<'a> Runtime<'a> {
     ) -> Result<(), String> {
         match value {
             Value::Node(id) => {
-                for (src, dest, id) in self.g.borrow().get_node_relationships(id) {
+                if !self.g.borrow().is_node_deleted(id) {
+                    for (src, dest, id) in self.g.borrow().get_node_relationships(id) {
+                        self.pending
+                            .borrow_mut()
+                            .deleted_relationship(id, src, dest);
+                    }
+                    self.pending.borrow_mut().deleted_node(id);
+                    let labels = self.g.borrow().get_node_label_ids(id).collect();
+                    let attrs = self.get_node_attrs(id);
+                    self.deleted_nodes
+                        .borrow_mut()
+                        .insert(id, DeletedNode::new(labels, attrs));
+                }
+            }
+            Value::Relationship(id, src, dest) => {
+                if !self.g.borrow().is_relationship_deleted(id) {
                     self.pending
                         .borrow_mut()
                         .deleted_relationship(id, src, dest);
+                    let type_id = self.g.borrow().get_relationship_type_id(id);
+                    let attrs = self.get_relationship_attrs(id);
+                    self.deleted_relationships
+                        .borrow_mut()
+                        .insert(id, DeletedRelationship::new(type_id, attrs));
                 }
-                self.pending.borrow_mut().deleted_node(id);
-            }
-            Value::Relationship(id, src, dest) => {
-                self.pending
-                    .borrow_mut()
-                    .deleted_relationship(id, src, dest);
             }
             Value::Path(values) => {
                 for value in values {
@@ -1871,7 +2004,7 @@ impl<'a> Runtime<'a> {
                 Value::Map(attrs) => {
                     self.pending
                         .borrow_mut()
-                        .set_node_attributes(id, Rc::unwrap_or_clone(attrs));
+                        .set_node_attributes(id, Rc::unwrap_or_clone(attrs))?;
                 }
                 _ => unreachable!(),
             }
@@ -1893,6 +2026,16 @@ impl<'a> Runtime<'a> {
                 };
                 (from_id, to_id)
             };
+
+            if self.g.borrow().is_node_deleted(from_id)
+                || self.pending.borrow().is_node_deleted(from_id)
+                || self.g.borrow().is_node_deleted(to_id)
+                || self.pending.borrow().is_node_deleted(to_id)
+            {
+                return Err(String::from(
+                    "Failed to create relationship; endpoint was not found.",
+                ));
+            }
             let id = self.g.borrow_mut().reserve_relationship();
             self.pending.borrow_mut().created_relationship(
                 id,
@@ -1905,7 +2048,7 @@ impl<'a> Runtime<'a> {
                 Value::Map(attrs) => {
                     self.pending
                         .borrow_mut()
-                        .set_relationship_attributes(id, Rc::unwrap_or_clone(attrs));
+                        .set_relationship_attributes(id, Rc::unwrap_or_clone(attrs))?;
                 }
                 _ => {
                     return Err(String::from("Invalid relationship properties"));
@@ -1961,6 +2104,9 @@ impl<'a> Runtime<'a> {
         &self,
         id: NodeId,
     ) -> OrderMap<Rc<String>, Value> {
+        if let Some(dn) = self.deleted_nodes.borrow().get(&id) {
+            return dn.attrs.clone();
+        }
         let g = self.g.borrow();
         let mut actual: OrderMap<Rc<String>, Value> = g
             .get_node_attrs(id)

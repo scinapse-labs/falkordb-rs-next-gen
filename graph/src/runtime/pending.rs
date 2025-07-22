@@ -1,15 +1,15 @@
-use std::{
-    cell::RefCell,
-    collections::{HashMap, HashSet},
-    rc::Rc,
-};
+use std::{cell::RefCell, rc::Rc};
 
 use ordermap::{OrderMap, OrderSet};
 use roaring::RoaringTreemap;
 
 use crate::{
     graph::graph::{Graph, NodeId, RelationshipId},
-    runtime::{runtime::QueryStatistics, value::Value},
+    runtime::{
+        functions::Type,
+        runtime::QueryStatistics,
+        value::{Value, ValueTypeOf},
+    },
 };
 
 pub struct PendingRelationship {
@@ -36,13 +36,13 @@ impl PendingRelationship {
 #[derive(Default)]
 pub struct Pending {
     created_nodes: RoaringTreemap,
-    created_relationships: HashMap<RelationshipId, PendingRelationship>,
+    created_relationships: OrderMap<RelationshipId, PendingRelationship>,
     deleted_nodes: RoaringTreemap,
-    deleted_relationships: HashSet<(RelationshipId, NodeId, NodeId)>,
-    set_nodes_attrs: HashMap<NodeId, OrderMap<Rc<String>, Value>>,
-    set_relationships_attrs: HashMap<RelationshipId, OrderMap<Rc<String>, Value>>,
-    set_node_labels: HashMap<NodeId, OrderSet<Rc<String>>>,
-    remove_node_labels: HashMap<NodeId, OrderSet<Rc<String>>>,
+    deleted_relationships: OrderSet<(RelationshipId, NodeId, NodeId)>,
+    set_nodes_attrs: OrderMap<NodeId, OrderMap<Rc<String>, Value>>,
+    set_relationships_attrs: OrderMap<RelationshipId, OrderMap<Rc<String>, Value>>,
+    set_node_labels: OrderMap<NodeId, OrderSet<Rc<String>>>,
+    remove_node_labels: OrderMap<NodeId, OrderSet<Rc<String>>>,
 }
 
 impl Pending {
@@ -59,8 +59,31 @@ impl Pending {
         &mut self,
         id: NodeId,
         attrs: OrderMap<Rc<String>, Value>,
-    ) {
+    ) -> Result<(), String> {
+        for (_, value) in &attrs {
+            if value
+                .value_of_type(&Type::Union(vec![
+                    Type::Bool,
+                    Type::Int,
+                    Type::Float,
+                    Type::String,
+                    Type::Null,
+                    Type::List(Box::new(Type::Union(vec![
+                        Type::Bool,
+                        Type::Int,
+                        Type::Float,
+                        Type::String,
+                    ]))),
+                ]))
+                .is_some()
+            {
+                return Err(
+                    "Property values can only be of primitive types or arrays of primitive types",
+                )?;
+            }
+        }
         self.set_nodes_attrs.insert(id, attrs);
+        Ok(())
     }
 
     pub fn set_node_attribute(
@@ -68,11 +91,32 @@ impl Pending {
         id: NodeId,
         key: Rc<String>,
         value: Value,
-    ) {
+    ) -> Result<(), String> {
+        if value
+            .value_of_type(&Type::Union(vec![
+                Type::Bool,
+                Type::Int,
+                Type::Float,
+                Type::String,
+                Type::Null,
+                Type::List(Box::new(Type::Union(vec![
+                    Type::Bool,
+                    Type::Int,
+                    Type::Float,
+                    Type::String,
+                ]))),
+            ]))
+            .is_some()
+        {
+            return Err(
+                "Property values can only be of primitive types or arrays of primitive types",
+            )?;
+        }
         self.set_nodes_attrs
             .entry(id)
             .or_default()
             .insert(key, value);
+        Ok(())
     }
 
     #[must_use]
@@ -155,8 +199,31 @@ impl Pending {
         &mut self,
         id: RelationshipId,
         attrs: OrderMap<Rc<String>, Value>,
-    ) {
+    ) -> Result<(), String> {
+        for (_, value) in &attrs {
+            if value
+                .value_of_type(&Type::Union(vec![
+                    Type::Bool,
+                    Type::Int,
+                    Type::Float,
+                    Type::String,
+                    Type::Null,
+                    Type::List(Box::new(Type::Union(vec![
+                        Type::Bool,
+                        Type::Int,
+                        Type::Float,
+                        Type::String,
+                    ]))),
+                ]))
+                .is_some()
+            {
+                return Err(
+                    "Property values can only be of primitive types or arrays of primitive types",
+                )?;
+            }
+        }
         self.set_relationships_attrs.insert(id, attrs);
+        Ok(())
     }
 
     pub fn set_relationship_attribute(
@@ -164,11 +231,32 @@ impl Pending {
         id: RelationshipId,
         key: Rc<String>,
         value: Value,
-    ) {
+    ) -> Result<(), String> {
+        if value
+            .value_of_type(&Type::Union(vec![
+                Type::Bool,
+                Type::Int,
+                Type::Float,
+                Type::String,
+                Type::Null,
+                Type::List(Box::new(Type::Union(vec![
+                    Type::Bool,
+                    Type::Int,
+                    Type::Float,
+                    Type::String,
+                ]))),
+            ]))
+            .is_some()
+        {
+            return Err(
+                "Property values can only be of primitive types or arrays of primitive types",
+            )?;
+        }
         self.set_relationships_attrs
             .entry(id)
             .or_default()
             .insert(key, value);
+        Ok(())
     }
 
     #[must_use]
@@ -215,6 +303,24 @@ impl Pending {
         self.created_relationships
             .get(&id)
             .map(|r| r.type_name.clone())
+    }
+
+    #[must_use]
+    pub fn is_node_deleted(
+        &self,
+        id: NodeId,
+    ) -> bool {
+        self.deleted_nodes.contains(id.into())
+    }
+
+    #[must_use]
+    pub fn is_relationship_deleted(
+        &self,
+        id: RelationshipId,
+        from: NodeId,
+        to: NodeId,
+    ) -> bool {
+        self.deleted_relationships.contains(&(id, from, to))
     }
 
     pub fn commit(

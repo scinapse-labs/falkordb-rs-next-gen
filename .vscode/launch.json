@@ -17,7 +17,7 @@
         {
             "type": "antlr-debug",
             "request": "launch",
-            "name": "Debug Current Grammar",
+            "name": "Debug Cypher Grammar",
             "input": "input.txt",
             "visualParseTree": true,
             "grammar": "${workspaceFolder}/graph/src/Cypher.g4"
@@ -49,6 +49,20 @@
             "sourceLanguages": [
                 "rust"
             ],
-        }
+        },
+        {
+            "name": "Debug Flow Tests Linux",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "RLTest",
+            "args": ["--test", "tests/flow/test_load_csv.py", "--module", "${workspaceFolder}/target/debug/libfalkordb.so", "--log-dir", "${workspaceFolder}/tests/flow/logs"],
+        },
+        {
+            "name": "Debug Flow Tests Mac",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "RLTest",
+            "args": ["--test", "tests/flow/test_load_csv.py", "--module", "${workspaceFolder}/target/debug/libfalkordb.dylib", "--log-dir", "${workspaceFolder}/tests/flow/logs"]
+        },
     ]
 }

@@ -92,6 +92,11 @@ jobs:
         run: |
           . /data/venv/bin/activate
           pytest tests/test_e2e.py tests/test_functions.py -vv
+      - name: Run Flow tests
+        run: |
+          . /data/venv/bin/activate
+          pip install git+https://github.com/falkordb/RLTest.git@master
+          ./flow.sh
       - name: Run TCK tests
         run: |
           . /data/venv/bin/activate
@@ -108,13 +113,13 @@ jobs:
           rustup default stable
           RUSTFLAGS="-C instrument-coverage" cargo build
           RUSTFLAGS="-C instrument-coverage" cargo test -p graph
-          mkdir cov
-          cd cov
           . /data/venv/bin/activate
-          TARGET=../target/debug/libfalkordb.so pytest ../tests/test_e2e.py ../tests/test_functions.py -vv
-          TARGET=../target/debug/libfalkordb.so TCK_FEATURES=../tests/tck/features/ TCK_DONE=../tck_done.txt pytest ../tests/tck/test_tck.py -s
+          pip install git+https://github.com/falkordb/RLTest.git@master
+          pytest tests/test_e2e.py tests/test_functions.py -vv
+          ./flow.sh
+          TCK_DONE=tck_done.txt pytest tests/tck/test_tck.py -s
           llvm-profdata-20 merge --sparse `find . -name "*.profraw"` -o cov.profdata
-          llvm-cov-20 export --format=lcov --instr-profile cov.profdata ../target/debug/libfalkordb.so > codecov.txt.all
+          llvm-cov-20 export --format=lcov --instr-profile cov.profdata target/debug/libfalkordb.so > codecov.txt.all
           lcov --ignore-errors unused -r codecov.txt.all -o codecov.txt
       - name: Upload coverage reports to Codecov
         uses: codecov/codecov-action@18283e04ce6e62d37312384ff67231eb8fd56d24

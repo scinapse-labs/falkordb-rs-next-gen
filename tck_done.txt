@@ -2,6 +2,13 @@ expressions/aggregation
 expressions/boolean
 expressions/comparison/Comparison1.feature
 expressions/conditional
+expressions/graph/Graph1.feature
+expressions/graph/Graph2.feature
+expressions/graph/Graph3.feature
+expressions/graph/Graph6.feature
+expressions/graph/Graph7.feature
+expressions/graph/Graph8.feature
+expressions/graph/Graph9.feature
 expressions/list/List1.feature
 expressions/list/List2.feature
 expressions/list/List3.feature

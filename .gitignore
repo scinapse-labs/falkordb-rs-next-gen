@@ -25,3 +25,5 @@ in
 out
 outg
 data
+tests/flow/logs
+tests/flow/csvs

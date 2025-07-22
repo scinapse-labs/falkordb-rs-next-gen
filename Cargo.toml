@@ -29,7 +29,7 @@ redis-module-macros = { git = "https://github.com/RedisLabsModules/redismodule-r
 tracing = "0.1"
 tracing-subscriber = "0.3"
 opentelemetry = { version = "0", optional = true }
-opentelemetry-zipkin = { version = "0", optional = true }
+opentelemetry-zipkin = { version = "0", default-features = false, features = ["reqwest-blocking-client", "reqwest-rustls"], optional = true }
 opentelemetry_sdk = { version = "0", optional = true }
 orx-tree = "1.7.1"
 tracing-opentelemetry = { git = 'https://github.com/BSteffaniak/tracing-opentelemetry.git', branch = 'upgrade-otel-to-0.30', optional = true }

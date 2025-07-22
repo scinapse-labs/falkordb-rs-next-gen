@@ -1,6 +1,6 @@
 use std::{collections::HashSet, fmt::Display, rc::Rc};
 
-use orx_tree::{DynTree, NodeRef};
+use orx_tree::{DynTree, NodeRef, Side};
 
 use crate::{
     ast::{
@@ -17,7 +17,11 @@ pub enum IR {
     Call(Rc<String>, Vec<DynTree<ExprIR>>),
     Unwind(DynTree<ExprIR>, Variable),
     Create(QueryGraph),
-    Merge(QueryGraph),
+    Merge(
+        QueryGraph,
+        Vec<(DynTree<ExprIR>, DynTree<ExprIR>, bool)>,
+        Vec<(DynTree<ExprIR>, DynTree<ExprIR>, bool)>,
+    ),
     Delete(Vec<DynTree<ExprIR>>, bool),
     Set(Vec<(DynTree<ExprIR>, DynTree<ExprIR>, bool)>),
     Remove(Vec<DynTree<ExprIR>>),
@@ -68,7 +72,7 @@ impl Display for IR {
                 write!(f, "Unwind({})", alias.as_str())
             }
             Self::Create(pattern) => write!(f, "Create {pattern}"),
-            Self::Merge(pattern) => write!(f, "Merge {pattern}"),
+            Self::Merge(pattern, _, _) => write!(f, "Merge {pattern}"),
             Self::Delete(_, _) => write!(f, "Delete"),
             Self::Set(_) => write!(f, "Set"),
             Self::Remove(_) => write!(f, "Remove"),
@@ -77,7 +81,7 @@ impl Display for IR {
             Self::ExpandInto(rel) => write!(f, "ExpandInto {rel}"),
             Self::PathBuilder(_) => write!(f, "PathBuilder"),
             Self::Filter(_) => write!(f, "Filter"),
-            Self::CartesianProduct => write!(f, "CartesianProduct"),
+            Self::CartesianProduct => write!(f, "Cartesian Product"),
             Self::LoadCsv { .. } => write!(f, "LoadCsv"),
             Self::Sort(_) => write!(f, "Sort"),
             Self::Skip(_) => write!(f, "Skip"),
@@ -229,24 +233,30 @@ impl Planner {
         let mut iter = plans.into_iter().rev();
         let mut res = iter.next().unwrap();
         let mut idx = res.root().idx();
-        while matches!(res.node(&idx).data(), IR::Commit)
-            || matches!(res.node(&idx).data(), IR::Sort(_))
-            || matches!(res.node(&idx).data(), IR::Skip(_))
-            || matches!(res.node(&idx).data(), IR::Limit(_))
-            || matches!(res.node(&idx).data(), IR::Distinct)
-            || matches!(res.node(&idx).data(), IR::Filter(_))
-        {
+        while matches!(
+            res.node(&idx).data(),
+            IR::Commit | IR::Sort(_) | IR::Skip(_) | IR::Limit(_) | IR::Distinct | IR::Filter(_)
+        ) {
             idx = res.node(&idx).child(0).idx();
         }
         for n in iter {
-            idx = res.node_mut(&idx).push_child_tree(n);
-            while matches!(res.node(&idx).data(), IR::Commit)
-                || matches!(res.node(&idx).data(), IR::Sort(_))
-                || matches!(res.node(&idx).data(), IR::Skip(_))
-                || matches!(res.node(&idx).data(), IR::Limit(_))
-                || matches!(res.node(&idx).data(), IR::Distinct)
-                || matches!(res.node(&idx).data(), IR::Filter(_))
-            {
+            if res.node(&idx).num_children() > 0 {
+                idx = res
+                    .node_mut(&idx)
+                    .child_mut(0)
+                    .push_sibling_tree(Side::Left, n);
+            } else {
+                idx = res.node_mut(&idx).push_child_tree(n);
+            }
+            while matches!(
+                res.node(&idx).data(),
+                IR::Commit
+                    | IR::Sort(_)
+                    | IR::Skip(_)
+                    | IR::Limit(_)
+                    | IR::Distinct
+                    | IR::Filter(_)
+            ) {
                 idx = res.node(&idx).child(0).idx();
             }
         }
@@ -285,8 +295,12 @@ impl Planner {
                 }
             }
             QueryIR::Unwind(expr, alias) => tree!(IR::Unwind(expr, alias)),
-            QueryIR::Merge(pattern) => tree!(
-                IR::Merge(pattern.filter_visited(&self.visited)),
+            QueryIR::Merge(pattern, on_create_set_items, on_match_set_items) => tree!(
+                IR::Merge(
+                    pattern.filter_visited(&self.visited),
+                    on_create_set_items,
+                    on_match_set_items
+                ),
                 self.plan_match(&pattern, None)
             ),
             QueryIR::Create(pattern) => {

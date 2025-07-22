@@ -68,6 +68,7 @@ pub enum Type {
     Node,
     Relationship,
     Path,
+    VecF32,
     Any,
     Union(Vec<Type>),
     Optional(Box<Type>),
@@ -90,6 +91,7 @@ impl Display for Type {
             Self::Node => write!(f, "Node"),
             Self::Relationship => write!(f, "Relationship"),
             Self::Path => write!(f, "Path"),
+            Self::VecF32 => write!(f, "VecF32"),
             Self::Any => write!(f, "Any"),
             Self::Union(types) => {
                 let mut iter = types.iter();
@@ -339,6 +341,18 @@ pub fn init_functions() -> Result<(), Functions> {
         FnType::Function,
     );
     funcs.add(
+        "properties",
+        properties,
+        false,
+        vec![Type::Union(vec![
+            Type::Map,
+            Type::Node,
+            Type::Relationship,
+            Type::Null,
+        ])],
+        FnType::Function,
+    );
+    funcs.add(
         "startnode",
         start_node,
         false,
@@ -350,6 +364,13 @@ pub fn init_functions() -> Result<(), Functions> {
         end_node,
         false,
         vec![Type::Relationship],
+        FnType::Function,
+    );
+    funcs.add(
+        "length",
+        length,
+        false,
+        vec![Type::Union(vec![Type::Path, Type::Null])],
         FnType::Function,
     );
     funcs.add(
@@ -382,9 +403,10 @@ pub fn init_functions() -> Result<(), Functions> {
         value_to_string,
         false,
         vec![Type::Union(vec![
-            Type::String,
-            Type::Int,
             Type::Bool,
+            Type::Int,
+            Type::Float,
+            Type::String,
             Type::Null,
         ])],
         FnType::Function,
@@ -656,7 +678,7 @@ pub fn init_functions() -> Result<(), Functions> {
         "type",
         relationship_type,
         false,
-        vec![Type::Relationship],
+        vec![Type::Union(vec![Type::Relationship, Type::Null])],
         FnType::Function,
     );
     funcs.add(
@@ -673,6 +695,18 @@ pub fn init_functions() -> Result<(), Functions> {
         vec![Type::Union(vec![Type::Path, Type::Null])],
         FnType::Function,
     );
+    funcs.add(
+        "vecf32",
+        vecf32,
+        false,
+        vec![Type::Union(vec![
+            Type::List(Box::new(Type::Float)),
+            Type::Null,
+        ])],
+        FnType::Function,
+    );
+    funcs.add("exists", exists, false, vec![Type::Any], FnType::Function);
+
     // aggregation functions
     funcs.add(
         "collect",
@@ -743,6 +777,26 @@ pub fn init_functions() -> Result<(), Functions> {
         FnType::Aggregation(
             Value::List(vec![Value::Float(0.0), Value::List(vec![])]),
             Some(Box::new(finalize_percentile_cont)),
+        ),
+    );
+    funcs.add(
+        "stDev",
+        stdev,
+        false,
+        vec![Type::Union(vec![Type::Int, Type::Float, Type::Null])],
+        FnType::Aggregation(
+            Value::List(vec![Value::Float(0.0), Value::List(vec![])]),
+            Some(Box::new(finalize_stdev)),
+        ),
+    );
+    funcs.add(
+        "stDevP",
+        stdev,
+        false,
+        vec![Type::Union(vec![Type::Int, Type::Float, Type::Null])],
+        FnType::Aggregation(
+            Value::List(vec![Value::Float(0.0), Value::List(vec![])]),
+            Some(Box::new(finalize_stdevp)),
         ),
     );
 
@@ -897,6 +951,27 @@ fn id(
     }
 }
 
+fn properties(
+    runtime: &Runtime,
+    args: Vec<Value>,
+) -> Result<Value, String> {
+    let mut iter = args.into_iter();
+    match iter.next() {
+        Some(Value::Map(map)) => Ok(Value::Map(map)),
+        Some(Value::Node(id)) => {
+            let properties = runtime.get_node_attrs(id);
+            Ok(Value::Map(Rc::new(properties)))
+        }
+        Some(Value::Relationship(id, _, _)) => {
+            let properties = runtime.get_relationship_attrs(id);
+            Ok(Value::Map(Rc::new(properties)))
+        }
+        Some(Value::Null) => Ok(Value::Null),
+
+        _ => unreachable!(),
+    }
+}
+
 fn start_node(
     _runtime: &Runtime,
     args: Vec<Value>,
@@ -916,6 +991,19 @@ fn end_node(
     let mut iter = args.into_iter();
     match iter.next() {
         Some(Value::Relationship(_, _, dest)) => Ok(Value::Node(dest)),
+
+        _ => unreachable!(),
+    }
+}
+
+fn length(
+    _runtime: &Runtime,
+    args: Vec<Value>,
+) -> Result<Value, String> {
+    let mut iter = args.into_iter();
+    match iter.next() {
+        Some(Value::Path(path)) => Ok(Value::Int(path.len() as i64)),
+        Some(Value::Null) => Ok(Value::Null),
 
         _ => unreachable!(),
     }
@@ -1197,6 +1285,75 @@ fn modf(x: f64) -> (f64, f64) {
     (frac_part, int_part)
 }
 
+fn stdev(
+    _: &Runtime,
+    args: Vec<Value>,
+) -> Result<Value, String> {
+    let mut iter = args.into_iter();
+    let val = iter.next().unwrap();
+    let ctx = iter.next().unwrap();
+    match (val, ctx) {
+        (Value::Null, ctx) => Ok(ctx),
+        (val, Value::List(vec)) => {
+            let val = val.get_numeric();
+            let (Value::Float(sum), Value::List(vec)) = (&vec[0], &vec[1]) else {
+                unreachable!("stdev accumulator should be [sum, values]");
+            };
+
+            let mut vec = vec.clone();
+            vec.push(Value::Float(val));
+
+            Ok(Value::List(vec![Value::Float(sum + val), Value::List(vec)]))
+        }
+
+        _ => unreachable!(),
+    }
+}
+
+fn finalize_stdev(ctx: Value) -> Value {
+    let Value::List(vec) = ctx else {
+        unreachable!("finalize_stdev expects a list");
+    };
+    let (Value::Float(sum), Value::List(values)) = (&vec[0], &vec[1]) else {
+        unreachable!("stdev function should have [sum, values] format");
+    };
+    if values.is_empty() || values.len() == 1 {
+        return Value::Float(0.0);
+    }
+    let mean = sum / values.len() as f64;
+    let variance: f64 = values
+        .iter()
+        .map(|v| {
+            let diff = v.get_numeric() - mean;
+            diff * diff
+        })
+        .sum::<f64>()
+        / (values.len() - 1) as f64;
+    Value::Float(variance.sqrt())
+}
+
+fn finalize_stdevp(ctx: Value) -> Value {
+    let Value::List(vec) = ctx else {
+        unreachable!("finalize_stdev expects a list");
+    };
+    let (Value::Float(sum), Value::List(values)) = (&vec[0], &vec[1]) else {
+        unreachable!("stdev function should have [sum, values] format");
+    };
+    if values.is_empty() {
+        return Value::Float(0.0);
+    }
+    let mean = sum / values.len() as f64;
+    let variance: f64 = values
+        .iter()
+        .map(|v| {
+            let diff = v.get_numeric() - mean;
+            diff * diff
+        })
+        .sum::<f64>()
+        / values.len() as f64;
+    Value::Float(variance.sqrt())
+}
+
 fn value_to_integer(
     _runtime: &Runtime,
     args: Vec<Value>,
@@ -1232,9 +1389,10 @@ fn value_to_float(
 
 fn value_string(value: &Value) -> Result<Rc<String>, String> {
     match value {
-        Value::String(s) => Ok(s.clone()),
-        Value::Int(i) => Ok(Rc::new(i.to_string())),
         Value::Bool(b) => Ok(Rc::new(String::from(if *b { "true" } else { "false" }))),
+        Value::Int(i) => Ok(Rc::new(i.to_string())),
+        Value::Float(f) => Ok(Rc::new(f.to_string())),
+        Value::String(s) => Ok(s.clone()),
 
         _ => unreachable!(),
     }
@@ -1354,7 +1512,7 @@ fn substring(
             }
             let start = start as usize;
 
-            Ok(Value::String(Rc::new(String::from(&s[start..]))))
+            Ok(Value::String(Rc::new(s.chars().skip(start).collect())))
         }
 
         // Three-argument version: (string, start, length)
@@ -1374,8 +1532,9 @@ fn substring(
 
             let length = length as usize;
 
-            let end = start.saturating_add(length).min(s.len());
-            Ok(Value::String(Rc::new(String::from(&s[start..end]))))
+            Ok(Value::String(Rc::new(
+                s.chars().skip(start).take(length).collect(),
+            )))
         }
 
         _ => unreachable!(),
@@ -1499,7 +1658,7 @@ fn string_right(
             if n < 0 {
                 Err(String::from("length must be a non-negative integer"))
             } else {
-                let start = s.len().saturating_sub(n as usize);
+                let start = s.chars().count().saturating_sub(n as usize);
                 Ok(Value::String(Rc::new(s.chars().skip(start).collect())))
             }
         }
@@ -1898,7 +2057,7 @@ fn relationship_type(
         Some(Value::Relationship(id, _from, _to)) => runtime
             .get_relationship_type(id)
             .map_or_else(|| Ok(Value::Null), |type_name| Ok(Value::String(type_name))),
-
+        Some(Value::Null) => Ok(Value::Null),
         _ => unreachable!(),
     }
 }
@@ -1946,6 +2105,32 @@ fn relationships(
         )),
         Some(Value::Null) => Ok(Value::Null),
         _ => unreachable!(),
+    }
+}
+
+fn vecf32(
+    _: &Runtime,
+    args: Vec<Value>,
+) -> Result<Value, String> {
+    let mut iter = args.into_iter();
+    match iter.next() {
+        Some(Value::List(vec)) => Ok(Value::VecF32(
+            vec.into_iter().map(|v| v.get_numeric() as f32).collect(),
+        )),
+        Some(Value::Null) => Ok(Value::Null),
+
+        _ => unreachable!(),
+    }
+}
+
+fn exists(
+    _: &Runtime,
+    args: Vec<Value>,
+) -> Result<Value, String> {
+    let mut iter = args.into_iter();
+    match iter.next() {
+        Some(Value::Null) => Ok(Value::Bool(false)),
+        _ => Ok(Value::Bool(true)),
     }
 }
 
