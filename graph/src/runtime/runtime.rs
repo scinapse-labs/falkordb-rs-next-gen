@@ -1575,7 +1575,7 @@ impl<'a> Runtime<'a> {
                             relationship,
                             property.clone(),
                             Value::Null,
-                        );
+                        )?;
                     }
                 }
                 Value::Null => {}
@@ -1710,7 +1710,7 @@ impl<'a> Runtime<'a> {
                             id,
                             property.clone(),
                             value,
-                        );
+                        )?;
                     } else if let Value::Relationship(sid, _, _) = value {
                         let g = self.g.borrow();
                         let attrs = g.get_relationship_attrs(sid);
@@ -1720,7 +1720,7 @@ impl<'a> Runtime<'a> {
                                     id,
                                     g.get_relationship_attribute_string(*key).unwrap(),
                                     Value::Null,
-                                );
+                                )?;
                             }
                         }
                         for (key, value) in attrs {
@@ -1731,7 +1731,7 @@ impl<'a> Runtime<'a> {
                                 id,
                                 key,
                                 value.clone(),
-                            );
+                            )?;
                         }
                     }
                 }
@@ -1938,7 +1938,7 @@ impl<'a> Runtime<'a> {
     ) -> Result<(), String> {
         for tree in trees {
             let value = self.run_expr(tree, tree.root().idx(), vars, None)?;
-            self.delete_entity(value, vars)?;
+            self.delete_entity(value)?;
         }
         Ok(())
     }
@@ -1946,7 +1946,6 @@ impl<'a> Runtime<'a> {
     fn delete_entity(
         &self,
         value: Value,
-        vars: &Env,
     ) -> Result<(), String> {
         match value {
             Value::Node(id) => {
@@ -1978,7 +1977,7 @@ impl<'a> Runtime<'a> {
             }
             Value::Path(values) => {
                 for value in values {
-                    self.delete_entity(value, vars)?;
+                    self.delete_entity(value)?;
                 }
             }
             Value::Null => {}
@@ -2049,7 +2048,7 @@ impl<'a> Runtime<'a> {
                 Value::Map(attrs) => {
                     self.pending
                         .borrow_mut()
-                        .set_relationship_attributes(id, Rc::unwrap_or_clone(attrs));
+                        .set_relationship_attributes(id, Rc::unwrap_or_clone(attrs))?;
                 }
                 _ => {
                     return Err(String::from("Invalid relationship properties"));

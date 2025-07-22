@@ -1,7 +1,6 @@
 from common import *
 
 sys.path.append(os.path.dirname(os.path.abspath(__file__)) + '/../..')
-from demo import QueryInfo
 
 GRAPH_ID = "graph_deletion"
 
@@ -172,7 +171,6 @@ class testGraphDeletionFlow(FlowTestsBase):
         # Delete and benchmark for 300ms.
         query = """MATCH (a)-[e:R]->(b) DELETE e"""
         result = self.graph.query(query)
-        query_info = QueryInfo(query = query, description = "Test the execution time for deleting large number of edges")
         self.env.assertEquals(result.relationships_deleted, 50000)
 
     def test11_delete_entity_type_validation(self):

@@ -957,7 +957,7 @@ fn properties(
 ) -> Result<Value, String> {
     let mut iter = args.into_iter();
     match iter.next() {
-        Some(Value::Map(map)) => Ok(Value::Map(map.clone())),
+        Some(Value::Map(map)) => Ok(Value::Map(map)),
         Some(Value::Node(id)) => {
             let properties = runtime.get_node_attrs(id);
             Ok(Value::Map(Rc::new(properties)))

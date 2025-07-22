@@ -199,8 +199,31 @@ impl Pending {
         &mut self,
         id: RelationshipId,
         attrs: OrderMap<Rc<String>, Value>,
-    ) {
+    ) -> Result<(), String> {
+        for (_, value) in &attrs {
+            if value
+                .value_of_type(&Type::Union(vec![
+                    Type::Bool,
+                    Type::Int,
+                    Type::Float,
+                    Type::String,
+                    Type::Null,
+                    Type::List(Box::new(Type::Union(vec![
+                        Type::Bool,
+                        Type::Int,
+                        Type::Float,
+                        Type::String,
+                    ]))),
+                ]))
+                .is_some()
+            {
+                return Err(
+                    "Property values can only be of primitive types or arrays of primitive types",
+                )?;
+            }
+        }
         self.set_relationships_attrs.insert(id, attrs);
+        Ok(())
     }
 
     pub fn set_relationship_attribute(
@@ -208,11 +231,32 @@ impl Pending {
         id: RelationshipId,
         key: Rc<String>,
         value: Value,
-    ) {
+    ) -> Result<(), String> {
+        if value
+            .value_of_type(&Type::Union(vec![
+                Type::Bool,
+                Type::Int,
+                Type::Float,
+                Type::String,
+                Type::Null,
+                Type::List(Box::new(Type::Union(vec![
+                    Type::Bool,
+                    Type::Int,
+                    Type::Float,
+                    Type::String,
+                ]))),
+            ]))
+            .is_some()
+        {
+            return Err(
+                "Property values can only be of primitive types or arrays of primitive types",
+            )?;
+        }
         self.set_relationships_attrs
             .entry(id)
             .or_default()
             .insert(key, value);
+        Ok(())
     }
 
     #[must_use]
