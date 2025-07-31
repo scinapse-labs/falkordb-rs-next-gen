@@ -3,8 +3,7 @@ from common import *
 from index_utils import *
 from collections import Counter
 
-sys.path.append(os.path.dirname(os.path.abspath(__file__)) + '/../..')
-from demo import QueryInfo
+from tests.flow.query_info import QueryInfo
 
 GRAPH_ID = "path_filters"
 

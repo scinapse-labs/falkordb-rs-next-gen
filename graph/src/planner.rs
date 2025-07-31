@@ -93,7 +93,7 @@ impl Display for IR {
                 write!(f, "Node By Index Scan {node}")
             }
             Self::RelationshipScan(rel) => write!(f, "RelationshipScan {rel}"),
-            Self::ExpandInto(rel) => write!(f, "ExpandInto {rel}"),
+            Self::ExpandInto(rel) => write!(f, "Expand Into {rel}"),
             Self::PathBuilder(_) => write!(f, "PathBuilder"),
             Self::Filter(_) => write!(f, "Filter"),
             Self::CartesianProduct => write!(f, "Cartesian Product"),

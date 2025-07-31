@@ -1,7 +1,6 @@
 from common import *
 
-sys.path.append(os.path.dirname(os.path.abspath(__file__)) + '/../..')
-from demo import QueryInfo
+from tests.flow.query_info import QueryInfo
 
 GRAPH_ID = "G"
 NEW_GRAPH_ID = "G2"
