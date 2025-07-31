@@ -1941,7 +1941,23 @@ impl<'a> Runtime<'a> {
                 Ok(IndexQuery::Equal(key.clone(), value))
             }
             IndexQuery::Range(key, min, max) => {
-                todo!()
+                let (min, max) = match (min, max) {
+                    (Some(min), Some(max)) => {
+                        let min = self.run_expr(min, min.root().idx(), vars, None)?;
+                        let max = self.run_expr(max, max.root().idx(), vars, None)?;
+                        (Some(min), Some(max))
+                    }
+                    (Some(min), None) => {
+                        let min = self.run_expr(min, min.root().idx(), vars, None)?;
+                        (Some(min), None)
+                    }
+                    (None, Some(max)) => {
+                        let max = self.run_expr(max, max.root().idx(), vars, None)?;
+                        (None, Some(max))
+                    }
+                    (None, None) => (None, None),
+                };
+                Ok(IndexQuery::Range(key.clone(), min, max))
             }
             _ => todo!(),
         }

@@ -9,11 +9,12 @@ use std::{
 use crate::{
     redisearch::{
         GC_POLICY_FORK, REDISEARCH_ADD_REPLACE, RSFLDOPT_NONE, RSFLDTYPE_GEO, RSFLDTYPE_NUMERIC,
-        RSFLDTYPE_TAG, RSIndex, RediSearch_CreateDocument2, RediSearch_CreateField,
-        RediSearch_CreateIndex, RediSearch_CreateIndexOptions, RediSearch_CreateNumericNode,
-        RediSearch_CreateTagNode, RediSearch_CreateTagTokenNode, RediSearch_DeleteDocument,
-        RediSearch_DocumentAddFieldNumber, RediSearch_DocumentAddFieldString, RediSearch_DropIndex,
-        RediSearch_FreeIndexOptions, RediSearch_GetResultsIterator, RediSearch_IndexAddDocument,
+        RSFLDTYPE_TAG, RSIndex, RSRANGE_INF, RSRANGE_NEG_INF, RediSearch_CreateDocument2,
+        RediSearch_CreateField, RediSearch_CreateIndex, RediSearch_CreateIndexOptions,
+        RediSearch_CreateNumericNode, RediSearch_CreateTagNode, RediSearch_CreateTagTokenNode,
+        RediSearch_DeleteDocument, RediSearch_DocumentAddFieldNumber,
+        RediSearch_DocumentAddFieldString, RediSearch_DropIndex, RediSearch_FreeIndexOptions,
+        RediSearch_GetResultsIterator, RediSearch_IndexAddDocument,
         RediSearch_IndexOptionsSetGCPolicy, RediSearch_IndexOptionsSetStopwords,
         RediSearch_QueryNodeAddChild, RediSearch_ResultsIteratorFree,
         RediSearch_ResultsIteratorNext, RediSearch_TagFieldSetCaseSensitive,
@@ -94,6 +95,10 @@ impl Indexer {
         label: u64,
         attrs: &Vec<Rc<String>>,
     ) {
+        let mut attrs = attrs.clone();
+        if let Some(a) = self.index.get(&label) {
+            attrs.extend(a.fields.keys().cloned());
+        }
         unsafe {
             let options = RediSearch_CreateIndexOptions();
             // RediSearch_IndexOptionsSetLanguage(options, idx->language);
@@ -223,6 +228,36 @@ impl Indexer {
                     RediSearch_ResultsIteratorFree(iter);
                     return res;
                 },
+                IndexQuery::Range(key, min, max) => {
+                    let (min, max) = match (min, max) {
+                        (Some(Value::Float(min)), None) => (min, RSRANGE_INF),
+                        (None, Some(Value::Float(max))) => (RSRANGE_NEG_INF, max),
+                        (Some(Value::Float(min)), Some(Value::Float(max))) => (min, max),
+                        (Some(Value::Int(min)), None) => (min as f64, RSRANGE_INF),
+                        (None, Some(Value::Int(max))) => (RSRANGE_NEG_INF, max as f64),
+                        (Some(Value::Int(min)), Some(Value::Int(max))) => (min as f64, max as f64),
+                        _ => todo!(),
+                    };
+                    unsafe {
+                        let msg = index.fields.get(&key).unwrap();
+                        let query =
+                            RediSearch_CreateNumericNode(index.index, msg.as_ptr(), max, min, 0, 0);
+                        let iter = RediSearch_GetResultsIterator(query, index.index);
+
+                        let mut res = vec![];
+                        loop {
+                            let node_id =
+                                RediSearch_ResultsIteratorNext(iter, index.index, null_mut())
+                                    .cast::<u64>();
+                            if node_id.is_null() {
+                                break;
+                            }
+                            res.push(node_id.read_unaligned());
+                        }
+                        RediSearch_ResultsIteratorFree(iter);
+                        return res;
+                    }
+                }
                 _ => todo!(),
             }
         }
