@@ -916,6 +916,7 @@ impl<'a> Parser<'a> {
                 let label = self.parse_ident()?;
                 match_token!(self.lexer, RBrace);
                 match_token!(self.lexer, Dash);
+                optional_match_token!(self.lexer, GreaterThan);
                 match_token!(self.lexer, LParen);
                 match_token!(self.lexer, RParen);
                 (nkey, label, EntityType::Relationship)
@@ -992,10 +993,25 @@ impl<'a> Parser<'a> {
             }
             match_token!(self.lexer => For);
             match_token!(self.lexer, LParen);
-            let nkey = self.parse_ident()?;
-            match_token!(self.lexer, Colon);
-            let label = self.parse_ident()?;
-            match_token!(self.lexer, RParen);
+            let (nkey, label, entity_type) = if optional_match_token!(self.lexer, RParen) {
+                match_token!(self.lexer, Dash);
+                match_token!(self.lexer, LBrace);
+                let nkey = self.parse_ident()?;
+                match_token!(self.lexer, Colon);
+                let label = self.parse_ident()?;
+                match_token!(self.lexer, RBrace);
+                match_token!(self.lexer, Dash);
+                optional_match_token!(self.lexer, GreaterThan);
+                match_token!(self.lexer, LParen);
+                match_token!(self.lexer, RParen);
+                (nkey, label, EntityType::Relationship)
+            } else {
+                let nkey = self.parse_ident()?;
+                match_token!(self.lexer, Colon);
+                let label = self.parse_ident()?;
+                match_token!(self.lexer, RParen);
+                (nkey, label, EntityType::Node)
+            };
             match_token!(self.lexer => On);
             match_token!(self.lexer, LParen);
             let key = self.parse_ident()?;
@@ -1021,7 +1037,6 @@ impl<'a> Parser<'a> {
             } else {
                 IndexType::Range
             };
-            let entity_type = EntityType::Node;
             return Ok(Some(QueryIR::DropIndex {
                 label,
                 attrs,
