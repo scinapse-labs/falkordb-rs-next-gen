@@ -19,7 +19,7 @@ use crate::{
         matrix::{Dup, ElementWiseAdd, ElementWiseMultiply, Matrix, MxM, New, Remove, Set, Size},
         tensor::Tensor,
     },
-    indexer::{Document, IndexQuery, Indexer},
+    indexer::{Document, EntityType, IndexQuery, IndexType, Indexer},
     optimizer::optimize,
     planner::{IR, Planner},
     runtime::{pending::PendingRelationship, value::Value},
@@ -897,19 +897,27 @@ impl Graph {
         self.relationship_attrs.get(&id).unwrap_or(&self.empty_map)
     }
 
-    pub fn create_node_index(
+    pub fn create_index(
         &mut self,
+        index_type: &IndexType,
+        entity_type: &EntityType,
         label: &Rc<String>,
         attrs: &Vec<Rc<String>>,
     ) {
-        self.get_label_matrix_mut(label);
-        let label_id = self.get_label_id(label).unwrap();
-        self.node_indexer.create_index(label_id.0 as u64, attrs);
-        let attr_ids = attrs
-            .iter()
-            .filter_map(|attr| self.get_node_attribute_id(attr))
-            .collect::<Vec<_>>();
-        self.populate_index(label, label_id, attr_ids);
+        match entity_type {
+            EntityType::Node => {
+                self.get_label_matrix_mut(label);
+                let label_id = self.get_label_id(label).unwrap();
+                self.node_indexer
+                    .create_index(index_type, label_id.0 as u64, attrs);
+                let attr_ids = attrs
+                    .iter()
+                    .filter_map(|attr| self.get_node_attribute_id(attr))
+                    .collect::<Vec<_>>();
+                self.populate_index(label, label_id, attr_ids);
+            }
+            EntityType::Relationship => {}
+        }
     }
 
     fn populate_index(
@@ -936,8 +944,10 @@ impl Graph {
         self.node_indexer.commit();
     }
 
-    pub fn drop_node_index(
+    pub fn drop_index(
         &mut self,
+        index_type: &IndexType,
+        entity_type: &EntityType,
         label: &Rc<String>,
         attrs: &Vec<Rc<String>>,
     ) {

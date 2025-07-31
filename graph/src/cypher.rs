@@ -2,6 +2,7 @@ use crate::ast::{
     ExprIR, QuantifierType, QueryExpr, QueryGraph, QueryIR, QueryNode, QueryPath,
     QueryRelationship, Variable,
 };
+use crate::indexer::{EntityType, IndexType};
 use crate::{
     cypher::Token::RParen,
     runtime::{
@@ -77,6 +78,7 @@ enum Keyword {
     Index,
     Fulltext,
     Vector,
+    Options,
     For,
     On,
 }
@@ -173,6 +175,7 @@ const KEYWORDS: &[(&str, Keyword)] = &[
     ("INDEX", Keyword::Index),
     ("FULLTEXT", Keyword::Fulltext),
     ("VECTOR", Keyword::Vector),
+    ("OPTIONS", Keyword::Options),
     ("FOR", Keyword::For),
     ("ON", Keyword::On),
 ];
@@ -671,7 +674,12 @@ macro_rules! match_token {
             Token::$token => {
                 $lexer.next();
             }
-            token => return Err($lexer.format_error(&format!("Invalid input {token:?}"))),
+            token => {
+                return Err($lexer.format_error(&format!(
+                    "Invalid input {token:?} Expected {:?}",
+                    Token::$token
+                )))
+            }
         }
     };
     ($lexer:expr => $token:ident) => {
@@ -679,7 +687,12 @@ macro_rules! match_token {
             Token::Keyword(Keyword::$token, _) => {
                 $lexer.next();
             }
-            token => return Err($lexer.format_error(&format!("Invalid input {token:?}"))),
+            token => {
+                return Err($lexer.format_error(&format!(
+                    "Invalid input {token:?}  Expected Keyword {:?}",
+                    Keyword::$token
+                )))
+            }
         }
     };
     () => {};
@@ -864,6 +877,7 @@ impl<'a> Parser<'a> {
         Ok(ir)
     }
 
+    #[allow(clippy::too_many_lines)]
     fn parse_index_ops(&mut self) -> Result<Option<QueryIR>, String> {
         if optional_match_token!(self.lexer => Create) {
             let fulltext = optional_match_token!(self.lexer => Fulltext);
@@ -871,6 +885,110 @@ impl<'a> Parser<'a> {
             let index = optional_match_token!(self.lexer => Index);
             if !index {
                 return Ok(None);
+            }
+            if !fulltext && !vector && optional_match_token!(self.lexer => On) {
+                match_token!(self.lexer, Colon);
+                let label = self.parse_ident()?;
+                match_token!(self.lexer, LParen);
+                let mut attrs = vec![self.parse_ident()?];
+                while optional_match_token!(self.lexer, Comma) {
+                    attrs.push(self.parse_ident()?);
+                }
+                match_token!(self.lexer, RParen);
+                match_token!(self.lexer, EndOfFile);
+                let index_type = IndexType::Range;
+                let entity_type = EntityType::Node;
+                return Ok(Some(QueryIR::CreateIndex {
+                    label,
+                    attrs,
+                    index_type,
+                    entity_type,
+                    options: None,
+                }));
+            }
+            match_token!(self.lexer => For);
+            match_token!(self.lexer, LParen);
+            let (nkey, label, entity_type) = if optional_match_token!(self.lexer, RParen) {
+                match_token!(self.lexer, Dash);
+                match_token!(self.lexer, LBrace);
+                let nkey = self.parse_ident()?;
+                match_token!(self.lexer, Colon);
+                let label = self.parse_ident()?;
+                match_token!(self.lexer, RBrace);
+                match_token!(self.lexer, Dash);
+                match_token!(self.lexer, LParen);
+                match_token!(self.lexer, RParen);
+                (nkey, label, EntityType::Relationship)
+            } else {
+                let nkey = self.parse_ident()?;
+                match_token!(self.lexer, Colon);
+                let label = self.parse_ident()?;
+                match_token!(self.lexer, RParen);
+                (nkey, label, EntityType::Node)
+            };
+            match_token!(self.lexer => On);
+            match_token!(self.lexer, LParen);
+            let key = self.parse_ident()?;
+            if nkey.as_str() != key.as_str() {
+                return Err(self.lexer.format_error(&format!("'{key}' not defined")));
+            }
+            match_token!(self.lexer, Dot);
+            let mut attrs = vec![self.parse_ident()?];
+            while optional_match_token!(self.lexer, Comma) {
+                let key = self.parse_ident()?;
+                if nkey.as_str() != key.as_str() {
+                    return Err(self.lexer.format_error(&format!("'{key}' not defined")));
+                }
+                match_token!(self.lexer, Dot);
+                attrs.push(self.parse_ident()?);
+            }
+            match_token!(self.lexer, RParen);
+            let index_type = if fulltext {
+                IndexType::Fulltext
+            } else if vector {
+                IndexType::Vector
+            } else {
+                IndexType::Range
+            };
+            let options = if vector && optional_match_token!(self.lexer => Options) {
+                Some(Rc::new(self.parse_map()?))
+            } else {
+                None
+            };
+            match_token!(self.lexer, EndOfFile);
+            return Ok(Some(QueryIR::CreateIndex {
+                label,
+                attrs,
+                index_type,
+                entity_type,
+                options,
+            }));
+        }
+        if optional_match_token!(self.lexer => Drop) {
+            let fulltext = optional_match_token!(self.lexer => Fulltext);
+            let vector = !fulltext && optional_match_token!(self.lexer => Vector);
+            let index = optional_match_token!(self.lexer => Index);
+            if !index {
+                return Ok(None);
+            }
+            if !fulltext && !vector && optional_match_token!(self.lexer => On) {
+                match_token!(self.lexer, Colon);
+                let label = self.parse_ident()?;
+                match_token!(self.lexer, LParen);
+                let mut attrs = vec![self.parse_ident()?];
+                while optional_match_token!(self.lexer, Comma) {
+                    attrs.push(self.parse_ident()?);
+                }
+                match_token!(self.lexer, RParen);
+                match_token!(self.lexer, EndOfFile);
+                let index_type = IndexType::Range;
+                let entity_type = EntityType::Node;
+                return Ok(Some(QueryIR::DropIndex {
+                    label,
+                    attrs,
+                    index_type,
+                    entity_type,
+                }));
             }
             match_token!(self.lexer => For);
             match_token!(self.lexer, LParen);
@@ -882,58 +1000,34 @@ impl<'a> Parser<'a> {
             match_token!(self.lexer, LParen);
             let key = self.parse_ident()?;
             if nkey.as_str() != key.as_str() {
-                return Err(self.lexer.format_error(&format!(
-                    "Invalid index name '{nkey}' for label '{label}' on property '{key}'"
-                )));
+                return Err(self.lexer.format_error(&format!("'{key}' not defined")));
             }
             match_token!(self.lexer, Dot);
             let mut attrs = vec![self.parse_ident()?];
             while optional_match_token!(self.lexer, Comma) {
                 let key = self.parse_ident()?;
                 if nkey.as_str() != key.as_str() {
-                    return Err(self.lexer.format_error(&format!(
-                        "Invalid index name '{nkey}' for label '{label}' on property '{key}'"
-                    )));
+                    return Err(self.lexer.format_error(&format!("'{key}' not defined")));
                 }
                 match_token!(self.lexer, Dot);
                 attrs.push(self.parse_ident()?);
             }
             match_token!(self.lexer, RParen);
             match_token!(self.lexer, EndOfFile);
-            return Ok(Some(QueryIR::CreateIndex { label, attrs }));
-        }
-        if optional_match_token!(self.lexer => Drop)
-            && optional_match_token!(self.lexer => Index)
-            && optional_match_token!(self.lexer => For)
-        {
-            match_token!(self.lexer, LParen);
-            let nkey = self.parse_ident()?;
-            match_token!(self.lexer, Colon);
-            let label = self.parse_ident()?;
-            match_token!(self.lexer, RParen);
-            match_token!(self.lexer => On);
-            match_token!(self.lexer, LParen);
-            let key = self.parse_ident()?;
-            if nkey.as_str() != key.as_str() {
-                return Err(self.lexer.format_error(&format!(
-                    "Invalid index name '{nkey}' for label '{label}' on property '{key}'"
-                )));
-            }
-            match_token!(self.lexer, Dot);
-            let mut attrs = vec![self.parse_ident()?];
-            while optional_match_token!(self.lexer, Comma) {
-                let key = self.parse_ident()?;
-                if nkey.as_str() != key.as_str() {
-                    return Err(self.lexer.format_error(&format!(
-                        "Invalid index name '{nkey}' for label '{label}' on property '{key}'"
-                    )));
-                }
-                match_token!(self.lexer, Dot);
-                attrs.push(self.parse_ident()?);
-            }
-            match_token!(self.lexer, RParen);
-            match_token!(self.lexer, EndOfFile);
-            return Ok(Some(QueryIR::DropIndex { label, attrs }));
+            let index_type = if fulltext {
+                IndexType::Fulltext
+            } else if vector {
+                IndexType::Vector
+            } else {
+                IndexType::Range
+            };
+            let entity_type = EntityType::Node;
+            return Ok(Some(QueryIR::DropIndex {
+                label,
+                attrs,
+                index_type,
+                entity_type,
+            }));
         }
         Ok(None)
     }

@@ -7,7 +7,7 @@ use crate::{
         QueryExpr, QueryGraph, QueryIR, QueryNode, QueryPath, QueryRelationship,
         SupportAggregation, Variable,
     },
-    indexer::IndexQuery,
+    indexer::{EntityType, IndexQuery, IndexType},
     runtime::functions::GraphFn,
     tree,
 };
@@ -58,10 +58,15 @@ pub enum IR {
     CreateIndex {
         label: Rc<String>,
         attrs: Vec<Rc<String>>,
+        index_type: IndexType,
+        entity_type: EntityType,
+        options: Option<QueryExpr>,
     },
     DropIndex {
         label: Rc<String>,
         attrs: Vec<Rc<String>>,
+        index_type: IndexType,
+        entity_type: EntityType,
     },
 }
 
@@ -100,10 +105,10 @@ impl Display for IR {
             Self::Project(_) => write!(f, "Project"),
             Self::Commit => write!(f, "Commit"),
             Self::Distinct => write!(f, "Distinct"),
-            Self::CreateIndex { label, attrs } => {
+            Self::CreateIndex { label, attrs, .. } => {
                 write!(f, "CreateIndex on :{label}({attrs:?})")
             }
-            Self::DropIndex { label, attrs } => {
+            Self::DropIndex { label, attrs, .. } => {
                 write!(f, "DropIndex on :{label}({attrs:?})")
             }
         }
@@ -276,6 +281,7 @@ impl Planner {
         res
     }
 
+    #[allow(clippy::too_many_lines)]
     #[must_use]
     pub fn plan(
         &mut self,
@@ -359,9 +365,31 @@ impl Planner {
                 write,
                 ..
             } => self.plan_project(exprs, orderby, skip, limit, None, distinct, write),
-            QueryIR::CreateIndex { label, attrs } => tree!(IR::CreateIndex { label, attrs }),
-            QueryIR::DropIndex { label, attrs } => {
-                tree!(IR::DropIndex { label, attrs })
+            QueryIR::CreateIndex {
+                label,
+                attrs,
+                index_type,
+                entity_type,
+                options,
+            } => tree!(IR::CreateIndex {
+                label,
+                attrs,
+                index_type,
+                entity_type,
+                options
+            }),
+            QueryIR::DropIndex {
+                label,
+                attrs,
+                index_type,
+                entity_type,
+            } => {
+                tree!(IR::DropIndex {
+                    label,
+                    attrs,
+                    index_type,
+                    entity_type
+                })
             }
             QueryIR::Query(q, write) => self.plan_query(q, write),
         }

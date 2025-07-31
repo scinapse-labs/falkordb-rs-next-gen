@@ -22,6 +22,19 @@ use crate::{
     runtime::value::Value,
 };
 
+#[derive(Clone, Debug)]
+pub enum IndexType {
+    Range,
+    Fulltext,
+    Vector,
+}
+
+#[derive(Clone, Debug)]
+pub enum EntityType {
+    Node,
+    Relationship,
+}
+
 #[derive(Clone)]
 pub struct Document {
     id: u64,
@@ -77,6 +90,7 @@ pub struct Indexer {
 impl Indexer {
     pub fn create_index(
         &mut self,
+        index_type: &IndexType,
         label: u64,
         attrs: &Vec<Rc<String>>,
     ) {

@@ -4,7 +4,10 @@ use itertools::Itertools;
 use ordermap::{OrderMap, OrderSet};
 use orx_tree::{Bfs, Collection, Dfs, DynTree, NodeRef};
 
-use crate::runtime::functions::{GraphFn, Type};
+use crate::{
+    indexer::{EntityType, IndexType},
+    runtime::functions::{GraphFn, Type},
+};
 
 #[derive(Clone, Debug)]
 pub struct Variable {
@@ -612,10 +615,15 @@ pub enum QueryIR {
     CreateIndex {
         label: Rc<String>,
         attrs: Vec<Rc<String>>,
+        index_type: IndexType,
+        entity_type: EntityType,
+        options: Option<QueryExpr>,
     },
     DropIndex {
         label: Rc<String>,
         attrs: Vec<Rc<String>>,
+        index_type: IndexType,
+        entity_type: EntityType,
     },
     Query(Vec<QueryIR>, bool),
 }
@@ -679,11 +687,28 @@ impl Display for QueryIR {
                 }
                 Ok(())
             }
-            Self::CreateIndex { label, attrs } => {
-                writeln!(f, "CREATE NODE INDEX ON :{label}({attrs:?})")
+            Self::CreateIndex {
+                label,
+                attrs,
+                index_type,
+                entity_type,
+                options: _options,
+            } => {
+                writeln!(
+                    f,
+                    "CREATE {index_type:?} {entity_type:?} INDEX ON :{label}({attrs:?})"
+                )
             }
-            Self::DropIndex { label, attrs } => {
-                writeln!(f, "DROP NODE INDEX ON :{label}({attrs:?})")
+            Self::DropIndex {
+                label,
+                attrs,
+                index_type,
+                entity_type,
+            } => {
+                writeln!(
+                    f,
+                    "DROP {index_type:?} {entity_type:?} INDEX ON :{label}({attrs:?})"
+                )
             }
             Self::Query(qs, _) => {
                 for q in qs {

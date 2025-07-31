@@ -9,7 +9,7 @@ use crate::{
     indexer::IndexQuery,
     planner::IR,
     runtime::{
-        functions::{FnType, Functions, Type, get_functions},
+        functions::{FnType, Functions, get_functions},
         iter::{Aggregate, CondInspectIter, LazyReplace, TryFlatMap, TryMap},
         pending::Pending,
         value::{
@@ -1338,24 +1338,39 @@ impl<'a> Runtime<'a> {
                     self.record.borrow_mut().push((idx.clone(), res.clone()));
                 }))
             }
-            IR::CreateIndex { label, attrs } => {
+            IR::CreateIndex {
+                label,
+                attrs,
+                index_type,
+                entity_type,
+                options,
+            } => {
                 if !self.write {
                     return Err(String::from(
                         "graph.RO_QUERY is to be executed only on read-only queries",
                     ));
                 }
                 self.stats.borrow_mut().indexes_created += attrs.len();
-                self.g.borrow_mut().create_node_index(label, attrs);
+                self.g
+                    .borrow_mut()
+                    .create_index(index_type, entity_type, label, attrs);
                 Ok(Box::new(empty()))
             }
-            IR::DropIndex { label, attrs } => {
+            IR::DropIndex {
+                label,
+                attrs,
+                index_type,
+                entity_type,
+            } => {
                 if !self.write {
                     return Err(String::from(
                         "graph.RO_QUERY is to be executed only on read-only queries",
                     ));
                 }
                 self.stats.borrow_mut().indexes_dropped += attrs.len();
-                self.g.borrow_mut().drop_node_index(label, attrs);
+                self.g
+                    .borrow_mut()
+                    .drop_index(index_type, entity_type, label, attrs);
                 Ok(Box::new(empty()))
             }
         }

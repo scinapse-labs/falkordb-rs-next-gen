@@ -15,6 +15,7 @@ text_st = st.text().filter(lambda s: all(0x00 < ord(c) < 0x80 for c in s))
 at_least_1_text_st = st.text("abcdefghijklmnopqrstuvwxyz", min_size=1)
 is_extra = False
 
+
 def setup_module(module):
     global is_extra
     from conftest import pytest_config
@@ -31,11 +32,12 @@ def setup_function(function):
     if common.g.name in common.client.list_graphs():
         common.g.delete()
 
+
 def memory_usage():
     common.g.execute_command("MEMORY PURGE")
 
     memory_info = common.g.execute_command("INFO", "memory")
-    _used_memory = memory_info['used_memory']
+    _used_memory = memory_info["used_memory"]
 
     return _used_memory
 
@@ -1764,28 +1766,34 @@ def test_nested_list():
 
 
 def test_index():
-    res = query("UNWIND range(1, 100000) AS x CREATE (n:Node {vi: x, vs: tostring(x)})", write=True)
+    res = query(
+        "UNWIND range(1, 100000) AS x CREATE (n:Node {vi: x, vs: tostring(x)})",
+        write=True,
+    )
     assert res.nodes_created == 100000
 
     memory_usage_before = memory_usage()
 
     res = query("MATCH (n:Node {vi: 5}) RETURN n")
-    assert res.result_set == [[Node(4, labels=["Node"], properties={"vi": 5, "vs": "5"})]]
+    assert res.result_set == [
+        [Node(4, labels=["Node"], properties={"vi": 5, "vs": "5"})]
+    ]
     runtime_ms = res.run_time_ms
 
     query("CREATE INDEX FOR (n:Node) ON (n.vi, n.vs)", write=True)
 
-    global is_extra
-    if is_extra:
-        common.wait_for_indices_to_sync(common.g)
-
+    common.wait_for_indices_to_sync(common.g)
 
     res = query("MATCH (n:Node {vi: 5}) RETURN n", steps=2)
-    assert res.result_set == [[Node(4, labels=["Node"], properties={"vi": 5, "vs": "5"})]]
+    assert res.result_set == [
+        [Node(4, labels=["Node"], properties={"vi": 5, "vs": "5"})]
+    ]
     assert res.run_time_ms < runtime_ms / 100
 
     res = query("MATCH (n:Node {vs: '5'}) RETURN n", steps=2)
-    assert res.result_set == [[Node(4, labels=["Node"], properties={"vi": 5, "vs": "5"})]]
+    assert res.result_set == [
+        [Node(4, labels=["Node"], properties={"vi": 5, "vs": "5"})]
+    ]
 
     res = query("MATCH (n:Node {vi: 5}) SET n.vi = 0", write=True)
     assert res.properties_set == 1
@@ -1794,7 +1802,9 @@ def test_index():
     assert res.result_set == []
 
     res = query("MATCH (n:Node {vi: 0}) RETURN n")
-    assert res.result_set == [[Node(4, labels=["Node"], properties={"vi": 0, "vs": "5"})]]
+    assert res.result_set == [
+        [Node(4, labels=["Node"], properties={"vi": 0, "vs": "5"})]
+    ]
 
     res = query("MATCH (n:Node {vi: 0}) REMOVE n:Node", write=True)
 
@@ -1804,7 +1814,9 @@ def test_index():
     res = query("MATCH (n {vi: 0}) SET n:Node", write=True)
 
     res = query("MATCH (n:Node {vi: 0}) RETURN n")
-    assert res.result_set == [[Node(4, labels=["Node"], properties={"vi": 0, "vs": "5"})]]
+    assert res.result_set == [
+        [Node(4, labels=["Node"], properties={"vi": 0, "vs": "5"})]
+    ]
 
     res = query("MATCH (n:Node {vi: 0}) DELETE n", write=True)
     assert res.nodes_deleted == 1
@@ -1816,10 +1828,13 @@ def test_index():
     assert res.nodes_created == 1
 
     res = query("MATCH (n:Node {vi: 5}) RETURN n")
-    assert res.result_set == [[Node(4, labels=["Node"], properties={"vi": 5, "vs": "5"})]]
+    assert res.result_set == [
+        [Node(4, labels=["Node"], properties={"vi": 5, "vs": "5"})]
+    ]
 
     query("DROP INDEX FOR (n:Node) ON (n.vi, n.vs)", write=True)
 
+    global is_extra
     if not is_extra:
         # wait for index drop to complete
         sleep(5)
