@@ -1,10 +1,9 @@
 from common import *
 from index_utils import *
 
-sys.path.append(os.path.dirname(os.path.abspath(__file__)) + '/social')
-import social_utils
+import social.social_utils
 
-GRAPH_ID = social_utils.graph_name
+GRAPH_ID = social.social_utils.graph_name
 
 
 class testIndexScanFlow():
@@ -14,7 +13,7 @@ class testIndexScanFlow():
     def setUp(self):
         redis_con = self.env.getConnection()
         self.graph = self.db.select_graph(GRAPH_ID)
-        social_utils.populate_graph(redis_con, self.graph)
+        social.social_utils.populate_graph(redis_con, self.graph)
         self.build_indices()
 
     def tearDown(self):

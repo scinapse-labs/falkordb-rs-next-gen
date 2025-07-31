@@ -14,7 +14,7 @@ def populate_graph(con, graph):
     node_count = 0
 
     # Create country entities
-    with open(os.path.dirname(os.path.abspath(__file__)) + '/resources/countries.csv', 'r') as f:
+    with open(os.path.dirname(os.path.abspath(__file__)) + '/countries.csv', 'r') as f:
         reader = csv.reader(f, delimiter=',')
         for row in reader:
             name = row[0]
@@ -23,7 +23,7 @@ def populate_graph(con, graph):
             node_count += 1
 
     # Create person entities
-    with open(os.path.dirname(os.path.abspath(__file__)) + '/resources/person.csv', 'r') as f:
+    with open(os.path.dirname(os.path.abspath(__file__)) + '/person.csv', 'r') as f:
         reader = csv.reader(f, delimiter=',')
         for row in reader:
             name = row[0]
@@ -40,7 +40,7 @@ def populate_graph(con, graph):
 
     # Connect people to places they've visited.
     edges = []
-    with open(os.path.dirname(os.path.abspath(__file__)) + '/resources/visits.csv', 'r') as f:
+    with open(os.path.dirname(os.path.abspath(__file__)) + '/visits.csv', 'r') as f:
         reader = csv.reader(f, delimiter=',')
         for row in reader:
             person = row[0]
@@ -53,7 +53,7 @@ def populate_graph(con, graph):
             edges.append(edge)
 
     # Connect friends
-    with open(os.path.dirname(os.path.abspath(__file__)) + '/resources/friends.csv', 'r') as f:
+    with open(os.path.dirname(os.path.abspath(__file__)) + '/friends.csv', 'r') as f:
         reader = csv.reader(f, delimiter=',')
         for row in reader:
             person = persons[row[0]]
