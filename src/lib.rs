@@ -1,10 +1,10 @@
 #![allow(clippy::cast_possible_wrap)]
-
 use graph::{
     graph::{
         graph::{Graph, Plan},
         matrix::init,
     },
+    redisearch::{REDISEARCH_INIT_LIBRARY, RediSearch_Init},
     runtime::{
         functions::init_functions,
         runtime::{GetVariables, QueryStatistics, ResultSummary, Runtime, evaluate_param},
@@ -24,15 +24,16 @@ use opentelemetry_sdk::{Resource, trace::SdkTracerProvider};
 use opentelemetry_zipkin::ZipkinExporter;
 use orx_tree::{Bfs, Dfs, NodeRef};
 use redis_module::{
-    Context, NextArg, REDISMODULE_TYPE_METHOD_VERSION, RedisError, RedisGILGuard,
-    RedisModule_Alloc, RedisModule_Calloc, RedisModule_Free, RedisModule_Realloc, RedisModuleIO,
+    Context, NextArg, REDISMODULE_OK, REDISMODULE_TYPE_METHOD_VERSION, RedisError, RedisGILGuard,
+    RedisModule_Alloc, RedisModule_Calloc, RedisModule_Free, RedisModule_Realloc,
+    RedisModule_SubscribeToServerEvent, RedisModuleCtx, RedisModuleEvent, RedisModuleIO,
     RedisModuleTypeMethods, RedisResult, RedisString, RedisValue, Status,
     configuration::ConfigurationFlags, native_types::RedisType, raw, redis_module,
 };
 use std::{
     cell::RefCell,
     collections::HashMap,
-    os::raw::{c_char, c_void},
+    os::raw::{c_char, c_int, c_void},
     ptr::null_mut,
 };
 #[cfg(feature = "fuzz")]
@@ -912,19 +913,31 @@ fn init_zipkin() {
 }
 
 fn graph_init(
-    _: &Context,
+    ctx: &Context,
     _: &Vec<RedisString>,
 ) -> Status {
     #[cfg(feature = "zipkin")]
     init_zipkin();
-
     unsafe {
+        let result = RediSearch_Init(ctx.ctx as _, REDISEARCH_INIT_LIBRARY as c_int);
+        if result == REDISMODULE_OK as c_int {
+            ctx.log_notice("RediSearch initialized successfully.");
+        } else {
+            ctx.log_notice("Failed initializing RediSearch.");
+            return Status::Err;
+        }
         init(
             RedisModule_Alloc,
             RedisModule_Calloc,
             RedisModule_Realloc,
             RedisModule_Free,
         );
+        let res = RedisModule_SubscribeToServerEvent.unwrap()(
+            ctx.ctx,
+            RedisModuleEvent_FlushDB,
+            Some(on_flush),
+        );
+        debug_assert_eq!(res, REDISMODULE_OK as c_int);
     }
     match init_functions() {
         Ok(()) => Status::Ok,
@@ -932,10 +945,20 @@ fn graph_init(
     }
 }
 
+static RedisModuleEvent_FlushDB: RedisModuleEvent = RedisModuleEvent { id: 2, dataver: 1 };
+
 lazy_static! {
     static ref CONFIGURATION_IMPORT_FOLDER: RedisGILGuard<String> =
         RedisGILGuard::new("/var/lib/FalkorDB/import/".into());
     static ref CONFIGURATION_CACHE_SIZE: RedisGILGuard<i64> = RedisGILGuard::new(25.into());
+}
+
+const unsafe extern "C" fn on_flush(
+    _ctx: *mut RedisModuleCtx,
+    _eid: RedisModuleEvent,
+    _subevent: u64,
+    _data: *mut c_void,
+) {
 }
 
 //////////////////////////////////////////////////////

@@ -1,5 +1,6 @@
 use crate::ast::{
-    ExprIR, QuantifierType, QueryGraph, QueryIR, QueryNode, QueryPath, QueryRelationship, Variable,
+    ExprIR, QuantifierType, QueryExpr, QueryGraph, QueryIR, QueryNode, QueryPath,
+    QueryRelationship, Variable,
 };
 use crate::{
     cypher::Token::RParen,
@@ -335,7 +336,7 @@ impl<'a> Lexer<'a> {
                 ':' => (Token::Colon, 1),
                 '.' => match chars.next() {
                     Some('.') => (Token::DotDot, 2),
-                    Some('0'..='9') => Self::lex_numeric(str, chars, pos, 2),
+                    Some('0'..='9') => Self::lex_numeric(str, chars, pos, '.', 2),
                     _ => (Token::Dot, 1),
                 },
                 '|' => (Token::Pipe, 1),
@@ -423,7 +424,7 @@ impl<'a> Lexer<'a> {
                         |unescaped| (Token::String(Rc::new(unescaped)), len + 1),
                     )
                 }
-                '0'..='9' => Self::lex_numeric(str, chars, pos, 1),
+                d @ '0'..='9' => Self::lex_numeric(str, chars, pos, d, 1),
                 '$' => {
                     let mut len = 1;
                     while let Some('a'..='z' | 'A'..='Z' | '0'..='9' | '_') = chars.next() {
@@ -482,63 +483,81 @@ impl<'a> Lexer<'a> {
         (Token::EndOfFile, 0)
     }
 
+    #[allow(clippy::too_many_lines)]
     fn lex_numeric(
         str: &'a str,
         mut chars: Chars,
         pos: usize,
+        current: char,
         mut len: usize,
     ) -> (Token, usize) {
         let mut radix = 10;
         let mut is_float = false;
         let mut is_e = false;
-        if &str[pos..=pos] == "0" && pos + 1 < str.len() {
-            if &str[pos + 1..pos + 2] == "x" {
-                radix = 16;
-                len += 1;
-                chars.next();
-            } else if &str[pos + 1..pos + 2] == "o" {
-                radix = 8;
-                len += 1;
-                chars.next();
-            } else if &str[pos + 1..pos + 2] == "b" {
-                radix = 2;
-                len += 1;
-                chars.next();
+        if current == '0' {
+            let next_char = chars.next();
+            match next_char {
+                Some('x') => {
+                    radix = 16;
+                    len += 1;
+                }
+                Some('o' | '0'..='9') => {
+                    radix = 8;
+                    len += 1;
+                }
+                Some('b') => {
+                    radix = 2;
+                    len += 1;
+                }
+                Some('.') => match chars.next() {
+                    Some(c) if c.is_digit(radix) => {
+                        is_float = true;
+                        len += 2;
+                    }
+                    _ => {
+                        return (Token::Integer(0), len);
+                    }
+                },
+                Some(_) | None => {
+                    return (Token::Integer(0), len);
+                }
             }
-        } else if &str[pos..=pos] == "." {
+        } else if current == '.' {
             is_float = true;
         }
-        while let Some(c) = chars.next() {
-            if c.is_alphanumeric() {
-                if (c == 'e' || c == 'E') && radix == 10 {
-                    is_float = true;
-                    is_e = true;
-                    len += 1;
-                    if pos + len < str.len()
-                        && (&str[pos + len..=pos + len] == "-"
-                            || &str[pos + len..=pos + len] == "+")
-                    {
-                        chars.next();
+        if !is_float {
+            while let Some(c) = chars.next() {
+                if c.is_alphanumeric() {
+                    if (c == 'e' || c == 'E') && radix == 10 {
+                        is_float = true;
+                        is_e = true;
                         len += 1;
+                        if pos + len < str.len()
+                            && (&str[pos + len..=pos + len] == "-"
+                                || &str[pos + len..=pos + len] == "+")
+                        {
+                            chars.next();
+                            len += 1;
+                        }
+                        break;
                     }
+                    len += 1;
+                } else if c == '.' && radix == 10 {
+                    if is_float {
+                        return (
+                            Token::Error(format!("Invalid numeric value at pos: {pos} in {str}")),
+                            len,
+                        );
+                    }
+                    if pos + len + 1 < str.len() && &str[pos + len + 1..=pos + len + 1] == "." {
+                        break;
+                    }
+                    is_float = true;
+                    len += 1;
+                    break;
+                } else {
                     break;
                 }
-                len += 1;
-            } else if c == '.' && radix == 10 {
-                if is_float {
-                    return (
-                        Token::Error(format!("Invalid numeric value at pos: {pos} in {str}")),
-                        len,
-                    );
-                }
-                if pos + len + 1 < str.len() && &str[pos + len + 1..=pos + len + 1] == "." {
-                    break;
-                }
-                is_float = true;
-                len += 1;
-                break;
-            } else {
-                break;
             }
         }
         if is_float {
@@ -574,21 +593,17 @@ impl<'a> Lexer<'a> {
                 }
             }
         }
-        let str = String::from(&str[pos..pos + len]);
-        let token = Lexer::str2number_token(&str);
+        let str = str[pos..].chars().take(len).collect::<String>();
+        let token = Lexer::str2number_token(&str, radix, is_float);
         (token, len)
     }
 
-    fn is_str_float(str: &str) -> bool {
-        str.contains('.')
-            || str.to_lowercase().contains('e')
-                && !(str.starts_with("0x") || str.starts_with("0X"))
-                && !(str.starts_with("0b") || str.starts_with("0B"))
-                && !(str.starts_with("0o") || str.starts_with("0O"))
-    }
-
-    fn str2number_token(str: &str) -> Token {
-        if Lexer::is_str_float(str) {
+    fn str2number_token(
+        str: &str,
+        radix: u32,
+        is_float: bool,
+    ) -> Token {
+        if is_float {
             return match str.parse::<f64>() {
                 Ok(f) if f.is_finite() && !f.is_subnormal() => Token::Float(f),
                 Ok(_) => Token::Error(format!("Float overflow '{str}'")),
@@ -605,19 +620,15 @@ impl<'a> Lexer<'a> {
             return Token::Integer(i64::MIN);
         }
 
-        let (mut offset, mut radix) = (0, 10);
-        if str.starts_with("0x") || str.starts_with("0X") {
+        let mut offset = 0;
+        if radix == 8 {
+            if str.starts_with("0o") || str.starts_with("0O") {
+                offset = 2;
+            } else if 1 < str.len() && str.starts_with('0') {
+                offset = 1;
+            }
+        } else if radix != 10 {
             offset = 2;
-            radix = 16;
-        } else if str.starts_with("0b") || str.starts_with("0B") {
-            offset = 2;
-            radix = 2;
-        } else if str.starts_with("0o") || str.starts_with("0O") {
-            offset = 2;
-            radix = 8;
-        } else if 1 < str.len() && str.starts_with('0') {
-            offset = 1;
-            radix = 8;
         }
         let number_str = &str[offset..];
         i64::from_str_radix(number_str, radix).map_or_else(
@@ -981,12 +992,12 @@ impl<'a> Parser<'a> {
                 let headers = optional_match_token!(self.lexer => With)
                     && optional_match_token!(self.lexer => Headers);
                 let delimiter = if optional_match_token!(self.lexer => Delimiter) {
-                    self.parse_expr()?
+                    Rc::new(self.parse_expr()?)
                 } else {
-                    tree!(ExprIR::String(Rc::new(String::from(','))))
+                    Rc::new(tree!(ExprIR::String(Rc::new(String::from(',')))))
                 };
                 match_token!(self.lexer => From);
-                let file_path = self.parse_expr()?;
+                let file_path = Rc::new(self.parse_expr()?);
                 match_token!(self.lexer => As);
                 let ident: Rc<String> = self.parse_ident()?;
                 Ok(QueryIR::LoadCsv {
@@ -1032,7 +1043,10 @@ impl<'a> Parser<'a> {
         match_token!(self.lexer, LParen);
         Ok(QueryIR::Call(
             ident,
-            self.parse_expression_list(ExpressionListType::ZeroOrMoreClosedBy(RParen))?,
+            self.parse_expression_list(ExpressionListType::ZeroOrMoreClosedBy(RParen))?
+                .into_iter()
+                .map(Rc::new)
+                .collect(),
         ))
     }
 
@@ -1057,7 +1071,7 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_unwind_clause(&mut self) -> Result<QueryIR, String> {
-        let list = self.parse_expr()?;
+        let list = Rc::new(self.parse_expr()?);
         match_token!(self.lexer => As);
         let ident = self.parse_ident()?;
         Ok(QueryIR::Unwind(
@@ -1097,15 +1111,18 @@ impl<'a> Parser<'a> {
         is_detach: bool,
     ) -> Result<QueryIR, String> {
         Ok(QueryIR::Delete(
-            self.parse_expression_list(ExpressionListType::OneOrMore)?,
+            self.parse_expression_list(ExpressionListType::OneOrMore)?
+                .into_iter()
+                .map(Rc::new)
+                .collect(),
             is_detach,
         ))
     }
 
-    fn parse_where(&mut self) -> Result<Option<DynTree<ExprIR>>, String> {
+    fn parse_where(&mut self) -> Result<Option<QueryExpr>, String> {
         if let Token::Keyword(Keyword::Where, _) = self.lexer.current() {
             self.lexer.next();
-            return Ok(Some(self.parse_expr()?));
+            return Ok(Some(Rc::new(self.parse_expr()?)));
         }
         Ok(None)
     }
@@ -1116,10 +1133,10 @@ impl<'a> Parser<'a> {
     ) -> Result<QueryIR, String> {
         let distinct = optional_match_token!(self.lexer => Distinct);
         let exprs = if optional_match_token!(self.lexer, Star) {
-            let mut res: Vec<(Variable, DynTree<ExprIR>)> = self
+            let mut res: Vec<(Variable, QueryExpr)> = self
                 .vars
                 .values()
-                .map(|v| (v.clone(), tree!(ExprIR::Variable(v.clone()))))
+                .map(|v| (v.clone(), Rc::new(tree!(ExprIR::Variable(v.clone())))))
                 .collect();
             res.sort_by(|a, b| a.0.name.cmp(&b.0.name));
             res
@@ -1132,7 +1149,7 @@ impl<'a> Parser<'a> {
             vec![]
         };
         let skip = if optional_match_token!(self.lexer => Skip) {
-            let skip = self.parse_expr()?;
+            let skip = Rc::new(self.parse_expr()?);
             match skip.root().data() {
                 ExprIR::Integer(i) => {
                     if *i < 0 {
@@ -1153,7 +1170,7 @@ impl<'a> Parser<'a> {
             None
         };
         let limit = if optional_match_token!(self.lexer => Limit) {
-            let limit = self.parse_expr()?;
+            let limit = Rc::new(self.parse_expr()?);
             match limit.root().data() {
                 ExprIR::Integer(i) => {
                     if *i < 0 {
@@ -1197,10 +1214,10 @@ impl<'a> Parser<'a> {
     ) -> Result<QueryIR, String> {
         let distinct = optional_match_token!(self.lexer => Distinct);
         let exprs = if optional_match_token!(self.lexer, Star) {
-            let mut res: Vec<(Variable, DynTree<ExprIR>)> = self
+            let mut res: Vec<(Variable, QueryExpr)> = self
                 .vars
                 .values()
-                .map(|v| (v.clone(), tree!(ExprIR::Variable(v.clone()))))
+                .map(|v| (v.clone(), Rc::new(tree!(ExprIR::Variable(v.clone())))))
                 .collect();
             res.sort_by(|a, b| a.0.name.cmp(&b.0.name));
             res
@@ -1213,7 +1230,7 @@ impl<'a> Parser<'a> {
             vec![]
         };
         let skip = if optional_match_token!(self.lexer => Skip) {
-            let skip = self.parse_expr()?;
+            let skip = Rc::new(self.parse_expr()?);
             match skip.root().data() {
                 ExprIR::Integer(i) => {
                     if *i < 0 {
@@ -1234,7 +1251,7 @@ impl<'a> Parser<'a> {
             None
         };
         let limit = if optional_match_token!(self.lexer => Limit) {
-            let limit = self.parse_expr()?;
+            let limit = Rc::new(self.parse_expr()?);
             match limit.root().data() {
                 ExprIR::Integer(i) => {
                     if *i < 0 {
@@ -1780,11 +1797,11 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_named_exprs(&mut self) -> Result<Vec<(Variable, DynTree<ExprIR>)>, String> {
+    fn parse_named_exprs(&mut self) -> Result<Vec<(Variable, QueryExpr)>, String> {
         let mut named_exprs = Vec::new();
         loop {
             let pos = self.lexer.pos(false);
-            let expr = self.parse_expr()?;
+            let expr = Rc::new(self.parse_expr()?);
             if let Token::Keyword(Keyword::As, _) = self.lexer.current() {
                 self.lexer.next();
                 let ident = self.parse_ident()?;
@@ -2038,11 +2055,11 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_orderby(&mut self) -> Result<Vec<(DynTree<ExprIR>, bool)>, String> {
+    fn parse_orderby(&mut self) -> Result<Vec<(QueryExpr, bool)>, String> {
         match_token!(self.lexer => By);
         let mut orderby = vec![];
         loop {
-            let expr = self.parse_expr()?;
+            let expr = Rc::new(self.parse_expr()?);
             let is_ascending = optional_match_token!(self.lexer => Asc)
                 || optional_match_token!(self.lexer => Ascending);
             let is_descending = !is_ascending
@@ -2064,7 +2081,7 @@ impl<'a> Parser<'a> {
 
     fn parse_set_items(
         &mut self,
-        set_items: &mut Vec<(DynTree<ExprIR>, DynTree<ExprIR>, bool)>,
+        set_items: &mut Vec<(QueryExpr, QueryExpr, bool)>,
     ) -> Result<(), String> {
         loop {
             let (mut expr, recurse) = self.parse_primary_expr()?;
@@ -2078,8 +2095,8 @@ impl<'a> Parser<'a> {
                     expr = self.parse_property_lookup(expr)?;
                 }
                 match_token!(self.lexer, Equal);
-                let value = self.parse_expr()?;
-                set_items.push((expr, value, false));
+                let value = Rc::new(self.parse_expr()?);
+                set_items.push((Rc::new(expr), value, false));
             } else if self.lexer.current() == Token::Colon {
                 if let ExprIR::Variable(id) = expr.root().data() {
                     if id.ty != Type::Node {
@@ -2099,7 +2116,7 @@ impl<'a> Parser<'a> {
                     expr,
                     tree!(ExprIR::List; self.parse_labels()?.into_iter().map(|l| tree!(ExprIR::String(l))))
                 );
-                set_items.push((expr, tree!(ExprIR::Null), false));
+                set_items.push((Rc::new(expr), Rc::new(tree!(ExprIR::Null)), false));
             } else {
                 if let ExprIR::Variable(id) = expr.root().data() {
                     if id.ty != Type::Node && id.ty != Type::Relationship {
@@ -2119,8 +2136,8 @@ impl<'a> Parser<'a> {
                     match_token!(self.lexer, PlusEqual);
                     true
                 };
-                let value = self.parse_expr()?;
-                set_items.push((expr, value, !plus_equals));
+                let value = Rc::new(self.parse_expr()?);
+                set_items.push((Rc::new(expr), value, !plus_equals));
             }
 
             if !optional_match_token!(self.lexer, Comma) {
@@ -2142,7 +2159,7 @@ impl<'a> Parser<'a> {
                     self.lexer.next();
                     expr = self.parse_property_lookup(expr)?;
                 }
-                remove_items.push(expr);
+                remove_items.push(Rc::new(expr));
             } else if self.lexer.current() == Token::Colon {
                 expr = tree!(
                     ExprIR::FuncInvocation(
@@ -2151,7 +2168,7 @@ impl<'a> Parser<'a> {
                     expr,
                     tree!(ExprIR::List; self.parse_labels()?.into_iter().map(|l| tree!(ExprIR::String(l))))
                 );
-                remove_items.push(expr);
+                remove_items.push(Rc::new(expr));
             } else {
                 return Err(self
                     .lexer
