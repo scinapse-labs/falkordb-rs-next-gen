@@ -24,6 +24,7 @@ use unescaper::unescape;
 #[derive(Debug, PartialEq, Clone)]
 enum Keyword {
     Call,
+    Yield,
     Optional,
     Match,
     Unwind,
@@ -74,6 +75,8 @@ enum Keyword {
     Delimiter,
     Drop,
     Index,
+    Fulltext,
+    Vector,
     For,
     On,
 }
@@ -117,6 +120,7 @@ enum Token {
 
 const KEYWORDS: &[(&str, Keyword)] = &[
     ("CALL", Keyword::Call),
+    ("YIELD", Keyword::Yield),
     ("OPTIONAL", Keyword::Optional),
     ("MATCH", Keyword::Match),
     ("UNWIND", Keyword::Unwind),
@@ -167,6 +171,8 @@ const KEYWORDS: &[(&str, Keyword)] = &[
     ("DELIMITER", Keyword::Delimiter),
     ("DROP", Keyword::Drop),
     ("INDEX", Keyword::Index),
+    ("FULLTEXT", Keyword::Fulltext),
+    ("VECTOR", Keyword::Vector),
     ("FOR", Keyword::For),
     ("ON", Keyword::On),
 ];
@@ -848,10 +854,25 @@ impl<'a> Parser<'a> {
 
     pub fn parse(&mut self) -> Result<QueryIR, String> {
         let pos = self.lexer.pos;
-        if optional_match_token!(self.lexer => Create)
-            && optional_match_token!(self.lexer => Index)
-            && optional_match_token!(self.lexer => For)
-        {
+        let ir = if let Some(ir) = self.parse_index_ops()? {
+            ir
+        } else {
+            self.lexer.set_pos(pos);
+            self.parse_query()?
+        };
+        ir.validate()?;
+        Ok(ir)
+    }
+
+    fn parse_index_ops(&mut self) -> Result<Option<QueryIR>, String> {
+        if optional_match_token!(self.lexer => Create) {
+            let fulltext = optional_match_token!(self.lexer => Fulltext);
+            let vector = !fulltext && optional_match_token!(self.lexer => Vector);
+            let index = optional_match_token!(self.lexer => Index);
+            if !index {
+                return Ok(None);
+            }
+            match_token!(self.lexer => For);
             match_token!(self.lexer, LParen);
             let nkey = self.parse_ident()?;
             match_token!(self.lexer, Colon);
@@ -879,7 +900,7 @@ impl<'a> Parser<'a> {
             }
             match_token!(self.lexer, RParen);
             match_token!(self.lexer, EndOfFile);
-            return Ok(QueryIR::CreateIndex { label, attrs });
+            return Ok(Some(QueryIR::CreateIndex { label, attrs }));
         }
         if optional_match_token!(self.lexer => Drop)
             && optional_match_token!(self.lexer => Index)
@@ -912,12 +933,9 @@ impl<'a> Parser<'a> {
             }
             match_token!(self.lexer, RParen);
             match_token!(self.lexer, EndOfFile);
-            return Ok(QueryIR::DropIndex { label, attrs });
+            return Ok(Some(QueryIR::DropIndex { label, attrs }));
         }
-        self.lexer.set_pos(pos);
-        let mut ir = self.parse_query()?;
-        ir.validate()?;
-        Ok(ir)
+        Ok(None)
     }
 
     fn parse_query(&mut self) -> Result<QueryIR, String> {
@@ -1039,15 +1057,33 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_call_clause(&mut self) -> Result<QueryIR, String> {
-        let ident = self.parse_dotted_ident()?;
+        let function_name = self.parse_dotted_ident()?;
+        let func = get_functions().get(function_name.as_str(), &FnType::Procedure(vec![]))?;
         match_token!(self.lexer, LParen);
-        Ok(QueryIR::Call(
-            ident,
-            self.parse_expression_list(ExpressionListType::ZeroOrMoreClosedBy(RParen))?
-                .into_iter()
-                .map(Rc::new)
-                .collect(),
-        ))
+        let args = self
+            .parse_expression_list(ExpressionListType::ZeroOrMoreClosedBy(RParen))?
+            .into_iter()
+            .map(Rc::new)
+            .collect();
+        let mut named_outputs = vec![];
+        let filter = if optional_match_token!(self.lexer => Yield) {
+            let ident = self.parse_ident()?;
+            named_outputs.push(self.create_var(Some(ident), Type::Any)?);
+            while optional_match_token!(self.lexer, Comma) {
+                let ident = self.parse_ident()?;
+                named_outputs.push(self.create_var(Some(ident), Type::Any)?);
+            }
+            self.parse_where()?
+        } else if let FnType::Procedure(defult_outputs) = &func.fn_type {
+            for output in defult_outputs {
+                named_outputs.push(self.create_var(Some(Rc::new(output.clone())), Type::Any)?);
+            }
+            None
+        } else {
+            None
+        };
+
+        Ok(QueryIR::Call(func, args, named_outputs, filter))
     }
 
     fn parse_dotted_ident(&mut self) -> Result<Rc<String>, String> {

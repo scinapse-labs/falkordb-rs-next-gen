@@ -83,11 +83,9 @@ impl GetVariables for DynNode<'_, IR> {
         for node in self.walk::<Bfs>() {
             match node {
                 IR::Optional(variables) => vars.extend(variables.iter().cloned()),
-                IR::Call(name, _) => vars.push(Variable {
-                    name: Some(name.clone()),
-                    id: 0,
-                    ty: Type::Any,
-                }),
+                IR::Call(_, _, named_outputs) => {
+                    vars.extend(named_outputs.clone());
+                }
                 IR::Unwind(_, variable) => vars.push(variable.clone()),
                 IR::Create(query_graph) | IR::Merge(query_graph, _, _) => {
                     for node in query_graph.nodes() {
@@ -152,11 +150,7 @@ impl ReturnNames for DynNode<'_, IR> {
             IR::Commit => self
                 .get_child(0)
                 .map_or(vec![], |child| child.get_return_names()),
-            IR::Call(name, _) => vec![Variable {
-                name: Some(name.clone()),
-                id: 0,
-                ty: Type::Any,
-            }],
+            IR::Call(_, _, named_outputs) => named_outputs.clone(),
             IR::Sort(_) | IR::Skip(_) | IR::Limit(_) | IR::Distinct => {
                 self.child(0).get_return_names()
             }
@@ -876,8 +870,7 @@ impl<'a> Runtime<'a> {
                         self.record.borrow_mut().push((idx.clone(), res.clone()));
                     }))
             }
-            IR::Call(name, trees) => {
-                let func = self.functions.get(name, &FnType::Procedure)?;
+            IR::Call(func, trees, name_outputs) => {
                 let args = trees
                     .iter()
                     .map(|ir| self.run_expr(ir, ir.root().idx(), &Env::default(), None))
@@ -892,16 +885,16 @@ impl<'a> Runtime<'a> {
                 match res {
                     Value::List(arr) => Ok(arr
                         .into_iter()
-                        .map(|v| {
+                        .map(move |v| {
                             let mut env = Env::default();
-                            env.insert(
-                                &Variable {
-                                    name: Some(name.clone()),
-                                    id: 0,
-                                    ty: Type::Any,
-                                },
-                                v,
-                            );
+                            if let Value::Map(map) = v {
+                                for output in name_outputs {
+                                    env.insert(
+                                        output,
+                                        map.get(output.name.as_ref().unwrap()).unwrap().clone(),
+                                    );
+                                }
+                            }
                             Ok(env)
                         })
                         .cond_inspect(self.inspect, move |res| {

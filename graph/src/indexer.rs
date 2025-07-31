@@ -322,4 +322,14 @@ impl Indexer {
             .map(|index| index.fields.keys().cloned().collect())
             .unwrap_or_default()
     }
+
+    pub fn index_info(&self) -> Vec<(u64, Vec<Rc<String>>)> {
+        self.index
+            .iter()
+            .map(|(id, index)| {
+                let attrs = index.fields.keys().cloned().collect();
+                (*id, attrs)
+            })
+            .collect()
+    }
 }

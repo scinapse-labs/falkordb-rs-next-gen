@@ -8,6 +8,7 @@ use crate::{
         SupportAggregation, Variable,
     },
     indexer::IndexQuery,
+    runtime::functions::GraphFn,
     tree,
 };
 
@@ -15,7 +16,7 @@ use crate::{
 pub enum IR {
     Empty,
     Optional(Vec<Variable>),
-    Call(Rc<String>, Vec<QueryExpr>),
+    Call(Rc<GraphFn>, Vec<QueryExpr>, Vec<Variable>),
     Unwind(QueryExpr, Variable),
     Create(QueryGraph),
     Merge(
@@ -73,7 +74,7 @@ impl Display for IR {
         match self {
             Self::Empty => write!(f, "Empty"),
             Self::Optional(_) => write!(f, "Optional"),
-            Self::Call(name, _) => write!(f, "Call({name})"),
+            Self::Call(func, _, _) => write!(f, "Call({})", func.name),
             Self::Unwind(_, alias) => {
                 write!(f, "Unwind({})", alias.as_str())
             }
@@ -281,7 +282,15 @@ impl Planner {
         ir: QueryIR,
     ) -> DynTree<IR> {
         match ir {
-            QueryIR::Call(name, exprs) => tree!(IR::Call(name, exprs)),
+            QueryIR::Call(name, exprs, named_outputs, filter) => {
+                if let Some(filter) = filter {
+                    return tree!(
+                        IR::Filter(filter),
+                        tree!(IR::Call(name, exprs, named_outputs))
+                    );
+                }
+                tree!(IR::Call(name, exprs, named_outputs))
+            }
             QueryIR::Match {
                 pattern,
                 filter,

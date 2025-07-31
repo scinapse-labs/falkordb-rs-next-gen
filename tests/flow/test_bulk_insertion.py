@@ -26,11 +26,6 @@ def ping_server(stop_event, res, self):
 class testGraphBulkInsertFlow(FlowTestsBase):
     def __init__(self):
         self.env, self.db = Env()
-
-        # skip test if we're running under Valgrind
-        if VALGRIND:
-            self.env.skip() # valgrind is not working correctly with replication
-
         global redis_graph
         self.port = self.env.envRunner.port
         redis_graph = self.db.select_graph(GRAPH_ID)

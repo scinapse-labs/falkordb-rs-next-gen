@@ -22,9 +22,9 @@ keys = {
 
 class testReplicationState():
     def __init__(self):
-        # skip test if we're running under Valgrind
-        if VALGRIND or SANITIZER:
-            Environment.skip(None) # valgrind is not working correctly with replication
+        # skip test if we're running under sanitizer
+        if SANITIZER:
+            Environment.skip(None) # sanitizer is not working correctly with replication
 
         self.env, self.db = Env(useSlaves=True, env='oss', moduleArgs='VKEY_MAX_ENTITY_COUNT 10')
         self.master = self.env.getConnection()

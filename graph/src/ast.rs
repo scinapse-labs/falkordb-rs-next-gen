@@ -565,7 +565,12 @@ pub type QueryExpr = Rc<DynTree<ExprIR>>;
 
 #[derive(Debug)]
 pub enum QueryIR {
-    Call(Rc<String>, Vec<QueryExpr>),
+    Call(
+        Rc<GraphFn>,
+        Vec<QueryExpr>,
+        Vec<Variable>,
+        Option<QueryExpr>,
+    ),
     Match {
         pattern: QueryGraph,
         filter: Option<QueryExpr>,
@@ -622,8 +627,8 @@ impl Display for QueryIR {
         f: &mut std::fmt::Formatter<'_>,
     ) -> std::fmt::Result {
         match self {
-            Self::Call(name, args) => {
-                writeln!(f, "{name}():")?;
+            Self::Call(func, args, _, _) => {
+                writeln!(f, "{}():", func.name)?;
                 for arg in args {
                     write!(f, "{arg}")?;
                 }
@@ -691,7 +696,7 @@ impl Display for QueryIR {
 }
 
 impl QueryIR {
-    pub fn validate(&mut self) -> Result<(), String> {
+    pub fn validate(&self) -> Result<(), String> {
         let mut env = HashSet::new();
         self.inner_validate(std::iter::empty(), &mut env)
     }
@@ -706,7 +711,7 @@ impl QueryIR {
         T: Iterator<Item = &'a Self>,
     {
         match self {
-            Self::Call(_, args) => {
+            Self::Call(_, args, _, _) => {
                 for arg in args {
                     arg.validate(false, env)?;
                 }

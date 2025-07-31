@@ -980,4 +980,12 @@ impl Graph {
                 .collect()
         })
     }
+
+    pub fn index_info(&self) -> Vec<(Rc<String>, Vec<Rc<String>>)> {
+        self.node_indexer
+            .index_info()
+            .into_iter()
+            .map(|(id, attrs)| (self.node_labels[id as usize].clone(), attrs))
+            .collect()
+    }
 }

@@ -1,4 +1,4 @@
-from common import Env, FalkorDB, SANITIZER, VALGRIND
+from common import Env, FalkorDB, SANITIZER
 from random_graph import create_random_schema, create_random_graph
 from graph_utils import graph_eq
 import time
@@ -240,9 +240,9 @@ class testGraphCopy():
         src_graph.delete()
 
     def test_08_replicated_copy(self):
-        # skip test if we're running under Valgrind or sanitizer
-        if VALGRIND or SANITIZER:
-            self.env.skip() # valgrind is not working correctly with replication
+        # skip test if we're running under sanitizer
+        if SANITIZER:
+            self.env.skip() # sanitizer is not working correctly with replication
 
         # make sure the GRAPH.COPY command is replicated
 

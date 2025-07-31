@@ -299,10 +299,6 @@ class testIndexCreationFlow():
             self.env.assertContains("'a' not defined", str(e))
 
     def test08_async_index_creation(self):
-        # skip test if we're running under Valgrind
-        if VALGRIND:
-            self.env.skip()
-
         # 1. create a large graph
         # 2. create an index
         # 3. while the index is being constructed make sure:
