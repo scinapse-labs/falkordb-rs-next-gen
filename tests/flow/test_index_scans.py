@@ -1,7 +1,7 @@
 from common import *
 from index_utils import *
 
-sys.path.append(os.path.dirname(os.path.abspath(__file__)) + '/../../demo/social')
+sys.path.append(os.path.dirname(os.path.abspath(__file__)) + '/social')
 import social_utils
 
 GRAPH_ID = social_utils.graph_name

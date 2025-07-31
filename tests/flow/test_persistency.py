@@ -237,7 +237,7 @@ class testGraphPersistency():
         graphname = "bulk_inserted_graph"
 
 
-        csv_path = os.path.dirname(os.path.abspath(__file__)) + '/../../demo/social/resources/bulk_formatted/'
+        csv_path = os.path.dirname(os.path.abspath(__file__)) + '/social/resources/bulk_formatted/'
         res = runner.invoke(bulk_insert, ['--server-url', f"redis://localhost:{port}",
                                           '--nodes', csv_path + 'Person.csv',
                                           '--nodes', csv_path + 'Country.csv',

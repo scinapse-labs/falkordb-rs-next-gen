@@ -2,7 +2,7 @@ from common import *
 
 from reversepattern import ReversePattern
 
-sys.path.append(os.path.dirname(os.path.abspath(__file__)) + '/../../demo/social/')
+sys.path.append(os.path.dirname(os.path.abspath(__file__)) + '/social/')
 import social_queries as queries
 import social_utils
 
