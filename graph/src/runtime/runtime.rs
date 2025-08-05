@@ -1353,7 +1353,7 @@ impl<'a> Runtime<'a> {
                 self.stats.borrow_mut().indexes_created += attrs.len();
                 self.g
                     .borrow_mut()
-                    .create_index(index_type, entity_type, label, attrs);
+                    .create_index(index_type, entity_type, label, attrs)?;
                 Ok(Box::new(empty()))
             }
             IR::DropIndex {

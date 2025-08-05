@@ -903,13 +903,16 @@ impl Graph {
         entity_type: &EntityType,
         label: &Rc<String>,
         attrs: &Vec<Rc<String>>,
-    ) {
+    ) -> Result<(), String> {
         match entity_type {
             EntityType::Node => {
                 self.get_label_matrix_mut(label);
+                for attr in attrs {
+                    self.get_or_add_node_attribute_id(attr);
+                }
                 let label_id = self.get_label_id(label).unwrap();
                 self.node_indexer
-                    .create_index(index_type, label_id.0 as u64, attrs);
+                    .create_index(index_type, label_id.0 as u64, attrs)?;
                 let attr_ids = attrs
                     .iter()
                     .filter_map(|attr| self.get_node_attribute_id(attr))
@@ -918,6 +921,7 @@ impl Graph {
             }
             EntityType::Relationship => {}
         }
+        Ok(())
     }
 
     fn populate_index(

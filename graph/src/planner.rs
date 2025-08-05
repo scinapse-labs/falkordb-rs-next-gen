@@ -79,25 +79,25 @@ impl Display for IR {
         match self {
             Self::Empty => write!(f, "Empty"),
             Self::Optional(_) => write!(f, "Optional"),
-            Self::Call(func, _, _) => write!(f, "Call({})", func.name),
-            Self::Unwind(_, alias) => {
-                write!(f, "Unwind({})", alias.as_str())
+            Self::Call(_, _, _) => write!(f, "Call"),
+            Self::Unwind(_, _) => {
+                write!(f, "Unwind")
             }
-            Self::Create(pattern) => write!(f, "Create {pattern}"),
-            Self::Merge(pattern, _, _) => write!(f, "Merge {pattern}"),
+            Self::Create(pattern) => write!(f, "Create | {pattern}"),
+            Self::Merge(pattern, _, _) => write!(f, "Merge | {pattern}"),
             Self::Delete(_, _) => write!(f, "Delete"),
             Self::Set(_) => write!(f, "Set"),
             Self::Remove(_) => write!(f, "Remove"),
-            Self::NodeByLabelScan(node) => write!(f, "Node By Label Scan {node}"),
+            Self::NodeByLabelScan(node) => write!(f, "Node By Label Scan | {node}"),
             Self::NodeByIndexScan { node, .. } => {
-                write!(f, "Node By Index Scan {node}")
+                write!(f, "Node By Index Scan | {node}")
             }
-            Self::RelationshipScan(rel) => write!(f, "RelationshipScan {rel}"),
-            Self::ExpandInto(rel) => write!(f, "Expand Into {rel}"),
+            Self::RelationshipScan(rel) => write!(f, "RelationshipScan | {rel}"),
+            Self::ExpandInto(rel) => write!(f, "Expand Into | {rel}"),
             Self::PathBuilder(_) => write!(f, "PathBuilder"),
             Self::Filter(_) => write!(f, "Filter"),
             Self::CartesianProduct => write!(f, "Cartesian Product"),
-            Self::LoadCsv { .. } => write!(f, "LoadCsv"),
+            Self::LoadCsv { .. } => write!(f, "Load CSV"),
             Self::Sort(_) => write!(f, "Sort"),
             Self::Skip(_) => write!(f, "Skip"),
             Self::Limit(_) => write!(f, "Limit"),
@@ -106,10 +106,10 @@ impl Display for IR {
             Self::Commit => write!(f, "Commit"),
             Self::Distinct => write!(f, "Distinct"),
             Self::CreateIndex { label, attrs, .. } => {
-                write!(f, "CreateIndex on :{label}({attrs:?})")
+                write!(f, "Create Index | :{label}({attrs:?})")
             }
             Self::DropIndex { label, attrs, .. } => {
-                write!(f, "DropIndex on :{label}({attrs:?})")
+                write!(f, "Drop Index | :{label}({attrs:?})")
             }
         }
     }

@@ -304,6 +304,11 @@ impl<'a> Lexer<'a> {
         self.cached_current.0.clone()
     }
 
+    pub fn current_str(&self) -> &str {
+        let pos = self.pos(false);
+        &self.str[pos..pos + self.cached_current.1]
+    }
+
     #[inline]
     #[allow(clippy::too_many_lines)]
     fn get_token(
@@ -558,7 +563,14 @@ impl<'a> Lexer<'a> {
                             len,
                         );
                     }
-                    if pos + len + 1 < str.len() && &str[pos + len + 1..=pos + len + 1] == "." {
+                    if pos + len + 1 < str.len()
+                        && (&str[pos + len + 1..=pos + len + 1] == "."
+                            || !&str[pos + len + 1..]
+                                .chars()
+                                .next()
+                                .unwrap()
+                                .is_ascii_digit())
+                    {
                         break;
                     }
                     is_float = true;
@@ -674,11 +686,12 @@ macro_rules! match_token {
             Token::$token => {
                 $lexer.next();
             }
-            token => {
+            _ => {
                 return Err($lexer.format_error(&format!(
-                    "Invalid input {token:?} Expected {:?}",
+                    "Invalid input '{}': expected {:?}",
+                    $lexer.current_str(),
                     Token::$token
-                )))
+                )));
             }
         }
     };
@@ -687,11 +700,12 @@ macro_rules! match_token {
             Token::Keyword(Keyword::$token, _) => {
                 $lexer.next();
             }
-            token => {
+            _ => {
                 return Err($lexer.format_error(&format!(
-                    "Invalid input {token:?}  Expected Keyword {:?}",
+                    "Invalid input '{}': expected {:?}",
+                    $lexer.current_str(),
                     Keyword::$token
-                )))
+                )));
             }
         }
     };
@@ -1086,11 +1100,7 @@ impl<'a> Parser<'a> {
             clauses.push(self.parse_return_clause(write)?);
             write = false;
         }
-        if self.lexer.current() != Token::EndOfFile {
-            return Err(self
-                .lexer
-                .format_error(&format!("Invalid input '{:?}'", self.lexer.current())));
-        }
+        match_token!(self.lexer, EndOfFile);
         Ok(QueryIR::Query(clauses, write))
     }
 
@@ -1161,7 +1171,7 @@ impl<'a> Parser<'a> {
                 self.lexer.next();
                 self.parse_remove_clause()
             }
-            token => Err(self.lexer.format_error(&format!("Invalid input {token:?}"))),
+            _ => unreachable!(),
         }
     }
 
@@ -1359,6 +1369,11 @@ impl<'a> Parser<'a> {
     ) -> Result<QueryIR, String> {
         let distinct = optional_match_token!(self.lexer => Distinct);
         let exprs = if optional_match_token!(self.lexer, Star) {
+            if !self.vars.iter().any(|v| v.1.name.is_some()) {
+                return Err(self
+                    .lexer
+                    .format_error("RETURN * is not allowed when there are no variables in scope"));
+            }
             let mut res: Vec<(Variable, QueryExpr)> = self
                 .vars
                 .values()
@@ -1938,7 +1953,10 @@ impl<'a> Parser<'a> {
                 self.lexer.next();
                 Ok(id)
             }
-            token => Err(self.lexer.format_error(&format!("Invalid input {token:?}"))),
+            _ => Err(self.lexer.format_error(&format!(
+                "Invalid input '{}': expected an identifier",
+                self.lexer.current_str()
+            ))),
         }
     }
 
@@ -2317,7 +2335,7 @@ impl<'a> Parser<'a> {
             } else {
                 return Err(self
                     .lexer
-                    .format_error(format!("Invalid input {:?}", self.lexer.current()).as_str()));
+                    .format_error(&format!("Invalid input '{}'", self.lexer.current_str())));
             }
 
             if !optional_match_token!(self.lexer, Comma) {

@@ -915,6 +915,29 @@ pub fn init_functions() -> Result<(), Functions> {
         ]),
     );
 
+    funcs.add(
+        "db.idx.fulltext.createNodeIndex",
+        db_fulltext_create_node_index,
+        true,
+        vec![Type::Map],
+        FnType::Procedure(vec![]),
+    );
+    funcs.add(
+        "db.idx.fulltext.drop",
+        db_fulltext_drop_node_index,
+        true,
+        vec![],
+        FnType::Procedure(vec![]),
+    );
+
+    funcs.add(
+        "db.idx.fulltext.queryNodes",
+        db_fulltext_query_nodes,
+        false,
+        vec![Type::Map],
+        FnType::Procedure(vec![String::from("node"), String::from("score")]),
+    );
+
     FUNCTIONS.set(funcs)
 }
 
@@ -2388,4 +2411,25 @@ fn db_indexes(
             })
             .collect(),
     ))
+}
+
+fn db_fulltext_create_node_index(
+    _runtime: &Runtime,
+    _args: Vec<Value>,
+) -> Result<Value, String> {
+    Ok(Value::List(vec![]))
+}
+
+fn db_fulltext_drop_node_index(
+    _runtime: &Runtime,
+    _args: Vec<Value>,
+) -> Result<Value, String> {
+    Ok(Value::List(vec![]))
+}
+
+fn db_fulltext_query_nodes(
+    _runtime: &Runtime,
+    _args: Vec<Value>,
+) -> Result<Value, String> {
+    Ok(Value::List(vec![]))
 }

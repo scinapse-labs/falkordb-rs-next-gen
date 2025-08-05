@@ -94,11 +94,19 @@ impl Indexer {
         index_type: &IndexType,
         label: u64,
         attrs: &Vec<Rc<String>>,
-    ) {
-        let mut attrs = attrs.clone();
-        if let Some(a) = self.index.get(&label) {
-            attrs.extend(a.fields.keys().cloned());
-        }
+    ) -> Result<(), String> {
+        let attrs = if let Some(a) = self.index.get_mut(&label) {
+            for attr in attrs {
+                if a.fields.contains_key(attr) {
+                    return Err(format!("Attribute '{attr}' is already indexed"));
+                }
+                a.fields
+                    .insert(attr.clone(), Rc::new(CString::new(attr.as_str()).unwrap()));
+            }
+            a.fields.keys().cloned().collect()
+        } else {
+            attrs.clone()
+        };
         unsafe {
             let options = RediSearch_CreateIndexOptions();
             // RediSearch_IndexOptionsSetLanguage(options, idx->language);
@@ -130,6 +138,7 @@ impl Indexer {
                 },
             );
         }
+        Ok(())
     }
 
     pub fn drop_index(
