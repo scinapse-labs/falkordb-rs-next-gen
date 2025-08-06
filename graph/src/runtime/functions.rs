@@ -4,9 +4,12 @@
 #![allow(clippy::cast_precision_loss)]
 #![allow(clippy::cast_possible_truncation)]
 
-use crate::runtime::{
-    runtime::Runtime,
-    value::{Value, ValueTypeOf},
+use crate::{
+    indexer::IndexType,
+    runtime::{
+        runtime::Runtime,
+        value::{Value, ValueTypeOf},
+    },
 };
 use itertools::Itertools;
 use ordermap::OrderMap;
@@ -2384,19 +2387,25 @@ fn db_indexes(
                 map.insert(Rc::new(String::from("label")), Value::String(label));
                 map.insert(
                     Rc::new(String::from("properties")),
-                    Value::List(
-                        attrs
-                            .iter()
-                            .map(|(f, _)| Value::String(f.clone()))
-                            .collect(),
-                    ),
+                    Value::List(attrs.keys().map(|f| Value::String(f.clone())).collect()),
                 );
                 let mut types_map = OrderMap::new();
-                for (attr, _) in attrs {
-                    types_map.insert(
-                        attr,
-                        Value::List(vec![Value::String(Rc::new(String::from("RANGE")))]),
-                    );
+                for (attr, fields) in attrs {
+                    let mut types = vec![];
+                    for field in fields {
+                        match field.ty {
+                            IndexType::Range => {
+                                types.push(Value::String(Rc::new(String::from("RANGE"))));
+                            }
+                            IndexType::Fulltext => {
+                                types.push(Value::String(Rc::new(String::from("FULLTEXT"))));
+                            }
+                            IndexType::Vector => {
+                                types.push(Value::String(Rc::new(String::from("VECTOR"))));
+                            }
+                        }
+                    }
+                    types_map.insert(attr, Value::List(types));
                 }
                 map.insert(
                     Rc::new(String::from("types")),

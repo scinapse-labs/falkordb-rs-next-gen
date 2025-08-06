@@ -446,9 +446,12 @@ impl Graph {
                         if self.node_indexer.is_attr_indexed(label, attr_name.clone()) {
                             let mut doc = Document::new(u64::from(id));
                             let fields = self.node_indexer.get_fields(label);
-                            for (key, field) in fields {
+                            for (key, fields) in fields {
                                 let attr_id = self.get_node_attribute_id(key.as_str()).unwrap();
-                                doc.set(field.clone(), attrs.get(&attr_id).cloned().unwrap());
+                                let value = attrs.get(&attr_id).cloned().unwrap();
+                                for field in fields {
+                                    doc.set(field.clone(), value.clone());
+                                }
                             }
                             self.node_indexer.add(label, doc);
                         }
@@ -469,10 +472,12 @@ impl Graph {
                     if self.node_indexer.is_attr_indexed(label, attr_name.clone()) {
                         let mut doc = Document::new(u64::from(id));
                         let fields = self.node_indexer.get_fields(label);
-                        for (key, field) in fields {
+                        for (key, fields) in fields {
                             let attr_id = self.get_node_attribute_id(key.as_str()).unwrap();
                             if let Some(value) = attrs.get(&attr_id) {
-                                doc.set(field.clone(), value.clone());
+                                for field in fields {
+                                    doc.set(field.clone(), value.clone());
+                                }
                             }
                         }
                         self.node_indexer.add(label, doc.clone());
@@ -499,9 +504,12 @@ impl Graph {
             {
                 let mut doc = Document::new(u64::from(id));
                 let fields = self.node_indexer.get_fields(label_id.0 as u64);
-                for (key, field) in fields {
+                for (key, fields) in fields {
                     let attr_id = self.get_node_attribute_id(key.as_str()).unwrap();
-                    doc.set(field.clone(), attrs.get(&attr_id).cloned().unwrap());
+                    let value = attrs.get(&attr_id).cloned().unwrap();
+                    for field in fields {
+                        doc.set(field.clone(), value.clone());
+                    }
                 }
                 self.node_indexer.add(label_id.0 as u64, doc);
             }
@@ -933,14 +941,16 @@ impl Graph {
         &mut self,
         label: &Rc<String>,
         label_id: LabelId,
-        attr_ids: Vec<(AttrId, Rc<Field>)>,
+        attr_ids: Vec<(AttrId, Vec<Rc<Field>>)>,
     ) {
         let lm = self.get_label_matrix(label).unwrap();
         for (n, _) in lm.iter(0, u64::MAX) {
             let mut doc = Document::new(n);
-            for (attr_id, field) in &attr_ids {
+            for (attr_id, fields) in &attr_ids {
                 if let Some(value) = self.get_node_attribute(NodeId(n), *attr_id) {
-                    doc.set(field.clone(), value);
+                    for field in fields {
+                        doc.set(field.clone(), value.clone());
+                    }
                 }
             }
             self.node_indexer.add(label_id.0 as u64, doc);
@@ -964,8 +974,8 @@ impl Graph {
                 .node_indexer
                 .get_fields(label_id.0 as u64)
                 .iter()
-                .filter_map(|(k, v)| {
-                    if v.ty == IndexType::Fulltext {
+                .filter_map(|(k, fields)| {
+                    if fields.iter().any(|f| f.ty == IndexType::Fulltext) {
                         Some(k.clone())
                     } else {
                         None
@@ -979,6 +989,7 @@ impl Graph {
                 } else {
                     attrs
                 },
+                index_type,
             ) {
                 let attr_ids = self
                     .node_indexer
@@ -1001,14 +1012,14 @@ impl Graph {
     pub fn is_indexed(
         &self,
         label: &Rc<String>,
-        key: &Rc<String>,
+        field: &Rc<String>,
     ) -> bool {
         if let Some(label_id) = self.get_label_id(label)
-            && let Some(_) = self.get_node_attribute_id(key)
+            && let Some(_) = self.get_node_attribute_id(field)
         {
             return self
                 .node_indexer
-                .is_attr_indexed(label_id.0 as u64, key.clone());
+                .is_attr_indexed(label_id.0 as u64, field.clone());
         }
         false
     }
@@ -1027,7 +1038,7 @@ impl Graph {
         })
     }
 
-    pub fn index_info(&self) -> Vec<(Rc<String>, Vec<(Rc<String>, Rc<Field>)>)> {
+    pub fn index_info(&self) -> Vec<(Rc<String>, HashMap<Rc<String>, Vec<Rc<Field>>>)> {
         self.node_indexer
             .index_info()
             .into_iter()
