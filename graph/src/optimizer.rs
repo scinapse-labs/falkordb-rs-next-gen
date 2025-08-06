@@ -11,12 +11,10 @@ use crate::{
     tree,
 };
 
-pub fn optimize(
-    plan: &DynTree<IR>,
+fn utilize_index(
+    optimized_plan: &mut DynTree<IR>,
     graph: &Graph,
-) -> DynTree<IR> {
-    let mut optimized_plan = plan.clone();
-
+) {
     let indices = optimized_plan.root().indices::<Bfs>().collect::<Vec<_>>();
 
     for idx in indices {
@@ -90,6 +88,15 @@ pub fn optimize(
             };
         }
     }
+}
+
+pub fn optimize(
+    plan: &DynTree<IR>,
+    graph: &Graph,
+) -> DynTree<IR> {
+    let mut optimized_plan = plan.clone();
+
+    utilize_index(&mut optimized_plan, graph);
 
     optimized_plan
 }

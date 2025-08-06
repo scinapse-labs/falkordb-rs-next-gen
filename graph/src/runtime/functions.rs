@@ -2384,11 +2384,19 @@ fn db_indexes(
                 map.insert(Rc::new(String::from("label")), Value::String(label));
                 map.insert(
                     Rc::new(String::from("properties")),
-                    Value::List(attrs.iter().map(|f| Value::String(f.clone())).collect()),
+                    Value::List(
+                        attrs
+                            .iter()
+                            .map(|(f, _)| Value::String(f.clone()))
+                            .collect(),
+                    ),
                 );
                 let mut types_map = OrderMap::new();
-                for attr in attrs {
-                    types_map.insert(attr, Value::String(Rc::new(String::from("range"))));
+                for (attr, _) in attrs {
+                    types_map.insert(
+                        attr,
+                        Value::List(vec![Value::String(Rc::new(String::from("RANGE")))]),
+                    );
                 }
                 map.insert(
                     Rc::new(String::from("types")),

@@ -19,7 +19,7 @@ use crate::{
         matrix::{Dup, ElementWiseAdd, ElementWiseMultiply, Matrix, MxM, New, Remove, Set, Size},
         tensor::Tensor,
     },
-    indexer::{Document, EntityType, IndexQuery, IndexType, Indexer},
+    indexer::{Document, EntityType, Field, IndexQuery, IndexType, Indexer},
     optimizer::optimize,
     planner::{IR, Planner},
     runtime::{pending::PendingRelationship, value::Value},
@@ -446,9 +446,9 @@ impl Graph {
                         if self.node_indexer.is_attr_indexed(label, attr_name.clone()) {
                             let mut doc = Document::new(u64::from(id));
                             let fields = self.node_indexer.get_fields(label);
-                            for f in fields {
-                                let attr_id = self.get_node_attribute_id(f.as_str()).unwrap();
-                                doc.set(f.clone(), attrs.get(&attr_id).cloned().unwrap());
+                            for (key, field) in fields {
+                                let attr_id = self.get_node_attribute_id(key.as_str()).unwrap();
+                                doc.set(field.clone(), attrs.get(&attr_id).cloned().unwrap());
                             }
                             self.node_indexer.add(label, doc);
                         }
@@ -469,10 +469,10 @@ impl Graph {
                     if self.node_indexer.is_attr_indexed(label, attr_name.clone()) {
                         let mut doc = Document::new(u64::from(id));
                         let fields = self.node_indexer.get_fields(label);
-                        for f in fields {
-                            let attr_id = self.get_node_attribute_id(f.as_str()).unwrap();
+                        for (key, field) in fields {
+                            let attr_id = self.get_node_attribute_id(key.as_str()).unwrap();
                             if let Some(value) = attrs.get(&attr_id) {
-                                doc.set(f.clone(), value.clone());
+                                doc.set(field.clone(), value.clone());
                             }
                         }
                         self.node_indexer.add(label, doc.clone());
@@ -499,9 +499,9 @@ impl Graph {
             {
                 let mut doc = Document::new(u64::from(id));
                 let fields = self.node_indexer.get_fields(label_id.0 as u64);
-                for f in fields {
-                    let attr_id = self.get_node_attribute_id(f.as_str()).unwrap();
-                    doc.set(f.clone(), attrs.get(&attr_id).cloned().unwrap());
+                for (key, field) in fields {
+                    let attr_id = self.get_node_attribute_id(key.as_str()).unwrap();
+                    doc.set(field.clone(), attrs.get(&attr_id).cloned().unwrap());
                 }
                 self.node_indexer.add(label_id.0 as u64, doc);
             }
@@ -913,9 +913,14 @@ impl Graph {
                 let label_id = self.get_label_id(label).unwrap();
                 self.node_indexer
                     .create_index(index_type, label_id.0 as u64, attrs)?;
-                let attr_ids = attrs
-                    .iter()
-                    .filter_map(|attr| self.get_node_attribute_id(attr))
+                let attr_ids = self
+                    .node_indexer
+                    .get_fields(label_id.0 as u64)
+                    .into_iter()
+                    .filter_map(|(attr, field)| {
+                        self.get_node_attribute_id(attr.as_str())
+                            .map(|id| (id, field))
+                    })
                     .collect::<Vec<_>>();
                 self.populate_index(label, label_id, attr_ids);
             }
@@ -928,15 +933,14 @@ impl Graph {
         &mut self,
         label: &Rc<String>,
         label_id: LabelId,
-        attr_ids: Vec<AttrId>,
+        attr_ids: Vec<(AttrId, Rc<Field>)>,
     ) {
         let lm = self.get_label_matrix(label).unwrap();
         for (n, _) in lm.iter(0, u64::MAX) {
             let mut doc = Document::new(n);
-            for attr_id in &attr_ids {
+            for (attr_id, field) in &attr_ids {
                 if let Some(value) = self.get_node_attribute(NodeId(n), *attr_id) {
-                    let attr_name = self.node_attrs_name[attr_id.0].clone();
-                    doc.set(attr_name, value);
+                    doc.set(field.clone(), value);
                 }
             }
             self.node_indexer.add(label_id.0 as u64, doc);
@@ -955,14 +959,42 @@ impl Graph {
         label: &Rc<String>,
         attrs: &Vec<Rc<String>>,
     ) {
-        if let Some(label_id) = self.get_label_id(label)
-            && let Some(attrs) = self.node_indexer.drop_index(label_id.0 as u64, attrs)
-        {
-            let attr_ids = attrs
+        if let Some(label_id) = self.get_label_id(label) {
+            let all_attrs = self
+                .node_indexer
+                .get_fields(label_id.0 as u64)
                 .iter()
-                .filter_map(|attr| self.get_node_attribute_id(attr))
+                .filter_map(|(k, v)| {
+                    if v.ty == IndexType::Fulltext {
+                        Some(k.clone())
+                    } else {
+                        None
+                    }
+                })
                 .collect::<Vec<_>>();
-            self.populate_index(label, label_id, attr_ids);
+            if let Some(attrs) = self.node_indexer.drop_index(
+                label_id.0 as u64,
+                if index_type == &IndexType::Fulltext {
+                    &all_attrs
+                } else {
+                    attrs
+                },
+            ) {
+                let attr_ids = self
+                    .node_indexer
+                    .get_fields(label_id.0 as u64)
+                    .into_iter()
+                    .filter_map(|(attr, field)| {
+                        if attrs.contains(&attr) {
+                            return self
+                                .get_node_attribute_id(attr.as_str())
+                                .map(|id| (id, field));
+                        }
+                        None
+                    })
+                    .collect::<Vec<_>>();
+                self.populate_index(label, label_id, attr_ids);
+            }
         }
     }
 
@@ -995,7 +1027,7 @@ impl Graph {
         })
     }
 
-    pub fn index_info(&self) -> Vec<(Rc<String>, Vec<Rc<String>>)> {
+    pub fn index_info(&self) -> Vec<(Rc<String>, Vec<(Rc<String>, Rc<Field>)>)> {
         self.node_indexer
             .index_info()
             .into_iter()

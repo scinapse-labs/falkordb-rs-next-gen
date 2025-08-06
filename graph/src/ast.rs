@@ -736,9 +736,33 @@ impl QueryIR {
         T: Iterator<Item = &'a Self>,
     {
         match self {
-            Self::Call(_, args, _, _) => {
+            Self::Call(proc, args, _, _) => {
                 for arg in args {
                     arg.validate(false, env)?;
+                }
+                if proc.name == "db.idx.fulltext.createNodeIndex" {
+                    match args[0].root().data() {
+                        ExprIR::String(_) => {}
+                        ExprIR::Map => {
+                            let mut has_labels = false;
+                            for child in args[0].root().children() {
+                                if let ExprIR::String(label) = child.data()
+                                    && label.as_str() == "label"
+                                {
+                                    has_labels = true;
+                                    break;
+                                }
+                            }
+                            if !has_labels {
+                                return Err(String::from("Label is missing"));
+                            }
+                        }
+                        _ => {
+                            return Err(String::from(
+                                "The first argument of a procedure call must be a string or a map with a 'label' key",
+                            ));
+                        }
+                    };
                 }
                 Ok(())
             }

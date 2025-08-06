@@ -4,7 +4,7 @@ use orx_tree::{DynTree, NodeRef, Side};
 
 use crate::{
     ast::{
-        QueryExpr, QueryGraph, QueryIR, QueryNode, QueryPath, QueryRelationship,
+        ExprIR, QueryExpr, QueryGraph, QueryIR, QueryNode, QueryPath, QueryRelationship,
         SupportAggregation, Variable,
     },
     indexer::{EntityType, IndexQuery, IndexType},
@@ -288,14 +288,52 @@ impl Planner {
         ir: QueryIR,
     ) -> DynTree<IR> {
         match ir {
-            QueryIR::Call(name, exprs, named_outputs, filter) => {
+            QueryIR::Call(proc, exprs, named_outputs, filter) => {
                 if let Some(filter) = filter {
                     return tree!(
                         IR::Filter(filter),
-                        tree!(IR::Call(name, exprs, named_outputs))
+                        tree!(IR::Call(proc, exprs, named_outputs))
                     );
                 }
-                tree!(IR::Call(name, exprs, named_outputs))
+                if proc.name == "db.idx.fulltext.drop" {
+                    let ExprIR::String(label) = exprs[0].root().data() else {
+                        unreachable!()
+                    };
+                    return tree!(IR::DropIndex {
+                        label: label.clone(),
+                        attrs: vec![],
+                        index_type: IndexType::Fulltext,
+                        entity_type: EntityType::Node,
+                    });
+                }
+                if proc.name == "db.idx.fulltext.createNodeIndex" {
+                    let label = match exprs[0].root().data() {
+                        ExprIR::String(label) => label.clone(),
+                        ExprIR::Map => {
+                            let mut ret = None;
+                            for child in exprs[0].root().children() {
+                                if let ExprIR::String(label) = child.data()
+                                    && label.as_str() == "label"
+                                {
+                                    ret = Some(label.clone());
+                                    break;
+                                }
+                            }
+                            ret.unwrap_or_else(|| {
+                                unreachable!();
+                            })
+                        }
+                        _ => unreachable!(),
+                    };
+                    return tree!(IR::CreateIndex {
+                        label,
+                        attrs: vec![],
+                        index_type: IndexType::Fulltext,
+                        entity_type: EntityType::Node,
+                        options: None,
+                    });
+                }
+                tree!(IR::Call(proc, exprs, named_outputs))
             }
             QueryIR::Match {
                 pattern,

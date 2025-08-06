@@ -1,6 +1,7 @@
 use std::{
     collections::HashMap,
     ffi::CString,
+    hash::Hash,
     os::raw::{c_char, c_int, c_void},
     ptr::null_mut,
     rc::Rc,
@@ -8,29 +9,29 @@ use std::{
 
 use crate::{
     redisearch::{
-        GC_POLICY_FORK, REDISEARCH_ADD_REPLACE, RSFLDOPT_NONE, RSFLDTYPE_GEO, RSFLDTYPE_NUMERIC,
-        RSFLDTYPE_TAG, RSIndex, RSRANGE_INF, RSRANGE_NEG_INF, RediSearch_CreateDocument2,
-        RediSearch_CreateField, RediSearch_CreateIndex, RediSearch_CreateIndexOptions,
-        RediSearch_CreateNumericNode, RediSearch_CreateTagNode, RediSearch_CreateTagTokenNode,
-        RediSearch_DeleteDocument, RediSearch_DocumentAddFieldNumber,
-        RediSearch_DocumentAddFieldString, RediSearch_DropIndex, RediSearch_FreeIndexOptions,
-        RediSearch_GetResultsIterator, RediSearch_IndexAddDocument,
+        GC_POLICY_FORK, REDISEARCH_ADD_REPLACE, RSFLDOPT_NONE, RSFLDTYPE_FULLTEXT, RSFLDTYPE_GEO,
+        RSFLDTYPE_NUMERIC, RSFLDTYPE_TAG, RSFLDTYPE_VECTOR, RSIndex, RSRANGE_INF, RSRANGE_NEG_INF,
+        RediSearch_CreateDocument2, RediSearch_CreateField, RediSearch_CreateIndex,
+        RediSearch_CreateIndexOptions, RediSearch_CreateNumericNode, RediSearch_CreateTagNode,
+        RediSearch_CreateTagTokenNode, RediSearch_DeleteDocument,
+        RediSearch_DocumentAddFieldNumber, RediSearch_DocumentAddFieldString, RediSearch_DropIndex,
+        RediSearch_FreeIndexOptions, RediSearch_GetResultsIterator, RediSearch_IndexAddDocument,
         RediSearch_IndexOptionsSetGCPolicy, RediSearch_IndexOptionsSetStopwords,
         RediSearch_QueryNodeAddChild, RediSearch_ResultsIteratorFree,
         RediSearch_ResultsIteratorNext, RediSearch_TagFieldSetCaseSensitive,
-        RediSearch_TagFieldSetSeparator,
+        RediSearch_TagFieldSetSeparator, RediSearch_TextFieldSetWeight,
     },
     runtime::value::Value,
 };
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum IndexType {
     Range,
     Fulltext,
     Vector,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum EntityType {
     Node,
     Relationship,
@@ -39,7 +40,7 @@ pub enum EntityType {
 #[derive(Clone)]
 pub struct Document {
     id: u64,
-    columns: HashMap<Rc<String>, Value>,
+    columns: HashMap<Rc<Field>, Value>,
 }
 
 impl Document {
@@ -53,10 +54,10 @@ impl Document {
 
     pub fn set(
         &mut self,
-        key: Rc<String>,
+        field: Rc<Field>,
         value: Value,
     ) {
-        self.columns.insert(key, value);
+        self.columns.insert(field, value);
     }
 }
 
@@ -68,9 +69,34 @@ pub enum IndexQuery<T> {
     Or(Vec<IndexQuery<T>>),
 }
 
+pub struct Field {
+    pub name: Rc<CString>,
+    pub ty: IndexType,
+}
+
+impl PartialEq for Field {
+    fn eq(
+        &self,
+        other: &Self,
+    ) -> bool {
+        self.name == other.name && self.ty == other.ty
+    }
+}
+
+impl Eq for Field {}
+
+impl Hash for Field {
+    fn hash<H: std::hash::Hasher>(
+        &self,
+        state: &mut H,
+    ) {
+        self.name.hash(state);
+    }
+}
+
 struct Index {
-    index: *mut RSIndex,
-    fields: HashMap<Rc<String>, Rc<CString>>,
+    rs_idx: *mut RSIndex,
+    fields: HashMap<Rc<String>, Rc<Field>>,
     add_docs: Vec<Document>,
     remove_docs: Vec<u64>,
 }
@@ -78,7 +104,7 @@ struct Index {
 impl Drop for Index {
     fn drop(&mut self) {
         unsafe {
-            RediSearch_DropIndex(self.index);
+            RediSearch_DropIndex(self.rs_idx);
         }
     }
 }
@@ -95,17 +121,40 @@ impl Indexer {
         label: u64,
         attrs: &Vec<Rc<String>>,
     ) -> Result<(), String> {
-        let attrs = if let Some(a) = self.index.get_mut(&label) {
+        let mut fields = HashMap::new();
+        if let Some(a) = self.index.get_mut(&label) {
             for attr in attrs {
-                if a.fields.contains_key(attr) {
+                let field_name = match index_type {
+                    IndexType::Range => Rc::new(format!("range:{attr}")),
+                    IndexType::Fulltext => attr.clone(),
+                    IndexType::Vector => Rc::new(format!("vector:{attr}")),
+                };
+                if a.fields.contains_key(&field_name) {
                     return Err(format!("Attribute '{attr}' is already indexed"));
                 }
-                a.fields
-                    .insert(attr.clone(), Rc::new(CString::new(attr.as_str()).unwrap()));
+                let field = Rc::new(Field {
+                    name: Rc::new(CString::new(field_name.as_str()).unwrap()),
+                    ty: index_type.clone(),
+                });
+                a.fields.insert(field_name.clone(), field);
             }
-            a.fields.keys().cloned().collect()
+            fields.clone_from(&a.fields);
         } else {
-            attrs.clone()
+            for attr in attrs {
+                let field_name = match index_type {
+                    IndexType::Range => Rc::new(format!("range:{attr}")),
+                    IndexType::Fulltext => attr.clone(),
+                    IndexType::Vector => Rc::new(format!("vector:{attr}")),
+                };
+                if fields.contains_key(&field_name) {
+                    return Err(format!("Attribute '{attr}' is already indexed"));
+                }
+                let field = Rc::new(Field {
+                    name: Rc::new(CString::new(field_name.as_str()).unwrap()),
+                    ty: index_type.clone(),
+                });
+                fields.insert(field_name.clone(), field);
+            }
         };
         unsafe {
             let options = RediSearch_CreateIndexOptions();
@@ -116,22 +165,47 @@ impl Indexer {
             let index = RediSearch_CreateIndex(c"index".as_ptr().cast::<i8>(), options);
             RediSearch_FreeIndexOptions(options);
 
-            let mut fields = HashMap::new();
+            for field in fields.values() {
+                match field.ty {
+                    IndexType::Range => {
+                        let types = RSFLDTYPE_NUMERIC | RSFLDTYPE_GEO | RSFLDTYPE_TAG;
+                        let field_id = RediSearch_CreateField(
+                            index,
+                            field.name.as_ptr(),
+                            types,
+                            RSFLDOPT_NONE,
+                        );
 
-            for attr in attrs {
-                let types = RSFLDTYPE_NUMERIC | RSFLDTYPE_GEO | RSFLDTYPE_TAG;
-                let msg = CString::new(attr.as_str()).unwrap();
-                let field_id = RediSearch_CreateField(index, msg.as_ptr(), types, RSFLDOPT_NONE);
-                fields.insert(attr.clone(), Rc::new(msg));
+                        RediSearch_TagFieldSetSeparator(index, field_id, 1 as c_char);
+                        RediSearch_TagFieldSetCaseSensitive(index, field_id, 1);
+                    }
+                    IndexType::Fulltext => {
+                        let field_id = RediSearch_CreateField(
+                            index,
+                            field.name.as_ptr(),
+                            RSFLDTYPE_FULLTEXT,
+                            RSFLDOPT_NONE,
+                        );
 
-                RediSearch_TagFieldSetSeparator(index, field_id, 1 as c_char);
-                RediSearch_TagFieldSetCaseSensitive(index, field_id, 1);
+                        RediSearch_TextFieldSetWeight(index, field_id, 1.0);
+                    }
+                    IndexType::Vector => {
+                        let field_id = RediSearch_CreateField(
+                            index,
+                            field.name.as_ptr(),
+                            RSFLDTYPE_VECTOR,
+                            RSFLDOPT_NONE,
+                        );
+                        //    RediSearch_VectorFieldSetDim(index, field_id, field->hnsw_options.dimension);
+                        // RediSearch_VectorFieldSetHNSWParams(index, field_id, IndexField_OptionsGetM(field), IndexField_OptionsGetEfConstruction(field), IndexField_OptionsGetEfRuntime(field), IndexField_OptionsGetSimFunc(field));
+                    }
+                }
             }
 
             self.index.insert(
                 label,
                 Index {
-                    index,
+                    rs_idx: index,
                     fields,
                     add_docs: Vec::new(),
                     remove_docs: Vec::new(),
@@ -193,21 +267,22 @@ impl Indexer {
         if let Some(index) = self.index.get(&label) {
             match query {
                 IndexQuery::Equal(key, Value::Int(value)) => unsafe {
-                    let msg = index.fields.get(&key).unwrap();
+                    let field = index.fields.get(&key).unwrap();
                     let query = RediSearch_CreateNumericNode(
-                        index.index,
-                        msg.as_ptr(),
+                        index.rs_idx,
+                        field.name.as_ptr(),
                         value as f64,
                         value as f64,
                         1,
                         1,
                     );
-                    let iter = RediSearch_GetResultsIterator(query, index.index);
+                    let iter = RediSearch_GetResultsIterator(query, index.rs_idx);
 
                     let mut res = vec![];
                     loop {
-                        let node_id = RediSearch_ResultsIteratorNext(iter, index.index, null_mut())
-                            .cast::<u64>();
+                        let node_id =
+                            RediSearch_ResultsIteratorNext(iter, index.rs_idx, null_mut())
+                                .cast::<u64>();
                         if node_id.is_null() {
                             break;
                         }
@@ -217,18 +292,19 @@ impl Indexer {
                     return res;
                 },
                 IndexQuery::Equal(key, Value::String(value)) => unsafe {
-                    let msg = index.fields.get(&key).unwrap();
-                    let query = RediSearch_CreateTagNode(index.index, msg.as_ptr());
+                    let field = index.fields.get(&key).unwrap();
+                    let query = RediSearch_CreateTagNode(index.rs_idx, field.name.as_ptr());
                     let msg = CString::new(value.as_str()).unwrap();
                     let child =
-                        RediSearch_CreateTagTokenNode(index.index, msg.as_ptr().cast::<c_char>());
+                        RediSearch_CreateTagTokenNode(index.rs_idx, msg.as_ptr().cast::<c_char>());
                     RediSearch_QueryNodeAddChild(query, child);
-                    let iter = RediSearch_GetResultsIterator(query, index.index);
+                    let iter = RediSearch_GetResultsIterator(query, index.rs_idx);
 
                     let mut res = vec![];
                     loop {
-                        let node_id = RediSearch_ResultsIteratorNext(iter, index.index, null_mut())
-                            .cast::<u64>();
+                        let node_id =
+                            RediSearch_ResultsIteratorNext(iter, index.rs_idx, null_mut())
+                                .cast::<u64>();
                         if node_id.is_null() {
                             break;
                         }
@@ -248,15 +324,21 @@ impl Indexer {
                         _ => todo!(),
                     };
                     unsafe {
-                        let msg = index.fields.get(&key).unwrap();
-                        let query =
-                            RediSearch_CreateNumericNode(index.index, msg.as_ptr(), max, min, 0, 0);
-                        let iter = RediSearch_GetResultsIterator(query, index.index);
+                        let field = index.fields.get(&key).unwrap();
+                        let query = RediSearch_CreateNumericNode(
+                            index.rs_idx,
+                            field.name.as_ptr(),
+                            max,
+                            min,
+                            0,
+                            0,
+                        );
+                        let iter = RediSearch_GetResultsIterator(query, index.rs_idx);
 
                         let mut res = vec![];
                         loop {
                             let node_id =
-                                RediSearch_ResultsIteratorNext(iter, index.index, null_mut())
+                                RediSearch_ResultsIteratorNext(iter, index.rs_idx, null_mut())
                                     .cast::<u64>();
                             if node_id.is_null() {
                                 break;
@@ -306,13 +388,12 @@ impl Indexer {
                         null_mut(),
                     );
 
-                    for (key, value) in doc.columns {
-                        let msg = index.fields.get(&key).unwrap();
+                    for (field, value) in doc.columns {
                         match value {
                             Value::Bool(i) => {
                                 RediSearch_DocumentAddFieldNumber(
                                     rs_doc,
-                                    msg.as_ptr(),
+                                    field.name.as_ptr(),
                                     f64::from(i),
                                     RSFLDTYPE_NUMERIC,
                                 );
@@ -320,7 +401,7 @@ impl Indexer {
                             Value::Int(i) => {
                                 RediSearch_DocumentAddFieldNumber(
                                     rs_doc,
-                                    msg.as_ptr(),
+                                    field.name.as_ptr(),
                                     i as f64,
                                     RSFLDTYPE_NUMERIC,
                                 );
@@ -328,7 +409,7 @@ impl Indexer {
                             Value::Float(i) => {
                                 RediSearch_DocumentAddFieldNumber(
                                     rs_doc,
-                                    msg.as_ptr(),
+                                    field.name.as_ptr(),
                                     i,
                                     RSFLDTYPE_NUMERIC,
                                 );
@@ -336,10 +417,14 @@ impl Indexer {
                             Value::String(s) => {
                                 RediSearch_DocumentAddFieldString(
                                     rs_doc,
-                                    msg.as_ptr(),
+                                    field.name.as_ptr(),
                                     s.as_ptr().cast::<i8>(),
                                     s.len(),
-                                    RSFLDTYPE_TAG,
+                                    if field.ty == IndexType::Fulltext {
+                                        RSFLDTYPE_FULLTEXT
+                                    } else {
+                                        RSFLDTYPE_TAG
+                                    },
                                 );
                             }
                             Value::List(values) => todo!(),
@@ -354,7 +439,7 @@ impl Indexer {
                     }
 
                     let res = RediSearch_IndexAddDocument(
-                        index.index,
+                        index.rs_idx,
                         rs_doc,
                         REDISEARCH_ADD_REPLACE as c_int,
                         null_mut(),
@@ -364,7 +449,7 @@ impl Indexer {
             }
             for id in index.remove_docs.drain(..) {
                 unsafe {
-                    RediSearch_DeleteDocument(index.index, (&raw const id).cast::<c_void>(), 8)
+                    RediSearch_DeleteDocument(index.rs_idx, (&raw const id).cast::<c_void>(), 8)
                 };
             }
         }
@@ -374,18 +459,23 @@ impl Indexer {
     pub fn get_fields(
         &self,
         label: u64,
-    ) -> Vec<Rc<String>> {
+    ) -> HashMap<Rc<String>, Rc<Field>> {
         self.index
             .get(&label)
-            .map(|index| index.fields.keys().cloned().collect())
+            .map(|index| index.fields.clone())
             .unwrap_or_default()
     }
 
-    pub fn index_info(&self) -> Vec<(u64, Vec<Rc<String>>)> {
+    #[must_use]
+    pub fn index_info(&self) -> Vec<(u64, Vec<(Rc<String>, Rc<Field>)>)> {
         self.index
             .iter()
             .map(|(id, index)| {
-                let attrs = index.fields.keys().cloned().collect();
+                let attrs = index
+                    .fields
+                    .iter()
+                    .map(|(k, v)| (k.clone(), v.clone()))
+                    .collect();
                 (*id, attrs)
             })
             .collect()
