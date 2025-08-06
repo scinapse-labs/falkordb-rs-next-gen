@@ -1,4 +1,4 @@
-FROM redis
+FROM redis:8.2.0
 
 ENV PATH="/root/.cargo/bin:${PATH}"
 
