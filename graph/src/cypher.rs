@@ -1600,6 +1600,11 @@ impl<'a> Parser<'a> {
 
                     if func.is_aggregate() {
                         if optional_match_token!(self.lexer, Star) {
+                            if func.name != "count" {
+                                return Err(self.lexer.format_error(
+                                    "COUNT is the only function which can accept * as an argument",
+                                ));
+                            }
                             let mut arg =
                                 tree!(ExprIR::Variable(self.create_var(None, Type::Any)?));
                             if distinct {
