@@ -4,11 +4,15 @@
 #![allow(clippy::cast_precision_loss)]
 #![allow(clippy::cast_possible_truncation)]
 
-use crate::runtime::{
-    runtime::Runtime,
-    value::{Value, ValueTypeOf},
+use crate::{
+    indexer::IndexType,
+    runtime::{
+        runtime::Runtime,
+        value::{Value, ValueTypeOf},
+    },
 };
 use itertools::Itertools;
+use ordermap::OrderMap;
 use rand::Rng;
 use std::{
     collections::HashMap,
@@ -22,7 +26,7 @@ type RuntimeFn = fn(&Runtime, Vec<Value>) -> Result<Value, String>;
 pub enum FnType {
     Function,
     Internal,
-    Procedure,
+    Procedure(Vec<String>),
     Aggregation(Value, Option<Box<dyn Fn(Value) -> Value>>),
 }
 
@@ -35,7 +39,7 @@ impl Debug for FnType {
         match self {
             Self::Function => write!(f, "Function"),
             Self::Internal => write!(f, "Internal"),
-            Self::Procedure => write!(f, "Procedure"),
+            Self::Procedure(_) => write!(f, "Procedure"),
             Self::Aggregation(_, _) => write!(f, "Aggregation"),
         }
     }
@@ -50,7 +54,7 @@ impl PartialEq for FnType {
             (self, other),
             (Self::Function, Self::Function)
                 | (Self::Internal, Self::Internal)
-                | (Self::Procedure, Self::Procedure)
+                | (Self::Procedure(_), Self::Procedure(_))
                 | (Self::Aggregation(_, _), Self::Aggregation(_, _))
         )
     }
@@ -875,20 +879,66 @@ pub fn init_functions() -> Result<(), Functions> {
     );
 
     // Procedures
-    funcs.add("db.labels", db_labels, false, vec![], FnType::Procedure);
+    funcs.add(
+        "db.labels",
+        db_labels,
+        false,
+        vec![],
+        FnType::Procedure(vec![String::from("label")]),
+    );
     funcs.add(
         "db.relationshiptypes",
         db_types,
         false,
         vec![],
-        FnType::Procedure,
+        FnType::Procedure(vec![String::from("relationshipType")]),
     );
     funcs.add(
         "db.propertykeys",
         db_properties,
         false,
         vec![],
-        FnType::Procedure,
+        FnType::Procedure(vec![String::from("propertyKey")]),
+    );
+    funcs.add(
+        "db.indexes",
+        db_indexes,
+        false,
+        vec![],
+        FnType::Procedure(vec![
+            String::from("label"),
+            String::from("properties"),
+            String::from("types"),
+            String::from("options"),
+            String::from("language"),
+            String::from("stopwords"),
+            String::from("entitytype"),
+            String::from("status"),
+            String::from("info"),
+        ]),
+    );
+
+    funcs.add(
+        "db.idx.fulltext.createNodeIndex",
+        db_fulltext_create_node_index,
+        true,
+        vec![Type::Map],
+        FnType::Procedure(vec![]),
+    );
+    funcs.add(
+        "db.idx.fulltext.drop",
+        db_fulltext_drop_node_index,
+        true,
+        vec![],
+        FnType::Procedure(vec![]),
+    );
+
+    funcs.add(
+        "db.idx.fulltext.queryNodes",
+        db_fulltext_query_nodes,
+        false,
+        vec![Type::Map],
+        FnType::Procedure(vec![String::from("node"), String::from("score")]),
     );
 
     FUNCTIONS.set(funcs)
@@ -2279,7 +2329,11 @@ fn db_labels(
         runtime
             .get_labels()
             .into_iter()
-            .map(Value::String)
+            .map(|l| {
+                let mut map = OrderMap::new();
+                map.insert(Rc::new(String::from("label")), Value::String(l));
+                Value::Map(Rc::new(map))
+            })
             .collect(),
     ))
 }
@@ -2289,7 +2343,15 @@ fn db_types(
     _args: Vec<Value>,
 ) -> Result<Value, String> {
     Ok(Value::List(
-        runtime.get_types().into_iter().map(Value::String).collect(),
+        runtime
+            .get_types()
+            .into_iter()
+            .map(|t| {
+                let mut map = OrderMap::new();
+                map.insert(Rc::new(String::from("relationshipType")), Value::String(t));
+                Value::Map(Rc::new(map))
+            })
+            .collect(),
     ))
 }
 
@@ -2298,6 +2360,93 @@ fn db_properties(
     _args: Vec<Value>,
 ) -> Result<Value, String> {
     Ok(Value::List(
-        runtime.get_attrs().into_iter().map(Value::String).collect(),
+        runtime
+            .get_attrs()
+            .into_iter()
+            .map(|p| {
+                let mut map = OrderMap::new();
+                map.insert(Rc::new(String::from("propertyKey")), Value::String(p));
+                Value::Map(Rc::new(map))
+            })
+            .collect(),
     ))
+}
+
+fn db_indexes(
+    runtime: &Runtime,
+    _args: Vec<Value>,
+) -> Result<Value, String> {
+    Ok(Value::List(
+        runtime
+            .g
+            .borrow()
+            .index_info()
+            .into_iter()
+            .map(|(label, attrs)| {
+                let mut map = OrderMap::new();
+                map.insert(Rc::new(String::from("label")), Value::String(label));
+                map.insert(
+                    Rc::new(String::from("properties")),
+                    Value::List(attrs.keys().map(|f| Value::String(f.clone())).collect()),
+                );
+                let mut types_map = OrderMap::new();
+                for (attr, fields) in attrs {
+                    let mut types = vec![];
+                    for field in fields {
+                        match field.ty {
+                            IndexType::Range => {
+                                types.push(Value::String(Rc::new(String::from("RANGE"))));
+                            }
+                            IndexType::Fulltext => {
+                                types.push(Value::String(Rc::new(String::from("FULLTEXT"))));
+                            }
+                            IndexType::Vector => {
+                                types.push(Value::String(Rc::new(String::from("VECTOR"))));
+                            }
+                        }
+                    }
+                    types_map.insert(attr, Value::List(types));
+                }
+                map.insert(
+                    Rc::new(String::from("types")),
+                    Value::Map(Rc::new(types_map)),
+                );
+                map.insert(Rc::new(String::from("options")), Value::Null);
+                map.insert(Rc::new(String::from("language")), Value::Null);
+                map.insert(Rc::new(String::from("stopwords")), Value::Null);
+                map.insert(
+                    Rc::new(String::from("entitytype")),
+                    Value::String(Rc::new(String::from("NODE"))),
+                );
+                map.insert(
+                    Rc::new(String::from("status")),
+                    Value::String(Rc::new(String::from("OPERATIONAL"))),
+                );
+                map.insert(Rc::new(String::from("info")), Value::Null);
+
+                Value::Map(Rc::new(map))
+            })
+            .collect(),
+    ))
+}
+
+fn db_fulltext_create_node_index(
+    _runtime: &Runtime,
+    _args: Vec<Value>,
+) -> Result<Value, String> {
+    Ok(Value::List(vec![]))
+}
+
+fn db_fulltext_drop_node_index(
+    _runtime: &Runtime,
+    _args: Vec<Value>,
+) -> Result<Value, String> {
+    Ok(Value::List(vec![]))
+}
+
+fn db_fulltext_query_nodes(
+    _runtime: &Runtime,
+    _args: Vec<Value>,
+) -> Result<Value, String> {
+    Ok(Value::List(vec![]))
 }

@@ -36,9 +36,7 @@ test_query_validation
 test_reduce
 test_relation_patterns
 test_results
-test_reversed_patterns - work
 test_ro_query
-test_self_pointing_node
 test_social
 test_star_projections
 test_timeout

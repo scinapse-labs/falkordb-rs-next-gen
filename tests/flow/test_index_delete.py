@@ -6,12 +6,6 @@ GRAPH_ID = "index_delete"
 
 class testNodeIndexDeletionFlow():
     def __init__(self):
-        # skip test if we're running under Valgrind
-        # drop index is an async operation which can cause Valgraind
-        # to wrongfully report as a leak
-        if VALGRIND:
-            Environment.skip(None)
-
         self.env, self.db = Env()
         self.redis_con = self.env.getConnection()
         self.g = Graph(self.redis_con, GRAPH_ID)
@@ -326,12 +320,6 @@ class testNodeIndexDeletionFlow():
 
 class testEdgeIndexDeletionFlow():
     def __init__(self):
-        # skip test if we're running under Valgrind
-        # drop index is an async operation which can cause Valgraind
-        # to wrongfully report as a leak
-        if VALGRIND:
-            Environment.skip(None)
-
         self.env, self.db = Env()
         self.g = self.db.select_graph(GRAPH_ID)
 

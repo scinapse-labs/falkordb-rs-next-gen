@@ -11,48 +11,73 @@ use crate::{
     tree,
 };
 
-pub fn optimize(
-    plan: &DynTree<IR>,
+fn utilize_index(
+    optimized_plan: &mut DynTree<IR>,
     graph: &Graph,
-) -> DynTree<IR> {
-    let mut optimized_plan = plan.clone();
-
+) {
     let indices = optimized_plan.root().indices::<Bfs>().collect::<Vec<_>>();
 
-    for index in indices {
-        // let node = if let IR::NodeByLabelScan(node) = optimized_plan.node(&index).data()
-        //     && let IR::Filter(filter) = optimized_plan.node(&index).parent().unwrap().data()
-        //     && let ExprIR::FuncInvocation(func) = filter.root().data()
-        //     && func.name == "contains"
-        //     && let ExprIR::FuncInvocation(inner_func) = filter.root().child(0).data()
-        //     && inner_func.name == "property"
-        //     && let ExprIR::String(attr) = filter.root().child(0).child(1).data()
-        //     && graph.is_indexed(&node.labels[0], attr)
-        // {
-        //     Some((node.clone(), attr.clone(), filter.clone()))
-        // } else {
-        //     None
-        // };
-        // if let Some((node, attr, filter)) = node {
-        //     let mut op = optimized_plan.node_mut(&index);
-        //     *op.data_mut() = IR::NodeByIndexScan {
-        //         node: node.clone(),
-        //         index: node.labels[0].clone(),
-        //         query: Rc::new(IndexQuery::Contains(
-        //             attr.clone(),
-        //             Rc::new(filter.root().child(1).clone_as_tree()),
-        //         )),
-        //     };
-        //     op.parent_mut().unwrap().take_out();
-        // }
+    for idx in indices {
+        let node = if let IR::NodeByLabelScan(node) = optimized_plan.node(&idx).data()
+            && !node.labels.is_empty()
+            && let IR::Filter(filter) = optimized_plan.node(&idx).parent().unwrap().data()
+            && matches!(filter.root().data(), ExprIR::Eq | ExprIR::Gt | ExprIR::Lt)
+            && let ExprIR::FuncInvocation(inner_func) = filter.root().child(0).data()
+            && inner_func.name == "property"
+            && let ExprIR::String(attr) = filter.root().child(0).child(1).data()
+            && graph.is_indexed(&node.labels[0], attr)
+        {
+            if matches!(filter.root().data(), ExprIR::Eq) {
+                Some((
+                    node.clone(),
+                    node.labels[0].clone(),
+                    Rc::new(IndexQuery::Equal(
+                        attr.clone(),
+                        Rc::new(filter.root().child(1).clone_as_tree()),
+                    )),
+                ))
+            } else if matches!(filter.root().data(), ExprIR::Gt) {
+                Some((
+                    node.clone(),
+                    node.labels[0].clone(),
+                    Rc::new(IndexQuery::Range(
+                        attr.clone(),
+                        Some(Rc::new(filter.root().child(1).clone_as_tree())),
+                        None,
+                    )),
+                ))
+            } else if matches!(filter.root().data(), ExprIR::Lt) {
+                Some((
+                    node.clone(),
+                    node.labels[0].clone(),
+                    Rc::new(IndexQuery::Range(
+                        attr.clone(),
+                        None,
+                        Some(Rc::new(filter.root().child(1).clone_as_tree())),
+                    )),
+                ))
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        if let Some((node, index, query)) = node {
+            let mut op = optimized_plan.node_mut(&idx);
+            *op.data_mut() = IR::NodeByIndexScan { node, index, query };
+            op.parent_mut().unwrap().take_out();
+            break;
+        }
 
-        let node = if let IR::NodeByLabelScan(node) = optimized_plan.node(&index).data() {
+        let node = if let IR::NodeByLabelScan(node) = optimized_plan.node(&idx).data() {
             get_index(graph, node)
         } else {
             None
         };
-        if let Some((node, attr, filter)) = node {
-            let mut op = optimized_plan.node_mut(&index);
+        if let Some((node, attr, filter)) = node
+            && !node.labels.is_empty()
+        {
+            let mut op = optimized_plan.node_mut(&idx);
             *op.data_mut() = IR::NodeByIndexScan {
                 node: node.clone(),
                 index: node.labels[0].clone(),
@@ -63,6 +88,15 @@ pub fn optimize(
             };
         }
     }
+}
+
+pub fn optimize(
+    plan: &DynTree<IR>,
+    graph: &Graph,
+) -> DynTree<IR> {
+    let mut optimized_plan = plan.clone();
+
+    utilize_index(&mut optimized_plan, graph);
 
     optimized_plan
 }

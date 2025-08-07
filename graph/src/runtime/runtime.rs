@@ -9,7 +9,7 @@ use crate::{
     indexer::IndexQuery,
     planner::IR,
     runtime::{
-        functions::{FnType, Functions, Type, get_functions},
+        functions::{FnType, Functions, get_functions},
         iter::{Aggregate, CondInspectIter, LazyReplace, TryFlatMap, TryMap},
         pending::Pending,
         value::{
@@ -83,11 +83,9 @@ impl GetVariables for DynNode<'_, IR> {
         for node in self.walk::<Bfs>() {
             match node {
                 IR::Optional(variables) => vars.extend(variables.iter().cloned()),
-                IR::Call(name, _) => vars.push(Variable {
-                    name: Some(name.clone()),
-                    id: 0,
-                    ty: Type::Any,
-                }),
+                IR::Call(_, _, named_outputs) => {
+                    vars.extend(named_outputs.clone());
+                }
                 IR::Unwind(_, variable) => vars.push(variable.clone()),
                 IR::Create(query_graph) | IR::Merge(query_graph, _, _) => {
                     for node in query_graph.nodes() {
@@ -152,11 +150,7 @@ impl ReturnNames for DynNode<'_, IR> {
             IR::Commit => self
                 .get_child(0)
                 .map_or(vec![], |child| child.get_return_names()),
-            IR::Call(name, _) => vec![Variable {
-                name: Some(name.clone()),
-                id: 0,
-                ty: Type::Any,
-            }],
+            IR::Call(_, _, named_outputs) => named_outputs.clone(),
             IR::Sort(_) | IR::Skip(_) | IR::Limit(_) | IR::Distinct => {
                 self.child(0).get_return_names()
             }
@@ -876,8 +870,7 @@ impl<'a> Runtime<'a> {
                         self.record.borrow_mut().push((idx.clone(), res.clone()));
                     }))
             }
-            IR::Call(name, trees) => {
-                let func = self.functions.get(name, &FnType::Procedure)?;
+            IR::Call(func, trees, name_outputs) => {
                 let args = trees
                     .iter()
                     .map(|ir| self.run_expr(ir, ir.root().idx(), &Env::default(), None))
@@ -892,16 +885,16 @@ impl<'a> Runtime<'a> {
                 match res {
                     Value::List(arr) => Ok(arr
                         .into_iter()
-                        .map(|v| {
+                        .map(move |v| {
                             let mut env = Env::default();
-                            env.insert(
-                                &Variable {
-                                    name: Some(name.clone()),
-                                    id: 0,
-                                    ty: Type::Any,
-                                },
-                                v,
-                            );
+                            if let Value::Map(map) = v {
+                                for output in name_outputs {
+                                    env.insert(
+                                        output,
+                                        map.get(output.name.as_ref().unwrap()).unwrap().clone(),
+                                    );
+                                }
+                            }
                             Ok(env)
                         })
                         .cond_inspect(self.inspect, move |res| {
@@ -1345,24 +1338,39 @@ impl<'a> Runtime<'a> {
                     self.record.borrow_mut().push((idx.clone(), res.clone()));
                 }))
             }
-            IR::CreateIndex { label, attrs } => {
+            IR::CreateIndex {
+                label,
+                attrs,
+                index_type,
+                entity_type,
+                options,
+            } => {
                 if !self.write {
                     return Err(String::from(
                         "graph.RO_QUERY is to be executed only on read-only queries",
                     ));
                 }
                 self.stats.borrow_mut().indexes_created += attrs.len();
-                self.g.borrow_mut().create_node_index(label, attrs);
+                self.g
+                    .borrow_mut()
+                    .create_index(index_type, entity_type, label, attrs)?;
                 Ok(Box::new(empty()))
             }
-            IR::DropIndex { label, attrs } => {
+            IR::DropIndex {
+                label,
+                attrs,
+                index_type,
+                entity_type,
+            } => {
                 if !self.write {
                     return Err(String::from(
                         "graph.RO_QUERY is to be executed only on read-only queries",
                     ));
                 }
                 self.stats.borrow_mut().indexes_dropped += attrs.len();
-                self.g.borrow_mut().drop_node_index(label, attrs);
+                self.g
+                    .borrow_mut()
+                    .drop_index(index_type, entity_type, label, attrs);
                 Ok(Box::new(empty()))
             }
         }
@@ -1933,7 +1941,23 @@ impl<'a> Runtime<'a> {
                 Ok(IndexQuery::Equal(key.clone(), value))
             }
             IndexQuery::Range(key, min, max) => {
-                todo!()
+                let (min, max) = match (min, max) {
+                    (Some(min), Some(max)) => {
+                        let min = self.run_expr(min, min.root().idx(), vars, None)?;
+                        let max = self.run_expr(max, max.root().idx(), vars, None)?;
+                        (Some(min), Some(max))
+                    }
+                    (Some(min), None) => {
+                        let min = self.run_expr(min, min.root().idx(), vars, None)?;
+                        (Some(min), None)
+                    }
+                    (None, Some(max)) => {
+                        let max = self.run_expr(max, max.root().idx(), vars, None)?;
+                        (None, Some(max))
+                    }
+                    (None, None) => (None, None),
+                };
+                Ok(IndexQuery::Range(key.clone(), min, max))
             }
             _ => todo!(),
         }

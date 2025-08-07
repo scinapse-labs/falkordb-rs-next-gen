@@ -4,10 +4,11 @@ use orx_tree::{DynTree, NodeRef, Side};
 
 use crate::{
     ast::{
-        QueryExpr, QueryGraph, QueryIR, QueryNode, QueryPath, QueryRelationship,
+        ExprIR, QueryExpr, QueryGraph, QueryIR, QueryNode, QueryPath, QueryRelationship,
         SupportAggregation, Variable,
     },
-    indexer::IndexQuery,
+    indexer::{EntityType, IndexQuery, IndexType},
+    runtime::functions::GraphFn,
     tree,
 };
 
@@ -15,7 +16,7 @@ use crate::{
 pub enum IR {
     Empty,
     Optional(Vec<Variable>),
-    Call(Rc<String>, Vec<QueryExpr>),
+    Call(Rc<GraphFn>, Vec<QueryExpr>, Vec<Variable>),
     Unwind(QueryExpr, Variable),
     Create(QueryGraph),
     Merge(
@@ -57,10 +58,15 @@ pub enum IR {
     CreateIndex {
         label: Rc<String>,
         attrs: Vec<Rc<String>>,
+        index_type: IndexType,
+        entity_type: EntityType,
+        options: Option<QueryExpr>,
     },
     DropIndex {
         label: Rc<String>,
         attrs: Vec<Rc<String>>,
+        index_type: IndexType,
+        entity_type: EntityType,
     },
 }
 
@@ -73,25 +79,25 @@ impl Display for IR {
         match self {
             Self::Empty => write!(f, "Empty"),
             Self::Optional(_) => write!(f, "Optional"),
-            Self::Call(name, _) => write!(f, "Call({name})"),
-            Self::Unwind(_, alias) => {
-                write!(f, "Unwind({})", alias.as_str())
+            Self::Call(_, _, _) => write!(f, "Call"),
+            Self::Unwind(_, _) => {
+                write!(f, "Unwind")
             }
-            Self::Create(pattern) => write!(f, "Create {pattern}"),
-            Self::Merge(pattern, _, _) => write!(f, "Merge {pattern}"),
+            Self::Create(pattern) => write!(f, "Create | {pattern}"),
+            Self::Merge(pattern, _, _) => write!(f, "Merge | {pattern}"),
             Self::Delete(_, _) => write!(f, "Delete"),
             Self::Set(_) => write!(f, "Set"),
             Self::Remove(_) => write!(f, "Remove"),
-            Self::NodeByLabelScan(node) => write!(f, "Node By Label Scan {node}"),
+            Self::NodeByLabelScan(node) => write!(f, "Node By Label Scan | {node}"),
             Self::NodeByIndexScan { node, .. } => {
-                write!(f, "Node By Index Scan {node}")
+                write!(f, "Node By Index Scan | {node}")
             }
-            Self::RelationshipScan(rel) => write!(f, "RelationshipScan {rel}"),
-            Self::ExpandInto(rel) => write!(f, "ExpandInto {rel}"),
+            Self::RelationshipScan(rel) => write!(f, "RelationshipScan | {rel}"),
+            Self::ExpandInto(rel) => write!(f, "Expand Into | {rel}"),
             Self::PathBuilder(_) => write!(f, "PathBuilder"),
             Self::Filter(_) => write!(f, "Filter"),
             Self::CartesianProduct => write!(f, "Cartesian Product"),
-            Self::LoadCsv { .. } => write!(f, "LoadCsv"),
+            Self::LoadCsv { .. } => write!(f, "Load CSV"),
             Self::Sort(_) => write!(f, "Sort"),
             Self::Skip(_) => write!(f, "Skip"),
             Self::Limit(_) => write!(f, "Limit"),
@@ -99,11 +105,11 @@ impl Display for IR {
             Self::Project(_) => write!(f, "Project"),
             Self::Commit => write!(f, "Commit"),
             Self::Distinct => write!(f, "Distinct"),
-            Self::CreateIndex { label, attrs } => {
-                write!(f, "CreateIndex on :{label}({attrs:?})")
+            Self::CreateIndex { label, attrs, .. } => {
+                write!(f, "Create Index | :{label}({attrs:?})")
             }
-            Self::DropIndex { label, attrs } => {
-                write!(f, "DropIndex on :{label}({attrs:?})")
+            Self::DropIndex { label, attrs, .. } => {
+                write!(f, "Drop Index | :{label}({attrs:?})")
             }
         }
     }
@@ -275,13 +281,60 @@ impl Planner {
         res
     }
 
+    #[allow(clippy::too_many_lines)]
     #[must_use]
     pub fn plan(
         &mut self,
         ir: QueryIR,
     ) -> DynTree<IR> {
         match ir {
-            QueryIR::Call(name, exprs) => tree!(IR::Call(name, exprs)),
+            QueryIR::Call(proc, exprs, named_outputs, filter) => {
+                if let Some(filter) = filter {
+                    return tree!(
+                        IR::Filter(filter),
+                        tree!(IR::Call(proc, exprs, named_outputs))
+                    );
+                }
+                if proc.name == "db.idx.fulltext.drop" {
+                    let ExprIR::String(label) = exprs[0].root().data() else {
+                        unreachable!()
+                    };
+                    return tree!(IR::DropIndex {
+                        label: label.clone(),
+                        attrs: vec![],
+                        index_type: IndexType::Fulltext,
+                        entity_type: EntityType::Node,
+                    });
+                }
+                if proc.name == "db.idx.fulltext.createNodeIndex" {
+                    let label = match exprs[0].root().data() {
+                        ExprIR::String(label) => label.clone(),
+                        ExprIR::Map => {
+                            let mut ret = None;
+                            for child in exprs[0].root().children() {
+                                if let ExprIR::String(label) = child.data()
+                                    && label.as_str() == "label"
+                                {
+                                    ret = Some(label.clone());
+                                    break;
+                                }
+                            }
+                            ret.unwrap_or_else(|| {
+                                unreachable!();
+                            })
+                        }
+                        _ => unreachable!(),
+                    };
+                    return tree!(IR::CreateIndex {
+                        label,
+                        attrs: vec![],
+                        index_type: IndexType::Fulltext,
+                        entity_type: EntityType::Node,
+                        options: None,
+                    });
+                }
+                tree!(IR::Call(proc, exprs, named_outputs))
+            }
             QueryIR::Match {
                 pattern,
                 filter,
@@ -350,9 +403,31 @@ impl Planner {
                 write,
                 ..
             } => self.plan_project(exprs, orderby, skip, limit, None, distinct, write),
-            QueryIR::CreateIndex { label, attrs } => tree!(IR::CreateIndex { label, attrs }),
-            QueryIR::DropIndex { label, attrs } => {
-                tree!(IR::DropIndex { label, attrs })
+            QueryIR::CreateIndex {
+                label,
+                attrs,
+                index_type,
+                entity_type,
+                options,
+            } => tree!(IR::CreateIndex {
+                label,
+                attrs,
+                index_type,
+                entity_type,
+                options
+            }),
+            QueryIR::DropIndex {
+                label,
+                attrs,
+                index_type,
+                entity_type,
+            } => {
+                tree!(IR::DropIndex {
+                    label,
+                    attrs,
+                    index_type,
+                    entity_type
+                })
             }
             QueryIR::Query(q, write) => self.plan_query(q, write),
         }

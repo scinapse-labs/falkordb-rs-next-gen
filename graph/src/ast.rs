@@ -4,7 +4,10 @@ use itertools::Itertools;
 use ordermap::{OrderMap, OrderSet};
 use orx_tree::{Bfs, Collection, Dfs, DynTree, NodeRef};
 
-use crate::runtime::functions::{GraphFn, Type};
+use crate::{
+    indexer::{EntityType, IndexType},
+    runtime::functions::{GraphFn, Type},
+};
 
 #[derive(Clone, Debug)]
 pub struct Variable {
@@ -565,7 +568,12 @@ pub type QueryExpr = Rc<DynTree<ExprIR>>;
 
 #[derive(Debug)]
 pub enum QueryIR {
-    Call(Rc<String>, Vec<QueryExpr>),
+    Call(
+        Rc<GraphFn>,
+        Vec<QueryExpr>,
+        Vec<Variable>,
+        Option<QueryExpr>,
+    ),
     Match {
         pattern: QueryGraph,
         filter: Option<QueryExpr>,
@@ -607,10 +615,15 @@ pub enum QueryIR {
     CreateIndex {
         label: Rc<String>,
         attrs: Vec<Rc<String>>,
+        index_type: IndexType,
+        entity_type: EntityType,
+        options: Option<QueryExpr>,
     },
     DropIndex {
         label: Rc<String>,
         attrs: Vec<Rc<String>>,
+        index_type: IndexType,
+        entity_type: EntityType,
     },
     Query(Vec<QueryIR>, bool),
 }
@@ -622,8 +635,8 @@ impl Display for QueryIR {
         f: &mut std::fmt::Formatter<'_>,
     ) -> std::fmt::Result {
         match self {
-            Self::Call(name, args) => {
-                writeln!(f, "{name}():")?;
+            Self::Call(func, args, _, _) => {
+                writeln!(f, "{}():", func.name)?;
                 for arg in args {
                     write!(f, "{arg}")?;
                 }
@@ -674,11 +687,28 @@ impl Display for QueryIR {
                 }
                 Ok(())
             }
-            Self::CreateIndex { label, attrs } => {
-                writeln!(f, "CREATE NODE INDEX ON :{label}({attrs:?})")
+            Self::CreateIndex {
+                label,
+                attrs,
+                index_type,
+                entity_type,
+                options: _options,
+            } => {
+                writeln!(
+                    f,
+                    "CREATE {index_type:?} {entity_type:?} INDEX ON :{label}({attrs:?})"
+                )
             }
-            Self::DropIndex { label, attrs } => {
-                writeln!(f, "DROP NODE INDEX ON :{label}({attrs:?})")
+            Self::DropIndex {
+                label,
+                attrs,
+                index_type,
+                entity_type,
+            } => {
+                writeln!(
+                    f,
+                    "DROP {index_type:?} {entity_type:?} INDEX ON :{label}({attrs:?})"
+                )
             }
             Self::Query(qs, _) => {
                 for q in qs {
@@ -691,7 +721,7 @@ impl Display for QueryIR {
 }
 
 impl QueryIR {
-    pub fn validate(&mut self) -> Result<(), String> {
+    pub fn validate(&self) -> Result<(), String> {
         let mut env = HashSet::new();
         self.inner_validate(std::iter::empty(), &mut env)
     }
@@ -706,9 +736,33 @@ impl QueryIR {
         T: Iterator<Item = &'a Self>,
     {
         match self {
-            Self::Call(_, args) => {
+            Self::Call(proc, args, _, _) => {
                 for arg in args {
                     arg.validate(false, env)?;
+                }
+                if proc.name == "db.idx.fulltext.createNodeIndex" {
+                    match args[0].root().data() {
+                        ExprIR::String(_) => {}
+                        ExprIR::Map => {
+                            let mut has_labels = false;
+                            for child in args[0].root().children() {
+                                if let ExprIR::String(label) = child.data()
+                                    && label.as_str() == "label"
+                                {
+                                    has_labels = true;
+                                    break;
+                                }
+                            }
+                            if !has_labels {
+                                return Err(String::from("Label is missing"));
+                            }
+                        }
+                        _ => {
+                            return Err(String::from(
+                                "The first argument of a procedure call must be a string or a map with a 'label' key",
+                            ));
+                        }
+                    };
                 }
                 Ok(())
             }

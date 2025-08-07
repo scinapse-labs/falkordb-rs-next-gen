@@ -44,12 +44,6 @@ class testImdbFlow(FlowTestsBase):
                 self.assert_reversed_pattern(query, actual_result)
 
     def test_index_scan_actors_over_85(self):
-        # skip test if we're running under Valgrind
-        # drop index is an async operation which can cause Valgraind
-        # to wrongfully report as a leak
-        if VALGRIND:
-            self.env.skip()
-
         # Execute this command directly, as its response does not contain the result set that
         # 'self.graph.query()' expects
         create_node_range_index(self.graph, 'actor', 'age', sync=True)
@@ -71,12 +65,6 @@ class testImdbFlow(FlowTestsBase):
         self.assert_reversed_pattern(q, actual_result)
 
     def test_index_scan_eighties_movies(self):
-        # skip test if we're running under Valgrind
-        # drop index is an async operation which can cause Valgraind
-        # to wrongfully report as a leak
-        if VALGRIND:
-            self.env.skip()
-
         # Execute this command directly, as its response does not contain the result set that
         # 'self.graph.query()' expects
         create_node_range_index(self.graph, 'movie', 'year', sync=True)

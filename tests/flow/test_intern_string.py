@@ -378,7 +378,7 @@ class testInternStringPersistency():
         self.conn = self.env.getConnection()
 
         # skip test if we're running under Sanitizer
-        if VALGRIND or SANITIZER:
+        if SANITIZER:
             self.env.skip() # sanitizer is not working correctly with bulk
 
         # Synchronous deletion
@@ -422,9 +422,9 @@ class testInternStringPersistency():
 
 class testInternStringReplication():
     def __init__(self):
-        # skip test if we're running under Valgrind
-        if VALGRIND or SANITIZER:
-            Environment.skip(None) # valgrind is not working correctly with replication
+        # skip test if we're running under sanitizer
+        if SANITIZER:
+            Environment.skip(None) # sanitizer is not working correctly with replication
 
         self.env, self.db = Env(env='oss', useSlaves=True)
         self.conn = self.env.getConnection()

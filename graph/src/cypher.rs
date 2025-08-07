@@ -2,6 +2,7 @@ use crate::ast::{
     ExprIR, QuantifierType, QueryExpr, QueryGraph, QueryIR, QueryNode, QueryPath,
     QueryRelationship, Variable,
 };
+use crate::indexer::{EntityType, IndexType};
 use crate::{
     cypher::Token::RParen,
     runtime::{
@@ -24,6 +25,7 @@ use unescaper::unescape;
 #[derive(Debug, PartialEq, Clone)]
 enum Keyword {
     Call,
+    Yield,
     Optional,
     Match,
     Unwind,
@@ -74,6 +76,9 @@ enum Keyword {
     Delimiter,
     Drop,
     Index,
+    Fulltext,
+    Vector,
+    Options,
     For,
     On,
 }
@@ -117,6 +122,7 @@ enum Token {
 
 const KEYWORDS: &[(&str, Keyword)] = &[
     ("CALL", Keyword::Call),
+    ("YIELD", Keyword::Yield),
     ("OPTIONAL", Keyword::Optional),
     ("MATCH", Keyword::Match),
     ("UNWIND", Keyword::Unwind),
@@ -167,6 +173,9 @@ const KEYWORDS: &[(&str, Keyword)] = &[
     ("DELIMITER", Keyword::Delimiter),
     ("DROP", Keyword::Drop),
     ("INDEX", Keyword::Index),
+    ("FULLTEXT", Keyword::Fulltext),
+    ("VECTOR", Keyword::Vector),
+    ("OPTIONS", Keyword::Options),
     ("FOR", Keyword::For),
     ("ON", Keyword::On),
 ];
@@ -295,6 +304,11 @@ impl<'a> Lexer<'a> {
         self.cached_current.0.clone()
     }
 
+    pub fn current_str(&self) -> &str {
+        let pos = self.pos(false);
+        &self.str[pos..pos + self.cached_current.1]
+    }
+
     #[inline]
     #[allow(clippy::too_many_lines)]
     fn get_token(
@@ -363,10 +377,7 @@ impl<'a> Lexer<'a> {
                         len += c.len_utf8();
                     }
                     if !end {
-                        return (
-                            Token::Error(String::from(&str[pos + 1..pos + len])),
-                            len + 1,
-                        );
+                        return (Token::Error(String::from(&str[pos..pos + len])), len);
                     }
                     unescape(&str[pos + 1..pos + len]).map_or_else(
                         |e| match e {
@@ -405,10 +416,7 @@ impl<'a> Lexer<'a> {
                         len += c.len_utf8();
                     }
                     if !end {
-                        return (
-                            Token::Error(String::from(&str[pos + 1..pos + len])),
-                            len + 1,
-                        );
+                        return (Token::Error(String::from(&str[pos..pos + len])), len);
                     }
                     unescape(&str[pos + 1..pos + len]).map_or_else(
                         |e| match e {
@@ -464,10 +472,7 @@ impl<'a> Lexer<'a> {
                         len += c.len_utf8();
                     }
                     if !end {
-                        return (
-                            Token::Error(String::from(&str[pos + 1..pos + len])),
-                            len + 1,
-                        );
+                        return (Token::Error(String::from(&str[pos..pos + len])), len);
                     }
                     (
                         Token::Ident(Rc::new(String::from(&str[pos + 1..pos + len]))),
@@ -549,7 +554,9 @@ impl<'a> Lexer<'a> {
                             len,
                         );
                     }
-                    if pos + len + 1 < str.len() && &str[pos + len + 1..=pos + len + 1] == "." {
+                    if let Some(ch) = str[pos + len + 1..].chars().next()
+                        && (ch == '.' || !ch.is_ascii_digit())
+                    {
                         break;
                     }
                     is_float = true;
@@ -665,7 +672,13 @@ macro_rules! match_token {
             Token::$token => {
                 $lexer.next();
             }
-            token => return Err($lexer.format_error(&format!("Invalid input {token:?}"))),
+            _ => {
+                return Err($lexer.format_error(&format!(
+                    "Invalid input '{}': expected {:?}",
+                    $lexer.current_str(),
+                    Token::$token
+                )));
+            }
         }
     };
     ($lexer:expr => $token:ident) => {
@@ -673,7 +686,13 @@ macro_rules! match_token {
             Token::Keyword(Keyword::$token, _) => {
                 $lexer.next();
             }
-            token => return Err($lexer.format_error(&format!("Invalid input {token:?}"))),
+            _ => {
+                return Err($lexer.format_error(&format!(
+                    "Invalid input '{}': expected {:?}",
+                    $lexer.current_str(),
+                    Keyword::$token
+                )));
+            }
         }
     };
     () => {};
@@ -848,76 +867,184 @@ impl<'a> Parser<'a> {
 
     pub fn parse(&mut self) -> Result<QueryIR, String> {
         let pos = self.lexer.pos;
-        if optional_match_token!(self.lexer => Create)
-            && optional_match_token!(self.lexer => Index)
-            && optional_match_token!(self.lexer => For)
-        {
-            match_token!(self.lexer, LParen);
-            let nkey = self.parse_ident()?;
-            match_token!(self.lexer, Colon);
-            let label = self.parse_ident()?;
-            match_token!(self.lexer, RParen);
-            match_token!(self.lexer => On);
-            match_token!(self.lexer, LParen);
-            let key = self.parse_ident()?;
-            if nkey.as_str() != key.as_str() {
-                return Err(self.lexer.format_error(&format!(
-                    "Invalid index name '{nkey}' for label '{label}' on property '{key}'"
-                )));
-            }
-            match_token!(self.lexer, Dot);
-            let mut attrs = vec![self.parse_ident()?];
-            while optional_match_token!(self.lexer, Comma) {
-                let key = self.parse_ident()?;
-                if nkey.as_str() != key.as_str() {
-                    return Err(self.lexer.format_error(&format!(
-                        "Invalid index name '{nkey}' for label '{label}' on property '{key}'"
-                    )));
-                }
-                match_token!(self.lexer, Dot);
-                attrs.push(self.parse_ident()?);
-            }
-            match_token!(self.lexer, RParen);
-            match_token!(self.lexer, EndOfFile);
-            return Ok(QueryIR::CreateIndex { label, attrs });
-        }
-        if optional_match_token!(self.lexer => Drop)
-            && optional_match_token!(self.lexer => Index)
-            && optional_match_token!(self.lexer => For)
-        {
-            match_token!(self.lexer, LParen);
-            let nkey = self.parse_ident()?;
-            match_token!(self.lexer, Colon);
-            let label = self.parse_ident()?;
-            match_token!(self.lexer, RParen);
-            match_token!(self.lexer => On);
-            match_token!(self.lexer, LParen);
-            let key = self.parse_ident()?;
-            if nkey.as_str() != key.as_str() {
-                return Err(self.lexer.format_error(&format!(
-                    "Invalid index name '{nkey}' for label '{label}' on property '{key}'"
-                )));
-            }
-            match_token!(self.lexer, Dot);
-            let mut attrs = vec![self.parse_ident()?];
-            while optional_match_token!(self.lexer, Comma) {
-                let key = self.parse_ident()?;
-                if nkey.as_str() != key.as_str() {
-                    return Err(self.lexer.format_error(&format!(
-                        "Invalid index name '{nkey}' for label '{label}' on property '{key}'"
-                    )));
-                }
-                match_token!(self.lexer, Dot);
-                attrs.push(self.parse_ident()?);
-            }
-            match_token!(self.lexer, RParen);
-            match_token!(self.lexer, EndOfFile);
-            return Ok(QueryIR::DropIndex { label, attrs });
-        }
-        self.lexer.set_pos(pos);
-        let mut ir = self.parse_query()?;
+        let ir = if let Some(ir) = self.parse_index_ops()? {
+            ir
+        } else {
+            self.lexer.set_pos(pos);
+            self.parse_query()?
+        };
         ir.validate()?;
         Ok(ir)
+    }
+
+    #[allow(clippy::too_many_lines)]
+    fn parse_index_ops(&mut self) -> Result<Option<QueryIR>, String> {
+        if optional_match_token!(self.lexer => Create) {
+            let fulltext = optional_match_token!(self.lexer => Fulltext);
+            let vector = !fulltext && optional_match_token!(self.lexer => Vector);
+            let index = optional_match_token!(self.lexer => Index);
+            if !index {
+                return Ok(None);
+            }
+            if !fulltext && !vector && optional_match_token!(self.lexer => On) {
+                match_token!(self.lexer, Colon);
+                let label = self.parse_ident()?;
+                match_token!(self.lexer, LParen);
+                let mut attrs = vec![self.parse_ident()?];
+                while optional_match_token!(self.lexer, Comma) {
+                    attrs.push(self.parse_ident()?);
+                }
+                match_token!(self.lexer, RParen);
+                match_token!(self.lexer, EndOfFile);
+                let index_type = IndexType::Range;
+                let entity_type = EntityType::Node;
+                return Ok(Some(QueryIR::CreateIndex {
+                    label,
+                    attrs,
+                    index_type,
+                    entity_type,
+                    options: None,
+                }));
+            }
+            match_token!(self.lexer => For);
+            match_token!(self.lexer, LParen);
+            let (nkey, label, entity_type) = if optional_match_token!(self.lexer, RParen) {
+                match_token!(self.lexer, Dash);
+                match_token!(self.lexer, LBrace);
+                let nkey = self.parse_ident()?;
+                match_token!(self.lexer, Colon);
+                let label = self.parse_ident()?;
+                match_token!(self.lexer, RBrace);
+                match_token!(self.lexer, Dash);
+                optional_match_token!(self.lexer, GreaterThan);
+                match_token!(self.lexer, LParen);
+                match_token!(self.lexer, RParen);
+                (nkey, label, EntityType::Relationship)
+            } else {
+                let nkey = self.parse_ident()?;
+                match_token!(self.lexer, Colon);
+                let label = self.parse_ident()?;
+                match_token!(self.lexer, RParen);
+                (nkey, label, EntityType::Node)
+            };
+            match_token!(self.lexer => On);
+            match_token!(self.lexer, LParen);
+            let key = self.parse_ident()?;
+            if nkey.as_str() != key.as_str() {
+                return Err(self.lexer.format_error(&format!("'{key}' not defined")));
+            }
+            match_token!(self.lexer, Dot);
+            let mut attrs = vec![self.parse_ident()?];
+            while optional_match_token!(self.lexer, Comma) {
+                let key = self.parse_ident()?;
+                if nkey.as_str() != key.as_str() {
+                    return Err(self.lexer.format_error(&format!("'{key}' not defined")));
+                }
+                match_token!(self.lexer, Dot);
+                attrs.push(self.parse_ident()?);
+            }
+            match_token!(self.lexer, RParen);
+            let index_type = if fulltext {
+                IndexType::Fulltext
+            } else if vector {
+                IndexType::Vector
+            } else {
+                IndexType::Range
+            };
+            let options = if vector && optional_match_token!(self.lexer => Options) {
+                Some(Rc::new(self.parse_map()?))
+            } else {
+                None
+            };
+            match_token!(self.lexer, EndOfFile);
+            return Ok(Some(QueryIR::CreateIndex {
+                label,
+                attrs,
+                index_type,
+                entity_type,
+                options,
+            }));
+        }
+        if optional_match_token!(self.lexer => Drop) {
+            let fulltext = optional_match_token!(self.lexer => Fulltext);
+            let vector = !fulltext && optional_match_token!(self.lexer => Vector);
+            let index = optional_match_token!(self.lexer => Index);
+            if !index {
+                return Ok(None);
+            }
+            if !fulltext && !vector && optional_match_token!(self.lexer => On) {
+                match_token!(self.lexer, Colon);
+                let label = self.parse_ident()?;
+                match_token!(self.lexer, LParen);
+                let mut attrs = vec![self.parse_ident()?];
+                while optional_match_token!(self.lexer, Comma) {
+                    attrs.push(self.parse_ident()?);
+                }
+                match_token!(self.lexer, RParen);
+                match_token!(self.lexer, EndOfFile);
+                let index_type = IndexType::Range;
+                let entity_type = EntityType::Node;
+                return Ok(Some(QueryIR::DropIndex {
+                    label,
+                    attrs,
+                    index_type,
+                    entity_type,
+                }));
+            }
+            match_token!(self.lexer => For);
+            match_token!(self.lexer, LParen);
+            let (nkey, label, entity_type) = if optional_match_token!(self.lexer, RParen) {
+                match_token!(self.lexer, Dash);
+                match_token!(self.lexer, LBrace);
+                let nkey = self.parse_ident()?;
+                match_token!(self.lexer, Colon);
+                let label = self.parse_ident()?;
+                match_token!(self.lexer, RBrace);
+                match_token!(self.lexer, Dash);
+                optional_match_token!(self.lexer, GreaterThan);
+                match_token!(self.lexer, LParen);
+                match_token!(self.lexer, RParen);
+                (nkey, label, EntityType::Relationship)
+            } else {
+                let nkey = self.parse_ident()?;
+                match_token!(self.lexer, Colon);
+                let label = self.parse_ident()?;
+                match_token!(self.lexer, RParen);
+                (nkey, label, EntityType::Node)
+            };
+            match_token!(self.lexer => On);
+            match_token!(self.lexer, LParen);
+            let key = self.parse_ident()?;
+            if nkey.as_str() != key.as_str() {
+                return Err(self.lexer.format_error(&format!("'{key}' not defined")));
+            }
+            match_token!(self.lexer, Dot);
+            let mut attrs = vec![self.parse_ident()?];
+            while optional_match_token!(self.lexer, Comma) {
+                let key = self.parse_ident()?;
+                if nkey.as_str() != key.as_str() {
+                    return Err(self.lexer.format_error(&format!("'{key}' not defined")));
+                }
+                match_token!(self.lexer, Dot);
+                attrs.push(self.parse_ident()?);
+            }
+            match_token!(self.lexer, RParen);
+            match_token!(self.lexer, EndOfFile);
+            let index_type = if fulltext {
+                IndexType::Fulltext
+            } else if vector {
+                IndexType::Vector
+            } else {
+                IndexType::Range
+            };
+            return Ok(Some(QueryIR::DropIndex {
+                label,
+                attrs,
+                index_type,
+                entity_type,
+            }));
+        }
+        Ok(None)
     }
 
     fn parse_query(&mut self) -> Result<QueryIR, String> {
@@ -959,11 +1086,7 @@ impl<'a> Parser<'a> {
             clauses.push(self.parse_return_clause(write)?);
             write = false;
         }
-        if self.lexer.current() != Token::EndOfFile {
-            return Err(self
-                .lexer
-                .format_error(&format!("Invalid input '{:?}'", self.lexer.current())));
-        }
+        match_token!(self.lexer, EndOfFile);
         Ok(QueryIR::Query(clauses, write))
     }
 
@@ -1034,20 +1157,38 @@ impl<'a> Parser<'a> {
                 self.lexer.next();
                 self.parse_remove_clause()
             }
-            token => Err(self.lexer.format_error(&format!("Invalid input {token:?}"))),
+            _ => unreachable!(),
         }
     }
 
     fn parse_call_clause(&mut self) -> Result<QueryIR, String> {
-        let ident = self.parse_dotted_ident()?;
+        let function_name = self.parse_dotted_ident()?;
+        let func = get_functions().get(function_name.as_str(), &FnType::Procedure(vec![]))?;
         match_token!(self.lexer, LParen);
-        Ok(QueryIR::Call(
-            ident,
-            self.parse_expression_list(ExpressionListType::ZeroOrMoreClosedBy(RParen))?
-                .into_iter()
-                .map(Rc::new)
-                .collect(),
-        ))
+        let args = self
+            .parse_expression_list(ExpressionListType::ZeroOrMoreClosedBy(RParen))?
+            .into_iter()
+            .map(Rc::new)
+            .collect();
+        let mut named_outputs = vec![];
+        let filter = if optional_match_token!(self.lexer => Yield) {
+            let ident = self.parse_ident()?;
+            named_outputs.push(self.create_var(Some(ident), Type::Any)?);
+            while optional_match_token!(self.lexer, Comma) {
+                let ident = self.parse_ident()?;
+                named_outputs.push(self.create_var(Some(ident), Type::Any)?);
+            }
+            self.parse_where()?
+        } else if let FnType::Procedure(defult_outputs) = &func.fn_type {
+            for output in defult_outputs {
+                named_outputs.push(self.create_var(Some(Rc::new(output.clone())), Type::Any)?);
+            }
+            None
+        } else {
+            None
+        };
+
+        Ok(QueryIR::Call(func, args, named_outputs, filter))
     }
 
     fn parse_dotted_ident(&mut self) -> Result<Rc<String>, String> {
@@ -1214,6 +1355,11 @@ impl<'a> Parser<'a> {
     ) -> Result<QueryIR, String> {
         let distinct = optional_match_token!(self.lexer => Distinct);
         let exprs = if optional_match_token!(self.lexer, Star) {
+            if !self.vars.iter().any(|v| v.1.name.is_some()) {
+                return Err(self
+                    .lexer
+                    .format_error("RETURN * is not allowed when there are no variables in scope"));
+            }
             let mut res: Vec<(Variable, QueryExpr)> = self
                 .vars
                 .values()
@@ -1454,6 +1600,11 @@ impl<'a> Parser<'a> {
 
                     if func.is_aggregate() {
                         if optional_match_token!(self.lexer, Star) {
+                            if func.name != "count" {
+                                return Err(self.lexer.format_error(
+                                    "COUNT is the only function which can accept * as an argument",
+                                ));
+                            }
                             let mut arg =
                                 tree!(ExprIR::Variable(self.create_var(None, Type::Any)?));
                             if distinct {
@@ -1793,7 +1944,10 @@ impl<'a> Parser<'a> {
                 self.lexer.next();
                 Ok(id)
             }
-            token => Err(self.lexer.format_error(&format!("Invalid input {token:?}"))),
+            _ => Err(self.lexer.format_error(&format!(
+                "Invalid input '{}': expected an identifier",
+                self.lexer.current_str()
+            ))),
         }
     }
 
@@ -2172,7 +2326,7 @@ impl<'a> Parser<'a> {
             } else {
                 return Err(self
                     .lexer
-                    .format_error(format!("Invalid input {:?}", self.lexer.current()).as_str()));
+                    .format_error(&format!("Invalid input '{}'", self.lexer.current_str())));
             }
 
             if !optional_match_token!(self.lexer, Comma) {

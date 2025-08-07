@@ -30,6 +30,7 @@ expressions/quantifier
 expressions/string
 expressions/temporal
 expressions/typeConversion
+clauses/call
 clauses/create
 clauses/delete/Delete1.feature
 clauses/delete/Delete2.feature
