@@ -554,13 +554,8 @@ impl<'a> Lexer<'a> {
                             len,
                         );
                     }
-                    if pos + len + 1 < str.len()
-                        && (&str[pos + len + 1..=pos + len + 1] == "."
-                            || !&str[pos + len + 1..]
-                                .chars()
-                                .next()
-                                .unwrap()
-                                .is_ascii_digit())
+                    if let Some(ch) = str[pos + len + 1..].chars().next()
+                        && (ch == '.' || !ch.is_ascii_digit())
                     {
                         break;
                     }
