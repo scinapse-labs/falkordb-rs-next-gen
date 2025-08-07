@@ -377,10 +377,7 @@ impl<'a> Lexer<'a> {
                         len += c.len_utf8();
                     }
                     if !end {
-                        return (
-                            Token::Error(String::from(&str[pos + 1..pos + len])),
-                            len + 1,
-                        );
+                        return (Token::Error(String::from(&str[pos..pos + len])), len);
                     }
                     unescape(&str[pos + 1..pos + len]).map_or_else(
                         |e| match e {
@@ -419,10 +416,7 @@ impl<'a> Lexer<'a> {
                         len += c.len_utf8();
                     }
                     if !end {
-                        return (
-                            Token::Error(String::from(&str[pos + 1..pos + len])),
-                            len + 1,
-                        );
+                        return (Token::Error(String::from(&str[pos..pos + len])), len);
                     }
                     unescape(&str[pos + 1..pos + len]).map_or_else(
                         |e| match e {
