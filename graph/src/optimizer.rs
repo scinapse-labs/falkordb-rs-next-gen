@@ -1,4 +1,4 @@
-use std::rc::Rc;
+use std::{rc::Rc, sync::Arc};
 
 use orx_tree::{Bfs, DynTree, NodeRef};
 
@@ -104,7 +104,7 @@ pub fn optimize(
 fn get_index(
     graph: &Graph,
     node: &Rc<crate::ast::QueryNode>,
-) -> Option<(Rc<QueryNode>, Rc<String>, DynTree<ExprIR>)> {
+) -> Option<(Rc<QueryNode>, Arc<String>, DynTree<ExprIR>)> {
     for label in &node.labels {
         for attr in node.attrs.root().children() {
             if let ExprIR::String(attr_str) = attr.data()

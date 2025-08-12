@@ -4,16 +4,16 @@ use std::{
     hash::Hash,
     os::raw::{c_char, c_int, c_void},
     ptr::null_mut,
-    rc::Rc,
+    sync::Arc,
 };
 
 use crate::{
     redisearch::{
-        GC_POLICY_FORK, REDISEARCH_ADD_REPLACE, RSFLDOPT_NONE, RSFLDTYPE_FULLTEXT, RSFLDTYPE_GEO,
-        RSFLDTYPE_NUMERIC, RSFLDTYPE_TAG, RSFLDTYPE_VECTOR, RSIndex, RSRANGE_INF, RSRANGE_NEG_INF,
-        RediSearch_CreateDocument2, RediSearch_CreateField, RediSearch_CreateIndex,
-        RediSearch_CreateIndexOptions, RediSearch_CreateNumericNode, RediSearch_CreateTagNode,
-        RediSearch_CreateTagTokenNode, RediSearch_DeleteDocument,
+        GC_POLICY_FORK, REDISEARCH_ADD_REPLACE, RSDoc, RSFLDOPT_NONE, RSFLDTYPE_FULLTEXT,
+        RSFLDTYPE_GEO, RSFLDTYPE_NUMERIC, RSFLDTYPE_TAG, RSFLDTYPE_VECTOR, RSIndex, RSRANGE_INF,
+        RSRANGE_NEG_INF, RediSearch_CreateDocument2, RediSearch_CreateField,
+        RediSearch_CreateIndex, RediSearch_CreateIndexOptions, RediSearch_CreateNumericNode,
+        RediSearch_CreateTagNode, RediSearch_CreateTagTokenNode, RediSearch_DeleteDocument,
         RediSearch_DocumentAddFieldNumber, RediSearch_DocumentAddFieldString, RediSearch_DropIndex,
         RediSearch_FreeIndexOptions, RediSearch_GetResultsIterator, RediSearch_IndexAddDocument,
         RediSearch_IndexOptionsSetGCPolicy, RediSearch_IndexOptionsSetStopwords,
@@ -39,38 +39,95 @@ pub enum EntityType {
 
 #[derive(Clone)]
 pub struct Document {
-    id: u64,
-    columns: HashMap<Rc<Field>, Value>,
+    rs_doc: *mut RSDoc,
 }
+
+unsafe impl Send for Document {}
+unsafe impl Sync for Document {}
 
 impl Document {
     #[must_use]
     pub fn new(id: u64) -> Self {
         Self {
-            id,
-            columns: HashMap::new(),
+            rs_doc: unsafe {
+                RediSearch_CreateDocument2(
+                    (&raw const id).cast::<c_void>(),
+                    8,
+                    null_mut(),
+                    1.0,
+                    null_mut(),
+                )
+            },
         }
     }
 
     pub fn set(
         &mut self,
-        field: Rc<Field>,
+        field: Arc<Field>,
         value: Value,
     ) {
-        self.columns.insert(field, value);
+        unsafe {
+            match value {
+                Value::Bool(i) => {
+                    RediSearch_DocumentAddFieldNumber(
+                        self.rs_doc,
+                        field.name.as_ptr(),
+                        f64::from(i),
+                        RSFLDTYPE_NUMERIC,
+                    );
+                }
+                Value::Int(i) => {
+                    RediSearch_DocumentAddFieldNumber(
+                        self.rs_doc,
+                        field.name.as_ptr(),
+                        i as f64,
+                        RSFLDTYPE_NUMERIC,
+                    );
+                }
+                Value::Float(i) => {
+                    RediSearch_DocumentAddFieldNumber(
+                        self.rs_doc,
+                        field.name.as_ptr(),
+                        i,
+                        RSFLDTYPE_NUMERIC,
+                    );
+                }
+                Value::String(s) => {
+                    RediSearch_DocumentAddFieldString(
+                        self.rs_doc,
+                        field.name.as_ptr(),
+                        s.as_ptr().cast::<i8>(),
+                        s.len(),
+                        if field.ty == IndexType::Fulltext {
+                            RSFLDTYPE_FULLTEXT
+                        } else {
+                            RSFLDTYPE_TAG
+                        },
+                    );
+                }
+                Value::List(values) => todo!(),
+                Value::VecF32(items) => todo!(),
+                Value::Null
+                | Value::Map(_)
+                | Value::Node(_)
+                | Value::Relationship(_, _, _)
+                | Value::Path(_)
+                | Value::Arc(_) => unreachable!(),
+            }
+        }
     }
 }
 
 #[derive(Debug)]
 pub enum IndexQuery<T> {
-    Equal(Rc<String>, T),
-    Range(Rc<String>, Option<T>, Option<T>),
+    Equal(Arc<String>, T),
+    Range(Arc<String>, Option<T>, Option<T>),
     And(Vec<IndexQuery<T>>),
     Or(Vec<IndexQuery<T>>),
 }
 
 pub struct Field {
-    pub name: Rc<CString>,
+    pub name: CString,
     pub ty: IndexType,
 }
 
@@ -94,16 +151,15 @@ impl Hash for Field {
     }
 }
 
-enum IndexStatus {
+#[derive(Clone)]
+pub enum IndexStatus {
     Operational,
-    UnderConstruction,
+    UnderConstruction(u64, u64),
 }
 
 struct Index {
     rs_idx: *mut RSIndex,
-    fields: HashMap<Rc<String>, Vec<Rc<Field>>>,
-    add_docs: Vec<Document>,
-    remove_docs: Vec<u64>,
+    fields: HashMap<Arc<String>, Vec<Arc<Field>>>,
     status: IndexStatus,
 }
 
@@ -117,15 +173,19 @@ impl Drop for Index {
 
 #[derive(Default)]
 pub struct Indexer {
-    index: HashMap<u64, Index>,
+    index: HashMap<Arc<String>, Index>,
 }
+
+unsafe impl Send for Indexer {}
+unsafe impl Sync for Indexer {}
 
 impl Indexer {
     pub fn create_index(
         &mut self,
         index_type: &IndexType,
-        label: u64,
-        attrs: &Vec<Rc<String>>,
+        label: Arc<String>,
+        attrs: &Vec<Arc<String>>,
+        total: u64,
     ) -> Result<(), String> {
         let mut fields = HashMap::new();
         if let Some(a) = self.index.get_mut(&label) {
@@ -135,23 +195,23 @@ impl Indexer {
                         return Err(format!("Attribute '{attr}' is already indexed"));
                     }
                     let field_name = match index_type {
-                        IndexType::Range => Rc::new(format!("range:{attr}")),
+                        IndexType::Range => Arc::new(format!("range:{attr}")),
                         IndexType::Fulltext => attr.clone(),
-                        IndexType::Vector => Rc::new(format!("vector:{attr}")),
+                        IndexType::Vector => Arc::new(format!("vector:{attr}")),
                     };
-                    let field = Rc::new(Field {
-                        name: Rc::new(CString::new(field_name.as_str()).unwrap()),
+                    let field = Arc::new(Field {
+                        name: CString::new(field_name.as_str()).unwrap(),
                         ty: index_type.clone(),
                     });
                     f.push(field);
                 } else {
                     let field_name = match index_type {
-                        IndexType::Range => Rc::new(format!("range:{attr}")),
+                        IndexType::Range => Arc::new(format!("range:{attr}")),
                         IndexType::Fulltext => attr.clone(),
-                        IndexType::Vector => Rc::new(format!("vector:{attr}")),
+                        IndexType::Vector => Arc::new(format!("vector:{attr}")),
                     };
-                    let field = Rc::new(Field {
-                        name: Rc::new(CString::new(field_name.as_str()).unwrap()),
+                    let field = Arc::new(Field {
+                        name: CString::new(field_name.as_str()).unwrap(),
                         ty: index_type.clone(),
                     });
                     a.fields.insert(attr.clone(), vec![field]);
@@ -161,20 +221,20 @@ impl Indexer {
         } else {
             for attr in attrs {
                 let field_name = match index_type {
-                    IndexType::Range => Rc::new(format!("range:{attr}")),
+                    IndexType::Range => Arc::new(format!("range:{attr}")),
                     IndexType::Fulltext => attr.clone(),
-                    IndexType::Vector => Rc::new(format!("vector:{attr}")),
+                    IndexType::Vector => Arc::new(format!("vector:{attr}")),
                 };
                 if fields.contains_key(attr) {
                     return Err(format!("Attribute '{attr}' is already indexed"));
                 }
-                let field = Rc::new(Field {
-                    name: Rc::new(CString::new(field_name.as_str()).unwrap()),
+                let field = Arc::new(Field {
+                    name: CString::new(field_name.as_str()).unwrap(),
                     ty: index_type.clone(),
                 });
                 fields.insert(attr.clone(), vec![field]);
             }
-        };
+        }
         unsafe {
             let options = RediSearch_CreateIndexOptions();
             // RediSearch_IndexOptionsSetLanguage(options, idx->language);
@@ -226,9 +286,7 @@ impl Indexer {
                 Index {
                     rs_idx: index,
                     fields,
-                    add_docs: Vec::new(),
-                    remove_docs: Vec::new(),
-                    status: IndexStatus::UnderConstruction,
+                    status: IndexStatus::UnderConstruction(0, total),
                 },
             );
         }
@@ -237,10 +295,11 @@ impl Indexer {
 
     pub fn drop_index(
         &mut self,
-        label: u64,
-        attrs: &Vec<Rc<String>>,
+        label: Arc<String>,
+        attrs: &Vec<Arc<String>>,
         index_type: &IndexType,
-    ) -> Option<Vec<Rc<String>>> {
+        total: u64,
+    ) -> Option<Vec<Arc<String>>> {
         if let Some(index) = self.index.get_mut(&label) {
             let mut removed = false;
             for attr in attrs {
@@ -264,6 +323,7 @@ impl Indexer {
                 return None;
             }
             if removed {
+                index.status = IndexStatus::UnderConstruction(0, total);
                 return Some(index.fields.keys().cloned().collect());
             }
         }
@@ -273,18 +333,25 @@ impl Indexer {
     #[must_use]
     pub fn is_label_indexed(
         &self,
-        label: u64,
+        label: Arc<String>,
     ) -> bool {
-        self.index.contains_key(&label)
+        if let Some(index) = self.index.get(&label)
+            && matches!(index.status, IndexStatus::Operational)
+        {
+            return true;
+        }
+        false
     }
 
     #[must_use]
     pub fn is_attr_indexed(
         &self,
-        label: u64,
-        field: Rc<String>,
+        label: Arc<String>,
+        field: Arc<String>,
     ) -> bool {
-        if let Some(index) = self.index.get(&label) {
+        if let Some(index) = self.index.get(&label)
+            && matches!(index.status, IndexStatus::Operational)
+        {
             return index.fields.contains_key(&field);
         }
         false
@@ -293,7 +360,7 @@ impl Indexer {
     #[must_use]
     pub fn query(
         &self,
-        label: u64,
+        label: Arc<String>,
         query: IndexQuery<Value>,
     ) -> Vec<u64> {
         if let Some(index) = self.index.get(&label) {
@@ -388,98 +455,33 @@ impl Indexer {
         vec![]
     }
 
-    pub fn add(
+    pub fn commit(
         &mut self,
-        label: u64,
-        doc: Document,
+        index_add_docs: &mut HashMap<Arc<String>, Vec<Document>>,
+        remove_docs: &mut HashMap<Arc<String>, Vec<u64>>,
     ) {
-        if let Some(index) = self.index.get_mut(&label) {
-            index.add_docs.push(doc);
-        }
-    }
-
-    pub fn remove(
-        &mut self,
-        label: u64,
-        id: u64,
-    ) {
-        if let Some(index) = self.index.get_mut(&label) {
-            index.remove_docs.push(id);
-        }
-    }
-
-    pub fn commit(&mut self) {
-        for index in self.index.values_mut() {
-            for doc in index.add_docs.drain(..) {
+        for (label, add_docs) in index_add_docs {
+            let Some(index) = self.index.get_mut(label) else {
+                continue;
+            };
+            for doc in add_docs.drain(..) {
                 unsafe {
-                    let rs_doc = RediSearch_CreateDocument2(
-                        (&raw const doc.id).cast::<c_void>(),
-                        8,
-                        null_mut(),
-                        1.0,
-                        null_mut(),
-                    );
-
-                    for (field, value) in doc.columns {
-                        match value {
-                            Value::Bool(i) => {
-                                RediSearch_DocumentAddFieldNumber(
-                                    rs_doc,
-                                    field.name.as_ptr(),
-                                    f64::from(i),
-                                    RSFLDTYPE_NUMERIC,
-                                );
-                            }
-                            Value::Int(i) => {
-                                RediSearch_DocumentAddFieldNumber(
-                                    rs_doc,
-                                    field.name.as_ptr(),
-                                    i as f64,
-                                    RSFLDTYPE_NUMERIC,
-                                );
-                            }
-                            Value::Float(i) => {
-                                RediSearch_DocumentAddFieldNumber(
-                                    rs_doc,
-                                    field.name.as_ptr(),
-                                    i,
-                                    RSFLDTYPE_NUMERIC,
-                                );
-                            }
-                            Value::String(s) => {
-                                RediSearch_DocumentAddFieldString(
-                                    rs_doc,
-                                    field.name.as_ptr(),
-                                    s.as_ptr().cast::<i8>(),
-                                    s.len(),
-                                    if field.ty == IndexType::Fulltext {
-                                        RSFLDTYPE_FULLTEXT
-                                    } else {
-                                        RSFLDTYPE_TAG
-                                    },
-                                );
-                            }
-                            Value::List(values) => todo!(),
-                            Value::VecF32(items) => todo!(),
-                            Value::Null
-                            | Value::Map(_)
-                            | Value::Node(_)
-                            | Value::Relationship(_, _, _)
-                            | Value::Path(_)
-                            | Value::Rc(_) => unreachable!(),
-                        }
-                    }
-
                     let res = RediSearch_IndexAddDocument(
                         index.rs_idx,
-                        rs_doc,
+                        doc.rs_doc,
                         REDISEARCH_ADD_REPLACE as c_int,
                         null_mut(),
                     );
                     debug_assert_eq!(res, 0);
                 }
             }
-            for id in index.remove_docs.drain(..) {
+            index.status = IndexStatus::Operational;
+        }
+        for (label, remove_docs) in remove_docs {
+            let Some(index) = self.index.get_mut(label) else {
+                continue;
+            };
+            for id in remove_docs.drain(..) {
                 unsafe {
                     RediSearch_DeleteDocument(index.rs_idx, (&raw const id).cast::<c_void>(), 8)
                 };
@@ -490,8 +492,8 @@ impl Indexer {
     #[must_use]
     pub fn get_fields(
         &self,
-        label: u64,
-    ) -> HashMap<Rc<String>, Vec<Rc<Field>>> {
+        label: Arc<String>,
+    ) -> HashMap<Arc<String>, Vec<Arc<Field>>> {
         self.index
             .get(&label)
             .map(|index| index.fields.clone())
@@ -499,16 +501,22 @@ impl Indexer {
     }
 
     #[must_use]
-    pub fn index_info(&self) -> Vec<(u64, HashMap<Rc<String>, Vec<Rc<Field>>>)> {
+    pub fn index_info(
+        &self
+    ) -> Vec<(
+        Arc<String>,
+        IndexStatus,
+        HashMap<Arc<String>, Vec<Arc<Field>>>,
+    )> {
         self.index
             .iter()
-            .map(|(id, index)| {
+            .map(|(label, index)| {
                 let attrs = index
                     .fields
                     .iter()
                     .map(|(k, v)| (k.clone(), v.clone()))
                     .collect();
-                (*id, attrs)
+                (label.clone(), index.status.clone(), attrs)
             })
             .collect()
     }

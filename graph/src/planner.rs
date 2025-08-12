@@ -1,4 +1,4 @@
-use std::{collections::HashSet, fmt::Display, rc::Rc};
+use std::{collections::HashSet, fmt::Display, rc::Rc, sync::Arc};
 
 use orx_tree::{DynTree, NodeRef, Side};
 
@@ -30,7 +30,7 @@ pub enum IR {
     NodeByLabelScan(Rc<QueryNode>),
     NodeByIndexScan {
         node: Rc<QueryNode>,
-        index: Rc<String>,
+        index: Arc<String>,
         query: Rc<IndexQuery<QueryExpr>>,
     },
     RelationshipScan(Rc<QueryRelationship>),
@@ -56,15 +56,15 @@ pub enum IR {
     Distinct,
     Commit,
     CreateIndex {
-        label: Rc<String>,
-        attrs: Vec<Rc<String>>,
+        label: Arc<String>,
+        attrs: Vec<Arc<String>>,
         index_type: IndexType,
         entity_type: EntityType,
         options: Option<QueryExpr>,
     },
     DropIndex {
-        label: Rc<String>,
-        attrs: Vec<Rc<String>>,
+        label: Arc<String>,
+        attrs: Vec<Arc<String>>,
         index_type: IndexType,
         entity_type: EntityType,
     },

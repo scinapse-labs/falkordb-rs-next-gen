@@ -1,10 +1,11 @@
-use std::{cell::RefCell, rc::Rc};
+use std::{cell::RefCell, collections::HashMap, sync::Arc};
 
 use ordermap::{OrderMap, OrderSet};
 use roaring::RoaringTreemap;
 
 use crate::{
     graph::graph::{Graph, NodeId, RelationshipId},
+    indexer::Document,
     runtime::{
         functions::Type,
         runtime::QueryStatistics,
@@ -15,7 +16,7 @@ use crate::{
 pub struct PendingRelationship {
     pub from: NodeId,
     pub to: NodeId,
-    pub type_name: Rc<String>,
+    pub type_name: Arc<String>,
 }
 
 impl PendingRelationship {
@@ -23,7 +24,7 @@ impl PendingRelationship {
     pub const fn new(
         from: NodeId,
         to: NodeId,
-        type_name: Rc<String>,
+        type_name: Arc<String>,
     ) -> Self {
         Self {
             from,
@@ -39,10 +40,12 @@ pub struct Pending {
     created_relationships: OrderMap<RelationshipId, PendingRelationship>,
     deleted_nodes: RoaringTreemap,
     deleted_relationships: OrderSet<(RelationshipId, NodeId, NodeId)>,
-    set_nodes_attrs: OrderMap<NodeId, OrderMap<Rc<String>, Value>>,
-    set_relationships_attrs: OrderMap<RelationshipId, OrderMap<Rc<String>, Value>>,
-    set_node_labels: OrderMap<NodeId, OrderSet<Rc<String>>>,
-    remove_node_labels: OrderMap<NodeId, OrderSet<Rc<String>>>,
+    set_nodes_attrs: OrderMap<NodeId, OrderMap<Arc<String>, Value>>,
+    set_relationships_attrs: OrderMap<RelationshipId, OrderMap<Arc<String>, Value>>,
+    set_node_labels: OrderMap<NodeId, OrderSet<Arc<String>>>,
+    remove_node_labels: OrderMap<NodeId, OrderSet<Arc<String>>>,
+    index_add_docs: HashMap<Arc<String>, Vec<Document>>,
+    index_remove_docs: HashMap<Arc<String>, Vec<u64>>,
 }
 
 impl Pending {
@@ -58,7 +61,7 @@ impl Pending {
     pub fn set_node_attributes(
         &mut self,
         id: NodeId,
-        attrs: OrderMap<Rc<String>, Value>,
+        attrs: OrderMap<Arc<String>, Value>,
     ) -> Result<(), String> {
         for (_, value) in &attrs {
             if value
@@ -89,7 +92,7 @@ impl Pending {
     pub fn set_node_attribute(
         &mut self,
         id: NodeId,
-        key: Rc<String>,
+        key: Arc<String>,
         value: Value,
     ) -> Result<(), String> {
         if value
@@ -123,7 +126,7 @@ impl Pending {
     pub fn get_node_attribute(
         &self,
         id: NodeId,
-        key: &Rc<String>,
+        key: &Arc<String>,
     ) -> Option<&Value> {
         self.set_nodes_attrs
             .get(&id)
@@ -133,7 +136,7 @@ impl Pending {
     pub fn update_node_attrs(
         &self,
         id: NodeId,
-        attrs: &mut OrderMap<Rc<String>, Value>,
+        attrs: &mut OrderMap<Arc<String>, Value>,
     ) {
         if let Some(added) = self.set_nodes_attrs.get(&id) {
             for (key, value) in added {
@@ -149,7 +152,7 @@ impl Pending {
     pub fn set_node_labels(
         &mut self,
         id: NodeId,
-        labels: OrderSet<Rc<String>>,
+        labels: OrderSet<Arc<String>>,
     ) {
         self.set_node_labels.insert(id, labels);
     }
@@ -157,7 +160,7 @@ impl Pending {
     pub fn remove_node_labels(
         &mut self,
         id: NodeId,
-        labels: OrderSet<Rc<String>>,
+        labels: OrderSet<Arc<String>>,
     ) {
         self.remove_node_labels.insert(id, labels);
     }
@@ -165,7 +168,7 @@ impl Pending {
     pub fn update_node_labels(
         &self,
         id: NodeId,
-        labels: &mut OrderSet<Rc<String>>,
+        labels: &mut OrderSet<Arc<String>>,
     ) {
         if let Some(added) = self.set_node_labels.get(&id) {
             labels.extend(added.iter().cloned());
@@ -189,7 +192,7 @@ impl Pending {
         id: RelationshipId,
         from: NodeId,
         to: NodeId,
-        type_name: Rc<String>,
+        type_name: Arc<String>,
     ) {
         self.created_relationships
             .insert(id, PendingRelationship::new(from, to, type_name));
@@ -198,7 +201,7 @@ impl Pending {
     pub fn set_relationship_attributes(
         &mut self,
         id: RelationshipId,
-        attrs: OrderMap<Rc<String>, Value>,
+        attrs: OrderMap<Arc<String>, Value>,
     ) -> Result<(), String> {
         for (_, value) in &attrs {
             if value
@@ -229,7 +232,7 @@ impl Pending {
     pub fn set_relationship_attribute(
         &mut self,
         id: RelationshipId,
-        key: Rc<String>,
+        key: Arc<String>,
         value: Value,
     ) -> Result<(), String> {
         if value
@@ -263,7 +266,7 @@ impl Pending {
     pub fn get_relationship_attribute(
         &self,
         id: RelationshipId,
-        key: &Rc<String>,
+        key: &Arc<String>,
     ) -> Option<&Value> {
         self.set_relationships_attrs
             .get(&id)
@@ -273,7 +276,7 @@ impl Pending {
     pub fn update_relationship_attrs(
         &self,
         id: RelationshipId,
-        attrs: &mut OrderMap<Rc<String>, Value>,
+        attrs: &mut OrderMap<Arc<String>, Value>,
     ) {
         if let Some(added) = self.set_relationships_attrs.get(&id) {
             for (key, value) in added {
@@ -299,7 +302,7 @@ impl Pending {
     pub fn get_relationship_type(
         &self,
         id: RelationshipId,
-    ) -> Option<Rc<String>> {
+    ) -> Option<Arc<String>> {
         self.created_relationships
             .get(&id)
             .map(|r| r.type_name.clone())
@@ -348,19 +351,22 @@ impl Pending {
         if !self.deleted_nodes.is_empty() {
             stats.borrow_mut().nodes_deleted += self.deleted_nodes.len();
             for id in &self.deleted_nodes {
-                g.borrow_mut().delete_node(NodeId::from(id));
+                g.borrow_mut()
+                    .delete_node(NodeId::from(id), &mut self.index_remove_docs);
             }
             self.deleted_nodes.clear();
         }
         if !self.set_node_labels.is_empty() {
             for (id, labels) in &self.set_node_labels {
-                g.borrow_mut().set_node_labels(*id, labels);
+                g.borrow_mut()
+                    .set_node_labels(*id, labels, &mut self.index_add_docs);
             }
             self.set_node_labels.clear();
         }
         if !self.remove_node_labels.is_empty() {
             for (id, labels) in &self.remove_node_labels {
-                g.borrow_mut().remove_node_labels(*id, labels);
+                g.borrow_mut()
+                    .remove_node_labels(*id, labels, &mut self.index_remove_docs);
             }
             self.remove_node_labels.clear();
         }
@@ -377,9 +383,13 @@ impl Pending {
             for (id, attrs) in &self.set_nodes_attrs {
                 for (key, value) in attrs {
                     let attr_id = g.borrow_mut().get_or_add_node_attribute_id(key);
-                    if g.borrow_mut()
-                        .set_node_attribute(*id, attr_id, value.clone())
-                    {
+                    if g.borrow_mut().set_node_attribute(
+                        *id,
+                        attr_id,
+                        value.clone(),
+                        &mut self.index_add_docs,
+                        &mut self.index_remove_docs,
+                    ) {
                         stats.borrow_mut().properties_removed += 1;
                     }
                 }
@@ -408,6 +418,7 @@ impl Pending {
             }
             self.set_relationships_attrs.clear();
         }
-        g.borrow_mut().commit_index();
+        g.borrow_mut()
+            .commit_index(&mut self.index_add_docs, &mut self.index_remove_docs);
     }
 }

@@ -9,7 +9,7 @@ use crate::{
     indexer::IndexQuery,
     planner::IR,
     runtime::{
-        functions::{FnType, Functions, get_functions},
+        functions::FnType,
         iter::{Aggregate, CondInspectIter, LazyReplace, TryFlatMap, TryMap},
         pending::Pending,
         value::{
@@ -31,6 +31,7 @@ use std::{
     iter::{empty, once},
     path::Path,
     rc::Rc,
+    sync::Arc,
     time::Instant,
 };
 use tracing::instrument;
@@ -57,7 +58,6 @@ pub struct QueryStatistics {
 }
 
 pub struct Runtime<'a> {
-    functions: &'static Functions,
     parameters: HashMap<String, Value>,
     pub g: &'a RefCell<Graph>,
     write: bool,
@@ -181,7 +181,6 @@ impl<'a> Runtime<'a> {
     ) -> Self {
         let return_names = plan.root().get_return_names();
         Self {
-            functions: get_functions(),
             parameters,
             g,
             write,
@@ -627,7 +626,7 @@ impl<'a> Runtime<'a> {
 
                     res.push((func.func)(self, args)?);
                 }
-                ExprIR::Map => res.push(Value::Map(Rc::new(
+                ExprIR::Map => res.push(Value::Map(Arc::new(
                     node.children()
                         .map(|child| {
                             Ok((
@@ -1380,7 +1379,7 @@ impl<'a> Runtime<'a> {
         &'a self,
         path: &str,
         headers: bool,
-        delimiter: Rc<String>,
+        delimiter: Arc<String>,
         var: &'a Variable,
         vars: &Env,
     ) -> Result<Box<dyn Iterator<Item = Result<Env, String>> + 'a>, String> {
@@ -1396,7 +1395,7 @@ impl<'a> Runtime<'a> {
                 .headers()
                 .map_err(|e| format!("Failed to read CSV headers: {e}"))?
                 .iter()
-                .map(|s| Rc::new(String::from(s)))
+                .map(|s| Arc::new(String::from(s)))
                 .collect::<Vec<_>>();
             Ok(Box::new(reader.into_records().map(
                 move |record| match record {
@@ -1404,7 +1403,7 @@ impl<'a> Runtime<'a> {
                         let mut env = vars.clone();
                         env.insert(
                             var,
-                            Value::Map(Rc::new(
+                            Value::Map(Arc::new(
                                 record
                                     .iter()
                                     .enumerate()
@@ -1413,11 +1412,10 @@ impl<'a> Runtime<'a> {
                                             None
                                         } else {
                                             Some((
-                                                headers
-                                                    .get(i)
-                                                    .cloned()
-                                                    .unwrap_or_else(|| Rc::new(format!("col_{i}"))),
-                                                Value::String(Rc::new(String::from(field))),
+                                                headers.get(i).cloned().unwrap_or_else(|| {
+                                                    Arc::new(format!("col_{i}"))
+                                                }),
+                                                Value::String(Arc::new(String::from(field))),
                                             ))
                                         }
                                     })
@@ -1443,7 +1441,7 @@ impl<'a> Runtime<'a> {
                                         if field.is_empty() {
                                             Value::Null
                                         } else {
-                                            Value::String(Rc::new(String::from(field)))
+                                            Value::String(Arc::new(String::from(field)))
                                         }
                                     })
                                     .collect(),
@@ -1461,7 +1459,7 @@ impl<'a> Runtime<'a> {
         &'a self,
         path: &str,
         headers: bool,
-        delimiter: Rc<String>,
+        delimiter: Arc<String>,
         var: &'a Variable,
         vars: &Env,
     ) -> Result<Box<dyn Iterator<Item = Result<Env, String>> + 'a>, String> {
@@ -1477,7 +1475,7 @@ impl<'a> Runtime<'a> {
                 .headers()
                 .map_err(|e| format!("Failed to read CSV headers: {e}"))?
                 .iter()
-                .map(|s| Rc::new(String::from(s)))
+                .map(|s| Arc::new(String::from(s)))
                 .collect::<Vec<_>>();
             Ok(Box::new(reader.into_records().map(
                 move |record| match record {
@@ -1485,7 +1483,7 @@ impl<'a> Runtime<'a> {
                         let mut env = vars.clone();
                         env.insert(
                             var,
-                            Value::Map(Rc::new(
+                            Value::Map(Arc::new(
                                 record
                                     .iter()
                                     .enumerate()
@@ -1494,11 +1492,10 @@ impl<'a> Runtime<'a> {
                                             None
                                         } else {
                                             Some((
-                                                headers
-                                                    .get(i)
-                                                    .cloned()
-                                                    .unwrap_or_else(|| Rc::new(format!("col_{i}"))),
-                                                Value::String(Rc::new(String::from(field))),
+                                                headers.get(i).cloned().unwrap_or_else(|| {
+                                                    Arc::new(format!("col_{i}"))
+                                                }),
+                                                Value::String(Arc::new(String::from(field))),
                                             ))
                                         }
                                     })
@@ -1524,7 +1521,7 @@ impl<'a> Runtime<'a> {
                                         if field.is_empty() {
                                             Value::Null
                                         } else {
-                                            Value::String(Rc::new(String::from(field)))
+                                            Value::String(Arc::new(String::from(field)))
                                         }
                                     })
                                     .collect(),
@@ -1966,7 +1963,7 @@ impl<'a> Runtime<'a> {
     fn node_by_index_scan(
         &self,
         node_pattern: &'a QueryNode,
-        index: &Rc<String>,
+        index: &Arc<String>,
         query: &IndexQuery<QueryExpr>,
         vars: Env,
     ) -> Result<Box<dyn Iterator<Item = Result<Env, String>> + '_>, String> {
@@ -2082,7 +2079,7 @@ impl<'a> Runtime<'a> {
                 Value::Map(attrs) => {
                     self.pending
                         .borrow_mut()
-                        .set_node_attributes(id, Rc::unwrap_or_clone(attrs))?;
+                        .set_node_attributes(id, Arc::unwrap_or_clone(attrs))?;
                 }
                 _ => unreachable!(),
             }
@@ -2126,7 +2123,7 @@ impl<'a> Runtime<'a> {
                 Value::Map(attrs) => {
                     self.pending
                         .borrow_mut()
-                        .set_relationship_attributes(id, Rc::unwrap_or_clone(attrs))?;
+                        .set_relationship_attributes(id, Arc::unwrap_or_clone(attrs))?;
                 }
                 _ => {
                     return Err(String::from("Invalid relationship properties"));
@@ -2140,7 +2137,7 @@ impl<'a> Runtime<'a> {
     pub fn get_node_attribute(
         &self,
         id: NodeId,
-        attribute: &Rc<String>,
+        attribute: &Arc<String>,
     ) -> Option<Value> {
         if let Some(value) = self.pending.borrow().get_node_attribute(id, attribute) {
             return Some(value.clone());
@@ -2154,7 +2151,7 @@ impl<'a> Runtime<'a> {
     pub fn get_relationship_attribute(
         &self,
         id: RelationshipId,
-        attribute: &Rc<String>,
+        attribute: &Arc<String>,
     ) -> Option<Value> {
         if let Some(value) = self
             .pending
@@ -2172,7 +2169,7 @@ impl<'a> Runtime<'a> {
     pub fn get_node_labels(
         &self,
         id: NodeId,
-    ) -> OrderSet<Rc<String>> {
+    ) -> OrderSet<Arc<String>> {
         let mut labels = self.g.borrow().get_node_labels(id).collect::<OrderSet<_>>();
         self.pending.borrow().update_node_labels(id, &mut labels);
         labels
@@ -2181,12 +2178,12 @@ impl<'a> Runtime<'a> {
     pub fn get_node_attrs(
         &self,
         id: NodeId,
-    ) -> OrderMap<Rc<String>, Value> {
+    ) -> OrderMap<Arc<String>, Value> {
         if let Some(dn) = self.deleted_nodes.borrow().get(&id) {
             return dn.attrs.clone();
         }
         let g = self.g.borrow();
-        let mut actual: OrderMap<Rc<String>, Value> = g
+        let mut actual: OrderMap<Arc<String>, Value> = g
             .get_node_attrs(id)
             .iter()
             .map(|(k, v)| (g.get_node_attribute_string(*k).unwrap(), v.clone()))
@@ -2198,9 +2195,9 @@ impl<'a> Runtime<'a> {
     pub fn get_relationship_attrs(
         &self,
         id: RelationshipId,
-    ) -> OrderMap<Rc<String>, Value> {
+    ) -> OrderMap<Arc<String>, Value> {
         let g = self.g.borrow();
-        let mut actual: OrderMap<Rc<String>, Value> = g
+        let mut actual: OrderMap<Arc<String>, Value> = g
             .get_relationship_attrs(id)
             .iter()
             .map(|(k, v)| (g.get_relationship_attribute_string(*k).unwrap(), v.clone()))
@@ -2214,7 +2211,7 @@ impl<'a> Runtime<'a> {
     pub fn get_relationship_type(
         &self,
         id: RelationshipId,
-    ) -> Option<Rc<String>> {
+    ) -> Option<Arc<String>> {
         if let Some(type_name) = self.pending.borrow().get_relationship_type(id) {
             return Some(type_name);
         }
@@ -2223,15 +2220,15 @@ impl<'a> Runtime<'a> {
             .get_type(self.g.borrow().get_relationship_type_id(id))
     }
 
-    pub fn get_labels(&self) -> Vec<Rc<String>> {
+    pub fn get_labels(&self) -> Vec<Arc<String>> {
         self.g.borrow().get_labels()
     }
 
-    pub fn get_types(&self) -> Vec<Rc<String>> {
+    pub fn get_types(&self) -> Vec<Arc<String>> {
         self.g.borrow().get_types()
     }
 
-    pub fn get_attrs(&self) -> Vec<Rc<String>> {
+    pub fn get_attrs(&self) -> Vec<Arc<String>> {
         self.g.borrow().get_attrs()
     }
 }
@@ -2248,7 +2245,7 @@ pub fn evaluate_param(expr: &DynNode<ExprIR>) -> Result<Value, String> {
                 .map(|c| evaluate_param(&c))
                 .collect::<Result<Vec<_>, _>>()?,
         )),
-        ExprIR::Map => Ok(Value::Map(Rc::new(
+        ExprIR::Map => Ok(Value::Map(Arc::new(
             expr.children()
                 .map(|ir| match ir.data() {
                     ExprIR::String(key) => {

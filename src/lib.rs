@@ -186,7 +186,7 @@ fn reply_compact_value(
                 raw::reply_with_array(ctx.ctx, attrs.len() as _);
                 for (key, value) in attrs {
                     raw::reply_with_array(ctx.ctx, 3);
-                    raw::reply_with_long_long(ctx.ctx, usize::from(*key) as _);
+                    raw::reply_with_long_long(ctx.ctx, usize::from(key) as _);
                     reply_compact_value(ctx, runtime, value.clone());
                 }
             }
@@ -274,7 +274,7 @@ fn reply_compact_value(
                 raw::reply_with_double(ctx.ctx, f as f64);
             }
         }
-        Value::Rc(inner) => {
+        Value::Arc(inner) => {
             reply_compact_value(ctx, runtime, (*inner).clone());
         }
     }
@@ -361,7 +361,7 @@ fn reply_verbose_value(
                 raw::reply_with_array(ctx.ctx, attrs.len() as _);
                 for (key, value) in attrs {
                     raw::reply_with_array(ctx.ctx, 2);
-                    let key_name = bg.get_node_attribute_string(*key).unwrap();
+                    let key_name = bg.get_node_attribute_string(key).unwrap();
                     raw::reply_with_string_buffer(
                         ctx.ctx,
                         key_name.as_ptr().cast::<c_char>(),
@@ -431,7 +431,7 @@ fn reply_verbose_value(
                 raw::reply_with_double(ctx.ctx, f as f64);
             }
         }
-        Value::Rc(inner) => {
+        Value::Arc(inner) => {
             reply_verbose_value(ctx, runtime, (*inner).clone());
         }
     }
