@@ -270,6 +270,7 @@ impl<'a> Runtime<'a> {
     }
 
     #[allow(clippy::too_many_lines)]
+    #[allow(clippy::cognitive_complexity)]
     #[instrument(name = "run_expr", level = "debug", skip(self), fields(expr_type = ?ir.node(&idx).data()))]
     fn run_expr(
         &self,
@@ -1150,9 +1151,9 @@ impl<'a> Runtime<'a> {
                         };
 
                         if path.starts_with("https://") {
-                            self.load_csv_url(&path, *headers, delimiter, var, &vars)
+                            Self::load_csv_url(&path, *headers, delimiter, var, &vars)
                         } else {
-                            self.load_csv_file(&path, *headers, delimiter, var, &vars)
+                            Self::load_csv_file(&path, *headers, delimiter, var, &vars)
                         }
                     })
                     .cond_inspect(self.inspect, move |res| {
@@ -1376,7 +1377,6 @@ impl<'a> Runtime<'a> {
     }
 
     fn load_csv_file(
-        &'a self,
         path: &str,
         headers: bool,
         delimiter: Arc<String>,
@@ -1456,7 +1456,6 @@ impl<'a> Runtime<'a> {
     }
 
     fn load_csv_url(
-        &'a self,
         path: &str,
         headers: bool,
         delimiter: Arc<String>,

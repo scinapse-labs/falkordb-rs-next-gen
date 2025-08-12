@@ -4,7 +4,10 @@ use std::{
     hash::Hash,
     os::raw::{c_char, c_int, c_void},
     ptr::null_mut,
-    sync::Arc,
+    sync::{
+        Arc,
+        atomic::{AtomicI32, Ordering},
+    },
 };
 
 use crate::{
@@ -21,7 +24,7 @@ use crate::{
         RediSearch_ResultsIteratorNext, RediSearch_TagFieldSetCaseSensitive,
         RediSearch_TagFieldSetSeparator, RediSearch_TextFieldSetWeight,
     },
-    runtime::value::Value,
+    runtime::{pending, value::Value},
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -161,6 +164,13 @@ struct Index {
     rs_idx: *mut RSIndex,
     fields: HashMap<Arc<String>, Vec<Arc<Field>>>,
     status: IndexStatus,
+    pending_changes: AtomicI32,
+}
+
+pub struct IndexInfo {
+    pub label: Arc<String>,
+    pub status: IndexStatus,
+    pub fields: HashMap<Arc<String>, Vec<Arc<Field>>>,
 }
 
 impl Drop for Index {
@@ -188,53 +198,43 @@ impl Indexer {
         total: u64,
     ) -> Result<(), String> {
         let mut fields = HashMap::new();
-        if let Some(a) = self.index.get_mut(&label) {
-            for attr in attrs {
-                if let Some(f) = a.fields.get_mut(attr) {
-                    if f.iter().any(|f| f.ty == *index_type) {
-                        return Err(format!("Attribute '{attr}' is already indexed"));
-                    }
-                    let field_name = match index_type {
-                        IndexType::Range => Arc::new(format!("range:{attr}")),
-                        IndexType::Fulltext => attr.clone(),
-                        IndexType::Vector => Arc::new(format!("vector:{attr}")),
-                    };
-                    let field = Arc::new(Field {
-                        name: CString::new(field_name.as_str()).unwrap(),
-                        ty: index_type.clone(),
-                    });
-                    f.push(field);
-                } else {
-                    let field_name = match index_type {
-                        IndexType::Range => Arc::new(format!("range:{attr}")),
-                        IndexType::Fulltext => attr.clone(),
-                        IndexType::Vector => Arc::new(format!("vector:{attr}")),
-                    };
-                    let field = Arc::new(Field {
-                        name: CString::new(field_name.as_str()).unwrap(),
-                        ty: index_type.clone(),
-                    });
-                    a.fields.insert(attr.clone(), vec![field]);
+        let a = self.index.entry(label).or_insert_with(|| Index {
+            rs_idx: std::ptr::null_mut(),
+            fields: HashMap::new(),
+            status: IndexStatus::Operational,
+            pending_changes: AtomicI32::new(0),
+        });
+
+        for attr in attrs {
+            if let Some(f) = a.fields.get_mut(attr) {
+                if f.iter().any(|f| f.ty == *index_type) {
+                    return Err(format!("Attribute '{attr}' is already indexed"));
                 }
-            }
-            fields.clone_from(&a.fields);
-        } else {
-            for attr in attrs {
                 let field_name = match index_type {
                     IndexType::Range => Arc::new(format!("range:{attr}")),
                     IndexType::Fulltext => attr.clone(),
                     IndexType::Vector => Arc::new(format!("vector:{attr}")),
                 };
-                if fields.contains_key(attr) {
-                    return Err(format!("Attribute '{attr}' is already indexed"));
-                }
                 let field = Arc::new(Field {
                     name: CString::new(field_name.as_str()).unwrap(),
                     ty: index_type.clone(),
                 });
-                fields.insert(attr.clone(), vec![field]);
+                f.push(field);
+            } else {
+                let field_name = match index_type {
+                    IndexType::Range => Arc::new(format!("range:{attr}")),
+                    IndexType::Fulltext => attr.clone(),
+                    IndexType::Vector => Arc::new(format!("vector:{attr}")),
+                };
+                let field = Arc::new(Field {
+                    name: CString::new(field_name.as_str()).unwrap(),
+                    ty: index_type.clone(),
+                });
+                a.fields.insert(attr.clone(), vec![field]);
             }
         }
+        fields.clone_from(&a.fields);
+
         unsafe {
             let options = RediSearch_CreateIndexOptions();
             // RediSearch_IndexOptionsSetLanguage(options, idx->language);
@@ -281,14 +281,9 @@ impl Indexer {
                 }
             }
 
-            self.index.insert(
-                label,
-                Index {
-                    rs_idx: index,
-                    fields,
-                    status: IndexStatus::UnderConstruction(0, total),
-                },
-            );
+            a.rs_idx = index;
+            a.status = IndexStatus::UnderConstruction(0, total);
+            a.pending_changes.fetch_add(1, Ordering::SeqCst);
         }
         Ok(())
     }
@@ -319,7 +314,8 @@ impl Indexer {
                 }
             }
             if index.fields.is_empty() {
-                self.index.remove(&label).unwrap();
+                index.status = IndexStatus::UnderConstruction(0, 0);
+                index.pending_changes.fetch_add(1, Ordering::SeqCst);
                 return None;
             }
             if removed {
@@ -328,6 +324,13 @@ impl Indexer {
             }
         }
         None
+    }
+
+    pub fn remove(
+        &mut self,
+        label: Arc<String>,
+    ) {
+        self.index.remove(&label);
     }
 
     #[must_use]
@@ -455,6 +458,49 @@ impl Indexer {
         vec![]
     }
 
+    pub fn enable(
+        &mut self,
+        label: Arc<String>,
+    ) -> bool {
+        if let Some(index) = self.index.get_mut(&label) {
+            let res = index.pending_changes.fetch_sub(1, Ordering::SeqCst);
+            debug_assert!(res > 0);
+            return res == 1;
+        }
+        false
+    }
+
+    pub fn disable(
+        &mut self,
+        label: Arc<String>,
+    ) {
+        if let Some(index) = self.index.get_mut(&label) {
+            index.pending_changes.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    #[must_use]
+    pub fn enabled(
+        &self,
+        label: Arc<String>,
+    ) -> bool {
+        if let Some(index) = self.index.get(&label) {
+            return index.pending_changes.load(Ordering::SeqCst) == 0;
+        }
+        false
+    }
+
+    #[must_use]
+    pub fn pending_changes(
+        &self,
+        label: Arc<String>,
+    ) -> i32 {
+        if let Some(index) = self.index.get(&label) {
+            return index.pending_changes.load(Ordering::SeqCst);
+        }
+        0
+    }
+
     pub fn commit(
         &mut self,
         index_add_docs: &mut HashMap<Arc<String>, Vec<Document>>,
@@ -501,13 +547,7 @@ impl Indexer {
     }
 
     #[must_use]
-    pub fn index_info(
-        &self
-    ) -> Vec<(
-        Arc<String>,
-        IndexStatus,
-        HashMap<Arc<String>, Vec<Arc<Field>>>,
-    )> {
+    pub fn index_info(&self) -> Vec<IndexInfo> {
         self.index
             .iter()
             .map(|(label, index)| {
@@ -516,7 +556,11 @@ impl Indexer {
                     .iter()
                     .map(|(k, v)| (k.clone(), v.clone()))
                     .collect();
-                (label.clone(), index.status.clone(), attrs)
+                IndexInfo {
+                    label: label.clone(),
+                    status: index.status.clone(),
+                    fields: attrs,
+                }
             })
             .collect()
     }

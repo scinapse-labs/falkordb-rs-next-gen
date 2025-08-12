@@ -727,6 +727,7 @@ impl QueryIR {
     }
 
     #[allow(clippy::too_many_lines)]
+    #[allow(clippy::cognitive_complexity)]
     fn inner_validate<'a, T>(
         &self,
         mut iter: T,

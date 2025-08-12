@@ -1,4 +1,6 @@
 #![allow(clippy::cast_possible_wrap)]
+#![allow(clippy::non_std_lazy_statics)]
+
 use graph::{
     graph::{
         graph::{Graph, Plan},
@@ -271,7 +273,7 @@ fn reply_compact_value(
             raw::reply_with_long_long(ctx.ctx, 12);
             raw::reply_with_array(ctx.ctx, vec.len() as _);
             for f in vec {
-                raw::reply_with_double(ctx.ctx, f as f64);
+                raw::reply_with_double(ctx.ctx, f64::from(f));
             }
         }
         Value::Arc(inner) => {
@@ -428,7 +430,7 @@ fn reply_verbose_value(
         Value::VecF32(vec) => {
             raw::reply_with_array(ctx.ctx, vec.len() as _);
             for f in vec {
-                raw::reply_with_double(ctx.ctx, f as f64);
+                raw::reply_with_double(ctx.ctx, f64::from(f));
             }
         }
         Value::Arc(inner) => {
@@ -945,6 +947,7 @@ fn graph_init(
     }
 }
 
+#[allow(non_upper_case_globals)]
 static RedisModuleEvent_FlushDB: RedisModuleEvent = RedisModuleEvent { id: 2, dataver: 1 };
 
 lazy_static! {

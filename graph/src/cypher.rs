@@ -579,7 +579,6 @@ impl<'a> Lexer<'a> {
                             len,
                         );
                     }
-                    is_e = true;
                     len += 1;
                     if pos + len < str.len()
                         && (&str[pos + len..=pos + len] == "-"
@@ -879,6 +878,7 @@ impl<'a> Parser<'a> {
     }
 
     #[allow(clippy::too_many_lines)]
+    #[allow(clippy::cognitive_complexity)]
     fn parse_index_ops(&mut self) -> Result<Option<QueryIR>, String> {
         if optional_match_token!(self.lexer => Create) {
             let fulltext = optional_match_token!(self.lexer => Fulltext);
@@ -1728,6 +1728,7 @@ impl<'a> Parser<'a> {
     }
 
     #[allow(clippy::too_many_lines)]
+    #[allow(clippy::cognitive_complexity)]
     fn parse_expr(&mut self) -> Result<DynTree<ExprIR>, String> {
         let mut stack = vec![(0, None::<DynTree<ExprIR>>)];
         while let Some((current, res)) = stack.pop() {

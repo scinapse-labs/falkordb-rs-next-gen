@@ -5,7 +5,7 @@
 #![allow(clippy::cast_possible_truncation)]
 
 use crate::{
-    indexer::{IndexStatus, IndexType},
+    indexer::{IndexInfo, IndexStatus, IndexType},
     runtime::{
         runtime::Runtime,
         value::{Value, ValueTypeOf},
@@ -2386,56 +2386,62 @@ fn db_indexes(
             .borrow()
             .index_info()
             .into_iter()
-            .map(|(label, status, attrs)| {
-                let mut map = OrderMap::new();
-                map.insert(Arc::new(String::from("label")), Value::String(label));
-                map.insert(
-                    Arc::new(String::from("properties")),
-                    Value::List(attrs.keys().map(|f| Value::String(f.clone())).collect()),
-                );
-                let mut types_map = OrderMap::new();
-                for (attr, fields) in attrs {
-                    let mut types = vec![];
-                    for field in fields {
-                        match field.ty {
-                            IndexType::Range => {
-                                types.push(Value::String(Arc::new(String::from("RANGE"))));
-                            }
-                            IndexType::Fulltext => {
-                                types.push(Value::String(Arc::new(String::from("FULLTEXT"))));
-                            }
-                            IndexType::Vector => {
-                                types.push(Value::String(Arc::new(String::from("VECTOR"))));
+            .map(
+                |IndexInfo {
+                     label,
+                     status,
+                     fields,
+                 }| {
+                    let mut map = OrderMap::new();
+                    map.insert(Arc::new(String::from("label")), Value::String(label));
+                    map.insert(
+                        Arc::new(String::from("properties")),
+                        Value::List(fields.keys().map(|f| Value::String(f.clone())).collect()),
+                    );
+                    let mut types_map = OrderMap::new();
+                    for (attr, fields) in fields {
+                        let mut types = vec![];
+                        for field in fields {
+                            match field.ty {
+                                IndexType::Range => {
+                                    types.push(Value::String(Arc::new(String::from("RANGE"))));
+                                }
+                                IndexType::Fulltext => {
+                                    types.push(Value::String(Arc::new(String::from("FULLTEXT"))));
+                                }
+                                IndexType::Vector => {
+                                    types.push(Value::String(Arc::new(String::from("VECTOR"))));
+                                }
                             }
                         }
+                        types_map.insert(attr, Value::List(types));
                     }
-                    types_map.insert(attr, Value::List(types));
-                }
-                map.insert(
-                    Arc::new(String::from("types")),
-                    Value::Map(Arc::new(types_map)),
-                );
-                map.insert(Arc::new(String::from("options")), Value::Null);
-                map.insert(Arc::new(String::from("language")), Value::Null);
-                map.insert(Arc::new(String::from("stopwords")), Value::Null);
-                map.insert(
-                    Arc::new(String::from("entitytype")),
-                    Value::String(Arc::new(String::from("NODE"))),
-                );
-                map.insert(
-                    Arc::new(String::from("status")),
-                    if let IndexStatus::UnderConstruction(current, total) = status {
-                        Value::String(Arc::new(format!(
-                            "[Indexing] {current}/{total}: UNDER CONSTRUCTION"
-                        )))
-                    } else {
-                        Value::String(Arc::new(String::from("OPERATIONAL")))
-                    },
-                );
-                map.insert(Arc::new(String::from("info")), Value::Null);
+                    map.insert(
+                        Arc::new(String::from("types")),
+                        Value::Map(Arc::new(types_map)),
+                    );
+                    map.insert(Arc::new(String::from("options")), Value::Null);
+                    map.insert(Arc::new(String::from("language")), Value::Null);
+                    map.insert(Arc::new(String::from("stopwords")), Value::Null);
+                    map.insert(
+                        Arc::new(String::from("entitytype")),
+                        Value::String(Arc::new(String::from("NODE"))),
+                    );
+                    map.insert(
+                        Arc::new(String::from("status")),
+                        if let IndexStatus::UnderConstruction(current, total) = status {
+                            Value::String(Arc::new(format!(
+                                "[Indexing] {current}/{total}: UNDER CONSTRUCTION"
+                            )))
+                        } else {
+                            Value::String(Arc::new(String::from("OPERATIONAL")))
+                        },
+                    );
+                    map.insert(Arc::new(String::from("info")), Value::Null);
 
-                Value::Map(Arc::new(map))
-            })
+                    Value::Map(Arc::new(map))
+                },
+            )
             .collect(),
     ))
 }

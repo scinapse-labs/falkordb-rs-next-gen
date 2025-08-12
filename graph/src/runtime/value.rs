@@ -25,7 +25,8 @@ pub struct DeletedNode {
 }
 
 impl DeletedNode {
-    pub fn new(
+    #[must_use]
+    pub const fn new(
         labels: HashSet<LabelId>,
         attrs: OrderMap<Arc<String>, Value>,
     ) -> Self {
