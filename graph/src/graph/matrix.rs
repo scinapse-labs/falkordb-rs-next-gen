@@ -12,7 +12,8 @@ use crate::graph::GraphBLAS::{
     GrB_mxm, GrB_transpose, GxB_ANY_PAIR_BOOL, GxB_Iterator, GxB_Iterator_free,
     GxB_Iterator_get_UINT64, GxB_Iterator_new, GxB_Matrix_Iterator_attach,
     GxB_Matrix_Iterator_getIndex, GxB_Matrix_Iterator_next, GxB_Matrix_fprint, GxB_Print_Level,
-    GxB_init, GxB_rowIterator_seekRow, GxB_unary_function,
+    GxB_init, GxB_rowIterator_getRowIndex, GxB_rowIterator_nextRow, GxB_rowIterator_seekRow,
+    GxB_unary_function,
 };
 
 /// Initializes the GraphBLAS library in non-blocking mode.
@@ -637,16 +638,23 @@ impl<T> Iter<T> {
             let iter = iter.assume_init();
             let info = GxB_Matrix_Iterator_attach(iter, *m.m, null_mut());
             debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
-            let info = GxB_rowIterator_seekRow(iter, min_row);
+            let mut info = GxB_rowIterator_seekRow(iter, min_row);
             debug_assert!(
                 info == GrB_Info::GrB_SUCCESS
                     || info == GrB_Info::GrB_NO_VALUE
                     || info == GrB_Info::GxB_EXHAUSTED
             );
+            if info == GrB_Info::GrB_NO_VALUE {
+                while info == GrB_Info::GrB_NO_VALUE && GxB_rowIterator_getRowIndex(iter) < max_row
+                {
+                    info = GxB_rowIterator_nextRow(iter);
+                }
+            }
             Self {
                 m: m.m.clone(),
                 inner: iter,
-                depleted: info == GrB_Info::GxB_EXHAUSTED,
+                depleted: info != GrB_Info::GrB_SUCCESS
+                    || GxB_rowIterator_getRowIndex(iter) > max_row,
                 max_row,
                 phantom: PhantomData,
             }
