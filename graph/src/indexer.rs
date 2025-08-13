@@ -45,21 +45,20 @@ pub struct Document {
     rs_doc: *mut RSDoc,
 }
 
-unsafe impl Send for Document {}
-unsafe impl Sync for Document {}
-
 impl Document {
     #[must_use]
     pub fn new(id: u64) -> Self {
         Self {
             rs_doc: unsafe {
-                RediSearch_CreateDocument2(
+                let doc = RediSearch_CreateDocument2(
                     (&raw const id).cast::<c_void>(),
                     8,
                     null_mut(),
                     1.0,
                     null_mut(),
-                )
+                );
+                debug_assert!(!doc.is_null(), "Failed to create RediSearch document");
+                doc
             },
         }
     }
