@@ -14,6 +14,7 @@ use crate::{
 use itertools::Itertools;
 use ordermap::OrderSet;
 use orx_tree::{DynTree, NodeRef};
+use std::sync::Arc;
 use std::{
     collections::{HashMap, HashSet},
     num::IntErrorKind,
@@ -85,12 +86,12 @@ enum Keyword {
 
 #[derive(Debug, PartialEq, Clone)]
 enum Token {
-    Ident(Rc<String>),
-    Keyword(Keyword, Rc<String>),
+    Ident(Arc<String>),
+    Keyword(Keyword, Arc<String>),
     Parameter(String),
     Integer(i64),
     Float(f64),
-    String(Rc<String>),
+    String(Arc<String>),
     LBrace,
     RBrace,
     LBracket,
@@ -382,7 +383,7 @@ impl<'a> Lexer<'a> {
                     unescape(&str[pos + 1..pos + len]).map_or_else(
                         |e| match e {
                             unescaper::Error::InvalidChar { .. } => (
-                                Token::String(Rc::new(String::from(&str[pos + 1..pos + len]))),
+                                Token::String(Arc::new(String::from(&str[pos + 1..pos + len]))),
                                 len + 1,
                             ),
                             _ => (
@@ -390,7 +391,7 @@ impl<'a> Lexer<'a> {
                                 len + 1,
                             ),
                         },
-                        |unescaped| (Token::String(Rc::new(unescaped)), len + 1),
+                        |unescaped| (Token::String(Arc::new(unescaped)), len + 1),
                     )
                 }
                 '\"' => {
@@ -421,7 +422,7 @@ impl<'a> Lexer<'a> {
                     unescape(&str[pos + 1..pos + len]).map_or_else(
                         |e| match e {
                             unescaper::Error::InvalidChar { .. } => (
-                                Token::String(Rc::new(String::from(&str[pos + 1..pos + len]))),
+                                Token::String(Arc::new(String::from(&str[pos + 1..pos + len]))),
                                 len + 1,
                             ),
                             _ => (
@@ -429,7 +430,7 @@ impl<'a> Lexer<'a> {
                                 len + 1,
                             ),
                         },
-                        |unescaped| (Token::String(Rc::new(unescaped)), len + 1),
+                        |unescaped| (Token::String(Arc::new(unescaped)), len + 1),
                     )
                 }
                 d @ '0'..='9' => Self::lex_numeric(str, chars, pos, d, 1),
@@ -451,11 +452,11 @@ impl<'a> Lexer<'a> {
                         .iter()
                         .find(|&other| str[pos..pos + len].eq_ignore_ascii_case(other.0))
                         .map_or_else(
-                            || Token::Ident(Rc::new(String::from(&str[pos..pos + len]))),
+                            || Token::Ident(Arc::new(String::from(&str[pos..pos + len]))),
                             |o| {
                                 Token::Keyword(
                                     o.1.clone(),
-                                    Rc::new(String::from(&str[pos..pos + len])),
+                                    Arc::new(String::from(&str[pos..pos + len])),
                                 )
                             },
                         );
@@ -475,7 +476,7 @@ impl<'a> Lexer<'a> {
                         return (Token::Error(String::from(&str[pos..pos + len])), len);
                     }
                     (
-                        Token::Ident(Rc::new(String::from(&str[pos + 1..pos + len]))),
+                        Token::Ident(Arc::new(String::from(&str[pos + 1..pos + len]))),
                         len + 1,
                     )
                 }
@@ -578,7 +579,6 @@ impl<'a> Lexer<'a> {
                             len,
                         );
                     }
-                    is_e = true;
                     len += 1;
                     if pos + len < str.len()
                         && (&str[pos + len..=pos + len] == "-"
@@ -787,7 +787,7 @@ macro_rules! parse_operators {
 pub struct Parser<'a> {
     lexer: Lexer<'a>,
     var_id: u32,
-    vars: HashMap<Rc<String>, Variable>,
+    vars: HashMap<Arc<String>, Variable>,
 }
 
 impl<'a> Parser<'a> {
@@ -802,7 +802,7 @@ impl<'a> Parser<'a> {
 
     fn create_var(
         &mut self,
-        name: Option<Rc<String>>,
+        name: Option<Arc<String>>,
         ty: Type,
     ) -> Result<Variable, String> {
         if let Some(name) = &name {
@@ -878,6 +878,7 @@ impl<'a> Parser<'a> {
     }
 
     #[allow(clippy::too_many_lines)]
+    #[allow(clippy::cognitive_complexity)]
     fn parse_index_ops(&mut self) -> Result<Option<QueryIR>, String> {
         if optional_match_token!(self.lexer => Create) {
             let fulltext = optional_match_token!(self.lexer => Fulltext);
@@ -1117,12 +1118,12 @@ impl<'a> Parser<'a> {
                 let delimiter = if optional_match_token!(self.lexer => Delimiter) {
                     Rc::new(self.parse_expr()?)
                 } else {
-                    Rc::new(tree!(ExprIR::String(Rc::new(String::from(',')))))
+                    Rc::new(tree!(ExprIR::String(Arc::new(String::from(',')))))
                 };
                 match_token!(self.lexer => From);
                 let file_path = Rc::new(self.parse_expr()?);
                 match_token!(self.lexer => As);
-                let ident: Rc<String> = self.parse_ident()?;
+                let ident = self.parse_ident()?;
                 Ok(QueryIR::LoadCsv {
                     file_path,
                     headers,
@@ -1181,7 +1182,7 @@ impl<'a> Parser<'a> {
             self.parse_where()?
         } else if let FnType::Procedure(defult_outputs) = &func.fn_type {
             for output in defult_outputs {
-                named_outputs.push(self.create_var(Some(Rc::new(output.clone())), Type::Any)?);
+                named_outputs.push(self.create_var(Some(Arc::new(output.clone())), Type::Any)?);
             }
             None
         } else {
@@ -1191,13 +1192,15 @@ impl<'a> Parser<'a> {
         Ok(QueryIR::Call(func, args, named_outputs, filter))
     }
 
-    fn parse_dotted_ident(&mut self) -> Result<Rc<String>, String> {
+    fn parse_dotted_ident(&mut self) -> Result<Arc<String>, String> {
         let mut idents = vec![self.parse_ident()?];
         while self.lexer.current() == Token::Dot {
             self.lexer.next();
             idents.push(self.parse_ident()?);
         }
-        Ok(Rc::new(idents.iter().map(|label| label.as_str()).join(".")))
+        Ok(Arc::new(
+            idents.iter().map(|label| label.as_str()).join("."),
+        ))
     }
 
     fn parse_match_clause(
@@ -1725,6 +1728,7 @@ impl<'a> Parser<'a> {
     }
 
     #[allow(clippy::too_many_lines)]
+    #[allow(clippy::cognitive_complexity)]
     fn parse_expr(&mut self) -> Result<DynTree<ExprIR>, String> {
         let mut stack = vec![(0, None::<DynTree<ExprIR>>)];
         while let Some((current, res)) = stack.pop() {
@@ -1938,7 +1942,7 @@ impl<'a> Parser<'a> {
         unreachable!()
     }
 
-    fn parse_ident(&mut self) -> Result<Rc<String>, String> {
+    fn parse_ident(&mut self) -> Result<Arc<String>, String> {
         match self.lexer.current() {
             Token::Ident(id) | Token::Keyword(_, id) => {
                 self.lexer.next();
@@ -1965,7 +1969,7 @@ impl<'a> Parser<'a> {
             } else {
                 named_exprs.push((
                     self.create_var(
-                        Some(Rc::new(String::from(
+                        Some(Arc::new(String::from(
                             &self.lexer.str[pos..self.lexer.pos(true)],
                         ))),
                         Type::Any,
@@ -2021,7 +2025,7 @@ impl<'a> Parser<'a> {
 
     fn parse_list_comprehension(
         &mut self,
-        var: Rc<String>,
+        var: Arc<String>,
     ) -> Result<DynTree<ExprIR>, String> {
         // var and 'IN' already parsed
         let list_expr = self.parse_expr()?;
@@ -2168,7 +2172,7 @@ impl<'a> Parser<'a> {
         Ok((Rc::new(relationship), dst))
     }
 
-    fn parse_labels(&mut self) -> Result<OrderSet<Rc<String>>, String> {
+    fn parse_labels(&mut self) -> Result<OrderSet<Arc<String>>, String> {
         let mut labels = OrderSet::new();
         while self.lexer.current() == Token::Colon {
             self.lexer.next();

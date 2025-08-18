@@ -5,7 +5,7 @@
 #![allow(clippy::cast_possible_truncation)]
 
 use crate::{
-    indexer::IndexType,
+    indexer::{IndexInfo, IndexStatus, IndexType},
     runtime::{
         runtime::Runtime,
         value::{Value, ValueTypeOf},
@@ -18,7 +18,7 @@ use std::{
     collections::HashMap,
     fmt::{Debug, Display},
     rc::Rc,
-    sync::OnceLock,
+    sync::{Arc, OnceLock},
 };
 
 type RuntimeFn = fn(&Runtime, Vec<Value>) -> Result<Value, String>;
@@ -1010,11 +1010,11 @@ fn properties(
         Some(Value::Map(map)) => Ok(Value::Map(map)),
         Some(Value::Node(id)) => {
             let properties = runtime.get_node_attrs(id);
-            Ok(Value::Map(Rc::new(properties)))
+            Ok(Value::Map(Arc::new(properties)))
         }
         Some(Value::Relationship(id, _, _)) => {
             let properties = runtime.get_relationship_attrs(id);
-            Ok(Value::Map(Rc::new(properties)))
+            Ok(Value::Map(Arc::new(properties)))
         }
         Some(Value::Null) => Ok(Value::Null),
 
@@ -1437,11 +1437,11 @@ fn value_to_float(
     }
 }
 
-fn value_string(value: &Value) -> Result<Rc<String>, String> {
+fn value_string(value: &Value) -> Result<Arc<String>, String> {
     match value {
-        Value::Bool(b) => Ok(Rc::new(String::from(if *b { "true" } else { "false" }))),
-        Value::Int(i) => Ok(Rc::new(i.to_string())),
-        Value::Float(f) => Ok(Rc::new(f.to_string())),
+        Value::Bool(b) => Ok(Arc::new(String::from(if *b { "true" } else { "false" }))),
+        Value::Int(i) => Ok(Arc::new(i.to_string())),
+        Value::Float(f) => Ok(Arc::new(f.to_string())),
         Value::String(s) => Ok(s.clone()),
 
         _ => unreachable!(),
@@ -1467,7 +1467,7 @@ fn size(
     match args.into_iter().next() {
         Some(Value::String(s)) => Ok(Value::Int(s.len() as i64)),
         Some(Value::List(v)) => Ok(Value::Int(v.len() as i64)),
-        Some(Value::Rc(v)) => {
+        Some(Value::Arc(v)) => {
             if let Value::List(v) = &*v {
                 Ok(Value::Int(v.len() as i64))
             } else {
@@ -1537,7 +1537,7 @@ fn reverse(
             v.reverse();
             Ok(Value::List(v))
         }
-        Some(Value::String(s)) => Ok(Value::String(Rc::new(s.chars().rev().collect()))),
+        Some(Value::String(s)) => Ok(Value::String(Arc::new(s.chars().rev().collect()))),
         Some(Value::Null) => Ok(Value::Null),
 
         _ => unreachable!(),
@@ -1558,11 +1558,11 @@ fn substring(
                 return Err("start must be a non-negative integer".into());
             }
             if start >= s.len() as _ {
-                return Ok(Value::String(Rc::new(String::new())));
+                return Ok(Value::String(Arc::new(String::new())));
             }
             let start = start as usize;
 
-            Ok(Value::String(Rc::new(s.chars().skip(start).collect())))
+            Ok(Value::String(Arc::new(s.chars().skip(start).collect())))
         }
 
         // Three-argument version: (string, start, length)
@@ -1573,7 +1573,7 @@ fn substring(
 
             let start = start as usize;
             if start >= s.len() {
-                return Ok(Value::String(Rc::new(String::new())));
+                return Ok(Value::String(Arc::new(String::new())));
             }
 
             if length < 0 {
@@ -1582,7 +1582,7 @@ fn substring(
 
             let length = length as usize;
 
-            Ok(Value::String(Rc::new(
+            Ok(Value::String(Arc::new(
                 s.chars().skip(start).take(length).collect(),
             )))
         }
@@ -1599,18 +1599,18 @@ fn split(
     match (iter.next(), iter.next()) {
         (Some(Value::String(string)), Some(Value::String(delimiter))) => {
             if string.is_empty() {
-                Ok(Value::List(vec![Value::String(Rc::new(String::new()))]))
+                Ok(Value::List(vec![Value::String(Arc::new(String::new()))]))
             } else if delimiter.is_empty() {
                 // split string to characters
                 let parts = string
                     .chars()
-                    .map(|c| Value::String(Rc::new(String::from(c))))
+                    .map(|c| Value::String(Arc::new(String::from(c))))
                     .collect();
                 Ok(Value::List(parts))
             } else {
                 let parts = string
                     .split(delimiter.as_str())
-                    .map(|s| Value::String(Rc::new(String::from(s))))
+                    .map(|s| Value::String(Arc::new(String::from(s))))
                     .collect();
                 Ok(Value::List(parts))
             }
@@ -1626,7 +1626,7 @@ fn string_to_lower(
     args: Vec<Value>,
 ) -> Result<Value, String> {
     match args.into_iter().next() {
-        Some(Value::String(s)) => Ok(Value::String(Rc::new(s.to_lowercase()))),
+        Some(Value::String(s)) => Ok(Value::String(Arc::new(s.to_lowercase()))),
         Some(Value::Null) => Ok(Value::Null),
 
         _ => unreachable!(),
@@ -1638,7 +1638,7 @@ fn string_to_upper(
     args: Vec<Value>,
 ) -> Result<Value, String> {
     match args.into_iter().next() {
-        Some(Value::String(s)) => Ok(Value::String(Rc::new(s.to_uppercase()))),
+        Some(Value::String(s)) => Ok(Value::String(Arc::new(s.to_uppercase()))),
         Some(Value::Null) => Ok(Value::Null),
 
         _ => unreachable!(),
@@ -1652,7 +1652,7 @@ fn string_replace(
     let mut iter = args.into_iter();
     match (iter.next(), iter.next(), iter.next()) {
         (Some(Value::String(s)), Some(Value::String(search)), Some(Value::String(replacement))) => {
-            Ok(Value::String(Rc::new(
+            Ok(Value::String(Arc::new(
                 s.replace(search.as_str(), replacement.as_str()),
             )))
         }
@@ -1674,7 +1674,9 @@ fn string_left(
             if n < 0 {
                 Err(String::from("length must be a non-negative integer"))
             } else {
-                Ok(Value::String(Rc::new(s.chars().take(n as usize).collect())))
+                Ok(Value::String(Arc::new(
+                    s.chars().take(n as usize).collect(),
+                )))
             }
         }
         (Some(Value::Null), _) => Ok(Value::Null),
@@ -1689,7 +1691,7 @@ fn string_ltrim(
     args: Vec<Value>,
 ) -> Result<Value, String> {
     match args.into_iter().next() {
-        Some(Value::String(s)) => Ok(Value::String(Rc::new(String::from(
+        Some(Value::String(s)) => Ok(Value::String(Arc::new(String::from(
             s.trim_start_matches(' '),
         )))),
         Some(Value::Null) => Ok(Value::Null),
@@ -1709,7 +1711,7 @@ fn string_right(
                 Err(String::from("length must be a non-negative integer"))
             } else {
                 let start = s.chars().count().saturating_sub(n as usize);
-                Ok(Value::String(Rc::new(s.chars().skip(start).collect())))
+                Ok(Value::String(Arc::new(s.chars().skip(start).collect())))
             }
         }
         (Some(Value::Null), _) => Ok(Value::Null),
@@ -1723,7 +1725,7 @@ fn string_join(
     _: &Runtime,
     args: Vec<Value>,
 ) -> Result<Value, String> {
-    fn to_string_vec(vec: &[Value]) -> Result<Vec<Rc<String>>, String> {
+    fn to_string_vec(vec: &[Value]) -> Result<Vec<Arc<String>>, String> {
         vec.iter()
             .map(|item| {
                 if let Value::String(s) = item {
@@ -1743,7 +1745,7 @@ fn string_join(
         (Value::List(vec), Some(Value::String(s))) => {
             let result = to_string_vec(&vec);
             result.map(|strings| {
-                Value::String(Rc::new(
+                Value::String(Arc::new(
                     strings.iter().map(|label| label.as_str()).join(s.as_str()),
                 ))
             })
@@ -1751,7 +1753,9 @@ fn string_join(
         (Value::List(vec), None) => {
             let result = to_string_vec(&vec);
             result.map(|strings| {
-                Value::String(Rc::new(strings.iter().map(|label| label.as_str()).join("")))
+                Value::String(Arc::new(
+                    strings.iter().map(|label| label.as_str()).join(""),
+                ))
             })
         }
         (Value::Null, _) => Ok(Value::Null),
@@ -1773,7 +1777,7 @@ fn string_match_reg_ex(
                     for caps in re.captures_iter(text.as_str()) {
                         for i in 0..caps.len() {
                             if let Some(m) = caps.get(i) {
-                                all_matches.push(Value::String(Rc::new(String::from(m.as_str()))));
+                                all_matches.push(Value::String(Arc::new(String::from(m.as_str()))));
                             }
                         }
                     }
@@ -1803,7 +1807,7 @@ fn string_replace_reg_ex(
                 let replaced_text = re
                     .replace_all(text.as_str(), replacement.as_str())
                     .into_owned();
-                Ok(Value::String(Rc::new(replaced_text)))
+                Ok(Value::String(Arc::new(replaced_text)))
             }
             Err(e) => Err(format!("Invalid regex, {e}")),
         },
@@ -2012,14 +2016,14 @@ fn range(
                 return Err(String::from("Range too large"));
             }
             if step > 0 {
-                return Ok(Value::Rc(Rc::new(Value::List(
+                return Ok(Value::Arc(Arc::new(Value::List(
                     (start..=end)
                         .step_by(step as usize)
                         .map(Value::Int)
                         .collect(),
                 ))));
             }
-            Ok(Value::Rc(Rc::new(Value::List(
+            Ok(Value::Arc(Arc::new(Value::List(
                 (end..=start)
                     .rev()
                     .step_by((-step) as usize)
@@ -2331,8 +2335,8 @@ fn db_labels(
             .into_iter()
             .map(|l| {
                 let mut map = OrderMap::new();
-                map.insert(Rc::new(String::from("label")), Value::String(l));
-                Value::Map(Rc::new(map))
+                map.insert(Arc::new(String::from("label")), Value::String(l));
+                Value::Map(Arc::new(map))
             })
             .collect(),
     ))
@@ -2348,8 +2352,8 @@ fn db_types(
             .into_iter()
             .map(|t| {
                 let mut map = OrderMap::new();
-                map.insert(Rc::new(String::from("relationshipType")), Value::String(t));
-                Value::Map(Rc::new(map))
+                map.insert(Arc::new(String::from("relationshipType")), Value::String(t));
+                Value::Map(Arc::new(map))
             })
             .collect(),
     ))
@@ -2365,8 +2369,8 @@ fn db_properties(
             .into_iter()
             .map(|p| {
                 let mut map = OrderMap::new();
-                map.insert(Rc::new(String::from("propertyKey")), Value::String(p));
-                Value::Map(Rc::new(map))
+                map.insert(Arc::new(String::from("propertyKey")), Value::String(p));
+                Value::Map(Arc::new(map))
             })
             .collect(),
     ))
@@ -2382,50 +2386,62 @@ fn db_indexes(
             .borrow()
             .index_info()
             .into_iter()
-            .map(|(label, attrs)| {
-                let mut map = OrderMap::new();
-                map.insert(Rc::new(String::from("label")), Value::String(label));
-                map.insert(
-                    Rc::new(String::from("properties")),
-                    Value::List(attrs.keys().map(|f| Value::String(f.clone())).collect()),
-                );
-                let mut types_map = OrderMap::new();
-                for (attr, fields) in attrs {
-                    let mut types = vec![];
-                    for field in fields {
-                        match field.ty {
-                            IndexType::Range => {
-                                types.push(Value::String(Rc::new(String::from("RANGE"))));
-                            }
-                            IndexType::Fulltext => {
-                                types.push(Value::String(Rc::new(String::from("FULLTEXT"))));
-                            }
-                            IndexType::Vector => {
-                                types.push(Value::String(Rc::new(String::from("VECTOR"))));
+            .map(
+                |IndexInfo {
+                     label,
+                     status,
+                     fields,
+                 }| {
+                    let mut map = OrderMap::new();
+                    map.insert(Arc::new(String::from("label")), Value::String(label));
+                    map.insert(
+                        Arc::new(String::from("properties")),
+                        Value::List(fields.keys().map(|f| Value::String(f.clone())).collect()),
+                    );
+                    let mut types_map = OrderMap::new();
+                    for (attr, fields) in fields {
+                        let mut types = vec![];
+                        for field in fields {
+                            match field.ty {
+                                IndexType::Range => {
+                                    types.push(Value::String(Arc::new(String::from("RANGE"))));
+                                }
+                                IndexType::Fulltext => {
+                                    types.push(Value::String(Arc::new(String::from("FULLTEXT"))));
+                                }
+                                IndexType::Vector => {
+                                    types.push(Value::String(Arc::new(String::from("VECTOR"))));
+                                }
                             }
                         }
+                        types_map.insert(attr, Value::List(types));
                     }
-                    types_map.insert(attr, Value::List(types));
-                }
-                map.insert(
-                    Rc::new(String::from("types")),
-                    Value::Map(Rc::new(types_map)),
-                );
-                map.insert(Rc::new(String::from("options")), Value::Null);
-                map.insert(Rc::new(String::from("language")), Value::Null);
-                map.insert(Rc::new(String::from("stopwords")), Value::Null);
-                map.insert(
-                    Rc::new(String::from("entitytype")),
-                    Value::String(Rc::new(String::from("NODE"))),
-                );
-                map.insert(
-                    Rc::new(String::from("status")),
-                    Value::String(Rc::new(String::from("OPERATIONAL"))),
-                );
-                map.insert(Rc::new(String::from("info")), Value::Null);
+                    map.insert(
+                        Arc::new(String::from("types")),
+                        Value::Map(Arc::new(types_map)),
+                    );
+                    map.insert(Arc::new(String::from("options")), Value::Null);
+                    map.insert(Arc::new(String::from("language")), Value::Null);
+                    map.insert(Arc::new(String::from("stopwords")), Value::Null);
+                    map.insert(
+                        Arc::new(String::from("entitytype")),
+                        Value::String(Arc::new(String::from("NODE"))),
+                    );
+                    map.insert(
+                        Arc::new(String::from("status")),
+                        if let IndexStatus::UnderConstruction(current, total) = status {
+                            Value::String(Arc::new(format!(
+                                "[Indexing] {current}/{total}: UNDER CONSTRUCTION"
+                            )))
+                        } else {
+                            Value::String(Arc::new(String::from("OPERATIONAL")))
+                        },
+                    );
+                    map.insert(Arc::new(String::from("info")), Value::Null);
 
-                Value::Map(Rc::new(map))
-            })
+                    Value::Map(Arc::new(map))
+                },
+            )
             .collect(),
     ))
 }

@@ -109,7 +109,7 @@ impl Tensor {
         min_row: u64,
         max_row: u64,
         transpose: bool,
-    ) -> Iter {
+    ) -> Iter<'_> {
         Iter::new(self, min_row, max_row, transpose)
     }
 

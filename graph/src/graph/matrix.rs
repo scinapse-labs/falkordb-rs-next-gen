@@ -1,6 +1,6 @@
 #![allow(clippy::doc_markdown)]
 
-use std::{marker::PhantomData, mem::MaybeUninit, os::raw::c_void, ptr::null_mut, rc::Rc};
+use std::{marker::PhantomData, mem::MaybeUninit, os::raw::c_void, ptr::null_mut, sync::Arc};
 
 use crate::graph::GraphBLAS::{
     GrB_BOOL, GrB_DESC_ST0, GrB_Info, GrB_Matrix, GrB_Matrix_apply, GrB_Matrix_dup,
@@ -12,7 +12,8 @@ use crate::graph::GraphBLAS::{
     GrB_mxm, GrB_transpose, GxB_ANY_PAIR_BOOL, GxB_Iterator, GxB_Iterator_free,
     GxB_Iterator_get_UINT64, GxB_Iterator_new, GxB_Matrix_Iterator_attach,
     GxB_Matrix_Iterator_getIndex, GxB_Matrix_Iterator_next, GxB_Matrix_fprint, GxB_Print_Level,
-    GxB_init, GxB_rowIterator_seekRow, GxB_unary_function,
+    GxB_init, GxB_rowIterator_getRowIndex, GxB_rowIterator_nextRow, GxB_rowIterator_seekRow,
+    GxB_unary_function,
 };
 
 /// Initializes the GraphBLAS library in non-blocking mode.
@@ -252,14 +253,17 @@ impl MxM<bool> for Matrix<bool> {
 /// A wrapper around a GraphBLAS matrix with type safety for elements.
 pub struct Matrix<T> {
     /// The underlying GraphBLAS matrix.
-    m: Rc<GrB_Matrix>,
+    m: Arc<GrB_Matrix>,
     /// Phantom data to associate the matrix with a specific type.
     phantom: PhantomData<T>,
 }
 
+unsafe impl<T> Send for Matrix<T> {}
+unsafe impl<T> Sync for Matrix<T> {}
+
 impl<T> Drop for Matrix<T> {
     fn drop(&mut self) {
-        if let Some(m) = Rc::get_mut(&mut self.m) {
+        if let Some(m) = Arc::get_mut(&mut self.m) {
             unsafe {
                 let info = GrB_Matrix_free(m);
                 debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
@@ -334,7 +338,7 @@ impl New for Matrix<bool> {
             let info = GrB_Matrix_new(m.as_mut_ptr(), GrB_BOOL, nrows, ncols);
             debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
             Self {
-                m: Rc::new(m.assume_init()),
+                m: Arc::new(m.assume_init()),
                 phantom: PhantomData,
             }
         }
@@ -351,7 +355,7 @@ impl New for Matrix<u64> {
             let info = GrB_Matrix_new(m.as_mut_ptr(), GrB_UINT64, nrows, ncols);
             debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
             Self {
-                m: Rc::new(m.assume_init()),
+                m: Arc::new(m.assume_init()),
                 phantom: PhantomData,
             }
         }
@@ -365,7 +369,7 @@ pub trait Dup<T> {
 impl<T> Dup<Self> for Matrix<T> {
     fn dup(&self) -> Self {
         Self {
-            m: Rc::new(unsafe {
+            m: Arc::new(unsafe {
                 let mut m: MaybeUninit<GrB_Matrix> = MaybeUninit::uninit();
                 let info = GrB_Matrix_dup(m.as_mut_ptr(), *self.m);
                 debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
@@ -383,7 +387,7 @@ pub trait DupBool {
 impl DupBool for Matrix<u64> {
     fn dup_bool(&self) -> Matrix<bool> {
         Matrix::<bool> {
-            m: Rc::new(unsafe {
+            m: Arc::new(unsafe {
                 let mut m: MaybeUninit<GrB_Matrix> = MaybeUninit::uninit();
                 let info = GrB_Matrix_new(m.as_mut_ptr(), GrB_BOOL, self.nrows(), self.ncols());
                 debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
@@ -590,7 +594,7 @@ where
 }
 
 pub struct Iter<T> {
-    m: Rc<GrB_Matrix>,
+    m: Arc<GrB_Matrix>,
     /// The underlying GraphBLAS iterator.
     inner: GxB_Iterator,
     /// Indicates whether the iterator is depleted.
@@ -605,7 +609,7 @@ impl<T> Drop for Iter<T> {
     /// Frees the GraphBLAS iterator when the `Iter` is dropped.
     fn drop(&mut self) {
         unsafe {
-            if let Some(m) = Rc::get_mut(&mut self.m) {
+            if let Some(m) = Arc::get_mut(&mut self.m) {
                 let info = GrB_Matrix_free(m);
                 debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
             }
@@ -634,16 +638,23 @@ impl<T> Iter<T> {
             let iter = iter.assume_init();
             let info = GxB_Matrix_Iterator_attach(iter, *m.m, null_mut());
             debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
-            let info = GxB_rowIterator_seekRow(iter, min_row);
+            let mut info = GxB_rowIterator_seekRow(iter, min_row);
             debug_assert!(
                 info == GrB_Info::GrB_SUCCESS
                     || info == GrB_Info::GrB_NO_VALUE
                     || info == GrB_Info::GxB_EXHAUSTED
             );
+            if info == GrB_Info::GrB_NO_VALUE {
+                while info == GrB_Info::GrB_NO_VALUE && GxB_rowIterator_getRowIndex(iter) < max_row
+                {
+                    info = GxB_rowIterator_nextRow(iter);
+                }
+            }
             Self {
                 m: m.m.clone(),
                 inner: iter,
-                depleted: info == GrB_Info::GxB_EXHAUSTED,
+                depleted: info != GrB_Info::GrB_SUCCESS
+                    || GxB_rowIterator_getRowIndex(iter) > max_row,
                 max_row,
                 phantom: PhantomData,
             }

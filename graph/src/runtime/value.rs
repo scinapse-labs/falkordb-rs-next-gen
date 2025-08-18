@@ -7,7 +7,7 @@ use std::{
     fmt::Debug,
     hash::{DefaultHasher, Hash, Hasher},
     ops::{Add, Div, Mul, Rem, Sub},
-    rc::Rc,
+    sync::Arc,
 };
 
 use ordermap::OrderMap;
@@ -21,13 +21,14 @@ use crate::{
 #[derive(Clone, Debug, PartialEq)]
 pub struct DeletedNode {
     pub labels: HashSet<LabelId>,
-    pub attrs: OrderMap<Rc<String>, Value>,
+    pub attrs: OrderMap<Arc<String>, Value>,
 }
 
 impl DeletedNode {
-    pub fn new(
+    #[must_use]
+    pub const fn new(
         labels: HashSet<LabelId>,
-        attrs: OrderMap<Rc<String>, Value>,
+        attrs: OrderMap<Arc<String>, Value>,
     ) -> Self {
         Self { labels, attrs }
     }
@@ -36,14 +37,14 @@ impl DeletedNode {
 #[derive(Clone, Debug, PartialEq)]
 pub struct DeletedRelationship {
     pub type_id: TypeId,
-    pub attrs: OrderMap<Rc<String>, Value>,
+    pub attrs: OrderMap<Arc<String>, Value>,
 }
 
 impl DeletedRelationship {
     #[must_use]
     pub const fn new(
         type_id: TypeId,
-        attrs: OrderMap<Rc<String>, Value>,
+        attrs: OrderMap<Arc<String>, Value>,
     ) -> Self {
         Self { type_id, attrs }
     }
@@ -56,14 +57,14 @@ pub enum Value {
     Bool(bool),
     Int(i64),
     Float(f64),
-    String(Rc<String>),
+    String(Arc<String>),
     List(Vec<Value>),
-    Map(Rc<OrderMap<Rc<String>, Value>>),
+    Map(Arc<OrderMap<Arc<String>, Value>>),
     Node(NodeId),
     Relationship(RelationshipId, NodeId, NodeId),
     Path(Vec<Value>),
     VecF32(Vec<f32>),
-    Rc(Rc<Value>),
+    Arc(Arc<Value>),
 }
 
 impl Value {
@@ -135,7 +136,7 @@ impl Hash for Value {
                     f.to_bits().hash(state);
                 }
             }
-            Self::Rc(x) => {
+            Self::Arc(x) => {
                 x.hash(state);
             }
         }
@@ -236,12 +237,12 @@ impl Add for Value {
                 for (k, v) in b.iter() {
                     new_map.insert(k.clone(), v.clone());
                 }
-                Ok(Self::Map(Rc::new(new_map)))
+                Ok(Self::Map(Arc::new(new_map)))
             }
-            (Self::String(a), Self::String(b)) => Ok(Self::String(Rc::new(format!("{a}{b}")))),
-            (Self::String(s), Self::Int(i)) => Ok(Self::String(Rc::new(format!("{s}{i}")))),
-            (Self::String(s), Self::Float(f)) => Ok(Self::String(Rc::new(format!("{s}{f}")))),
-            (Self::String(s), Self::Bool(f)) => Ok(Self::String(Rc::new(format!("{s}{f}")))),
+            (Self::String(a), Self::String(b)) => Ok(Self::String(Arc::new(format!("{a}{b}")))),
+            (Self::String(s), Self::Int(i)) => Ok(Self::String(Arc::new(format!("{s}{i}")))),
+            (Self::String(s), Self::Float(f)) => Ok(Self::String(Arc::new(format!("{s}{f}")))),
+            (Self::String(s), Self::Bool(f)) => Ok(Self::String(Arc::new(format!("{s}{f}")))),
             (a, b) => Err(format!(
                 "Unexpected types for add operator ({}, {})",
                 a.name(),
@@ -376,7 +377,7 @@ impl OrderedEnum for Value {
             Self::Relationship(_, _, _) => 1 << 2,
             Self::Path(_) => 1 << 4,
             Self::VecF32(_) => 1 << 18,
-            Self::Rc(inner) => inner.order(),
+            Self::Arc(inner) => inner.order(),
         }
     }
 }
@@ -457,7 +458,7 @@ impl ValueTypeOf for Value {
             | (Self::Relationship(_, _, _), Type::Relationship)
             | (Self::Path(_), Type::Path)
             | (_, Type::Any) => None,
-            (Self::Rc(inner), ty) => {
+            (Self::Arc(inner), ty) => {
                 // If the inner value is a Rc, we need to check its type
                 inner.value_of_type(ty)
             }
@@ -491,7 +492,7 @@ impl ValueGetType for Value {
             Self::Relationship(_, _, _) => Type::Relationship,
             Self::Path(_) => Type::Path,
             Self::VecF32(_) => Type::VecF32,
-            Self::Rc(inner) => inner.get_type(),
+            Self::Arc(inner) => inner.get_type(),
         }
     }
 }
@@ -510,7 +511,7 @@ impl Value {
             Self::Relationship(_, _, _) => String::from("Relationship"),
             Self::Path(_) => String::from("Path"),
             Self::VecF32(_) => String::from("VecF32"),
-            Self::Rc(inner) => inner.name(),
+            Self::Arc(inner) => inner.name(),
         }
     }
 
@@ -566,8 +567,8 @@ impl Value {
     }
 
     fn compare_map(
-        a: &OrderMap<Rc<String>, Self>,
-        b: &OrderMap<Rc<String>, Self>,
+        a: &OrderMap<Arc<String>, Self>,
+        b: &OrderMap<Arc<String>, Self>,
     ) -> (Ordering, DisjointOrNull) {
         let a_key_count = a.len();
         let b_key_count = b.len();
@@ -576,9 +577,9 @@ impl Value {
         }
 
         // sort keys
-        let mut a_keys: Vec<&Rc<String>> = a.keys().collect();
+        let mut a_keys: Vec<&Arc<String>> = a.keys().collect();
         a_keys.sort();
-        let mut b_keys: Vec<&Rc<String>> = b.keys().collect();
+        let mut b_keys: Vec<&Arc<String>> = b.keys().collect();
         b_keys.sort();
 
         // iterate over keys count

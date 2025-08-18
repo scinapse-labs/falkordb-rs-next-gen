@@ -1,4 +1,4 @@
-use std::{collections::HashSet, fmt::Display, hash::Hash, rc::Rc};
+use std::{collections::HashSet, fmt::Display, hash::Hash, rc::Rc, sync::Arc};
 
 use itertools::Itertools;
 use ordermap::{OrderMap, OrderSet};
@@ -11,7 +11,7 @@ use crate::{
 
 #[derive(Clone, Debug)]
 pub struct Variable {
-    pub name: Option<Rc<String>>,
+    pub name: Option<Arc<String>>,
     pub id: u32,
     pub ty: Type,
 }
@@ -49,7 +49,7 @@ pub enum ExprIR {
     Bool(bool),
     Integer(i64),
     Float(f64),
-    String(Rc<String>),
+    String(Arc<String>),
     List,
     Map,
     Variable(Variable),
@@ -299,7 +299,7 @@ impl SupportAggregation for DynTree<ExprIR> {
 #[derive(Debug)]
 pub struct QueryNode {
     pub alias: Variable,
-    pub labels: OrderSet<Rc<String>>,
+    pub labels: OrderSet<Arc<String>>,
     pub attrs: QueryExpr,
 }
 
@@ -325,7 +325,7 @@ impl QueryNode {
     #[must_use]
     pub const fn new(
         alias: Variable,
-        labels: OrderSet<Rc<String>>,
+        labels: OrderSet<Arc<String>>,
         attrs: QueryExpr,
     ) -> Self {
         Self {
@@ -339,7 +339,7 @@ impl QueryNode {
 #[derive(Debug)]
 pub struct QueryRelationship {
     pub alias: Variable,
-    pub types: Vec<Rc<String>>,
+    pub types: Vec<Arc<String>>,
     pub attrs: QueryExpr,
     pub from: Rc<QueryNode>,
     pub to: Rc<QueryNode>,
@@ -379,7 +379,7 @@ impl QueryRelationship {
     #[must_use]
     pub const fn new(
         alias: Variable,
-        types: Vec<Rc<String>>,
+        types: Vec<Arc<String>>,
         attrs: QueryExpr,
         from: Rc<QueryNode>,
         to: Rc<QueryNode>,
@@ -613,15 +613,15 @@ pub enum QueryIR {
         write: bool,
     },
     CreateIndex {
-        label: Rc<String>,
-        attrs: Vec<Rc<String>>,
+        label: Arc<String>,
+        attrs: Vec<Arc<String>>,
         index_type: IndexType,
         entity_type: EntityType,
         options: Option<QueryExpr>,
     },
     DropIndex {
-        label: Rc<String>,
-        attrs: Vec<Rc<String>>,
+        label: Arc<String>,
+        attrs: Vec<Arc<String>>,
         index_type: IndexType,
         entity_type: EntityType,
     },
@@ -727,6 +727,7 @@ impl QueryIR {
     }
 
     #[allow(clippy::too_many_lines)]
+    #[allow(clippy::cognitive_complexity)]
     fn inner_validate<'a, T>(
         &self,
         mut iter: T,
@@ -762,7 +763,7 @@ impl QueryIR {
                                 "The first argument of a procedure call must be a string or a map with a 'label' key",
                             ));
                         }
-                    };
+                    }
                 }
                 Ok(())
             }
