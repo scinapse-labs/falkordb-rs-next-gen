@@ -1050,7 +1050,7 @@ impl Graph {
             let fields = node_indexer.get_fields(label.clone());
             let mut docs = vec![];
             for id in ids {
-                let mut doc: Document = Document::new(id);
+                let mut doc = Document::new(id);
                 let attrs = node_attrs.get(&NodeId(id)).unwrap();
                 for (key, fields) in &fields {
                     let attr_id = self.get_node_attribute_id(key.as_str()).unwrap();
