@@ -512,8 +512,8 @@ impl Graph {
         id: NodeId,
         attr_id: AttrId,
         value: Value,
-        index_add_docs: &mut HashMap<Arc<String>, Vec<Document>>,
-        remove_docs: &mut HashMap<Arc<String>, Vec<u64>>,
+        index_add_docs: &mut HashMap<Arc<String>, RoaringTreemap>,
+        index_remove_docs: &mut HashMap<Arc<String>, RoaringTreemap>,
     ) -> bool {
         let attr_name = self.get_node_attribute_string(attr_id).unwrap();
         let mut node_attrs = self.node_attrs.lock().unwrap();
@@ -524,7 +524,7 @@ impl Graph {
                 node_attrs.remove(&id);
             }
             if removed {
-                if let Some(attrs) = node_attrs.get(&id) {
+                if node_attrs.contains_key(&id) {
                     for (_, label_id) in self.node_labels_matrix.iter(id.into(), id.into()) {
                         let label = self.node_labels[label_id as usize].clone();
                         if self
@@ -533,17 +533,10 @@ impl Graph {
                             .unwrap()
                             .is_attr_indexed(label.clone(), attr_name.clone())
                         {
-                            let mut doc = Document::new(u64::from(id));
-                            let fields =
-                                self.node_indexer.lock().unwrap().get_fields(label.clone());
-                            for (key, fields) in fields {
-                                let attr_id = self.get_node_attribute_id(key.as_str()).unwrap();
-                                let value = attrs.get(&attr_id).cloned().unwrap();
-                                for field in fields {
-                                    doc.set(field.clone(), value.clone());
-                                }
-                            }
-                            index_add_docs.entry(label).or_default().push(doc);
+                            index_add_docs
+                                .entry(label)
+                                .or_default()
+                                .insert(u64::from(id));
                         }
                     }
                 } else {
@@ -551,7 +544,10 @@ impl Graph {
                     for (_, label_id) in self.node_labels_matrix.iter(id.into(), id.into()) {
                         let label = self.node_labels[label_id as usize].clone();
                         if node_indexer.is_attr_indexed(label.clone(), attr_name.clone()) {
-                            remove_docs.entry(label).or_default().push(u64::from(id));
+                            index_remove_docs
+                                .entry(label)
+                                .or_default()
+                                .insert(u64::from(id));
                         }
                     }
                 }
@@ -559,27 +555,18 @@ impl Graph {
             removed
         } else {
             let res = attrs.insert(attr_id, value).is_some();
-            if let Some(attrs) = node_attrs.get(&id) {
-                for (_, label_id) in self.node_labels_matrix.iter(id.into(), id.into()) {
-                    let label = self.node_labels[label_id as usize].clone();
-                    if self
-                        .node_indexer
-                        .lock()
-                        .unwrap()
-                        .is_attr_indexed(label.clone(), attr_name.clone())
-                    {
-                        let mut doc = Document::new(u64::from(id));
-                        let fields = self.node_indexer.lock().unwrap().get_fields(label.clone());
-                        for (key, fields) in fields {
-                            let attr_id = self.get_node_attribute_id(key.as_str()).unwrap();
-                            if let Some(value) = attrs.get(&attr_id) {
-                                for field in fields {
-                                    doc.set(field.clone(), value.clone());
-                                }
-                            }
-                        }
-                        index_add_docs.entry(label).or_default().push(doc.clone());
-                    }
+            for (_, label_id) in self.node_labels_matrix.iter(id.into(), id.into()) {
+                let label = self.node_labels[label_id as usize].clone();
+                if self
+                    .node_indexer
+                    .lock()
+                    .unwrap()
+                    .is_attr_indexed(label.clone(), attr_name.clone())
+                {
+                    index_add_docs
+                        .entry(label)
+                        .or_default()
+                        .insert(u64::from(id));
                 }
             }
             res
@@ -590,7 +577,7 @@ impl Graph {
         &mut self,
         id: NodeId,
         labels: &OrderSet<Arc<String>>,
-        index_add_docs: &mut HashMap<Arc<String>, Vec<Document>>,
+        index_add_docs: &mut HashMap<Arc<String>, RoaringTreemap>,
     ) {
         for label in labels {
             let label_matrix = self.get_label_matrix_mut(label);
@@ -603,21 +590,12 @@ impl Graph {
                 .lock()
                 .unwrap()
                 .is_label_indexed(label.clone())
-                && let Some(attrs) = self.node_attrs.lock().unwrap().get(&id)
+                && self.node_attrs.lock().unwrap().contains_key(&id)
             {
-                let mut doc = Document::new(u64::from(id));
-                let fields = self.node_indexer.lock().unwrap().get_fields(label.clone());
-                for (key, fields) in fields {
-                    let attr_id = self.get_node_attribute_id(key.as_str()).unwrap();
-                    let value = attrs.get(&attr_id).cloned().unwrap();
-                    for field in fields {
-                        doc.set(field.clone(), value.clone());
-                    }
-                }
                 index_add_docs
                     .entry(label.clone())
                     .or_default()
-                    .push(doc.clone());
+                    .insert(u64::from(id));
             }
         }
     }
@@ -626,7 +604,7 @@ impl Graph {
         &mut self,
         id: NodeId,
         labels: &OrderSet<Arc<String>>,
-        remove_docs: &mut HashMap<Arc<String>, Vec<u64>>,
+        remove_docs: &mut HashMap<Arc<String>, RoaringTreemap>,
     ) {
         for label in labels {
             if !self.node_labels.contains(label) {
@@ -641,7 +619,7 @@ impl Graph {
                 remove_docs
                     .entry(label.clone())
                     .or_default()
-                    .push(u64::from(id));
+                    .insert(u64::from(id));
             }
         }
     }
@@ -649,7 +627,7 @@ impl Graph {
     pub fn delete_node(
         &mut self,
         id: NodeId,
-        remove_docs: &mut HashMap<Arc<String>, Vec<u64>>,
+        remove_docs: &mut HashMap<Arc<String>, RoaringTreemap>,
     ) {
         self.deleted_nodes.insert(id.0);
         self.node_count -= 1;
@@ -675,7 +653,7 @@ impl Graph {
                 remove_docs
                     .entry(label.clone())
                     .or_default()
-                    .push(u64::from(id));
+                    .insert(u64::from(id));
             }
         }
 
@@ -1062,11 +1040,31 @@ impl Graph {
 
     pub fn commit_index(
         &mut self,
-        index_add_docs: &mut HashMap<Arc<String>, Vec<Document>>,
-        remove_docs: &mut HashMap<Arc<String>, Vec<u64>>,
+        index_add_docs: &mut HashMap<Arc<String>, RoaringTreemap>,
+        remove_docs: &mut HashMap<Arc<String>, RoaringTreemap>,
     ) {
+        let mut add_docs = HashMap::new();
         let mut node_indexer = self.node_indexer.lock().unwrap();
-        node_indexer.commit(index_add_docs, remove_docs);
+        let node_attrs = self.node_attrs.lock().unwrap();
+        for (label, ids) in index_add_docs.drain() {
+            let fields = node_indexer.get_fields(label.clone());
+            let mut docs = vec![];
+            for id in ids {
+                let mut doc: Document = Document::new(id);
+                let attrs = node_attrs.get(&NodeId(id)).unwrap();
+                for (key, fields) in &fields {
+                    let attr_id = self.get_node_attribute_id(key.as_str()).unwrap();
+                    let value = attrs.get(&attr_id).cloned().unwrap();
+                    for field in fields {
+                        doc.set(field.clone(), value.clone());
+                    }
+                }
+                docs.push(doc);
+            }
+            add_docs.insert(label, docs);
+        }
+
+        node_indexer.commit(&mut add_docs, remove_docs);
     }
 
     pub fn drop_index(
