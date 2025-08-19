@@ -507,12 +507,7 @@ impl Indexer {
             };
             for id in remove_docs.iter() {
                 unsafe {
-                    let res = RediSearch_DeleteDocument(
-                        index.rs_idx,
-                        (&raw const id).cast::<c_void>(),
-                        8,
-                    );
-                    debug_assert_eq!(res, 0);
+                    RediSearch_DeleteDocument(index.rs_idx, (&raw const id).cast::<c_void>(), 8);
                 };
             }
         }
