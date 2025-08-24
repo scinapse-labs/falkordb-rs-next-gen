@@ -5,7 +5,6 @@ use roaring::RoaringTreemap;
 
 use crate::{
     graph::graph::{Graph, NodeId, RelationshipId},
-    indexer::Document,
     runtime::{
         functions::Type,
         runtime::QueryStatistics,
@@ -44,8 +43,8 @@ pub struct Pending {
     set_relationships_attrs: OrderMap<RelationshipId, OrderMap<Arc<String>, Value>>,
     set_node_labels: OrderMap<NodeId, OrderSet<Arc<String>>>,
     remove_node_labels: OrderMap<NodeId, OrderSet<Arc<String>>>,
-    index_add_docs: HashMap<Arc<String>, Vec<Document>>,
-    index_remove_docs: HashMap<Arc<String>, Vec<u64>>,
+    index_add_docs: HashMap<Arc<String>, RoaringTreemap>,
+    index_remove_docs: HashMap<Arc<String>, RoaringTreemap>,
 }
 
 impl Pending {
@@ -53,9 +52,7 @@ impl Pending {
         &mut self,
         id: NodeId,
     ) {
-        let len = self.created_nodes.len();
         self.created_nodes.insert(id.into());
-        debug_assert_eq!(self.created_nodes.len(), len + 1);
     }
 
     pub fn set_node_attributes(

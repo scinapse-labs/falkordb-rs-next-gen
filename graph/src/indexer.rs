@@ -10,6 +10,8 @@ use std::{
     },
 };
 
+use roaring::RoaringTreemap;
+
 use crate::{
     redisearch::{
         GC_POLICY_FORK, REDISEARCH_ADD_REPLACE, RSDoc, RSFLDOPT_NONE, RSFLDTYPE_FULLTEXT,
@@ -24,7 +26,7 @@ use crate::{
         RediSearch_ResultsIteratorNext, RediSearch_TagFieldSetCaseSensitive,
         RediSearch_TagFieldSetSeparator, RediSearch_TextFieldSetWeight,
     },
-    runtime::{pending, value::Value},
+    runtime::value::Value,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -197,7 +199,7 @@ impl Indexer {
         total: u64,
     ) -> Result<(), String> {
         let mut fields = HashMap::new();
-        let a = self.index.entry(label).or_insert_with(|| Index {
+        let a = self.index.entry(label.clone()).or_insert_with(|| Index {
             rs_idx: std::ptr::null_mut(),
             fields: HashMap::new(),
             status: IndexStatus::Operational,
@@ -240,7 +242,8 @@ impl Indexer {
             RediSearch_IndexOptionsSetGCPolicy(options, GC_POLICY_FORK as _);
             RediSearch_IndexOptionsSetStopwords(options, null_mut(), 0);
 
-            let index = RediSearch_CreateIndex(c"index".as_ptr().cast::<i8>(), options);
+            let clabel = CString::new(label.as_str()).unwrap();
+            let index = RediSearch_CreateIndex(clabel.as_ptr().cast::<i8>(), options);
             RediSearch_FreeIndexOptions(options);
 
             for field in fields.values().flat_map(|f| f.iter()) {
@@ -366,31 +369,17 @@ impl Indexer {
         query: IndexQuery<Value>,
     ) -> Vec<u64> {
         if let Some(index) = self.index.get(&label) {
-            match query {
+            let query = match query {
                 IndexQuery::Equal(key, Value::Int(value)) => unsafe {
                     let field = &index.fields.get(&key).unwrap()[0];
-                    let query = RediSearch_CreateNumericNode(
+                    RediSearch_CreateNumericNode(
                         index.rs_idx,
                         field.name.as_ptr(),
                         value as f64,
                         value as f64,
                         1,
                         1,
-                    );
-                    let iter = RediSearch_GetResultsIterator(query, index.rs_idx);
-
-                    let mut res = vec![];
-                    loop {
-                        let node_id =
-                            RediSearch_ResultsIteratorNext(iter, index.rs_idx, null_mut())
-                                .cast::<u64>();
-                        if node_id.is_null() {
-                            break;
-                        }
-                        res.push(node_id.read_unaligned());
-                    }
-                    RediSearch_ResultsIteratorFree(iter);
-                    return res;
+                    )
                 },
                 IndexQuery::Equal(key, Value::String(value)) => unsafe {
                     let field = &index.fields.get(&key).unwrap()[0];
@@ -399,20 +388,8 @@ impl Indexer {
                     let child =
                         RediSearch_CreateTagTokenNode(index.rs_idx, msg.as_ptr().cast::<c_char>());
                     RediSearch_QueryNodeAddChild(query, child);
-                    let iter = RediSearch_GetResultsIterator(query, index.rs_idx);
 
-                    let mut res = vec![];
-                    loop {
-                        let node_id =
-                            RediSearch_ResultsIteratorNext(iter, index.rs_idx, null_mut())
-                                .cast::<u64>();
-                        if node_id.is_null() {
-                            break;
-                        }
-                        res.push(node_id.read_unaligned());
-                    }
-                    RediSearch_ResultsIteratorFree(iter);
-                    return res;
+                    query
                 },
                 IndexQuery::Range(key, min, max) => {
                     let (min, max) = match (min, max) {
@@ -426,31 +403,33 @@ impl Indexer {
                     };
                     unsafe {
                         let field = &index.fields.get(&key).unwrap()[0];
-                        let query = RediSearch_CreateNumericNode(
+                        RediSearch_CreateNumericNode(
                             index.rs_idx,
                             field.name.as_ptr(),
                             max,
                             min,
                             0,
                             0,
-                        );
-                        let iter = RediSearch_GetResultsIterator(query, index.rs_idx);
-
-                        let mut res = vec![];
-                        loop {
-                            let node_id =
-                                RediSearch_ResultsIteratorNext(iter, index.rs_idx, null_mut())
-                                    .cast::<u64>();
-                            if node_id.is_null() {
-                                break;
-                            }
-                            res.push(node_id.read_unaligned());
-                        }
-                        RediSearch_ResultsIteratorFree(iter);
-                        return res;
+                        )
                     }
                 }
                 _ => todo!(),
+            };
+
+            unsafe {
+                let iter = RediSearch_GetResultsIterator(query, index.rs_idx);
+
+                let mut res = vec![];
+                loop {
+                    let node_id = RediSearch_ResultsIteratorNext(iter, index.rs_idx, null_mut())
+                        .cast::<u64>();
+                    if node_id.is_null() {
+                        break;
+                    }
+                    res.push(node_id.read_unaligned());
+                }
+                RediSearch_ResultsIteratorFree(iter);
+                return res;
             }
         }
 
@@ -502,10 +481,10 @@ impl Indexer {
 
     pub fn commit(
         &mut self,
-        index_add_docs: &mut HashMap<Arc<String>, Vec<Document>>,
-        remove_docs: &mut HashMap<Arc<String>, Vec<u64>>,
+        add_docs: &mut HashMap<Arc<String>, Vec<Document>>,
+        remove_docs: &mut HashMap<Arc<String>, RoaringTreemap>,
     ) {
-        for (label, add_docs) in index_add_docs {
+        for (label, add_docs) in add_docs {
             let Some(index) = self.index.get_mut(label) else {
                 continue;
             };
@@ -526,9 +505,9 @@ impl Indexer {
             let Some(index) = self.index.get_mut(label) else {
                 continue;
             };
-            for id in remove_docs.drain(..) {
+            for id in remove_docs.iter() {
                 unsafe {
-                    RediSearch_DeleteDocument(index.rs_idx, (&raw const id).cast::<c_void>(), 8)
+                    RediSearch_DeleteDocument(index.rs_idx, (&raw const id).cast::<c_void>(), 8);
                 };
             }
         }
