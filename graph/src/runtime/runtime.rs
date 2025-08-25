@@ -31,7 +31,7 @@ use std::{
     iter::{empty, once},
     path::Path,
     rc::Rc,
-    sync::Arc,
+    sync::{Arc, RwLock},
     time::Instant,
 };
 use tracing::instrument;
@@ -57,9 +57,9 @@ pub struct QueryStatistics {
     pub cached: bool,
 }
 
-pub struct Runtime<'a> {
+pub struct Runtime {
     parameters: HashMap<String, Value>,
-    pub g: &'a RefCell<Graph>,
+    pub g: Arc<RwLock<Graph>>,
     write: bool,
     pending: Lazy<RefCell<Pending>>,
     stats: RefCell<QueryStatistics>,
@@ -169,10 +169,10 @@ impl Debug for Env {
     }
 }
 
-impl<'a> Runtime<'a> {
+impl<'a> Runtime {
     #[must_use]
     pub fn new(
-        g: &'a RefCell<Graph>,
+        g: Arc<RwLock<Graph>>,
         parameters: HashMap<String, Value>,
         write: bool,
         plan: Rc<DynTree<IR>>,
@@ -198,7 +198,7 @@ impl<'a> Runtime<'a> {
     }
 
     pub fn query(&mut self) -> Result<ResultSummary, String> {
-        let labels_count = self.g.borrow().get_labels_count();
+        let labels_count = self.g.read().unwrap().get_labels_count();
         let start = Instant::now();
         let idx = self.plan.root().idx();
         let mut result = vec![];
@@ -208,7 +208,8 @@ impl<'a> Runtime<'a> {
         }
         let run_duration = start.elapsed();
 
-        self.stats.borrow_mut().labels_added = self.g.borrow().get_labels_count() - labels_count;
+        self.stats.borrow_mut().labels_added =
+            self.g.read().unwrap().get_labels_count() - labels_count;
         self.stats.borrow_mut().execution_time = run_duration.as_secs_f64() * 1000.0;
         Ok(ResultSummary {
             stats: self.stats.take(),
@@ -810,9 +811,9 @@ impl<'a> Runtime<'a> {
     #[allow(clippy::too_many_lines)]
     #[instrument(name = "run", level = "debug", skip(self, idx))]
     fn run(
-        &'a self,
+        &self,
         idx: &NodeIdx<Dyn<IR>>,
-    ) -> Result<Box<dyn Iterator<Item = Result<Env, String>> + 'a>, String> {
+    ) -> Result<Box<dyn Iterator<Item = Result<Env, String>> + '_>, String> {
         let child0_idx = self.plan.node(idx).get_child(0).map(|n| n.idx());
         let iter = if matches!(
             self.plan.node(idx).data(),
@@ -1332,7 +1333,9 @@ impl<'a> Runtime<'a> {
                     .collect::<Result<Vec<_>, String>>()?
                     .into_iter()
                     .map(Ok);
-                self.pending.borrow_mut().commit(self.g, &self.stats);
+                self.pending
+                    .borrow_mut()
+                    .commit(self.g.clone(), &self.stats);
                 let idx = idx.clone();
                 Ok(iter.cond_inspect(self.inspect, move |res| {
                     self.record.borrow_mut().push((idx.clone(), res.clone()));
@@ -1352,7 +1355,8 @@ impl<'a> Runtime<'a> {
                 }
                 self.stats.borrow_mut().indexes_created += attrs.len();
                 self.g
-                    .borrow_mut()
+                    .write()
+                    .unwrap()
                     .create_index(index_type, entity_type, label, attrs)?;
                 Ok(Box::new(empty()))
             }
@@ -1369,7 +1373,8 @@ impl<'a> Runtime<'a> {
                 }
                 self.stats.borrow_mut().indexes_dropped += attrs.len();
                 self.g
-                    .borrow_mut()
+                    .write()
+                    .unwrap()
                     .drop_index(index_type, entity_type, label, attrs);
                 Ok(Box::new(empty()))
             }
@@ -1650,14 +1655,15 @@ impl<'a> Runtime<'a> {
             };
             match entity {
                 Value::Node(id) => {
-                    if self.g.borrow().is_node_deleted(id)
+                    if self.g.read().unwrap().is_node_deleted(id)
                         || self.pending.borrow().is_node_deleted(id)
                     {
                         continue;
                     }
                     if let Some(property) = property {
-                        if let Some(attr_id) = self.g.borrow().get_node_attribute_id(property)
-                            && let Some(v) = self.g.borrow().get_node_attribute(id, attr_id)
+                        if let Some(attr_id) =
+                            self.g.read().unwrap().get_node_attribute_id(property)
+                            && let Some(v) = self.g.read().unwrap().get_node_attribute(id, attr_id)
                             && v == value
                         {
                             continue;
@@ -1670,10 +1676,14 @@ impl<'a> Runtime<'a> {
                         )?;
                     } else if let Value::Map(map) = value {
                         if *replace {
-                            for key in self.g.borrow().get_node_attrs(id).keys() {
+                            for key in self.g.read().unwrap().get_node_attrs(id).keys() {
                                 self.pending.borrow_mut().set_node_attribute(
                                     id,
-                                    self.g.borrow().get_node_attribute_string(*key).unwrap(),
+                                    self.g
+                                        .read()
+                                        .unwrap()
+                                        .get_node_attribute_string(*key)
+                                        .unwrap(),
                                     Value::Null,
                                 )?;
                             }
@@ -1686,7 +1696,7 @@ impl<'a> Runtime<'a> {
                             )?;
                         }
                     } else if let Value::Node(id) = value {
-                        let g = self.g.borrow();
+                        let g = self.g.read().unwrap();
                         let attrs = self.get_node_attrs(id);
                         if *replace {
                             for key in g.get_node_attrs(id).keys() {
@@ -1708,15 +1718,22 @@ impl<'a> Runtime<'a> {
                     }
                 }
                 Value::Relationship(id, src, dest) => {
-                    if self.g.borrow().is_relationship_deleted(id)
+                    if self.g.read().unwrap().is_relationship_deleted(id)
                         || self.pending.borrow().is_relationship_deleted(id, src, dest)
                     {
                         continue;
                     }
                     if let Some(property) = property {
-                        if let Some(attr_id) =
-                            self.g.borrow().get_relationship_attribute_id(property)
-                            && let Some(v) = self.g.borrow().get_relationship_attribute(id, attr_id)
+                        if let Some(attr_id) = self
+                            .g
+                            .read()
+                            .unwrap()
+                            .get_relationship_attribute_id(property)
+                            && let Some(v) = self
+                                .g
+                                .read()
+                                .unwrap()
+                                .get_relationship_attribute(id, attr_id)
                             && v == value
                         {
                             continue;
@@ -1728,7 +1745,7 @@ impl<'a> Runtime<'a> {
                             value,
                         )?;
                     } else if let Value::Relationship(sid, _, _) = value {
-                        let g = self.g.borrow();
+                        let g = self.g.read().unwrap();
                         let attrs = g.get_relationship_attrs(sid);
                         if *replace {
                             for key in g.get_relationship_attrs(id).keys() {
@@ -1764,10 +1781,10 @@ impl<'a> Runtime<'a> {
     }
 
     fn relationship_scan(
-        &self,
+        &'a self,
         relationship_pattern: &'a QueryRelationship,
         vars: Env,
-    ) -> Result<Box<dyn Iterator<Item = Result<Env, String>> + '_>, String> {
+    ) -> Result<Box<dyn Iterator<Item = Result<Env, String>> + 'a>, String> {
         let filter_attrs = self.run_expr(
             &relationship_pattern.attrs,
             relationship_pattern.attrs.root().idx(),
@@ -1786,7 +1803,7 @@ impl<'a> Runtime<'a> {
                 Value::Node(id) => Some(id),
                 _ => None,
             });
-        let iter = self.g.borrow().get_relationships(
+        let iter = self.g.read().unwrap().get_relationships(
             &relationship_pattern.types,
             &relationship_pattern.from.labels,
             &relationship_pattern.to.labels,
@@ -1802,14 +1819,15 @@ impl<'a> Runtime<'a> {
             }
             Box::new(
                 self.g
-                    .borrow()
+                    .read()
+                    .unwrap()
                     .get_src_dest_relationships(src, dst, &relationship_pattern.types)
                     .into_iter()
                     .filter(move |v| {
                         if let Value::Map(filter_attrs) = &filter_attrs
                             && !filter_attrs.is_empty()
                         {
-                            let g = self.g.borrow();
+                            let g = self.g.read().unwrap();
                             let attrs = g.get_relationship_attrs(*v);
                             for (key, avalue) in filter_attrs.iter() {
                                 if let Some(key) = g.get_relationship_attribute_id(key)
@@ -1850,10 +1868,10 @@ impl<'a> Runtime<'a> {
     }
 
     fn expand_into(
-        &self,
+        &'a self,
         relationship_pattern: &'a QueryRelationship,
         vars: Env,
-    ) -> Result<Box<dyn Iterator<Item = Result<Env, String>> + '_>, String> {
+    ) -> Result<Box<dyn Iterator<Item = Result<Env, String>> + 'a>, String> {
         let src = vars.get(&relationship_pattern.from.alias).map_or_else(
             || Err(String::from("Node not found")),
             |v| match v {
@@ -1874,7 +1892,8 @@ impl<'a> Runtime<'a> {
         )?;
         Ok(Box::new(
             self.g
-                .borrow()
+                .read()
+                .unwrap()
                 .get_src_dest_relationships(src, dst, &relationship_pattern.types)
                 .into_iter()
                 .map(move |id| {
@@ -1891,23 +1910,23 @@ impl<'a> Runtime<'a> {
     }
 
     fn node_by_label_scan(
-        &self,
+        &'a self,
         node_pattern: &'a QueryNode,
         vars: Env,
-    ) -> Result<Box<dyn Iterator<Item = Result<Env, String>> + '_>, String> {
+    ) -> Result<Box<dyn Iterator<Item = Result<Env, String>> + 'a>, String> {
         let attrs = self.run_expr(
             &node_pattern.attrs,
             node_pattern.attrs.root().idx(),
             &vars,
             None,
         )?;
-        let iter = self.g.borrow().get_nodes(&node_pattern.labels);
+        let iter = self.g.read().unwrap().get_nodes(&node_pattern.labels);
         Ok(Box::new(iter.filter_map(move |v| {
             let mut vars = vars.clone();
             if let Value::Map(attrs) = &attrs
                 && !attrs.is_empty()
             {
-                let g = self.g.borrow();
+                let g = self.g.read().unwrap();
                 let properties = g.get_node_attrs(v);
                 for (key, avalue) in attrs.iter() {
                     if let Some(key) = g.get_node_attribute_id(key)
@@ -1960,12 +1979,12 @@ impl<'a> Runtime<'a> {
     }
 
     fn node_by_index_scan(
-        &self,
+        &'a self,
         node_pattern: &'a QueryNode,
         index: &Arc<String>,
         query: &IndexQuery<QueryExpr>,
         vars: Env,
-    ) -> Result<Box<dyn Iterator<Item = Result<Env, String>> + '_>, String> {
+    ) -> Result<Box<dyn Iterator<Item = Result<Env, String>> + 'a>, String> {
         let attrs = self.run_expr(
             &node_pattern.attrs,
             node_pattern.attrs.root().idx(),
@@ -1977,7 +1996,8 @@ impl<'a> Runtime<'a> {
 
         Ok(Box::new(
             self.g
-                .borrow()
+                .read()
+                .unwrap()
                 .get_indexed_nodes(index, q)
                 .into_iter()
                 .filter_map(move |v| {
@@ -1985,7 +2005,7 @@ impl<'a> Runtime<'a> {
                     if let Value::Map(attrs) = &attrs
                         && !attrs.is_empty()
                     {
-                        let g = self.g.borrow();
+                        let g = self.g.read().unwrap();
                         let properties = g.get_node_attrs(v);
                         for (key, avalue) in attrs.iter() {
                             if let Some(key) = g.get_node_attribute_id(key)
@@ -2023,14 +2043,14 @@ impl<'a> Runtime<'a> {
     ) -> Result<(), String> {
         match value {
             Value::Node(id) => {
-                if !self.g.borrow().is_node_deleted(id) {
-                    for (src, dest, id) in self.g.borrow().get_node_relationships(id) {
+                if !self.g.read().unwrap().is_node_deleted(id) {
+                    for (src, dest, id) in self.g.read().unwrap().get_node_relationships(id) {
                         self.pending
                             .borrow_mut()
                             .deleted_relationship(id, src, dest);
                     }
                     self.pending.borrow_mut().deleted_node(id);
-                    let labels = self.g.borrow().get_node_label_ids(id).collect();
+                    let labels = self.g.read().unwrap().get_node_label_ids(id).collect();
                     let attrs = self.get_node_attrs(id);
                     self.deleted_nodes
                         .borrow_mut()
@@ -2038,11 +2058,11 @@ impl<'a> Runtime<'a> {
                 }
             }
             Value::Relationship(id, src, dest) => {
-                if !self.g.borrow().is_relationship_deleted(id) {
+                if !self.g.read().unwrap().is_relationship_deleted(id) {
                     self.pending
                         .borrow_mut()
                         .deleted_relationship(id, src, dest);
-                    let type_id = self.g.borrow().get_relationship_type_id(id);
+                    let type_id = self.g.read().unwrap().get_relationship_type_id(id);
                     let attrs = self.get_relationship_attrs(id);
                     self.deleted_relationships
                         .borrow_mut()
@@ -2068,7 +2088,7 @@ impl<'a> Runtime<'a> {
         vars: &mut Env,
     ) -> Result<(), String> {
         for node in pattern.nodes() {
-            let id = self.g.borrow_mut().reserve_node();
+            let id = self.g.write().unwrap().reserve_node();
             self.pending.borrow_mut().created_node(id);
             self.pending
                 .borrow_mut()
@@ -2101,16 +2121,16 @@ impl<'a> Runtime<'a> {
                 (from_id, to_id)
             };
 
-            if self.g.borrow().is_node_deleted(from_id)
+            if self.g.read().unwrap().is_node_deleted(from_id)
                 || self.pending.borrow().is_node_deleted(from_id)
-                || self.g.borrow().is_node_deleted(to_id)
+                || self.g.read().unwrap().is_node_deleted(to_id)
                 || self.pending.borrow().is_node_deleted(to_id)
             {
                 return Err(String::from(
                     "Failed to create relationship; endpoint was not found.",
                 ));
             }
-            let id = self.g.borrow_mut().reserve_relationship();
+            let id = self.g.write().unwrap().reserve_relationship();
             self.pending.borrow_mut().created_relationship(
                 id,
                 from_id,
@@ -2142,9 +2162,10 @@ impl<'a> Runtime<'a> {
             return Some(value.clone());
         }
         self.g
-            .borrow()
+            .read()
+            .unwrap()
             .get_node_attribute_id(attribute.as_str())
-            .and_then(|attr_id| self.g.borrow().get_node_attribute(id, attr_id))
+            .and_then(|attr_id| self.g.read().unwrap().get_node_attribute(id, attr_id))
     }
 
     pub fn get_relationship_attribute(
@@ -2160,16 +2181,27 @@ impl<'a> Runtime<'a> {
             return Some(value.clone());
         }
         self.g
-            .borrow()
+            .read()
+            .unwrap()
             .get_relationship_attribute_id(attribute.as_str())
-            .and_then(|attr_id| self.g.borrow().get_relationship_attribute(id, attr_id))
+            .and_then(|attr_id| {
+                self.g
+                    .read()
+                    .unwrap()
+                    .get_relationship_attribute(id, attr_id)
+            })
     }
 
     pub fn get_node_labels(
         &self,
         id: NodeId,
     ) -> OrderSet<Arc<String>> {
-        let mut labels = self.g.borrow().get_node_labels(id).collect::<OrderSet<_>>();
+        let mut labels = self
+            .g
+            .read()
+            .unwrap()
+            .get_node_labels(id)
+            .collect::<OrderSet<_>>();
         self.pending.borrow().update_node_labels(id, &mut labels);
         labels
     }
@@ -2181,7 +2213,7 @@ impl<'a> Runtime<'a> {
         if let Some(dn) = self.deleted_nodes.borrow().get(&id) {
             return dn.attrs.clone();
         }
-        let g = self.g.borrow();
+        let g = self.g.read().unwrap();
         let mut actual: OrderMap<Arc<String>, Value> = g
             .get_node_attrs(id)
             .iter()
@@ -2195,7 +2227,7 @@ impl<'a> Runtime<'a> {
         &self,
         id: RelationshipId,
     ) -> OrderMap<Arc<String>, Value> {
-        let g = self.g.borrow();
+        let g = self.g.read().unwrap();
         let mut actual: OrderMap<Arc<String>, Value> = g
             .get_relationship_attrs(id)
             .iter()
@@ -2215,20 +2247,21 @@ impl<'a> Runtime<'a> {
             return Some(type_name);
         }
         self.g
-            .borrow()
-            .get_type(self.g.borrow().get_relationship_type_id(id))
+            .read()
+            .unwrap()
+            .get_type(self.g.read().unwrap().get_relationship_type_id(id))
     }
 
     pub fn get_labels(&self) -> Vec<Arc<String>> {
-        self.g.borrow().get_labels()
+        self.g.read().unwrap().get_labels()
     }
 
     pub fn get_types(&self) -> Vec<Arc<String>> {
-        self.g.borrow().get_types()
+        self.g.read().unwrap().get_types()
     }
 
     pub fn get_attrs(&self) -> Vec<Arc<String>> {
-        self.g.borrow().get_attrs()
+        self.g.read().unwrap().get_attrs()
     }
 }
 

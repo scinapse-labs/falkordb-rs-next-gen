@@ -8,6 +8,7 @@ use std::{
 
 use itertools::Itertools;
 use lru::LruCache;
+use once_cell::sync::Lazy;
 use ordermap::{OrderMap, OrderSet};
 use orx_tree::DynTree;
 use rayon::spawn;
@@ -115,7 +116,7 @@ pub struct Graph {
     relationship_type_matrix: Matrix<bool>,
     all_nodes_matrix: Matrix<bool>,
     labels_matices: HashMap<usize, Arc<Mutex<Matrix<bool>>>>,
-    relationship_matrices: HashMap<usize, Tensor>,
+    relationship_matrices: HashMap<usize, Arc<Mutex<Tensor>>>,
     empty_map: OrderMap<AttrId, Value>,
     node_attrs: Arc<Mutex<HashMap<NodeId, OrderMap<AttrId, Value>>>>,
     relationship_attrs: HashMap<RelationshipId, OrderMap<AttrId, Value>>,
@@ -125,8 +126,96 @@ pub struct Graph {
     node_attrs_name: Arc<Mutex<Vec<Arc<String>>>>,
     relationship_attrs_name: Vec<Arc<String>>,
     cache: Mutex<LruCache<String, DynTree<IR>>>,
-    tx: mpsc::Sender<(i32, Arc<String>, Arc<Mutex<Matrix<bool>>>)>,
 }
+
+unsafe impl Send for Graph {}
+unsafe impl Sync for Graph {}
+
+static INDEXER_CHANNEL: Lazy<
+    mpsc::Sender<(
+        i32,
+        Arc<String>,
+        Arc<Mutex<Matrix<bool>>>,
+        Arc<Mutex<Indexer>>,
+        Arc<Mutex<HashMap<NodeId, OrderMap<AttrId, Value>>>>,
+        Arc<Mutex<Vec<Arc<String>>>>,
+    )>,
+> = Lazy::new(|| {
+    let (sender, receiver) = mpsc::channel::<(
+        i32,
+        Arc<String>,
+        Arc<Mutex<Matrix<bool>>>,
+        Arc<Mutex<Indexer>>,
+        Arc<Mutex<HashMap<NodeId, OrderMap<AttrId, Value>>>>,
+        Arc<Mutex<Vec<Arc<String>>>>,
+    )>();
+    spawn(move || {
+        loop {
+            let Ok((action, label, lm, node_indexer, node_attrs, node_attrs_name)) =
+                receiver.recv()
+            else {
+                break;
+            };
+
+            if action == 0 {
+                if node_indexer.lock().unwrap().pending_changes(label.clone()) > 1 {
+                    node_indexer.lock().unwrap().enable(label);
+                    continue;
+                }
+                let attr_ids = {
+                    let node_indexer = node_indexer.lock().unwrap();
+
+                    node_indexer
+                        .get_fields(label.clone())
+                        .into_iter()
+                        .filter_map(|(attr, field)| {
+                            node_attrs_name
+                                .lock()
+                                .unwrap()
+                                .iter()
+                                .position(|p| p.as_str() == attr.as_str())
+                                .map(AttrId)
+                                .map(|id| (id, field))
+                        })
+                        .collect::<Vec<_>>()
+                };
+                let mut add_docs = vec![];
+                let node_attrs = node_attrs.lock().unwrap();
+                let value = lm.lock().unwrap().iter(0, u64::MAX);
+                for (n, _) in value {
+                    let mut doc = Document::new(n);
+                    for (attr_id, fields) in &attr_ids {
+                        if let Some(value) = node_attrs
+                            .get(&NodeId(n))
+                            .map_or_else(|| None, |attrs| attrs.get(attr_id).cloned())
+                        {
+                            for field in fields {
+                                doc.set(field.clone(), value.clone());
+                            }
+                        }
+                    }
+                    add_docs.push(doc);
+                }
+                if node_indexer.lock().unwrap().pending_changes(label.clone()) > 1 {
+                    node_indexer.lock().unwrap().enable(label);
+                    continue;
+                }
+                let mut index_add_docs = HashMap::new();
+                index_add_docs.insert(label.clone(), add_docs);
+                let add_docs = Arc::new(Mutex::new(index_add_docs));
+
+                let mut node_indexer = node_indexer.lock().unwrap();
+                let mut add_docs = add_docs.lock().unwrap();
+                node_indexer.commit(&mut add_docs, &mut HashMap::new());
+                node_indexer.enable(label);
+            } else if action == 1 {
+                let mut node_indexer = node_indexer.lock().unwrap();
+                node_indexer.remove(label);
+            }
+        }
+    });
+    sender
+});
 
 impl Graph {
     #[must_use]
@@ -135,8 +224,7 @@ impl Graph {
         e: u64,
         cache_size: usize,
     ) -> Self {
-        let (tx, rx) = mpsc::channel();
-        let res = Self {
+        Self {
             node_cap: n,
             relationship_cap: e,
             reserved_node_count: 0,
@@ -161,75 +249,39 @@ impl Graph {
             node_attrs_name: Arc::new(Mutex::new(Vec::new())),
             relationship_attrs_name: Vec::new(),
             cache: Mutex::new(LruCache::new(NonZeroUsize::new(cache_size).unwrap())),
-            tx,
-        };
-        let node_indexer = res.node_indexer.clone();
-        let node_attrs = res.node_attrs.clone();
-        let node_attrs_name = res.node_attrs_name.clone();
-        spawn(move || {
-            loop {
-                let Ok((action, label, lm)) = rx.recv() else {
-                    break;
-                };
+        }
+    }
 
-                if action == 0 {
-                    if node_indexer.lock().unwrap().pending_changes(label.clone()) > 1 {
-                        node_indexer.lock().unwrap().enable(label);
-                        continue;
-                    }
-                    let attr_ids = {
-                        let node_indexer = node_indexer.lock().unwrap();
-
-                        node_indexer
-                            .get_fields(label.clone())
-                            .into_iter()
-                            .filter_map(|(attr, field)| {
-                                node_attrs_name
-                                    .lock()
-                                    .unwrap()
-                                    .iter()
-                                    .position(|p| p.as_str() == attr.as_str())
-                                    .map(AttrId)
-                                    .map(|id| (id, field))
-                            })
-                            .collect::<Vec<_>>()
-                    };
-                    let mut add_docs = vec![];
-                    let node_attrs = node_attrs.lock().unwrap();
-                    let value = lm.lock().unwrap().iter(0, u64::MAX);
-                    for (n, _) in value {
-                        let mut doc = Document::new(n);
-                        for (attr_id, fields) in &attr_ids {
-                            if let Some(value) = node_attrs
-                                .get(&NodeId(n))
-                                .map_or_else(|| None, |attrs| attrs.get(attr_id).cloned())
-                            {
-                                for field in fields {
-                                    doc.set(field.clone(), value.clone());
-                                }
-                            }
-                        }
-                        add_docs.push(doc);
-                    }
-                    if node_indexer.lock().unwrap().pending_changes(label.clone()) > 1 {
-                        node_indexer.lock().unwrap().enable(label);
-                        continue;
-                    }
-                    let mut index_add_docs = HashMap::new();
-                    index_add_docs.insert(label.clone(), add_docs);
-                    let add_docs = Arc::new(Mutex::new(index_add_docs));
-
-                    let mut node_indexer = node_indexer.lock().unwrap();
-                    let mut add_docs = add_docs.lock().unwrap();
-                    node_indexer.commit(&mut add_docs, &mut HashMap::new());
-                    node_indexer.enable(label);
-                } else if action == 1 {
-                    let mut node_indexer = node_indexer.lock().unwrap();
-                    node_indexer.remove(label);
-                }
-            }
-        });
-        res
+    #[must_use]
+    pub fn new_version(&self) -> Self {
+        debug_assert_eq!(self.reserved_node_count, 0);
+        debug_assert_eq!(self.reserved_relationship_count, 0);
+        Self {
+            node_cap: self.node_cap,
+            relationship_cap: self.relationship_cap,
+            reserved_node_count: 0,
+            reserved_relationship_count: 0,
+            node_count: self.node_count,
+            relationship_count: self.relationship_count,
+            deleted_nodes: self.deleted_nodes.clone(),
+            deleted_relationships: self.deleted_relationships.clone(),
+            zero_matrix: self.zero_matrix.dup(),
+            adjacancy_matrix: self.adjacancy_matrix.dup(),
+            node_labels_matrix: self.node_labels_matrix.dup(),
+            relationship_type_matrix: self.relationship_type_matrix.dup(),
+            all_nodes_matrix: self.all_nodes_matrix.dup(),
+            labels_matices: self.labels_matices.clone(),
+            relationship_matrices: self.relationship_matrices.clone(),
+            empty_map: self.empty_map.clone(),
+            node_attrs: self.node_attrs.clone(),
+            relationship_attrs: self.relationship_attrs.clone(),
+            node_indexer: self.node_indexer.clone(),
+            node_labels: self.node_labels.clone(),
+            relationship_types: self.relationship_types.clone(),
+            node_attrs_name: self.node_attrs_name.clone(),
+            relationship_attrs_name: self.relationship_attrs_name.clone(),
+            cache: Mutex::new(LruCache::new(self.cache.lock().unwrap().cap())),
+        }
     }
 
     pub const fn get_labels_count(&self) -> usize {
@@ -375,18 +427,18 @@ impl Graph {
     fn get_relationship_matrix_mut(
         &mut self,
         relationship_type: &Arc<String>,
-    ) -> &mut Tensor {
+    ) -> Arc<Mutex<Tensor>> {
         if !self.relationship_types.contains(relationship_type) {
             self.relationship_types.push(relationship_type.clone());
 
             self.relationship_matrices.insert(
                 self.relationship_types.len() - 1,
-                Tensor::new(self.node_cap, self.node_cap),
+                Arc::new(Mutex::new(Tensor::new(self.node_cap, self.node_cap))),
             );
         }
 
         self.relationship_matrices
-            .get_mut(
+            .get(
                 &self
                     .relationship_types
                     .iter()
@@ -394,23 +446,26 @@ impl Graph {
                     .unwrap(),
             )
             .unwrap()
+            .clone()
     }
 
     fn get_relationship_matrix(
         &self,
         relationship_type: &Arc<String>,
-    ) -> Option<&Tensor> {
+    ) -> Option<Arc<Mutex<Tensor>>> {
         if !self.relationship_types.contains(relationship_type) {
             return None;
         }
 
-        self.relationship_matrices.get(
-            &self
-                .relationship_types
-                .iter()
-                .position(|l| l.as_str() == relationship_type.as_str())
-                .unwrap(),
-        )
+        self.relationship_matrices
+            .get(
+                &self
+                    .relationship_types
+                    .iter()
+                    .position(|l| l.as_str() == relationship_type.as_str())
+                    .unwrap(),
+            )
+            .cloned()
     }
 
     pub fn get_node_attribute_id(
@@ -666,7 +721,12 @@ impl Graph {
     ) -> impl Iterator<Item = (NodeId, NodeId, RelationshipId)> + '_ {
         self.relationship_matrices
             .values()
-            .flat_map(move |m| m.iter(id.0, id.0, false).chain(m.iter(id.0, id.0, true)))
+            .flat_map(move |m| {
+                let m = m.lock().unwrap();
+                m.iter(id.0, id.0, false)
+                    .chain(m.iter(id.0, id.0, true))
+                    .collect::<Vec<_>>()
+            })
             .map(|(src, dest, id)| {
                 let src_node = NodeId(src);
                 let dest_node = NodeId(dest);
@@ -768,7 +828,10 @@ impl Graph {
         ) in relationships
         {
             let relationship_type_matrix = self.get_relationship_matrix_mut(type_name);
-            relationship_type_matrix.set(start.0, end.0, id.0);
+            relationship_type_matrix
+                .lock()
+                .unwrap()
+                .set(start.0, end.0, id.0);
         }
 
         self.resize();
@@ -848,7 +911,7 @@ impl Graph {
                 self.relationship_attrs.remove(&RelationshipId(*id));
             }
             let t = self.get_relationship_matrix_mut(&label);
-            t.remove_all(rels);
+            t.lock().unwrap().remove_all(rels);
         }
     }
 
@@ -865,7 +928,7 @@ impl Graph {
             types
         } {
             if let Some(relationship_matrix) = self.get_relationship_matrix(relationship_type) {
-                for id in relationship_matrix.get(src.0, dest.0) {
+                for id in relationship_matrix.lock().unwrap().get(src.0, dest.0) {
                     vec.push(RelationshipId(id));
                 }
             }
@@ -897,10 +960,10 @@ impl Graph {
             let mut iter = matrices.iter();
             let mut m = iter.next().map_or_else(
                 || self.adjacancy_matrix.dup(),
-                |relationship_matrix| relationship_matrix.dup_bool(),
+                |relationship_matrix| relationship_matrix.lock().unwrap().dup_bool(),
             );
             for relationship_matrix in iter {
-                m.element_wise_add(&relationship_matrix.dup_bool());
+                m.element_wise_add(&relationship_matrix.lock().unwrap().dup_bool());
             }
 
             if !src_labels_matrices.is_empty() {
@@ -967,7 +1030,10 @@ impl Graph {
                     .resize(self.node_cap, self.node_cap);
             }
             for relationship_matrix in self.relationship_matrices.iter_mut().map(|(_, m)| m) {
-                relationship_matrix.resize(self.node_cap, self.node_cap);
+                relationship_matrix
+                    .lock()
+                    .unwrap()
+                    .resize(self.node_cap, self.node_cap);
             }
         }
 
@@ -1035,7 +1101,14 @@ impl Graph {
     ) {
         let lm = self.get_label_matrix(label).unwrap();
         let label = label.clone();
-        self.tx.send((0, label, lm));
+        INDEXER_CHANNEL.send((
+            0,
+            label,
+            lm,
+            self.node_indexer.clone(),
+            self.node_attrs.clone(),
+            self.node_attrs_name.clone(),
+        ));
     }
 
     pub fn commit_index(
@@ -1111,8 +1184,14 @@ impl Graph {
                 if reindex {
                     self.populate_index(label);
                 } else {
-                    self.tx
-                        .send((1, label.clone(), Arc::new(Mutex::new(Matrix::new(0, 0)))));
+                    INDEXER_CHANNEL.send((
+                        1,
+                        label.clone(),
+                        Arc::new(Mutex::new(Matrix::new(0, 0))),
+                        self.node_indexer.clone(),
+                        self.node_attrs.clone(),
+                        self.node_attrs_name.clone(),
+                    ));
                 }
             }
             EntityType::Relationship => {}
@@ -1144,5 +1223,35 @@ impl Graph {
     pub fn index_info(&self) -> Vec<IndexInfo> {
         let node_indexer = self.node_indexer.lock().unwrap();
         node_indexer.index_info()
+    }
+}
+
+pub struct MvccGraph {
+    graph: Arc<Graph>,
+}
+
+impl MvccGraph {
+    #[must_use]
+    pub fn new(
+        n: u64,
+        e: u64,
+        cache_size: usize,
+    ) -> Self {
+        Self {
+            graph: Arc::new(Graph::new(n, e, cache_size)),
+        }
+    }
+
+    #[must_use]
+    pub fn read(&self) -> Arc<Graph> {
+        self.graph.clone()
+    }
+
+    pub fn write<F: Fn(Graph) -> Result<Graph, String>>(
+        &mut self,
+        f: F,
+    ) -> Result<(), String> {
+        self.graph = Arc::new(f(self.graph.new_version())?);
+        Ok(())
     }
 }

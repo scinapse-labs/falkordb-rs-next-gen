@@ -1,7 +1,10 @@
 #![feature(c_variadic)]
 #![no_main]
 
-use std::{cell::RefCell, collections::HashMap};
+use std::{
+    collections::HashMap,
+    sync::{Arc, RwLock},
+};
 
 // use libc::{atexit, calloc, free, malloc, realloc, strdup};
 
@@ -112,11 +115,11 @@ fuzz_target!(init: {
         }
         init_functions().expect("Failed to init functions");
     },|data: &[u8]| -> Corpus {
-        let g = RefCell::new(Graph::new(1024, 1024, 25));
+        let g = Arc::new(RwLock::new(Graph::new(1024, 1024, 25)));
     std::str::from_utf8(data).map_or(Corpus::Reject, |query| {
         let Ok(Plan {
             plan, parameters, ..
-        }) = g.borrow().get_plan(query)
+        }) = g.read().unwrap().get_plan(query)
         else {
             return Corpus::Reject;
         };
@@ -127,7 +130,7 @@ fuzz_target!(init: {
         else {
             return Corpus::Reject;
         };
-        let mut runtime = Runtime::new(&g, parameters, true, plan, false, String::new());
+        let mut runtime = Runtime::new(g, parameters, true, plan, false, String::new());
         match runtime.query() {
             Ok(_) => Corpus::Keep,
             _ => Corpus::Reject,

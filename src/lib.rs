@@ -24,7 +24,8 @@ use opentelemetry_sdk::trace::{BatchConfigBuilder, BatchSpanProcessor};
 use opentelemetry_sdk::{Resource, trace::SdkTracerProvider};
 #[cfg(feature = "zipkin")]
 use opentelemetry_zipkin::ZipkinExporter;
-use orx_tree::{Bfs, Dfs, NodeRef};
+use orx_tree::{Bfs, Collection, Dfs, NodeRef};
+use rayon::spawn;
 use redis_module::{
     Context, NextArg, REDISMODULE_OK, REDISMODULE_TYPE_METHOD_VERSION, RedisError, RedisGILGuard,
     RedisModule_Alloc, RedisModule_Calloc, RedisModule_Free, RedisModule_Realloc,
@@ -33,10 +34,10 @@ use redis_module::{
     configuration::ConfigurationFlags, native_types::RedisType, raw, redis_module,
 };
 use std::{
-    cell::RefCell,
     collections::HashMap,
     os::raw::{c_char, c_int, c_void},
     ptr::null_mut,
+    sync::{Arc, RwLock},
 };
 #[cfg(feature = "fuzz")]
 use std::{fs::File, io::Write};
@@ -57,7 +58,7 @@ static GRAPH_TYPE: RedisType = RedisType::new(
         rdb_load: Some(graph_rdb_load),
         rdb_save: Some(graph_rdb_save),
         aof_rewrite: None,
-        free: Some(my_free),
+        free: Some(graph_free),
 
         // Currently unused by Redis
         mem_usage: None,
@@ -99,9 +100,9 @@ unsafe extern "C" fn graph_rdb_save(
 }
 
 #[unsafe(no_mangle)]
-unsafe extern "C" fn my_free(value: *mut c_void) {
+unsafe extern "C" fn graph_free(value: *mut c_void) {
     unsafe {
-        drop(Box::from_raw(value.cast::<RefCell<Graph>>()));
+        drop(Box::from_raw(value.cast::<Arc<RwLock<Graph>>>()));
     }
 }
 
@@ -171,14 +172,15 @@ fn reply_compact_value(
                     raw::reply_with_array(ctx.ctx, 3);
                     let key = runtime
                         .g
-                        .borrow()
+                        .read()
+                        .unwrap()
                         .get_node_attribute_id(key.as_str())
                         .unwrap();
                     raw::reply_with_long_long(ctx.ctx, usize::from(key) as _);
                     reply_compact_value(ctx, runtime, value.clone());
                 }
             } else {
-                let bg = runtime.g.borrow();
+                let bg = runtime.g.read().unwrap();
                 let labels = bg.get_node_label_ids(id).collect::<Vec<_>>();
                 raw::reply_with_array(ctx.ctx, labels.len() as _);
                 for label in labels {
@@ -203,7 +205,7 @@ fn reply_compact_value(
                 raw::reply_with_long_long(ctx.ctx, u64::from(from) as _);
                 raw::reply_with_long_long(ctx.ctx, u64::from(to) as _);
                 raw::reply_with_array(ctx.ctx, x.attrs.len() as _);
-                let bg = runtime.g.borrow();
+                let bg = runtime.g.read().unwrap();
                 for (key, value) in &x.attrs {
                     raw::reply_with_array(ctx.ctx, 3);
                     let key = bg.get_relationship_attribute_id(key).unwrap();
@@ -211,7 +213,7 @@ fn reply_compact_value(
                     reply_compact_value(ctx, runtime, value.clone());
                 }
             } else {
-                let bg = runtime.g.borrow();
+                let bg = runtime.g.read().unwrap();
                 raw::reply_with_long_long(
                     ctx.ctx,
                     usize::from(bg.get_relationship_type_id(id)) as _,
@@ -327,7 +329,7 @@ fn reply_verbose_value(
         Value::Node(id) => {
             raw::reply_with_array(ctx.ctx, 3);
             raw::reply_with_long_long(ctx.ctx, u64::from(id) as _);
-            let bg = runtime.g.borrow();
+            let bg = runtime.g.read().unwrap();
             let dn = runtime.deleted_nodes.borrow();
             if let Some(x) = dn.get(&id) {
                 raw::reply_with_array(ctx.ctx, x.labels.len() as _);
@@ -392,7 +394,7 @@ fn reply_verbose_value(
                     reply_verbose_value(ctx, runtime, value.clone());
                 }
             } else {
-                let bg = runtime.g.borrow();
+                let bg = runtime.g.read().unwrap();
                 let rel_type = bg.get_type(bg.get_relationship_type_id(id)).unwrap();
                 raw::reply_with_string_buffer(
                     ctx.ctx,
@@ -460,45 +462,72 @@ fn graph_delete(
     let mut args = args.into_iter().skip(1);
     let key = args.next_arg()?;
     let key = ctx.open_key_writable(&key);
-    if key.get_value::<RefCell<Graph>>(&GRAPH_TYPE)?.is_some() {
+    if key.get_value::<Arc<RwLock<Graph>>>(&GRAPH_TYPE)?.is_some() {
         key.delete()
     } else {
         EMPTY_KEY_ERR
     }
 }
 
+pub struct BlockedClient {
+    pub inner: *mut raw::RedisModuleBlockedClient,
+}
+
+unsafe impl Send for BlockedClient {}
+unsafe impl Sync for BlockedClient {}
+
 #[inline]
 fn query_mut(
     ctx: &Context,
-    graph: &RefCell<Graph>,
+    graph: &Arc<RwLock<Graph>>,
     query: &str,
     compact: bool,
     write: bool,
-) -> Result<(), RedisError> {
-    // Create a child span for parsing and execution
-    tracing::debug_span!("query_execution", query = %query).in_scope(|| {
-        let Plan {
-            plan,
-            cached,
-            parameters,
-            ..
-        } = graph.borrow().get_plan(query).map_err(RedisError::String)?;
-        let parameters = parameters
-            .into_iter()
-            .map(|(k, v)| Ok((k, evaluate_param(&v.root())?)))
-            .collect::<Result<HashMap<_, _>, String>>()
-            .map_err(RedisError::String)?;
-        let scope = CONFIGURATION_IMPORT_FOLDER.lock(ctx);
-        let mut runtime = Runtime::new(graph, parameters, write, plan, false, (*scope).clone());
-        let mut result = runtime.query().map_err(RedisError::String)?;
-        result.stats.cached = cached;
-        if compact {
-            reply_compact(ctx, &runtime, result);
-        } else {
-            reply_verbose(ctx, &runtime, result);
+) {
+    let bc = BlockedClient {
+        inner: unsafe { raw::RedisModule_BlockClient.unwrap()(ctx.ctx, None, None, None, 0) },
+    };
+    let graph = graph.clone();
+    let query = Arc::new(query.to_string());
+    spawn(move || {
+        let graph = graph.clone();
+        let bc = bc;
+        let ctx = unsafe { raw::RedisModule_GetThreadSafeContext.unwrap()(bc.inner) };
+        let ctx = Context::new(ctx);
+        let res: Result<(), String> = {
+            tracing::debug_span!("query_execution", query = %query).in_scope(|| {
+                let Plan {
+                    plan,
+                    cached,
+                    parameters,
+                    ..
+                } = graph.read().unwrap().get_plan(&query)?;
+                let parameters = parameters
+                    .into_iter()
+                    .map(|(k, v)| Ok((k, evaluate_param(&v.root())?)))
+                    .collect::<Result<HashMap<_, _>, String>>()?;
+                let scope = CONFIGURATION_IMPORT_FOLDER.lock(&ctx);
+                let mut runtime =
+                    Runtime::new(graph, parameters, write, plan, false, (*scope).clone());
+                let mut result = runtime.query()?;
+                result.stats.cached = cached;
+                if compact {
+                    reply_compact(&ctx, &runtime, result);
+                } else {
+                    reply_verbose(&ctx, &runtime, result);
+                }
+                unsafe { raw::RedisModule_UnblockClient.unwrap()(bc.inner, null_mut()) };
+                Ok(())
+            })
+        };
+        match res {
+            Ok(()) => {}
+            Err(err) => {
+                raw::reply_with_error(ctx.ctx, err.as_ptr().cast::<c_char>());
+                unsafe { raw::RedisModule_UnblockClient.unwrap()(bc.inner, null_mut()) };
+            }
         }
-        Ok(())
-    })
+    });
 }
 
 fn reply_stats(
@@ -606,12 +635,12 @@ fn graph_query(
     let compact = args.next_str().is_ok_and(|arg| arg == "--compact");
     let key = ctx.open_key_writable(&key);
 
-    if let Some(graph) = key.get_value::<RefCell<Graph>>(&GRAPH_TYPE)? {
-        query_mut(ctx, graph, query, compact, true)?;
+    if let Some(graph) = key.get_value::<Arc<RwLock<Graph>>>(&GRAPH_TYPE)? {
+        query_mut(ctx, graph, query, compact, true);
     } else {
         let scope = CONFIGURATION_CACHE_SIZE.lock(ctx);
-        let graph = RefCell::new(Graph::new(16384, 16384, *scope as usize));
-        query_mut(ctx, &graph, query, compact, true)?;
+        let graph = Arc::new(RwLock::new(Graph::new(16384, 16384, *scope as usize)));
+        query_mut(ctx, &graph, query, compact, true);
         key.set_value(&GRAPH_TYPE, graph)?;
     }
 
@@ -621,13 +650,17 @@ fn graph_query(
 #[inline]
 fn record_mut(
     ctx: &Context,
-    graph: &RefCell<Graph>,
+    graph: &Arc<RwLock<Graph>>,
     query: &str,
 ) -> Result<(), RedisError> {
     // Create a child span for parsing and execution
     let Plan {
         plan, parameters, ..
-    } = graph.borrow().get_plan(query).map_err(RedisError::String)?;
+    } = graph
+        .read()
+        .unwrap()
+        .get_plan(query)
+        .map_err(RedisError::String)?;
     let parameters = parameters
         .into_iter()
         .map(|(k, v)| Ok((k, evaluate_param(&v.root())?)))
@@ -635,7 +668,7 @@ fn record_mut(
         .map_err(RedisError::String)?;
     let scope = CONFIGURATION_IMPORT_FOLDER.lock(ctx);
     let mut runtime = Runtime::new(
-        graph,
+        graph.clone(),
         parameters,
         true,
         plan.clone(),
@@ -712,11 +745,11 @@ fn graph_record(
 
     let key = ctx.open_key_writable(&key);
 
-    if let Some(graph) = key.get_value::<RefCell<Graph>>(&GRAPH_TYPE)? {
+    if let Some(graph) = key.get_value::<Arc<RwLock<Graph>>>(&GRAPH_TYPE)? {
         record_mut(ctx, graph, query)?;
     } else {
         let scope = CONFIGURATION_CACHE_SIZE.lock(ctx);
-        let graph = RefCell::new(Graph::new(16384, 16384, *scope as usize));
+        let graph = Arc::new(RwLock::new(Graph::new(16384, 16384, *scope as usize)));
         record_mut(ctx, &graph, query)?;
         key.set_value(&GRAPH_TYPE, graph)?;
     }
@@ -798,11 +831,11 @@ fn graph_ro_query(
     let key = ctx.open_key(&key);
 
     // We check if the key exists and is of type Graph if wrong type `get_value` return an error
-    (key.get_value::<RefCell<Graph>>(&GRAPH_TYPE)?).map_or(
+    (key.get_value::<Arc<RwLock<Graph>>>(&GRAPH_TYPE)?).map_or(
         // If the key does not exist, we return an error
         EMPTY_KEY_ERR,
         |graph| {
-            query_mut(ctx, graph, query, compact, false)?;
+            query_mut(ctx, graph, query, compact, false);
             RedisResult::Ok(RedisValue::NoReply)
         },
     )
@@ -866,11 +899,15 @@ fn graph_explain(
 
     let key = ctx.open_key(&key);
 
-    (key.get_value::<RefCell<Graph>>(&GRAPH_TYPE)?).map_or(
+    (key.get_value::<Arc<RwLock<Graph>>>(&GRAPH_TYPE)?).map_or(
         // If the key does not exist, we return an error
         EMPTY_KEY_ERR,
         |graph| {
-            let Plan { plan, .. } = graph.borrow().get_plan(query).map_err(RedisError::String)?;
+            let Plan { plan, .. } = graph
+                .read()
+                .unwrap()
+                .get_plan(query)
+                .map_err(RedisError::String)?;
             let ops = plan.root().indices::<Dfs>().collect::<Vec<_>>();
             raw::reply_with_array(ctx.ctx, ops.len() as _);
             for idx in ops {
