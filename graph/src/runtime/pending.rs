@@ -332,47 +332,38 @@ impl Pending {
         g: Arc<RwLock<Graph>>,
         stats: &RefCell<QueryStatistics>,
     ) {
+        let mut g = g.write().unwrap();
         if !self.created_nodes.is_empty() {
             stats.borrow_mut().nodes_created += self.created_nodes.len();
-            g.write().unwrap().create_nodes(&self.created_nodes);
+            g.create_nodes(&self.created_nodes);
             self.created_nodes.clear();
         }
         if !self.created_relationships.is_empty() {
             stats.borrow_mut().relationships_created += self.created_relationships.len();
-            g.write()
-                .unwrap()
-                .create_relationships(&self.created_relationships);
+            g.create_relationships(&self.created_relationships);
             self.created_relationships.clear();
         }
         if !self.deleted_relationships.is_empty() {
             stats.borrow_mut().relationships_deleted += self.deleted_relationships.len();
-            g.write()
-                .unwrap()
-                .delete_relationships(self.deleted_relationships.clone());
+            g.delete_relationships(self.deleted_relationships.clone());
             self.deleted_relationships.clear();
         }
         if !self.deleted_nodes.is_empty() {
             stats.borrow_mut().nodes_deleted += self.deleted_nodes.len();
             for id in &self.deleted_nodes {
-                g.write()
-                    .unwrap()
-                    .delete_node(NodeId::from(id), &mut self.index_remove_docs);
+                g.delete_node(NodeId::from(id), &mut self.index_remove_docs);
             }
             self.deleted_nodes.clear();
         }
         if !self.set_node_labels.is_empty() {
             for (id, labels) in &self.set_node_labels {
-                g.write()
-                    .unwrap()
-                    .set_node_labels(*id, labels, &mut self.index_add_docs);
+                g.set_node_labels(*id, labels, &mut self.index_add_docs);
             }
             self.set_node_labels.clear();
         }
         if !self.remove_node_labels.is_empty() {
             for (id, labels) in &self.remove_node_labels {
-                g.write()
-                    .unwrap()
-                    .remove_node_labels(*id, labels, &mut self.index_remove_docs);
+                g.remove_node_labels(*id, labels, &mut self.index_remove_docs);
             }
             self.remove_node_labels.clear();
         }
@@ -388,8 +379,8 @@ impl Pending {
                 .sum::<usize>();
             for (id, attrs) in &self.set_nodes_attrs {
                 for (key, value) in attrs {
-                    let attr_id = g.write().unwrap().get_or_add_node_attribute_id(key);
-                    if g.write().unwrap().set_node_attribute(
+                    let attr_id = g.get_or_add_node_attribute_id(key);
+                    if g.set_node_attribute(
                         *id,
                         attr_id,
                         value.clone(),
@@ -414,19 +405,14 @@ impl Pending {
                 .sum::<usize>();
             for (id, attrs) in &self.set_relationships_attrs {
                 for (key, value) in attrs {
-                    let attr_id = g.write().unwrap().get_or_add_relationship_attribute_id(key);
-                    if g.write()
-                        .unwrap()
-                        .set_relationship_attribute(*id, attr_id, value.clone())
-                    {
+                    let attr_id = g.get_or_add_relationship_attribute_id(key);
+                    if g.set_relationship_attribute(*id, attr_id, value.clone()) {
                         stats.borrow_mut().properties_removed += 1;
                     }
                 }
             }
             self.set_relationships_attrs.clear();
         }
-        g.write()
-            .unwrap()
-            .commit_index(&mut self.index_add_docs, &mut self.index_remove_docs);
+        g.commit_index(&mut self.index_add_docs, &mut self.index_remove_docs);
     }
 }
