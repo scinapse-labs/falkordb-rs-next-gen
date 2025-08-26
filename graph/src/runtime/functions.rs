@@ -2383,8 +2383,7 @@ fn db_indexes(
     Ok(Value::List(
         runtime
             .g
-            .read()
-            .unwrap()
+            .borrow()
             .index_info()
             .into_iter()
             .map(

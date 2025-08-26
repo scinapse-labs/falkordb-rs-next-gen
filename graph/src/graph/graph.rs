@@ -1,8 +1,9 @@
 use std::{
+    cell::RefCell,
     collections::HashMap,
     num::NonZeroUsize,
     rc::Rc,
-    sync::{Arc, Mutex, RwLock, mpsc},
+    sync::{Arc, Mutex, mpsc},
     time::{Duration, Instant},
 };
 
@@ -101,6 +102,7 @@ impl Plan {
     }
 }
 
+#[derive(Clone)]
 pub struct Graph {
     node_cap: u64,
     relationship_cap: u64,
@@ -125,8 +127,8 @@ pub struct Graph {
     relationship_types: Vec<Arc<String>>,
     node_attrs_name: Arc<Mutex<Vec<Arc<String>>>>,
     relationship_attrs_name: Vec<Arc<String>>,
-    cache: Mutex<LruCache<String, DynTree<IR>>>,
-    pub version: u64,
+    cache: Arc<Mutex<LruCache<String, DynTree<IR>>>>,
+    version: u64,
 }
 
 unsafe impl Send for Graph {}
@@ -250,7 +252,9 @@ impl Graph {
             relationship_types: Vec::new(),
             node_attrs_name: Arc::new(Mutex::new(Vec::new())),
             relationship_attrs_name: Vec::new(),
-            cache: Mutex::new(LruCache::new(NonZeroUsize::new(cache_size).unwrap())),
+            cache: Arc::new(Mutex::new(LruCache::new(
+                NonZeroUsize::new(cache_size).unwrap(),
+            ))),
             version,
         }
     }
@@ -283,7 +287,7 @@ impl Graph {
             relationship_types: self.relationship_types.clone(),
             node_attrs_name: self.node_attrs_name.clone(),
             relationship_attrs_name: self.relationship_attrs_name.clone(),
-            cache: Mutex::new(LruCache::new(self.cache.lock().unwrap().cap())),
+            cache: Arc::new(Mutex::new(LruCache::new(self.cache.lock().unwrap().cap()))),
             version: self.version + 1,
         }
     }
@@ -1205,8 +1209,11 @@ impl Graph {
 }
 
 pub struct MvccGraph {
-    graph: Arc<RwLock<Graph>>,
+    graph: Arc<RefCell<Graph>>,
 }
+
+unsafe impl Send for MvccGraph {}
+unsafe impl Sync for MvccGraph {}
 
 impl MvccGraph {
     #[must_use]
@@ -1216,25 +1223,25 @@ impl MvccGraph {
         cache_size: usize,
     ) -> Self {
         Self {
-            graph: Arc::new(RwLock::new(Graph::new(n, e, cache_size, 0))),
+            graph: Arc::new(RefCell::new(Graph::new(n, e, cache_size, 0))),
         }
     }
 
     #[must_use]
-    pub fn read(&self) -> Arc<RwLock<Graph>> {
+    pub fn read(&self) -> Arc<RefCell<Graph>> {
         self.graph.clone()
     }
 
     #[must_use]
-    pub fn write(&self) -> Arc<RwLock<Graph>> {
-        Arc::new(RwLock::new(self.graph.read().unwrap().new_version()))
+    pub fn write(&self) -> Arc<RefCell<Graph>> {
+        Arc::new(RefCell::new(self.graph.borrow().new_version()))
     }
 
     pub fn commit(
         &mut self,
-        new_graph: Arc<RwLock<Graph>>,
+        new_graph: Arc<RefCell<Graph>>,
     ) {
-        if self.graph.read().unwrap().version + 1 == new_graph.read().unwrap().version {
+        if self.graph.borrow().version + 1 == new_graph.borrow().version {
             self.graph = new_graph;
         } else {
             todo!();

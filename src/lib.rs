@@ -174,15 +174,14 @@ fn reply_compact_value(
                     raw::reply_with_array(ctx.ctx, 3);
                     let key = runtime
                         .g
-                        .read()
-                        .unwrap()
+                        .borrow()
                         .get_node_attribute_id(key.as_str())
                         .unwrap();
                     raw::reply_with_long_long(ctx.ctx, usize::from(key) as _);
                     reply_compact_value(ctx, runtime, value.clone());
                 }
             } else {
-                let bg = runtime.g.read().unwrap();
+                let bg = runtime.g.borrow();
                 let labels = bg.get_node_label_ids(id).collect::<Vec<_>>();
                 raw::reply_with_array(ctx.ctx, labels.len() as _);
                 for label in labels {
@@ -207,7 +206,7 @@ fn reply_compact_value(
                 raw::reply_with_long_long(ctx.ctx, u64::from(from) as _);
                 raw::reply_with_long_long(ctx.ctx, u64::from(to) as _);
                 raw::reply_with_array(ctx.ctx, x.attrs.len() as _);
-                let bg = runtime.g.read().unwrap();
+                let bg = runtime.g.borrow();
                 for (key, value) in &x.attrs {
                     raw::reply_with_array(ctx.ctx, 3);
                     let key = bg.get_relationship_attribute_id(key).unwrap();
@@ -215,7 +214,7 @@ fn reply_compact_value(
                     reply_compact_value(ctx, runtime, value.clone());
                 }
             } else {
-                let bg = runtime.g.read().unwrap();
+                let bg = runtime.g.borrow();
                 raw::reply_with_long_long(
                     ctx.ctx,
                     usize::from(bg.get_relationship_type_id(id)) as _,
@@ -331,7 +330,7 @@ fn reply_verbose_value(
         Value::Node(id) => {
             raw::reply_with_array(ctx.ctx, 3);
             raw::reply_with_long_long(ctx.ctx, u64::from(id) as _);
-            let bg = runtime.g.read().unwrap();
+            let bg = runtime.g.borrow();
             let dn = runtime.deleted_nodes.borrow();
             if let Some(x) = dn.get(&id) {
                 raw::reply_with_array(ctx.ctx, x.labels.len() as _);
@@ -396,7 +395,7 @@ fn reply_verbose_value(
                     reply_verbose_value(ctx, runtime, value.clone());
                 }
             } else {
-                let bg = runtime.g.read().unwrap();
+                let bg = runtime.g.borrow();
                 let rel_type = bg.get_type(bg.get_relationship_type_id(id)).unwrap();
                 raw::reply_with_string_buffer(
                     ctx.ctx,
@@ -512,13 +511,7 @@ fn query_mut(
                     cached,
                     parameters,
                     ..
-                } = graph
-                    .read()
-                    .unwrap()
-                    .read()
-                    .read()
-                    .unwrap()
-                    .get_plan(&query)?;
+                } = graph.read().unwrap().read().borrow().get_plan(&query)?;
                 let parameters = parameters
                     .into_iter()
                     .map(|(k, v)| Ok((k, evaluate_param(&v.root())?)))
@@ -685,8 +678,7 @@ fn record_mut(
         .read()
         .unwrap()
         .read()
-        .read()
-        .unwrap()
+        .borrow()
         .get_plan(query)
         .map_err(RedisError::String)?;
     let parameters = parameters
@@ -935,8 +927,7 @@ fn graph_explain(
                 .read()
                 .unwrap()
                 .read()
-                .read()
-                .unwrap()
+                .borrow()
                 .get_plan(query)
                 .map_err(RedisError::String)?;
             let ops = plan.root().indices::<Dfs>().collect::<Vec<_>>();
