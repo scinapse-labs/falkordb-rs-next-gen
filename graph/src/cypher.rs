@@ -602,7 +602,7 @@ impl<'a> Lexer<'a> {
         }
         let str = str[pos..].chars().take(len).collect::<String>();
         let token = Lexer::str2number_token(&str, radix, is_float);
-        (token, len)
+        (token, str.len())
     }
 
     fn str2number_token(
