@@ -251,6 +251,7 @@ impl MxM<bool> for Matrix<bool> {
 }
 
 /// A wrapper around a GraphBLAS matrix with type safety for elements.
+#[derive(Clone)]
 pub struct Matrix<T> {
     /// The underlying GraphBLAS matrix.
     m: Arc<GrB_Matrix>,

@@ -115,7 +115,7 @@ pub struct Graph {
     node_labels_matrix: Matrix<bool>,
     relationship_type_matrix: Matrix<bool>,
     all_nodes_matrix: Matrix<bool>,
-    labels_matices: HashMap<usize, Arc<Mutex<Matrix<bool>>>>,
+    labels_matices: HashMap<usize, Matrix<bool>>,
     relationship_matrices: HashMap<usize, Arc<Mutex<Tensor>>>,
     empty_map: OrderMap<AttrId, Value>,
     node_attrs: Arc<Mutex<HashMap<NodeId, OrderMap<AttrId, Value>>>>,
@@ -136,7 +136,7 @@ static INDEXER_CHANNEL: Lazy<
     mpsc::Sender<(
         i32,
         Arc<String>,
-        Arc<Mutex<Matrix<bool>>>,
+        Matrix<bool>,
         Arc<Mutex<Indexer>>,
         Arc<Mutex<HashMap<NodeId, OrderMap<AttrId, Value>>>>,
         Arc<Mutex<Vec<Arc<String>>>>,
@@ -145,7 +145,7 @@ static INDEXER_CHANNEL: Lazy<
     let (sender, receiver) = mpsc::channel::<(
         i32,
         Arc<String>,
-        Arc<Mutex<Matrix<bool>>>,
+        Matrix<bool>,
         Arc<Mutex<Indexer>>,
         Arc<Mutex<HashMap<NodeId, OrderMap<AttrId, Value>>>>,
         Arc<Mutex<Vec<Arc<String>>>>,
@@ -182,7 +182,7 @@ static INDEXER_CHANNEL: Lazy<
                 };
                 let mut add_docs = vec![];
                 let node_attrs = node_attrs.lock().unwrap();
-                let value = lm.lock().unwrap().iter(0, u64::MAX);
+                let value = lm.iter(0, u64::MAX);
                 for (n, _) in value {
                     let mut doc = Document::new(n);
                     for (attr_id, fields) in &attr_ids {
@@ -393,7 +393,7 @@ impl Graph {
     fn get_label_matrix(
         &self,
         label: &str,
-    ) -> Option<Arc<Mutex<Matrix<bool>>>> {
+    ) -> Option<Matrix<bool>> {
         self.node_labels
             .iter()
             .position(|l| l.as_str() == label)
@@ -403,16 +403,13 @@ impl Graph {
     fn get_label_matrix_mut(
         &mut self,
         label: &Arc<String>,
-    ) -> Arc<Mutex<Matrix<bool>>> {
+    ) -> Matrix<bool> {
         if !self.node_labels.contains(label) {
             self.node_labels.push(label.clone());
 
             self.labels_matices.insert(
                 self.node_labels.len() - 1,
-                Arc::new(Mutex::new(Matrix::<bool>::new(
-                    self.node_cap,
-                    self.node_cap,
-                ))),
+                Matrix::<bool>::new(self.node_cap, self.node_cap),
             );
         }
 
@@ -639,8 +636,8 @@ impl Graph {
         index_add_docs: &mut HashMap<Arc<String>, RoaringTreemap>,
     ) {
         for label in labels {
-            let label_matrix = self.get_label_matrix_mut(label);
-            label_matrix.lock().unwrap().set(id.0, id.0, true);
+            let mut label_matrix = self.get_label_matrix_mut(label);
+            label_matrix.set(id.0, id.0, true);
             let label_id = self.get_label_id(label).unwrap();
             self.resize();
             self.node_labels_matrix.set(id.0, label_id.0 as u64, true);
@@ -669,8 +666,8 @@ impl Graph {
             if !self.node_labels.contains(label) {
                 continue;
             }
-            let label_matrix = self.get_label_matrix_mut(label);
-            label_matrix.lock().unwrap().remove(id.0, id.0);
+            let mut label_matrix = self.get_label_matrix_mut(label);
+            label_matrix.remove(id.0, id.0);
             let label_id = self.get_label_id(label).unwrap();
             self.node_labels_matrix.remove(id.0, label_id.0 as u64);
             let node_indexer = self.node_indexer.lock().unwrap();
@@ -693,7 +690,7 @@ impl Graph {
         self.all_nodes_matrix.remove(id.0, id.0);
 
         for label_matrix in self.labels_matices.values_mut() {
-            label_matrix.lock().unwrap().remove(id.0, id.0);
+            label_matrix.remove(id.0, id.0);
         }
         let mut node_attrs = self.node_attrs.lock().unwrap();
         let node_indexer = self.node_indexer.lock().unwrap();
@@ -753,9 +750,8 @@ impl Graph {
                 || self.zero_matrix.iter(0, u64::MAX),
                 |matrices| {
                     let mut iter = matrices.iter();
-                    let mut m = iter.next().unwrap().lock().unwrap().dup();
+                    let mut m = iter.next().unwrap().dup();
                     for label_matrix in iter {
-                        let label_matrix = &*label_matrix.lock().unwrap();
                         m.element_wise_multiply(label_matrix);
                     }
                     m.iter(0, u64::MAX)
@@ -972,18 +968,16 @@ impl Graph {
 
             if !src_labels_matrices.is_empty() {
                 let mut iter = src_labels_matrices.iter();
-                let mut src_matrix = iter.next().unwrap().lock().unwrap().dup();
+                let mut src_matrix = iter.next().unwrap().dup();
                 for label_matrix in iter {
-                    let label_matrix = &*label_matrix.lock().unwrap();
                     src_matrix.element_wise_multiply(label_matrix);
                 }
                 m.rmxm(&src_matrix);
             }
             if !dest_labels_matrices.is_empty() {
                 let mut iter = dest_labels_matrices.iter();
-                let mut dest_matrix = iter.next().unwrap().lock().unwrap().dup();
+                let mut dest_matrix = iter.next().unwrap().dup();
                 for label_matrix in iter {
-                    let label_matrix = &*label_matrix.lock().unwrap();
                     dest_matrix.element_wise_multiply(label_matrix);
                 }
                 m.lmxm(&dest_matrix);
@@ -1028,10 +1022,7 @@ impl Graph {
                 .resize(self.node_cap, self.labels_matices.len() as u64);
             self.all_nodes_matrix.resize(self.node_cap, self.node_cap);
             for label_matrix in self.labels_matices.iter_mut().map(|(_, m)| m) {
-                label_matrix
-                    .lock()
-                    .unwrap()
-                    .resize(self.node_cap, self.node_cap);
+                label_matrix.resize(self.node_cap, self.node_cap);
             }
             for relationship_matrix in self.relationship_matrices.iter_mut().map(|(_, m)| m) {
                 relationship_matrix
@@ -1084,7 +1075,7 @@ impl Graph {
     ) -> Result<(), String> {
         match entity_type {
             EntityType::Node => {
-                let len = self.get_label_matrix_mut(label).lock().unwrap().nvals();
+                let len = self.get_label_matrix_mut(label).nvals();
                 for attr in attrs {
                     self.get_or_add_node_attribute_id(attr);
                 }
@@ -1165,12 +1156,7 @@ impl Graph {
                         }
                     })
                     .collect::<Vec<_>>();
-                let total = self
-                    .get_label_matrix(label)
-                    .unwrap()
-                    .lock()
-                    .unwrap()
-                    .nvals();
+                let total = self.get_label_matrix(label).unwrap().nvals();
                 let reindex = node_indexer
                     .drop_index(
                         label.clone(),
@@ -1191,7 +1177,7 @@ impl Graph {
                     INDEXER_CHANNEL.send((
                         1,
                         label.clone(),
-                        Arc::new(Mutex::new(Matrix::new(0, 0))),
+                        Matrix::new(0, 0),
                         self.node_indexer.clone(),
                         self.node_attrs.clone(),
                         self.node_attrs_name.clone(),
