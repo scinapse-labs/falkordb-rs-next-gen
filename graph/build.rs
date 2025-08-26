@@ -29,7 +29,7 @@ fn main() {
         );
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
     {
         println!(
             "cargo:rustc-link-search=native=redisearch/RediSearch/bin/linux-x64-release/search-static"
@@ -51,9 +51,36 @@ fn main() {
         );
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(all(target_os = "linux", target_arch = "aarch64"))]
+    {
+        println!(
+            "cargo:rustc-link-search=native=redisearch/RediSearch/bin/linux-arm64v8-release/search-static"
+        );
+        println!(
+            "cargo:rustc-link-search=native=redisearch/RediSearch/bin/linux-arm64v8-release/search-static/deps/VectorSimilarity/src/VecSim"
+        );
+        println!(
+            "cargo:rustc-link-search=native=redisearch/RediSearch/bin/linux-arm64v8-release/search-static/deps/VectorSimilarity/src/VecSim/spaces"
+        );
+        println!(
+            "cargo:rustc-link-search=native=/data/redisearch/bin/linux-arm64v8-release/search-static"
+        );
+        println!(
+            "cargo:rustc-link-search=native=/data/redisearch/bin/linux-arm64v8-release/search-static/deps/VectorSimilarity/src/VecSim"
+        );
+        println!(
+            "cargo:rustc-link-search=native=/data/redisearch/bin/linux-arm64v8-release/search-static/deps/VectorSimilarity/src/VecSim/spaces"
+        );
+    }
+
+    #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
     let paths = fs::read_dir("../redisearch/RediSearch/bin/linux-x64-release/search-static/deps/VectorSimilarity/src/VecSim/spaces").unwrap_or_else(|_| {
         fs::read_dir("/data/redisearch/bin/linux-x64-release/search-static/deps/VectorSimilarity/src/VecSim/spaces").unwrap()
+    });
+
+    #[cfg(all(target_os = "linux", target_arch = "aarch64"))]
+    let paths = fs::read_dir("../redisearch/RediSearch/bin/linux-arm64v8-release/search-static/deps/VectorSimilarity/src/VecSim/spaces").unwrap_or_else(|_| {
+        fs::read_dir("/data/redisearch/bin/linux-arm64v8-release/search-static/deps/VectorSimilarity/src/VecSim/spaces").unwrap()
     });
 
     #[cfg(target_os = "macos")]
