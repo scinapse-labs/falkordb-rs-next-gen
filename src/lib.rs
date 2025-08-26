@@ -481,6 +481,12 @@ pub struct BlockedClient {
 unsafe impl Send for BlockedClient {}
 unsafe impl Sync for BlockedClient {}
 
+impl Drop for BlockedClient {
+    fn drop(&mut self) {
+        unsafe { raw::RedisModule_UnblockClient.unwrap()(self.inner, null_mut()) };
+    }
+}
+
 #[inline]
 fn query_mut(
     ctx: &Context,
@@ -536,7 +542,6 @@ fn query_mut(
                 } else {
                     reply_verbose(&ctx, &runtime, result);
                 }
-                unsafe { raw::RedisModule_UnblockClient.unwrap()(bc.inner, null_mut()) };
                 Ok(())
             })
         };
@@ -545,7 +550,6 @@ fn query_mut(
             Err(err) => {
                 let cerr = CString::new(err).unwrap();
                 raw::reply_with_error(ctx.ctx, cerr.as_ptr().cast::<c_char>());
-                unsafe { raw::RedisModule_UnblockClient.unwrap()(bc.inner, null_mut()) };
             }
         }
     });
