@@ -125,7 +125,7 @@ pub struct Graph {
     node_indexer: Arc<Mutex<Indexer>>,
     node_labels: Vec<Arc<String>>,
     relationship_types: Vec<Arc<String>>,
-    node_attrs_name: Arc<Mutex<Vec<Arc<String>>>>,
+    node_attrs_name: Vec<Arc<String>>,
     relationship_attrs_name: Vec<Arc<String>>,
     cache: Rc<Mutex<LruCache<String, DynTree<IR>>>>,
     version: u64,
@@ -141,7 +141,7 @@ static INDEXER_CHANNEL: Lazy<
         Matrix<bool>,
         Arc<Mutex<Indexer>>,
         Arc<Mutex<HashMap<NodeId, OrderMap<AttrId, Value>>>>,
-        Arc<Mutex<Vec<Arc<String>>>>,
+        Vec<Arc<String>>,
     )>,
 > = Lazy::new(|| {
     let (sender, receiver) = mpsc::channel::<(
@@ -150,7 +150,7 @@ static INDEXER_CHANNEL: Lazy<
         Matrix<bool>,
         Arc<Mutex<Indexer>>,
         Arc<Mutex<HashMap<NodeId, OrderMap<AttrId, Value>>>>,
-        Arc<Mutex<Vec<Arc<String>>>>,
+        Vec<Arc<String>>,
     )>();
     spawn(move || {
         loop {
@@ -173,8 +173,6 @@ static INDEXER_CHANNEL: Lazy<
                         .into_iter()
                         .filter_map(|(attr, field)| {
                             node_attrs_name
-                                .lock()
-                                .unwrap()
                                 .iter()
                                 .position(|p| p.as_str() == attr.as_str())
                                 .map(AttrId)
@@ -248,7 +246,7 @@ impl Graph {
             node_indexer: Arc::new(Mutex::new(Indexer::default())),
             node_labels: Vec::new(),
             relationship_types: Vec::new(),
-            node_attrs_name: Arc::new(Mutex::new(Vec::new())),
+            node_attrs_name: Vec::new(),
             relationship_attrs_name: Vec::new(),
             cache: Rc::new(Mutex::new(LruCache::new(
                 NonZeroUsize::new(cache_size).unwrap(),
@@ -324,8 +322,6 @@ impl Graph {
     #[must_use]
     pub fn get_attrs(&self) -> Vec<Arc<String>> {
         self.node_attrs_name
-            .lock()
-            .unwrap()
             .iter()
             .chain(self.relationship_attrs_name.iter())
             .cloned()
@@ -467,8 +463,6 @@ impl Graph {
         key: &str,
     ) -> Option<AttrId> {
         self.node_attrs_name
-            .lock()
-            .unwrap()
             .iter()
             .position(|p| p.as_str() == key)
             .map(AttrId)
@@ -479,21 +473,20 @@ impl Graph {
         &self,
         id: AttrId,
     ) -> Option<Arc<String>> {
-        self.node_attrs_name.lock().unwrap().get(id.0).cloned()
+        self.node_attrs_name.get(id.0).cloned()
     }
 
     pub fn get_or_add_node_attribute_id(
         &mut self,
         key: &Arc<String>,
     ) -> AttrId {
-        let mut node_attrs_name = self.node_attrs_name.lock().unwrap();
         AttrId(
-            node_attrs_name
+            self.node_attrs_name
                 .iter()
                 .position(|p| p.as_str() == key.as_str())
                 .unwrap_or_else(|| {
-                    let len = node_attrs_name.len();
-                    node_attrs_name.push(key.clone());
+                    let len = self.node_attrs_name.len();
+                    self.node_attrs_name.push(key.clone());
                     len
                 }),
         )
