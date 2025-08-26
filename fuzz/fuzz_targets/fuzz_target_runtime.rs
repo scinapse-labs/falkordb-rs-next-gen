@@ -1,7 +1,7 @@
 #![feature(c_variadic)]
 #![no_main]
 
-use std::{cell::RefCell, collections::HashMap, sync::Arc};
+use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
 // use libc::{atexit, calloc, free, malloc, realloc, strdup};
 
@@ -112,7 +112,7 @@ fuzz_target!(init: {
         }
         init_functions().expect("Failed to init functions");
     },|data: &[u8]| -> Corpus {
-        let g = Arc::new(RefCell::new(Graph::new(1024, 1024, 25, 0)));
+        let g = Rc::new(RefCell::new(Graph::new(1024, 1024, 25, 0)));
     std::str::from_utf8(data).map_or(Corpus::Reject, |query| {
         let Ok(Plan {
             plan, parameters, ..

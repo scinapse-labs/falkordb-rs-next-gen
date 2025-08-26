@@ -90,6 +90,7 @@ fn utilize_index(
     }
 }
 
+#[must_use]
 pub fn optimize(
     plan: &DynTree<IR>,
     graph: &Graph,

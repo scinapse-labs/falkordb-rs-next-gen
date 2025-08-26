@@ -1,4 +1,4 @@
-use std::{cell::RefCell, collections::HashMap, sync::Arc};
+use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
 use graph::{
     graph::{
@@ -21,7 +21,7 @@ fn main() {
     init_functions().expect("Failed to init functions");
     fuzz!(|data: &[u8]| {
         if let Ok(query) = std::str::from_utf8(data) {
-            let g = Arc::new(RefCell::new(Graph::new(1024, 1024, 25, 0)));
+            let g = Rc::new(RefCell::new(Graph::new(1024, 1024, 25, 0)));
             let Ok(Plan {
                 plan, parameters, ..
             }) = g.borrow().get_plan(query)

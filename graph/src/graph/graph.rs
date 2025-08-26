@@ -127,7 +127,7 @@ pub struct Graph {
     relationship_types: Vec<Arc<String>>,
     node_attrs_name: Arc<Mutex<Vec<Arc<String>>>>,
     relationship_attrs_name: Vec<Arc<String>>,
-    cache: Arc<Mutex<LruCache<String, DynTree<IR>>>>,
+    cache: Rc<Mutex<LruCache<String, DynTree<IR>>>>,
     version: u64,
 }
 
@@ -205,11 +205,9 @@ static INDEXER_CHANNEL: Lazy<
                 }
                 let mut index_add_docs = HashMap::new();
                 index_add_docs.insert(label.clone(), add_docs);
-                let add_docs = Arc::new(Mutex::new(index_add_docs));
 
                 let mut node_indexer = node_indexer.lock().unwrap();
-                let mut add_docs = add_docs.lock().unwrap();
-                node_indexer.commit(&mut add_docs, &mut HashMap::new());
+                node_indexer.commit(&mut index_add_docs, &mut HashMap::new());
                 node_indexer.enable(label);
             } else if action == 1 {
                 let mut node_indexer = node_indexer.lock().unwrap();
@@ -252,7 +250,7 @@ impl Graph {
             relationship_types: Vec::new(),
             node_attrs_name: Arc::new(Mutex::new(Vec::new())),
             relationship_attrs_name: Vec::new(),
-            cache: Arc::new(Mutex::new(LruCache::new(
+            cache: Rc::new(Mutex::new(LruCache::new(
                 NonZeroUsize::new(cache_size).unwrap(),
             ))),
             version,
@@ -287,19 +285,22 @@ impl Graph {
             relationship_types: self.relationship_types.clone(),
             node_attrs_name: self.node_attrs_name.clone(),
             relationship_attrs_name: self.relationship_attrs_name.clone(),
-            cache: Arc::new(Mutex::new(LruCache::new(self.cache.lock().unwrap().cap()))),
+            cache: Rc::new(Mutex::new(LruCache::new(self.cache.lock().unwrap().cap()))),
             version: self.version + 1,
         }
     }
 
+    #[must_use]
     pub const fn get_labels_count(&self) -> usize {
         self.node_labels.len()
     }
 
+    #[must_use]
     pub fn get_labels(&self) -> Vec<Arc<String>> {
         self.node_labels.clone()
     }
 
+    #[must_use]
     pub fn get_label_by_id(
         &self,
         id: LabelId,
@@ -307,10 +308,12 @@ impl Graph {
         self.node_labels[id.0].clone()
     }
 
+    #[must_use]
     pub fn get_types(&self) -> Vec<Arc<String>> {
         self.relationship_types.clone()
     }
 
+    #[must_use]
     pub fn get_type(
         &self,
         id: TypeId,
@@ -318,6 +321,7 @@ impl Graph {
         self.relationship_types.get(id.0).cloned()
     }
 
+    #[must_use]
     pub fn get_attrs(&self) -> Vec<Arc<String>> {
         self.node_attrs_name
             .lock()
@@ -470,6 +474,7 @@ impl Graph {
             .map(AttrId)
     }
 
+    #[must_use]
     pub fn get_node_attribute_string(
         &self,
         id: AttrId,
@@ -520,6 +525,7 @@ impl Graph {
             .map(AttrId)
     }
 
+    #[must_use]
     pub fn get_relationship_attribute_string(
         &self,
         id: AttrId,
@@ -763,6 +769,7 @@ impl Graph {
             .map(move |label_id| self.node_labels[label_id.0].clone())
     }
 
+    #[must_use]
     pub fn get_node_attribute(
         &self,
         id: NodeId,
@@ -852,6 +859,7 @@ impl Graph {
         }
     }
 
+    #[must_use]
     pub fn is_node_deleted(
         &self,
         id: NodeId,
@@ -859,6 +867,7 @@ impl Graph {
         self.deleted_nodes.contains(id.0)
     }
 
+    #[must_use]
     pub fn is_relationship_deleted(
         &self,
         id: RelationshipId,
@@ -895,6 +904,7 @@ impl Graph {
         }
     }
 
+    #[must_use]
     pub fn get_src_dest_relationships(
         &self,
         src: NodeId,
@@ -938,10 +948,9 @@ impl Graph {
             (matrices, src_labels_matrices, dest_labels_matrices)
         {
             let mut iter = matrices.iter();
-            let mut m = iter.next().map_or_else(
-                || self.adjacancy_matrix.dup(),
-                |relationship_matrix| relationship_matrix.dup_bool(),
-            );
+            let mut m = iter
+                .next()
+                .map_or_else(|| self.adjacancy_matrix.dup(), Tensor::dup_bool);
             for relationship_matrix in iter {
                 m.element_wise_add(&relationship_matrix.dup_bool());
             }
@@ -970,6 +979,7 @@ impl Graph {
         iter.map(|(src, dest)| (NodeId(src), NodeId(dest)))
     }
 
+    #[must_use]
     pub fn get_relationship_type_id(
         &self,
         id: RelationshipId,
@@ -982,6 +992,7 @@ impl Graph {
             .unwrap()
     }
 
+    #[must_use]
     pub fn get_relationship_attribute(
         &self,
         id: RelationshipId,
@@ -1028,6 +1039,7 @@ impl Graph {
         }
     }
 
+    #[must_use]
     pub fn get_node_attrs(
         &self,
         id: NodeId,
@@ -1036,6 +1048,7 @@ impl Graph {
         node_attrs.get(&id).unwrap_or(&self.empty_map).clone()
     }
 
+    #[must_use]
     pub fn get_relationship_attrs(
         &self,
         id: RelationshipId,
@@ -1165,6 +1178,7 @@ impl Graph {
         }
     }
 
+    #[must_use]
     pub fn is_indexed(
         &self,
         label: &Arc<String>,
@@ -1187,6 +1201,7 @@ impl Graph {
             .collect()
     }
 
+    #[must_use]
     pub fn index_info(&self) -> Vec<IndexInfo> {
         let node_indexer = self.node_indexer.lock().unwrap();
         node_indexer.index_info()
@@ -1194,7 +1209,7 @@ impl Graph {
 }
 
 pub struct MvccGraph {
-    graph: Arc<RefCell<Graph>>,
+    graph: Rc<RefCell<Graph>>,
 }
 
 unsafe impl Send for MvccGraph {}
@@ -1208,23 +1223,23 @@ impl MvccGraph {
         cache_size: usize,
     ) -> Self {
         Self {
-            graph: Arc::new(RefCell::new(Graph::new(n, e, cache_size, 0))),
+            graph: Rc::new(RefCell::new(Graph::new(n, e, cache_size, 0))),
         }
     }
 
     #[must_use]
-    pub fn read(&self) -> Arc<RefCell<Graph>> {
+    pub fn read(&self) -> Rc<RefCell<Graph>> {
         self.graph.clone()
     }
 
     #[must_use]
-    pub fn write(&self) -> Arc<RefCell<Graph>> {
-        Arc::new(RefCell::new(self.graph.borrow().new_version()))
+    pub fn write(&self) -> Rc<RefCell<Graph>> {
+        Rc::new(RefCell::new(self.graph.borrow().new_version()))
     }
 
     pub fn commit(
         &mut self,
-        new_graph: Arc<RefCell<Graph>>,
+        new_graph: Rc<RefCell<Graph>>,
     ) {
         if self.graph.borrow().version + 1 == new_graph.borrow().version {
             self.graph = new_graph;

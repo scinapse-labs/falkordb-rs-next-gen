@@ -59,7 +59,7 @@ pub struct QueryStatistics {
 
 pub struct Runtime {
     parameters: HashMap<String, Value>,
-    pub g: Arc<RefCell<Graph>>,
+    pub g: Rc<RefCell<Graph>>,
     write: bool,
     pending: Lazy<RefCell<Pending>>,
     stats: RefCell<QueryStatistics>,
@@ -172,7 +172,7 @@ impl Debug for Env {
 impl<'a> Runtime {
     #[must_use]
     pub fn new(
-        g: Arc<RefCell<Graph>>,
+        g: Rc<RefCell<Graph>>,
         parameters: HashMap<String, Value>,
         write: bool,
         plan: Rc<DynTree<IR>>,
