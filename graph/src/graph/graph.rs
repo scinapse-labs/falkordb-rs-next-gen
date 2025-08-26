@@ -117,8 +117,8 @@ pub struct Graph {
     node_labels_matrix: Matrix<bool>,
     relationship_type_matrix: Matrix<bool>,
     all_nodes_matrix: Matrix<bool>,
-    labels_matices: HashMap<usize, Matrix<bool>>,
-    relationship_matrices: HashMap<usize, Tensor>,
+    labels_matices: Vec<Matrix<bool>>,
+    relationship_matrices: Vec<Tensor>,
     empty_map: OrderMap<AttrId, Value>,
     node_attrs: Arc<Mutex<HashMap<NodeId, OrderMap<AttrId, Value>>>>,
     relationship_attrs: HashMap<RelationshipId, OrderMap<AttrId, Value>>,
@@ -242,8 +242,8 @@ impl Graph {
             node_labels_matrix: Matrix::<bool>::new(0, 0),
             relationship_type_matrix: Matrix::<bool>::new(0, 0),
             all_nodes_matrix: Matrix::<bool>::new(n, n),
-            labels_matices: HashMap::new(),
-            relationship_matrices: HashMap::new(),
+            labels_matices: Vec::new(),
+            relationship_matrices: Vec::new(),
             empty_map: OrderMap::new(),
             node_attrs: Arc::new(Mutex::new(HashMap::new())),
             relationship_attrs: HashMap::new(),
@@ -401,7 +401,7 @@ impl Graph {
         self.node_labels
             .iter()
             .position(|l| l.as_str() == label)
-            .map(|i| self.labels_matices[&i].clone())
+            .map(|i| self.labels_matices[i].clone())
     }
 
     fn get_label_matrix_mut(
@@ -417,16 +417,11 @@ impl Graph {
             );
         }
 
-        self.labels_matices
-            .get(
-                &self
-                    .node_labels
-                    .iter()
-                    .position(|l| l.as_str() == label.as_str())
-                    .unwrap(),
-            )
+        self.node_labels
+            .iter()
+            .position(|l| l.as_str() == label.as_str())
+            .map(|i| self.labels_matices[i].clone())
             .unwrap()
-            .clone()
     }
 
     fn get_relationship_matrix_mut(
@@ -442,16 +437,11 @@ impl Graph {
             );
         }
 
-        self.relationship_matrices
-            .get(
-                &self
-                    .relationship_types
-                    .iter()
-                    .position(|l| l.as_str() == relationship_type.as_str())
-                    .unwrap(),
-            )
+        self.relationship_types
+            .iter()
+            .position(|l| l.as_str() == relationship_type.as_str())
+            .map(|i| self.relationship_matrices[i].clone())
             .unwrap()
-            .clone()
     }
 
     fn get_relationship_matrix(
@@ -462,15 +452,10 @@ impl Graph {
             return None;
         }
 
-        self.relationship_matrices
-            .get(
-                &self
-                    .relationship_types
-                    .iter()
-                    .position(|l| l.as_str() == relationship_type.as_str())
-                    .unwrap(),
-            )
-            .cloned()
+        self.relationship_types
+            .iter()
+            .position(|l| l.as_str() == relationship_type.as_str())
+            .map(|i| self.relationship_matrices[i].clone())
     }
 
     pub fn get_node_attribute_id(
@@ -693,14 +678,14 @@ impl Graph {
         self.node_count -= 1;
         self.all_nodes_matrix.remove(id.0, id.0);
 
-        for label_matrix in self.labels_matices.values_mut() {
+        for label_matrix in &mut self.labels_matices {
             label_matrix.remove(id.0, id.0);
         }
         let mut node_attrs = self.node_attrs.lock().unwrap();
         let node_indexer = self.node_indexer.lock().unwrap();
-        for label_id in self.labels_matices.keys() {
-            let label = self.node_labels[*label_id].clone();
-            self.node_labels_matrix.remove(id.0, *label_id as _);
+        for label_id in 0..self.labels_matices.len() {
+            let label = self.node_labels[label_id].clone();
+            self.node_labels_matrix.remove(id.0, label_id as _);
             let mut indexed = false;
             for (attr_id, _) in node_attrs.get(&id).unwrap_or(&self.empty_map) {
                 let attr_name = self.get_node_attribute_string(*attr_id).unwrap();
@@ -725,7 +710,7 @@ impl Graph {
         id: NodeId,
     ) -> impl Iterator<Item = (NodeId, NodeId, RelationshipId)> + '_ {
         self.relationship_matrices
-            .values()
+            .iter()
             .flat_map(move |m| m.iter(id.0, id.0, false).chain(m.iter(id.0, id.0, true)))
             .map(|(src, dest, id)| {
                 let src_node = NodeId(src);
@@ -1016,10 +1001,10 @@ impl Graph {
             self.node_labels_matrix
                 .resize(self.node_cap, self.labels_matices.len() as u64);
             self.all_nodes_matrix.resize(self.node_cap, self.node_cap);
-            for label_matrix in self.labels_matices.iter_mut().map(|(_, m)| m) {
+            for label_matrix in &mut self.labels_matices {
                 label_matrix.resize(self.node_cap, self.node_cap);
             }
-            for relationship_matrix in self.relationship_matrices.iter_mut().map(|(_, m)| m) {
+            for relationship_matrix in &mut self.relationship_matrices {
                 relationship_matrix.resize(self.node_cap, self.node_cap);
             }
         }
