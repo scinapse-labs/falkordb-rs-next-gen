@@ -3,6 +3,7 @@ use crate::graph::matrix::{self, Dup, ElementWiseAdd, Get, Matrix, New, Remove, 
 #[allow(non_upper_case_globals)]
 pub const GrB_INDEX_MAX: u64 = (1u64 << 60) - 1;
 
+#[derive(Clone)]
 pub struct Tensor {
     m: Matrix<bool>,
     mt: Matrix<bool>,

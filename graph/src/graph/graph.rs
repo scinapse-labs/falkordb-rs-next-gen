@@ -116,7 +116,7 @@ pub struct Graph {
     relationship_type_matrix: Matrix<bool>,
     all_nodes_matrix: Matrix<bool>,
     labels_matices: HashMap<usize, Matrix<bool>>,
-    relationship_matrices: HashMap<usize, Arc<Mutex<Tensor>>>,
+    relationship_matrices: HashMap<usize, Tensor>,
     empty_map: OrderMap<AttrId, Value>,
     node_attrs: Arc<Mutex<HashMap<NodeId, OrderMap<AttrId, Value>>>>,
     relationship_attrs: HashMap<RelationshipId, OrderMap<AttrId, Value>>,
@@ -428,13 +428,13 @@ impl Graph {
     fn get_relationship_matrix_mut(
         &mut self,
         relationship_type: &Arc<String>,
-    ) -> Arc<Mutex<Tensor>> {
+    ) -> Tensor {
         if !self.relationship_types.contains(relationship_type) {
             self.relationship_types.push(relationship_type.clone());
 
             self.relationship_matrices.insert(
                 self.relationship_types.len() - 1,
-                Arc::new(Mutex::new(Tensor::new(self.node_cap, self.node_cap))),
+                Tensor::new(self.node_cap, self.node_cap),
             );
         }
 
@@ -453,7 +453,7 @@ impl Graph {
     fn get_relationship_matrix(
         &self,
         relationship_type: &Arc<String>,
-    ) -> Option<Arc<Mutex<Tensor>>> {
+    ) -> Option<Tensor> {
         if !self.relationship_types.contains(relationship_type) {
             return None;
         }
@@ -722,12 +722,7 @@ impl Graph {
     ) -> impl Iterator<Item = (NodeId, NodeId, RelationshipId)> + '_ {
         self.relationship_matrices
             .values()
-            .flat_map(move |m| {
-                let m = m.lock().unwrap();
-                m.iter(id.0, id.0, false)
-                    .chain(m.iter(id.0, id.0, true))
-                    .collect::<Vec<_>>()
-            })
+            .flat_map(move |m| m.iter(id.0, id.0, false).chain(m.iter(id.0, id.0, true)))
             .map(|(src, dest, id)| {
                 let src_node = NodeId(src);
                 let dest_node = NodeId(dest);
@@ -827,10 +822,7 @@ impl Graph {
             },
         ) in relationships
         {
-            let relationship_type_matrix = self.get_relationship_matrix_mut(type_name);
-            relationship_type_matrix
-                .lock()
-                .unwrap()
+            self.get_relationship_matrix_mut(type_name)
                 .set(start.0, end.0, id.0);
         }
 
@@ -910,8 +902,7 @@ impl Graph {
                 self.relationship_type_matrix.remove(*id, type_id.0 as u64);
                 self.relationship_attrs.remove(&RelationshipId(*id));
             }
-            let t = self.get_relationship_matrix_mut(&label);
-            t.lock().unwrap().remove_all(rels);
+            self.get_relationship_matrix_mut(&label).remove_all(rels);
         }
     }
 
@@ -928,7 +919,7 @@ impl Graph {
             types
         } {
             if let Some(relationship_matrix) = self.get_relationship_matrix(relationship_type) {
-                for id in relationship_matrix.lock().unwrap().get(src.0, dest.0) {
+                for id in relationship_matrix.get(src.0, dest.0) {
                     vec.push(RelationshipId(id));
                 }
             }
@@ -960,10 +951,10 @@ impl Graph {
             let mut iter = matrices.iter();
             let mut m = iter.next().map_or_else(
                 || self.adjacancy_matrix.dup(),
-                |relationship_matrix| relationship_matrix.lock().unwrap().dup_bool(),
+                |relationship_matrix| relationship_matrix.dup_bool(),
             );
             for relationship_matrix in iter {
-                m.element_wise_add(&relationship_matrix.lock().unwrap().dup_bool());
+                m.element_wise_add(&relationship_matrix.dup_bool());
             }
 
             if !src_labels_matrices.is_empty() {
@@ -1025,10 +1016,7 @@ impl Graph {
                 label_matrix.resize(self.node_cap, self.node_cap);
             }
             for relationship_matrix in self.relationship_matrices.iter_mut().map(|(_, m)| m) {
-                relationship_matrix
-                    .lock()
-                    .unwrap()
-                    .resize(self.node_cap, self.node_cap);
+                relationship_matrix.resize(self.node_cap, self.node_cap);
             }
         }
 
