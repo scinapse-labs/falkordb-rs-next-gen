@@ -3,9 +3,10 @@
 
 use graph::{
     graph::{
-        graph::{Graph, Plan},
+        graph::{MvccGraph, Plan},
         matrix::init,
     },
+    planner::IR,
     redisearch::{REDISEARCH_INIT_LIBRARY, RediSearch_Init},
     runtime::{
         functions::init_functions,
@@ -35,6 +36,7 @@ use redis_module::{
 };
 use std::{
     collections::HashMap,
+    ffi::CString,
     os::raw::{c_char, c_int, c_void},
     ptr::null_mut,
     sync::{Arc, RwLock},
@@ -102,7 +104,7 @@ unsafe extern "C" fn graph_rdb_save(
 #[unsafe(no_mangle)]
 unsafe extern "C" fn graph_free(value: *mut c_void) {
     unsafe {
-        drop(Box::from_raw(value.cast::<Arc<RwLock<Graph>>>()));
+        drop(Box::from_raw(value.cast::<Arc<RwLock<MvccGraph>>>()));
     }
 }
 
@@ -462,7 +464,10 @@ fn graph_delete(
     let mut args = args.into_iter().skip(1);
     let key = args.next_arg()?;
     let key = ctx.open_key_writable(&key);
-    if key.get_value::<Arc<RwLock<Graph>>>(&GRAPH_TYPE)?.is_some() {
+    if key
+        .get_value::<Arc<RwLock<MvccGraph>>>(&GRAPH_TYPE)?
+        .is_some()
+    {
         key.delete()
     } else {
         EMPTY_KEY_ERR
@@ -479,7 +484,7 @@ unsafe impl Sync for BlockedClient {}
 #[inline]
 fn query_mut(
     ctx: &Context,
-    graph: &Arc<RwLock<Graph>>,
+    graph: &Arc<RwLock<MvccGraph>>,
     query: &str,
     compact: bool,
     write: bool,
@@ -501,15 +506,30 @@ fn query_mut(
                     cached,
                     parameters,
                     ..
-                } = graph.read().unwrap().get_plan(&query)?;
+                } = graph
+                    .read()
+                    .unwrap()
+                    .read()
+                    .read()
+                    .unwrap()
+                    .get_plan(&query)?;
                 let parameters = parameters
                     .into_iter()
                     .map(|(k, v)| Ok((k, evaluate_param(&v.root())?)))
                     .collect::<Result<HashMap<_, _>, String>>()?;
                 let scope = CONFIGURATION_IMPORT_FOLDER.lock(&ctx);
+                let is_write = plan.iter().any(|n| matches!(n, IR::Commit));
+                let g = if is_write {
+                    graph.read().unwrap().write()
+                } else {
+                    graph.read().unwrap().read()
+                };
                 let mut runtime =
-                    Runtime::new(graph, parameters, write, plan, false, (*scope).clone());
+                    Runtime::new(g.clone(), parameters, write, plan, false, (*scope).clone());
                 let mut result = runtime.query()?;
+                if is_write {
+                    graph.write().unwrap().commit(g);
+                }
                 result.stats.cached = cached;
                 if compact {
                     reply_compact(&ctx, &runtime, result);
@@ -523,7 +543,8 @@ fn query_mut(
         match res {
             Ok(()) => {}
             Err(err) => {
-                raw::reply_with_error(ctx.ctx, err.as_ptr().cast::<c_char>());
+                let cerr = CString::new(err).unwrap();
+                raw::reply_with_error(ctx.ctx, cerr.as_ptr().cast::<c_char>());
                 unsafe { raw::RedisModule_UnblockClient.unwrap()(bc.inner, null_mut()) };
             }
         }
@@ -635,11 +656,11 @@ fn graph_query(
     let compact = args.next_str().is_ok_and(|arg| arg == "--compact");
     let key = ctx.open_key_writable(&key);
 
-    if let Some(graph) = key.get_value::<Arc<RwLock<Graph>>>(&GRAPH_TYPE)? {
+    if let Some(graph) = key.get_value::<Arc<RwLock<MvccGraph>>>(&GRAPH_TYPE)? {
         query_mut(ctx, graph, query, compact, true);
     } else {
         let scope = CONFIGURATION_CACHE_SIZE.lock(ctx);
-        let graph = Arc::new(RwLock::new(Graph::new(16384, 16384, *scope as usize)));
+        let graph = Arc::new(RwLock::new(MvccGraph::new(16384, 16384, *scope as usize)));
         query_mut(ctx, &graph, query, compact, true);
         key.set_value(&GRAPH_TYPE, graph)?;
     }
@@ -650,13 +671,16 @@ fn graph_query(
 #[inline]
 fn record_mut(
     ctx: &Context,
-    graph: &Arc<RwLock<Graph>>,
+    graph: &Arc<RwLock<MvccGraph>>,
     query: &str,
 ) -> Result<(), RedisError> {
     // Create a child span for parsing and execution
     let Plan {
         plan, parameters, ..
     } = graph
+        .read()
+        .unwrap()
+        .read()
         .read()
         .unwrap()
         .get_plan(query)
@@ -668,7 +692,7 @@ fn record_mut(
         .map_err(RedisError::String)?;
     let scope = CONFIGURATION_IMPORT_FOLDER.lock(ctx);
     let mut runtime = Runtime::new(
-        graph.clone(),
+        graph.read().unwrap().read(),
         parameters,
         true,
         plan.clone(),
@@ -745,11 +769,11 @@ fn graph_record(
 
     let key = ctx.open_key_writable(&key);
 
-    if let Some(graph) = key.get_value::<Arc<RwLock<Graph>>>(&GRAPH_TYPE)? {
+    if let Some(graph) = key.get_value::<Arc<RwLock<MvccGraph>>>(&GRAPH_TYPE)? {
         record_mut(ctx, graph, query)?;
     } else {
         let scope = CONFIGURATION_CACHE_SIZE.lock(ctx);
-        let graph = Arc::new(RwLock::new(Graph::new(16384, 16384, *scope as usize)));
+        let graph = Arc::new(RwLock::new(MvccGraph::new(16384, 16384, *scope as usize)));
         record_mut(ctx, &graph, query)?;
         key.set_value(&GRAPH_TYPE, graph)?;
     }
@@ -831,7 +855,7 @@ fn graph_ro_query(
     let key = ctx.open_key(&key);
 
     // We check if the key exists and is of type Graph if wrong type `get_value` return an error
-    (key.get_value::<Arc<RwLock<Graph>>>(&GRAPH_TYPE)?).map_or(
+    (key.get_value::<Arc<RwLock<MvccGraph>>>(&GRAPH_TYPE)?).map_or(
         // If the key does not exist, we return an error
         EMPTY_KEY_ERR,
         |graph| {
@@ -899,11 +923,14 @@ fn graph_explain(
 
     let key = ctx.open_key(&key);
 
-    (key.get_value::<Arc<RwLock<Graph>>>(&GRAPH_TYPE)?).map_or(
+    (key.get_value::<Arc<RwLock<MvccGraph>>>(&GRAPH_TYPE)?).map_or(
         // If the key does not exist, we return an error
         EMPTY_KEY_ERR,
         |graph| {
             let Plan { plan, .. } = graph
+                .read()
+                .unwrap()
+                .read()
                 .read()
                 .unwrap()
                 .get_plan(query)

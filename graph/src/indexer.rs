@@ -100,7 +100,7 @@ impl Document {
                     RediSearch_DocumentAddFieldString(
                         self.rs_doc,
                         field.name.as_ptr(),
-                        s.as_ptr().cast::<i8>(),
+                        s.as_ptr().cast::<c_char>(),
                         s.len(),
                         if field.ty == IndexType::Fulltext {
                             RSFLDTYPE_FULLTEXT
@@ -243,7 +243,7 @@ impl Indexer {
             RediSearch_IndexOptionsSetStopwords(options, null_mut(), 0);
 
             let clabel = CString::new(label.as_str()).unwrap();
-            let index = RediSearch_CreateIndex(clabel.as_ptr().cast::<i8>(), options);
+            let index = RediSearch_CreateIndex(clabel.as_ptr().cast::<c_char>(), options);
             RediSearch_FreeIndexOptions(options);
 
             for field in fields.values().flat_map(|f| f.iter()) {

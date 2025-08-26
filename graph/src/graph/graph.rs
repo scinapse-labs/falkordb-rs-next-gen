@@ -2,7 +2,7 @@ use std::{
     collections::HashMap,
     num::NonZeroUsize,
     rc::Rc,
-    sync::{Arc, Mutex, mpsc},
+    sync::{Arc, Mutex, RwLock, mpsc},
     time::{Duration, Instant},
 };
 
@@ -126,6 +126,7 @@ pub struct Graph {
     node_attrs_name: Arc<Mutex<Vec<Arc<String>>>>,
     relationship_attrs_name: Vec<Arc<String>>,
     cache: Mutex<LruCache<String, DynTree<IR>>>,
+    pub version: u64,
 }
 
 unsafe impl Send for Graph {}
@@ -223,6 +224,7 @@ impl Graph {
         n: u64,
         e: u64,
         cache_size: usize,
+        version: u64,
     ) -> Self {
         Self {
             node_cap: n,
@@ -249,6 +251,7 @@ impl Graph {
             node_attrs_name: Arc::new(Mutex::new(Vec::new())),
             relationship_attrs_name: Vec::new(),
             cache: Mutex::new(LruCache::new(NonZeroUsize::new(cache_size).unwrap())),
+            version,
         }
     }
 
@@ -281,6 +284,7 @@ impl Graph {
             node_attrs_name: self.node_attrs_name.clone(),
             relationship_attrs_name: self.relationship_attrs_name.clone(),
             cache: Mutex::new(LruCache::new(self.cache.lock().unwrap().cap())),
+            version: self.version + 1,
         }
     }
 
@@ -1227,7 +1231,7 @@ impl Graph {
 }
 
 pub struct MvccGraph {
-    graph: Arc<Graph>,
+    graph: Arc<RwLock<Graph>>,
 }
 
 impl MvccGraph {
@@ -1238,20 +1242,28 @@ impl MvccGraph {
         cache_size: usize,
     ) -> Self {
         Self {
-            graph: Arc::new(Graph::new(n, e, cache_size)),
+            graph: Arc::new(RwLock::new(Graph::new(n, e, cache_size, 0))),
         }
     }
 
     #[must_use]
-    pub fn read(&self) -> Arc<Graph> {
+    pub fn read(&self) -> Arc<RwLock<Graph>> {
         self.graph.clone()
     }
 
-    pub fn write<F: Fn(Graph) -> Result<Graph, String>>(
+    #[must_use]
+    pub fn write(&self) -> Arc<RwLock<Graph>> {
+        Arc::new(RwLock::new(self.graph.read().unwrap().new_version()))
+    }
+
+    pub fn commit(
         &mut self,
-        f: F,
-    ) -> Result<(), String> {
-        self.graph = Arc::new(f(self.graph.new_version())?);
-        Ok(())
+        new_graph: Arc<RwLock<Graph>>,
+    ) {
+        if self.graph.read().unwrap().version + 1 == new_graph.read().unwrap().version {
+            self.graph = new_graph;
+        } else {
+            todo!();
+        }
     }
 }
