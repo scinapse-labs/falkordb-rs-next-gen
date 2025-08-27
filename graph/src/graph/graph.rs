@@ -188,7 +188,6 @@ pub struct Graph {
     all_nodes_matrix: Matrix<bool>,
     labels_matices: Vec<Matrix<bool>>,
     relationship_matrices: Vec<Tensor>,
-    empty_map: OrderMap<AttrId, Value>,
     node_attrs: AttributeStore<NodeId>,
     relationship_attrs: AttributeStore<RelationshipId>,
     node_indexer: Indexer,
@@ -196,7 +195,7 @@ pub struct Graph {
     relationship_types: Vec<Arc<String>>,
     node_attrs_name: Vec<Arc<String>>,
     relationship_attrs_name: Vec<Arc<String>>,
-    cache: Rc<Mutex<LruCache<String, DynTree<IR>>>>,
+    cache: Arc<Mutex<LruCache<String, DynTree<IR>>>>,
     version: u64,
 }
 
@@ -304,7 +303,6 @@ impl Graph {
             all_nodes_matrix: Matrix::<bool>::new(n, n),
             labels_matices: Vec::new(),
             relationship_matrices: Vec::new(),
-            empty_map: OrderMap::new(),
             node_attrs: AttributeStore::new(),
             relationship_attrs: AttributeStore::new(),
             node_indexer: Indexer::default(),
@@ -312,7 +310,7 @@ impl Graph {
             relationship_types: Vec::new(),
             node_attrs_name: Vec::new(),
             relationship_attrs_name: Vec::new(),
-            cache: Rc::new(Mutex::new(LruCache::new(
+            cache: Arc::new(Mutex::new(LruCache::new(
                 NonZeroUsize::new(cache_size).unwrap(),
             ))),
             version,
@@ -339,7 +337,6 @@ impl Graph {
             all_nodes_matrix: self.all_nodes_matrix.dup(),
             labels_matices: self.labels_matices.iter().map(Matrix::dup).collect(),
             relationship_matrices: self.relationship_matrices.iter().map(Tensor::dup).collect(),
-            empty_map: self.empty_map.clone(),
             node_attrs: self.node_attrs.clone(),
             relationship_attrs: self.relationship_attrs.clone(),
             node_indexer: self.node_indexer.clone(),
@@ -347,7 +344,7 @@ impl Graph {
             relationship_types: self.relationship_types.clone(),
             node_attrs_name: self.node_attrs_name.clone(),
             relationship_attrs_name: self.relationship_attrs_name.clone(),
-            cache: Rc::new(Mutex::new(LruCache::new(self.cache.lock().unwrap().cap()))),
+            cache: self.cache.clone(),
             version: self.version + 1,
         }
     }
@@ -1088,9 +1085,7 @@ impl Graph {
         &self,
         id: NodeId,
     ) -> OrderMap<AttrId, Value> {
-        self.node_attrs
-            .get(&id)
-            .unwrap_or_else(|| self.empty_map.clone())
+        self.node_attrs.get(&id).unwrap_or_default()
     }
 
     #[must_use]
@@ -1098,9 +1093,7 @@ impl Graph {
         &self,
         id: RelationshipId,
     ) -> OrderMap<AttrId, Value> {
-        self.relationship_attrs
-            .get(&id)
-            .unwrap_or_else(|| self.empty_map.clone())
+        self.relationship_attrs.get(&id).unwrap_or_default()
     }
 
     pub fn create_index(
