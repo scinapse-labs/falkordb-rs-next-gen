@@ -1740,7 +1740,7 @@ impl<'a> Runtime {
                             }
                         }
                         for (key, value) in attrs {
-                            let Some(key) = g.get_relationship_attribute_string(*key) else {
+                            let Some(key) = g.get_relationship_attribute_string(key) else {
                                 continue;
                             };
                             self.pending.borrow_mut().set_relationship_attribute(
