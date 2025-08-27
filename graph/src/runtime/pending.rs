@@ -1,5 +1,6 @@
 use std::{cell::RefCell, collections::HashMap, sync::Arc};
 
+use atomic_refcell::AtomicRefCell;
 use ordermap::{OrderMap, OrderSet};
 use roaring::RoaringTreemap;
 
@@ -325,7 +326,7 @@ impl Pending {
 
     pub fn commit(
         &mut self,
-        g: &RefCell<Graph>,
+        g: &AtomicRefCell<Graph>,
         stats: &RefCell<QueryStatistics>,
     ) {
         if !self.created_nodes.is_empty() {

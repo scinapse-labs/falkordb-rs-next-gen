@@ -551,8 +551,9 @@ fn query_mut(
 fn reply_stats(
     ctx: &Context,
     stats: &QueryStatistics,
+    version: u64,
 ) {
-    let mut stats_len = 2;
+    let mut stats_len = 3;
     if stats.labels_added > 0 {
         stats_len += 1;
     }
@@ -624,6 +625,8 @@ fn reply_stats(
         "Query internal execution time: {} milliseconds",
         stats.execution_time
     );
+    raw::reply_with_string_buffer(ctx.ctx, str.as_ptr().cast::<c_char>(), str.len());
+    let str = format!("Graph version: {version}");
     raw::reply_with_string_buffer(ctx.ctx, str.as_ptr().cast::<c_char>(), str.len());
 }
 
@@ -800,7 +803,7 @@ fn reply_verbose(
             reply_verbose_value(ctx, runtime, row.get(name).unwrap());
         }
     }
-    reply_stats(ctx, &result.stats);
+    reply_stats(ctx, &result.stats, runtime.g.borrow().version);
 }
 
 fn reply_compact(
@@ -827,7 +830,7 @@ fn reply_compact(
             reply_compact_value(ctx, runtime, row.get(name).unwrap());
         }
     }
-    reply_stats(ctx, &result.stats);
+    reply_stats(ctx, &result.stats, runtime.g.borrow().version);
 }
 
 /// This function is used to execute a read only query on a graph

@@ -1,5 +1,4 @@
 use std::{
-    cell::RefCell,
     collections::HashMap,
     hash::Hash,
     num::NonZeroUsize,
@@ -8,6 +7,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+use atomic_refcell::AtomicRefCell;
 use itertools::Itertools;
 use lru::LruCache;
 use once_cell::sync::Lazy;
@@ -104,11 +104,11 @@ impl Plan {
 }
 
 #[derive(Clone)]
-struct AttributeStore<T: Eq + Hash> {
+struct AttributeStore<T: Eq + Hash + Clone> {
     attributes: Arc<RwLock<HashMap<T, OrderMap<AttrId, Value>>>>,
 }
 
-impl<T: Eq + Hash> AttributeStore<T> {
+impl<T: Eq + Hash + Clone> AttributeStore<T> {
     pub fn new() -> Self {
         Self {
             attributes: Arc::new(RwLock::new(HashMap::new())),
@@ -166,10 +166,18 @@ impl<T: Eq + Hash> AttributeStore<T> {
             .insert(attr_id, value)
             .is_some()
     }
+
+    pub fn new_version(&self) -> Self {
+        let attrs = self.attributes.read().unwrap();
+
+        Self {
+            attributes: Arc::new(RwLock::new((&*attrs).clone())),
+        }
+    }
 }
 
-unsafe impl<T: Eq + Hash> Send for AttributeStore<T> {}
-unsafe impl<T: Eq + Hash> Sync for AttributeStore<T> {}
+unsafe impl<T: Eq + Hash + Clone> Send for AttributeStore<T> {}
+unsafe impl<T: Eq + Hash + Clone> Sync for AttributeStore<T> {}
 
 #[derive(Clone)]
 pub struct Graph {
@@ -196,7 +204,7 @@ pub struct Graph {
     node_attrs_name: Vec<Arc<String>>,
     relationship_attrs_name: Vec<Arc<String>>,
     cache: Arc<Mutex<LruCache<String, DynTree<IR>>>>,
-    version: u64,
+    pub version: u64,
 }
 
 unsafe impl Send for Graph {}
@@ -337,8 +345,8 @@ impl Graph {
             all_nodes_matrix: self.all_nodes_matrix.dup(),
             labels_matices: self.labels_matices.iter().map(Matrix::dup).collect(),
             relationship_matrices: self.relationship_matrices.iter().map(Tensor::dup).collect(),
-            node_attrs: self.node_attrs.clone(),
-            relationship_attrs: self.relationship_attrs.clone(),
+            node_attrs: self.node_attrs.new_version(),
+            relationship_attrs: self.relationship_attrs.new_version(),
             node_indexer: self.node_indexer.clone(),
             node_labels: self.node_labels.clone(),
             relationship_types: self.relationship_types.clone(),
@@ -1246,7 +1254,7 @@ impl Graph {
 }
 
 pub struct MvccGraph {
-    graph: Rc<RefCell<Graph>>,
+    graph: Rc<AtomicRefCell<Graph>>,
 }
 
 unsafe impl Send for MvccGraph {}
@@ -1260,23 +1268,23 @@ impl MvccGraph {
         cache_size: usize,
     ) -> Self {
         Self {
-            graph: Rc::new(RefCell::new(Graph::new(n, e, cache_size, 0))),
+            graph: Rc::new(AtomicRefCell::new(Graph::new(n, e, cache_size, 0))),
         }
     }
 
     #[must_use]
-    pub fn read(&self) -> Rc<RefCell<Graph>> {
+    pub fn read(&self) -> Rc<AtomicRefCell<Graph>> {
         self.graph.clone()
     }
 
     #[must_use]
-    pub fn write(&self) -> Rc<RefCell<Graph>> {
-        Rc::new(RefCell::new(self.graph.borrow().new_version()))
+    pub fn write(&self) -> Rc<AtomicRefCell<Graph>> {
+        Rc::new(AtomicRefCell::new(self.graph.borrow().new_version()))
     }
 
     pub fn commit(
         &mut self,
-        new_graph: Rc<RefCell<Graph>>,
+        new_graph: Rc<AtomicRefCell<Graph>>,
     ) {
         if self.graph.borrow().version + 1 == new_graph.borrow().version {
             self.graph = new_graph;

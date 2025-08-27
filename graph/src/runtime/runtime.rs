@@ -18,6 +18,7 @@ use crate::{
         },
     },
 };
+use atomic_refcell::AtomicRefCell;
 use once_cell::unsync::Lazy;
 use ordermap::{OrderMap, OrderSet};
 use orx_tree::{Bfs, Dyn, DynNode, DynTree, NodeIdx, NodeRef};
@@ -59,7 +60,7 @@ pub struct QueryStatistics {
 
 pub struct Runtime {
     parameters: HashMap<String, Value>,
-    pub g: Rc<RefCell<Graph>>,
+    pub g: Rc<AtomicRefCell<Graph>>,
     write: bool,
     pending: Lazy<RefCell<Pending>>,
     stats: RefCell<QueryStatistics>,
@@ -172,7 +173,7 @@ impl Debug for Env {
 impl<'a> Runtime {
     #[must_use]
     pub fn new(
-        g: Rc<RefCell<Graph>>,
+        g: Rc<AtomicRefCell<Graph>>,
         parameters: HashMap<String, Value>,
         write: bool,
         plan: Rc<DynTree<IR>>,
@@ -2141,10 +2142,9 @@ impl<'a> Runtime {
         if let Some(value) = self.pending.borrow().get_node_attribute(id, attribute) {
             return Some(value.clone());
         }
-        self.g
-            .borrow()
-            .get_node_attribute_id(attribute.as_str())
-            .and_then(|attr_id| self.g.borrow().get_node_attribute(id, attr_id))
+        let g = self.g.borrow();
+        g.get_node_attribute_id(attribute.as_str())
+            .and_then(|attr_id| g.get_node_attribute(id, attr_id))
     }
 
     pub fn get_relationship_attribute(
