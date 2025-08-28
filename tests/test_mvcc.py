@@ -24,18 +24,27 @@ def run_write(id):
     db = FalkorDB()
     g = db.select_graph("test")
     res = g.query("MATCH (n:Node) WHERE n.id = $id SET n.id = 0", params={"id": id})
-    return (id, res._raw_stats)
+    version = int(res._raw_stats[4][15:])
+    return (id, version)
 
 
 def run_read(id):
     db = FalkorDB()
     g = db.select_graph("test")
     res = g.query("MATCH (n:Node) RETURN n.id")
-    return (id, res.result_set, res._raw_stats)
+    version = int(res._raw_stats[2][15:])
+    return (id, res.result_set, version)
 
 
 def test_mvcc():
     common.g.query("UNWIND range(1, 1000) AS x CREATE (:Node {id: x})")
+    try:
+        common.g.query("UNWIND [1, 2, 3] AS x MATCH (n:Node {id: x}) SET n.id = 1 / (x - 3)")
+    except:
+        pass
+
+    res = common.g.query("MATCH (n:Node) RETURN n.id")
+    assert res.result_set == [[x] for x in range(1, 1001)]
 
     pool1 = Pool(1)
     pool8 = Pool(8)
@@ -46,15 +55,12 @@ def test_mvcc():
     res_write.wait()
     res_read.wait()
 
-    # res = common.g.query("MATCH (n:Node) RETURN n.id")
-    # print(res.result_set)
+    res = common.g.query("MATCH (n:Node) RETURN n.id")
+    assert res.result_set == [[x if x >= 100 else 0] for x in range(1, 1001)]
     
-    # for r in res_write.get():
-    #     print(r[0], r[1][4])
+    assert res_write.get() == [(x, x + 1) for x in range(1, 100)]
 
     for r in res_read.get():
-        version = int(r[2][2][15:])
+        version = r[2]
         res = r[1]
-        # print(r[0], version, res[0:version])
-        assert res[0:version - 1] == [[0] for i in range(1, version)]
-        assert res[version - 1] == [version]
+        assert res == [[0 if i < version else i] for i in range(1, 1001)]
