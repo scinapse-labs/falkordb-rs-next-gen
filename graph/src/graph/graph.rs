@@ -104,11 +104,11 @@ impl Plan {
 }
 
 #[derive(Clone)]
-struct AttributeStore<T: Eq + Hash + Clone> {
+struct AttributeStore<T: Eq + Hash + Clone + Send + Sync> {
     attributes: Arc<RwLock<HashMap<T, OrderMap<AttrId, Value>>>>,
 }
 
-impl<T: Eq + Hash + Clone> AttributeStore<T> {
+impl<T: Eq + Hash + Clone + Send + Sync> AttributeStore<T> {
     pub fn new() -> Self {
         Self {
             attributes: Arc::new(RwLock::new(HashMap::new())),
@@ -139,13 +139,13 @@ impl<T: Eq + Hash + Clone> AttributeStore<T> {
     pub fn remove_attr(
         &mut self,
         key: &T,
-        attr_id: &AttrId,
+        attr_id: AttrId,
     ) -> bool {
         let mut attributes = self.attributes.write().unwrap();
         if let Some(attrs) = attributes.get_mut(key) {
-            let has_value = attrs.remove(attr_id).is_some();
+            let has_value = attrs.remove(&attr_id).is_some();
             if attrs.is_empty() {
-                attributes.remove(&key);
+                attributes.remove(key);
             }
             has_value
         } else {
@@ -171,13 +171,13 @@ impl<T: Eq + Hash + Clone> AttributeStore<T> {
         let attrs = self.attributes.read().unwrap();
 
         Self {
-            attributes: Arc::new(RwLock::new((&*attrs).clone())),
+            attributes: Arc::new(RwLock::new((*attrs).clone())),
         }
     }
 }
 
-unsafe impl<T: Eq + Hash + Clone> Send for AttributeStore<T> {}
-unsafe impl<T: Eq + Hash + Clone> Sync for AttributeStore<T> {}
+unsafe impl<T: Eq + Hash + Clone + Send + Sync> Send for AttributeStore<T> {}
+unsafe impl<T: Eq + Hash + Clone + Send + Sync> Sync for AttributeStore<T> {}
 
 #[derive(Clone)]
 pub struct Graph {
@@ -203,31 +203,30 @@ pub struct Graph {
     relationship_types: Vec<Arc<String>>,
     node_attrs_name: Vec<Arc<String>>,
     relationship_attrs_name: Vec<Arc<String>>,
-    cache: Arc<Mutex<LruCache<String, DynTree<IR>>>>,
+    cache: Arc<Mutex<LruCache<String, PlanTree>>>,
     pub version: u64,
 }
+
+struct PlanTree(DynTree<IR>);
+
+#[allow(clippy::non_send_fields_in_send_ty)]
+unsafe impl Send for PlanTree {}
+unsafe impl Sync for PlanTree {}
 
 unsafe impl Send for Graph {}
 unsafe impl Sync for Graph {}
 
-static INDEXER_CHANNEL: Lazy<
-    mpsc::Sender<(
-        i32,
-        Arc<String>,
-        Matrix<bool>,
-        Indexer,
-        AttributeStore<NodeId>,
-        Vec<Arc<String>>,
-    )>,
-> = Lazy::new(|| {
-    let (sender, receiver) = mpsc::channel::<(
-        i32,
-        Arc<String>,
-        Matrix<bool>,
-        Indexer,
-        AttributeStore<NodeId>,
-        Vec<Arc<String>>,
-    )>();
+type IndexAction = (
+    i32,
+    Arc<String>,
+    Matrix<bool>,
+    Indexer,
+    AttributeStore<NodeId>,
+    Vec<Arc<String>>,
+);
+
+static INDEXER_CHANNEL: Lazy<mpsc::Sender<IndexAction>> = Lazy::new(|| {
+    let (sender, receiver) = mpsc::channel::<IndexAction>();
     spawn(move || {
         loop {
             let Ok((action, label, lm, mut node_indexer, node_attrs, node_attrs_name)) =
@@ -430,7 +429,7 @@ impl Graph {
         match self.cache.lock() {
             Ok(mut cache) => {
                 if let Some(plan) = cache.get(query) {
-                    let optimize_plan = optimize(plan, self);
+                    let optimize_plan = optimize(&plan.0, self);
                     Ok(Plan::new(
                         Rc::new(optimize_plan),
                         true,
@@ -439,6 +438,7 @@ impl Graph {
                         plan_duration,
                     ))
                 } else {
+                    drop(cache);
                     let start = Instant::now();
                     let ir = parser.parse()?;
                     parse_duration = start.elapsed();
@@ -449,7 +449,10 @@ impl Graph {
                     let optimize_plan = optimize(&plan, self);
                     plan_duration = start.elapsed();
 
-                    cache.push(query.to_string(), plan);
+                    self.cache
+                        .lock()
+                        .unwrap()
+                        .push(query.to_string(), PlanTree(plan));
                     Ok(Plan::new(
                         Rc::new(optimize_plan),
                         false,
@@ -630,7 +633,7 @@ impl Graph {
     ) -> bool {
         let attr_name = self.get_node_attribute_string(attr_id).unwrap();
         if value == Value::Null {
-            let removed = self.node_attrs.remove_attr(&id, &attr_id);
+            let removed = self.node_attrs.remove_attr(&id, attr_id);
 
             if removed {
                 if self.node_attrs.contains_key(&id) {
@@ -902,7 +905,7 @@ impl Graph {
         value: Value,
     ) -> bool {
         if value == Value::Null {
-            self.relationship_attrs.remove_attr(&id, &attr_id)
+            self.relationship_attrs.remove_attr(&id, attr_id)
         } else {
             self.relationship_attrs.insert_attr(id, attr_id, value)
         }
@@ -1134,14 +1137,16 @@ impl Graph {
     ) {
         let lm = self.get_label_matrix(label).unwrap();
         let label = label.clone();
-        INDEXER_CHANNEL.send((
-            0,
-            label,
-            lm,
-            self.node_indexer.clone(),
-            self.node_attrs.clone(),
-            self.node_attrs_name.clone(),
-        ));
+        INDEXER_CHANNEL
+            .send((
+                0,
+                label,
+                lm,
+                self.node_indexer.clone(),
+                self.node_attrs.clone(),
+                self.node_attrs_name.clone(),
+            ))
+            .unwrap();
     }
 
     pub fn commit_index(
@@ -1211,14 +1216,16 @@ impl Graph {
                 if reindex {
                     self.populate_index(label);
                 } else {
-                    INDEXER_CHANNEL.send((
-                        1,
-                        label.clone(),
-                        Matrix::new(0, 0),
-                        self.node_indexer.clone(),
-                        self.node_attrs.clone(),
-                        self.node_attrs_name.clone(),
-                    ));
+                    INDEXER_CHANNEL
+                        .send((
+                            1,
+                            label.clone(),
+                            Matrix::new(0, 0),
+                            self.node_indexer.clone(),
+                            self.node_attrs.clone(),
+                            self.node_attrs_name.clone(),
+                        ))
+                        .unwrap();
                 }
             }
             EntityType::Relationship => {}
@@ -1254,7 +1261,7 @@ impl Graph {
 }
 
 pub struct MvccGraph {
-    graph: Rc<AtomicRefCell<Graph>>,
+    graph: Arc<AtomicRefCell<Graph>>,
 }
 
 unsafe impl Send for MvccGraph {}
@@ -1268,23 +1275,23 @@ impl MvccGraph {
         cache_size: usize,
     ) -> Self {
         Self {
-            graph: Rc::new(AtomicRefCell::new(Graph::new(n, e, cache_size, 0))),
+            graph: Arc::new(AtomicRefCell::new(Graph::new(n, e, cache_size, 0))),
         }
     }
 
     #[must_use]
-    pub fn read(&self) -> Rc<AtomicRefCell<Graph>> {
+    pub fn read(&self) -> Arc<AtomicRefCell<Graph>> {
         self.graph.clone()
     }
 
     #[must_use]
-    pub fn write(&self) -> Rc<AtomicRefCell<Graph>> {
-        Rc::new(AtomicRefCell::new(self.graph.borrow().new_version()))
+    pub fn write(&self) -> Arc<AtomicRefCell<Graph>> {
+        Arc::new(AtomicRefCell::new(self.graph.borrow().new_version()))
     }
 
     pub fn commit(
         &mut self,
-        new_graph: Rc<AtomicRefCell<Graph>>,
+        new_graph: Arc<AtomicRefCell<Graph>>,
     ) {
         if self.graph.borrow().version + 1 == new_graph.borrow().version {
             self.graph = new_graph;
