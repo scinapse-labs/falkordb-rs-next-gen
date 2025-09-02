@@ -20,31 +20,48 @@ def setup_function(function):
         common.g.delete()
 
 
-def run_write(id):
+def run_write_attribute(id):
     db = FalkorDB()
     g = db.select_graph("test")
-    res = g.query("MATCH (n:Node) WHERE n.id = $id SET n.id = 0", params={"id": id})
-    version = int(res._raw_stats[4][15:])
+    if id % 2 == 0:
+        res = g.query("MATCH (n:Node) WHERE n.id = $id SET n.id = 0", params={"id": id})
+    else:
+        res = g.query("MATCH (n:Node) WHERE n.id = $id REMOVE n.id", params={"id": id})
+    version = int(res._raw_stats[-1][15:])
     return (id, version)
 
 
-def run_read(id):
+def run_read_attribute(id):
     db = FalkorDB()
     g = db.select_graph("test")
-    res = g.query("MATCH (n:Node) RETURN n.id")
+    res = g.query("MATCH (n) RETURN n.id")
     version = int(res._raw_stats[2][15:])
     return (id, res.result_set, version)
 
 
-def test_mvcc():
-    common.g.query("UNWIND range(1, 1000) AS x CREATE (:Node {id: x})")
-    try:
-        common.g.query("UNWIND [1, 2, 3] AS x MATCH (n:Node {id: x}) SET n.id = 1 / (x - 3)")
-    except:
-        pass
+def run_write_label(id):
+    db = FalkorDB()
+    g = db.select_graph("test")
+    if id % 2 == 0:
+        res = g.query("MATCH (n:Node) WHERE n.id = $id SET n:L", params={"id": id})
+    else:
+        res = g.query(
+            "MATCH (n:Node) WHERE n.id = $id REMOVE n:Node", params={"id": id}
+        )
+    version = int(res._raw_stats[-1][15:])
+    return (id, version)
 
-    res = common.g.query("MATCH (n:Node) RETURN n.id")
-    assert res.result_set == [[x] for x in range(1, 1001)]
+
+def run_read_label(id):
+    db = FalkorDB()
+    g = db.select_graph("test")
+    res = g.query("MATCH (n) RETURN labels(n)")
+    version = int(res._raw_stats[-1][15:])
+    return (id, res.result_set, version)
+
+
+def mvcc(run_write, run_read):
+    common.g.query("UNWIND range(1, 1000) AS x CREATE (:Node {id: x})")
 
     pool1 = Pool(1)
     pool8 = Pool(8)
@@ -55,12 +72,75 @@ def test_mvcc():
     res_write.wait()
     res_read.wait()
 
-    res = common.g.query("MATCH (n:Node) RETURN n.id")
-    assert res.result_set == [[x if x >= 100 else 0] for x in range(1, 1001)]
-    
-    assert res_write.get() == [(x, x + 1) for x in range(1, 100)]
+    return (res_write.get(), res_read.get())
 
-    for r in res_read.get():
+
+def test_mvcc_version_discard_on_error():
+    common.g.query("UNWIND range(1, 1000) AS x CREATE (:Node {id: x})")
+    try:
+        common.g.query(
+            "UNWIND [1, 2, 3] AS x MATCH (n:Node {id: x}) SET n.id = 1 / (x - 3)"
+        )
+    except:
+        pass
+
+    res = common.g.query("MATCH (n:Node) RETURN n.id")
+    assert res.result_set == [[x] for x in range(1, 1001)]
+
+
+def test_mvcc_attribute():
+    res_write, res_read = mvcc(run_write_attribute, run_read_attribute)
+
+    res = common.g.query("MATCH (n) RETURN n.id")
+    assert res.result_set == [
+        [0 if i < 100 and i % 2 == 0 else None if i < 100 and i % 2 == 1 else i]
+        for i in range(1, 1001)
+    ]
+
+    assert res_write == [(x, x + 1) for x in range(1, 100)]
+
+    for r in res_read:
         version = r[2]
         res = r[1]
-        assert res == [[0 if i < version else i] for i in range(1, 1001)]
+        assert res == [
+            [
+                (
+                    0
+                    if i < version and i % 2 == 0
+                    else None if i < version and i % 2 == 1 else i
+                )
+            ]
+            for i in range(1, 1001)
+        ]
+
+
+def test_mvcc_label():
+    res_write, res_read = mvcc(run_write_label, run_read_label)
+
+    res = common.g.query("MATCH (n) RETURN labels(n)")
+    assert res.result_set == [
+        [
+            (
+                ["Node", "L"]
+                if i < 100 and i % 2 == 0
+                else [] if i < 100 and i % 2 == 1 else ["Node"]
+            )
+        ]
+        for i in range(1, 1001)
+    ]
+
+    assert res_write == [(x, x + 1) for x in range(1, 100)]
+
+    for r in res_read:
+        version = r[2]
+        res = r[1]
+        assert res == [
+            [
+                (
+                    ["Node", "L"]
+                    if i < version and i % 2 == 0
+                    else [] if i < version and i % 2 == 1 else ["Node"]
+                )
+            ]
+            for i in range(1, 1001)
+        ]

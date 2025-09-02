@@ -1,13 +1,13 @@
-use crate::graph::matrix::{self, Dup, ElementWiseAdd, Get, Matrix, New, Remove, Set, Size};
+use crate::graph::matrix::{self, Dup, Get, Matrix, New, Remove, Set, Size};
 
 #[allow(non_upper_case_globals)]
 pub const GrB_INDEX_MAX: u64 = (1u64 << 60) - 1;
 
 #[derive(Clone)]
 pub struct Tensor {
-    m: Matrix<bool>,
-    mt: Matrix<bool>,
-    me: Matrix<bool>,
+    m: Matrix,
+    mt: Matrix,
+    me: Matrix,
 }
 
 impl New for Tensor {
@@ -16,21 +16,10 @@ impl New for Tensor {
         ncols: u64,
     ) -> Self {
         Self {
-            m: Matrix::<bool>::new(nrows, ncols),
-            mt: Matrix::<bool>::new(ncols, nrows),
-            me: Matrix::<bool>::new(GrB_INDEX_MAX, GrB_INDEX_MAX),
+            m: Matrix::new(nrows, ncols),
+            mt: Matrix::new(ncols, nrows),
+            me: Matrix::new(GrB_INDEX_MAX, GrB_INDEX_MAX),
         }
-    }
-}
-
-impl ElementWiseAdd<u64> for Tensor {
-    fn element_wise_add(
-        &mut self,
-        other: &Self,
-    ) {
-        self.m.element_wise_add(&other.m);
-        self.mt.element_wise_add(&other.mt);
-        self.me.element_wise_add(&other.me);
     }
 }
 
@@ -100,8 +89,8 @@ impl Tensor {
     }
 
     #[must_use]
-    pub fn dup_bool(&self) -> Matrix<bool> {
-        self.m.dup()
+    pub const fn matrix(&self) -> &Matrix {
+        &self.m
     }
 
     #[must_use]
@@ -123,8 +112,8 @@ impl Tensor {
 
 pub struct Iter<'a> {
     t: &'a Tensor,
-    mit: matrix::Iter<bool>,
-    vit: Option<matrix::Iter<bool>>,
+    mit: matrix::Iter,
+    vit: Option<matrix::Iter>,
     transpose: bool,
     src: u64,
     dest: u64,
