@@ -246,7 +246,8 @@ where
 
 pub struct Iter {
     mit: matrix::Iter,
-    dp: matrix::Iter,
+    dpit: matrix::Iter,
+    dm: Cow<Matrix>,
 }
 
 impl Iter {
@@ -264,7 +265,8 @@ impl Iter {
     ) -> Self {
         Self {
             mit: m.m.iter(min_row, max_row),
-            dp: m.dp.iter(min_row, max_row),
+            dpit: m.dp.iter(min_row, max_row),
+            dm: m.dm.clone(),
         }
     }
 }
@@ -278,7 +280,11 @@ impl Iterator for Iter {
     /// - `Some((u64, u64))`: The next element in the matrix.
     /// - `None`: The iterator is depleted.
     fn next(&mut self) -> Option<Self::Item> {
-        // TODO: fix
-        self.mit.next().or_else(|| self.dp.next())
+        for (i, j) in &mut self.mit {
+            if self.dm.get(i, j).is_none() {
+                return Some((i, j));
+            }
+        }
+        self.dpit.next()
     }
 }
