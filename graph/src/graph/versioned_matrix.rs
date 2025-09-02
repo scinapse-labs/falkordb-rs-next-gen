@@ -1,12 +1,51 @@
+use std::ops::{Deref, DerefMut};
+
 use crate::graph::matrix::{
     self, Dup, ElementWiseAdd, Get, Matrix, New, Remove, Set, Size, Transpose,
 };
 
 #[derive(Clone)]
+struct Cow<T: Dup<T> + Clone> {
+    inner: T,
+    dup: bool,
+}
+
+impl<T: Dup<T> + Clone> Cow<T> {
+    const fn new(inner: T) -> Self {
+        Self { inner, dup: false }
+    }
+
+    fn new_version(&self) -> Self {
+        Self {
+            inner: self.inner.clone(),
+            dup: true,
+        }
+    }
+}
+
+impl Deref for Cow<Matrix> {
+    type Target = Matrix;
+
+    fn deref(&self) -> &Self::Target {
+        &self.inner
+    }
+}
+
+impl DerefMut for Cow<Matrix> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        if self.dup {
+            self.inner = self.inner.dup();
+            self.dup = false;
+        }
+        &mut self.inner
+    }
+}
+
+#[derive(Clone)]
 pub struct VersionedMatrix {
     m: Matrix,
-    dp: Matrix,
-    dm: Matrix,
+    dp: Cow<Matrix>,
+    dm: Cow<Matrix>,
 }
 
 unsafe impl Send for VersionedMatrix {}
@@ -51,8 +90,8 @@ impl New for VersionedMatrix {
     ) -> Self {
         Self {
             m: Matrix::new(nrows, ncols),
-            dp: Matrix::new(nrows, ncols),
-            dm: Matrix::new(nrows, ncols),
+            dp: Cow::new(Matrix::new(nrows, ncols)),
+            dm: Cow::new(Matrix::new(nrows, ncols)),
         }
     }
 }
@@ -61,8 +100,8 @@ impl Dup<Self> for VersionedMatrix {
     fn dup(&self) -> Self {
         Self {
             m: self.m.clone(),
-            dp: self.dp.dup(),
-            dm: self.dm.dup(),
+            dp: self.dp.new_version(),
+            dm: self.dm.new_version(),
         }
     }
 }
@@ -160,7 +199,16 @@ impl Get for VersionedMatrix {
         i: u64,
         j: u64,
     ) -> Option<bool> {
-        self.m.get(i, j)
+        self.m.get(i, j).map_or_else(
+            || self.dp.get(i, j),
+            |value| {
+                if self.dm.get(i, j).is_some() {
+                    None
+                } else {
+                    Some(value)
+                }
+            },
+        )
     }
 }
 
@@ -171,7 +219,9 @@ impl Set for VersionedMatrix {
         j: u64,
         value: bool,
     ) {
-        if self.m.get(i, j).is_none() {
+        if self.m.get(i, j).is_some() {
+            self.dm.remove(i, j);
+        } else {
             self.dp.set(i, j, value);
         }
     }
@@ -188,8 +238,8 @@ where
     fn transpose(&self) -> Self {
         Self {
             m: self.m.transpose(),
-            dp: self.dp.transpose(),
-            dm: self.dm.transpose(),
+            dp: Cow::new(self.dp.transpose()),
+            dm: Cow::new(self.dm.transpose()),
         }
     }
 }
