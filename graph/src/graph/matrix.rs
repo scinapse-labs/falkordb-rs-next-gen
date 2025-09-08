@@ -8,14 +8,20 @@ use std::{
 };
 
 use crate::graph::GraphBLAS::{
-    GrB_BOOL, GrB_DESC_RCT0, GrB_Info, GrB_Matrix, GrB_Matrix_dup, GrB_Matrix_eWiseAdd_Semiring,
-    GrB_Matrix_eWiseMult_Semiring, GrB_Matrix_extractElement_BOOL, GrB_Matrix_free,
-    GrB_Matrix_get_INT32, GrB_Matrix_ncols, GrB_Matrix_new, GrB_Matrix_nrows, GrB_Matrix_nvals,
-    GrB_Matrix_removeElement, GrB_Matrix_resize, GrB_Matrix_setElement_BOOL, GrB_Matrix_wait,
-    GrB_Mode, GrB_WaitMode, GrB_finalize, GrB_mxm, GrB_transpose, GxB_ANY_PAIR_BOOL, GxB_Iterator,
-    GxB_Iterator_free, GxB_Iterator_new, GxB_Matrix_Iterator_attach, GxB_Matrix_Iterator_getIndex,
-    GxB_Matrix_Iterator_next, GxB_Matrix_fprint, GxB_Option_Field, GxB_Print_Level, GxB_init,
-    GxB_rowIterator_getRowIndex, GxB_rowIterator_nextRow, GxB_rowIterator_seekRow,
+    GrB_BOOL, GrB_DESC_C, GrB_DESC_CT0, GrB_DESC_CT0T1, GrB_DESC_CT1, GrB_DESC_R, GrB_DESC_RC,
+    GrB_DESC_RCT0, GrB_DESC_RCT0T1, GrB_DESC_RCT1, GrB_DESC_RS, GrB_DESC_RSC, GrB_DESC_RSCT0,
+    GrB_DESC_RSCT0T1, GrB_DESC_RSCT1, GrB_DESC_RST0, GrB_DESC_RST0T1, GrB_DESC_RST1, GrB_DESC_RT0,
+    GrB_DESC_RT0T1, GrB_DESC_RT1, GrB_DESC_S, GrB_DESC_SC, GrB_DESC_SCT0, GrB_DESC_SCT0T1,
+    GrB_DESC_SCT1, GrB_DESC_ST0, GrB_DESC_ST0T1, GrB_DESC_ST1, GrB_DESC_T0, GrB_DESC_T0T1,
+    GrB_DESC_T1, GrB_Descriptor, GrB_Info, GrB_Matrix, GrB_Matrix_dup,
+    GrB_Matrix_eWiseAdd_Semiring, GrB_Matrix_eWiseMult_Semiring, GrB_Matrix_extractElement_BOOL,
+    GrB_Matrix_free, GrB_Matrix_get_INT32, GrB_Matrix_ncols, GrB_Matrix_new, GrB_Matrix_nrows,
+    GrB_Matrix_nvals, GrB_Matrix_removeElement, GrB_Matrix_resize, GrB_Matrix_setElement_BOOL,
+    GrB_Matrix_wait, GrB_Mode, GrB_WaitMode, GrB_finalize, GrB_mxm, GrB_transpose,
+    GxB_ANY_PAIR_BOOL, GxB_Iterator, GxB_Iterator_free, GxB_Iterator_new,
+    GxB_Matrix_Iterator_attach, GxB_Matrix_Iterator_getIndex, GxB_Matrix_Iterator_next,
+    GxB_Matrix_fprint, GxB_Option_Field, GxB_Print_Level, GxB_init, GxB_rowIterator_getRowIndex,
+    GxB_rowIterator_nextRow, GxB_rowIterator_seekRow,
 };
 
 /// Initializes the GraphBLAS library in non-blocking mode.
@@ -156,27 +162,107 @@ impl ElementWiseAdd for Matrix {
     }
 }
 
-pub trait ElementWiseMultiply {
+pub trait MaskedElementWiseMultiply {
     fn element_wise_multiply(
         &mut self,
-        b: &Self,
+        mask: Option<&Matrix>,
+        a: Option<&Self>,
+        b: Option<&Self>,
+        descriptor: Option<Descriptor>,
     );
 }
 
-impl ElementWiseMultiply for Matrix {
+pub enum Descriptor {
+    T0,
+    T1,
+    T0T1,
+    C,
+    CT0,
+    CT1,
+    CT0T1,
+    S,
+    ST0,
+    ST1,
+    ST0T1,
+    SC,
+    SCT0,
+    SCT1,
+    SCT0T1,
+    R,
+    RT0,
+    RT1,
+    RT0T1,
+    RC,
+    RCT0,
+    RCT1,
+    RCT0T1,
+    RS,
+    RST0,
+    RST1,
+    RST0T1,
+    RSC,
+    RSCT0,
+    RSCT1,
+    RSCT0T1,
+}
+
+impl From<Descriptor> for GrB_Descriptor {
+    fn from(descriptor: Descriptor) -> Self {
+        unsafe {
+            match descriptor {
+                Descriptor::T0 => GrB_DESC_T0,
+                Descriptor::T1 => GrB_DESC_T1,
+                Descriptor::T0T1 => GrB_DESC_T0T1,
+                Descriptor::C => GrB_DESC_C,
+                Descriptor::CT0 => GrB_DESC_CT0,
+                Descriptor::CT1 => GrB_DESC_CT1,
+                Descriptor::CT0T1 => GrB_DESC_CT0T1,
+                Descriptor::S => GrB_DESC_S,
+                Descriptor::ST0 => GrB_DESC_ST0,
+                Descriptor::ST1 => GrB_DESC_ST1,
+                Descriptor::ST0T1 => GrB_DESC_ST0T1,
+                Descriptor::SC => GrB_DESC_SC,
+                Descriptor::SCT0 => GrB_DESC_SCT0,
+                Descriptor::SCT1 => GrB_DESC_SCT1,
+                Descriptor::SCT0T1 => GrB_DESC_SCT0T1,
+                Descriptor::R => GrB_DESC_R,
+                Descriptor::RT0 => GrB_DESC_RT0,
+                Descriptor::RT1 => GrB_DESC_RT1,
+                Descriptor::RT0T1 => GrB_DESC_RT0T1,
+                Descriptor::RC => GrB_DESC_RC,
+                Descriptor::RCT0 => GrB_DESC_RCT0,
+                Descriptor::RCT1 => GrB_DESC_RCT1,
+                Descriptor::RCT0T1 => GrB_DESC_RCT0T1,
+                Descriptor::RS => GrB_DESC_RS,
+                Descriptor::RST0 => GrB_DESC_RST0,
+                Descriptor::RST1 => GrB_DESC_RST1,
+                Descriptor::RST0T1 => GrB_DESC_RST0T1,
+                Descriptor::RSC => GrB_DESC_RSC,
+                Descriptor::RSCT0 => GrB_DESC_RSCT0,
+                Descriptor::RSCT1 => GrB_DESC_RSCT1,
+                Descriptor::RSCT0T1 => GrB_DESC_RSCT0T1,
+            }
+        }
+    }
+}
+
+impl MaskedElementWiseMultiply for Matrix {
     fn element_wise_multiply(
         &mut self,
-        b: &Self,
+        mask: Option<&Self>,
+        a: Option<&Self>,
+        b: Option<&Self>,
+        descriptor: Option<Descriptor>,
     ) {
         unsafe {
             let info = GrB_Matrix_eWiseMult_Semiring(
                 *self.m,
-                null_mut(),
+                mask.map_or(null_mut(), |m| *m.m),
                 null_mut(),
                 GxB_ANY_PAIR_BOOL,
-                *self.m,
-                *b.m,
-                null_mut(),
+                a.map_or(*self.m, |a| *a.m),
+                b.map_or(*self.m, |b| *b.m),
+                descriptor.map_or(null_mut(), |d| d.into()),
             );
             debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
         }

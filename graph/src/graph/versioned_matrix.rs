@@ -1,7 +1,8 @@
 use std::ops::{Deref, DerefMut};
 
 use crate::graph::matrix::{
-    self, Dup, ElementWiseAdd, Get, Matrix, New, Remove, Set, Size, Transpose,
+    self, Descriptor, Dup, ElementWiseAdd, Get, MaskedElementWiseMultiply, Matrix, New, Remove,
+    Set, Size, Transpose,
 };
 
 #[derive(Clone)]
@@ -121,8 +122,8 @@ impl VersionedMatrix {
     pub fn to_matrix(&self) -> Matrix {
         // TODO: fix
         let mut m = self.m.dup();
-        m.element_wise_add(&self.dp);
         m.remove_all(&self.dm);
+        m.element_wise_add(&self.dp);
         m
     }
 
@@ -154,28 +155,42 @@ impl Remove for VersionedMatrix {
     }
 }
 
-// impl ElementWiseAdd<bool> for VersionedMatrix<bool> {
-//     fn element_wise_add(
-//         &mut self,
-//         b: &Self,
-//     ) {
-//         // TODO: fixß
-//         self.dp.element_wise_add(&b.m);
-//         self.dp.element_wise_add(&b.dp);
-//         self.dm.element_wise_add(&b.dm);
-//     }
-// }
+impl ElementWiseAdd for VersionedMatrix {
+    fn element_wise_add(
+        &mut self,
+        b: &Self,
+    ) {
+        // TODO: fixß
+        self.dp.element_wise_add(&b.m);
+        self.dp.element_wise_add(&b.dp);
+        self.dm.element_wise_add(&b.dm);
+    }
+}
 
-// impl ElementWiseMultiply<bool> for VersionedMatrix<bool> {
-//     fn element_wise_multiply(
-//         &mut self,
-//         b: &Self,
-//     ) {
-//         self.m.element_wise_multiply(&b.m);
-//         self.dp.element_wise_multiply(&b.dp);
-//         self.dm.element_wise_multiply(&b.dm);
-//     }
-// }
+pub trait ElementWiseMultiply {
+    fn element_wise_multiply(
+        &mut self,
+        b: &Self,
+    );
+}
+
+impl ElementWiseMultiply for VersionedMatrix {
+    fn element_wise_multiply(
+        &mut self,
+        b: &Self,
+    ) {
+        // TODO: fix
+        debug_assert_eq!(self.dp.nvals(), 0);
+        debug_assert_eq!(self.dm.nvals(), 0);
+        self.dp.element_wise_multiply(
+            Some(&self.dm),
+            Some(&self.m),
+            Some(&b.dp),
+            Some(Descriptor::C),
+        );
+        // self.dm.element_wise_multiply(None, &self.dm, &b.dp, None);
+    }
+}
 
 // impl MxM<bool> for VersionedMatrix<bool> {
 //     fn lmxm(

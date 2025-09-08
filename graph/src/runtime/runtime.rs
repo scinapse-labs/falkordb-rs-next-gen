@@ -112,7 +112,9 @@ impl GetVariables for DynNode<'_, IR> {
                 | IR::Commit
                 | IR::CreateIndex { .. }
                 | IR::DropIndex { .. } => {}
-                IR::NodeByLabelScan(node) | IR::NodeByIndexScan { node, .. } => {
+                IR::NodeByLabelScan(node)
+                | IR::NodeByIndexScan { node, .. }
+                | IR::NodeByIdScan { node, .. } => {
                     vars.push(node.alias.clone());
                 }
                 IR::RelationshipScan(query_relationship) => {
@@ -1027,6 +1029,14 @@ impl<'a> Runtime {
                 let idx = idx.clone();
                 Ok(iter
                     .try_flat_map(move |vars| self.node_by_index_scan(node, index, query, vars))
+                    .cond_inspect(self.inspect, move |res| {
+                        self.record.borrow_mut().push((idx.clone(), res.clone()));
+                    }))
+            }
+            IR::NodeByIdScan { node, id } => {
+                let idx = idx.clone();
+                Ok(iter
+                    .try_flat_map(move |vars| self.node_by_id_scan(node, id, vars))
                     .cond_inspect(self.inspect, move |res| {
                         self.record.borrow_mut().push((idx.clone(), res.clone()));
                     }))
@@ -2004,6 +2014,30 @@ impl<'a> Runtime {
                     Some(Ok(vars))
                 }),
         ))
+    }
+
+    fn node_by_id_scan(
+        &'a self,
+        node_pattern: &'a QueryNode,
+        id: &QueryExpr,
+        mut vars: Env,
+    ) -> Result<Box<dyn Iterator<Item = Result<Env, String>> + 'a>, String> {
+        let id = self.run_expr(id, id.root().idx(), &vars, None)?;
+        let id = match id {
+            Value::Int(id) => NodeId::from(id as u64),
+            _ => {
+                return Err(String::from("Node ID must be an integer"));
+            }
+        };
+        let g = self.g.borrow();
+        if g.get_node_labels(id)
+            .all(|label| node_pattern.labels.contains(&label))
+        {
+            vars.insert(&node_pattern.alias, Value::Node(id));
+            Ok(Box::new(std::iter::once(Ok(vars))))
+        } else {
+            Ok(Box::new(empty()))
+        }
     }
 
     fn delete(

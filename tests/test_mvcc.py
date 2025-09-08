@@ -60,6 +60,26 @@ def run_read_label(id):
     return (id, res.result_set, version)
 
 
+def run_write_relationship(id):
+    db = FalkorDB()
+    g = db.select_graph("test")
+    res = g.query(
+        "MATCH (n:Node) WHERE id(n) = $id WITH n MATCH (m:Node) WHERE id(m) = $id + 1 CREATE (n)-[:RELATES_TO {id: $id}]->(m)",
+        params={"id": id},
+    )
+    assert res.relationships_created == 1
+    version = int(res._raw_stats[-1][15:])
+    return (id, version)
+
+
+def run_read_relationship(id):
+    db = FalkorDB()
+    g = db.select_graph("test")
+    res = g.query("MATCH (n)-[r]->(m) RETURN r.id")
+    version = int(res._raw_stats[2][15:])
+    return (id, res.result_set, version)
+
+
 def mvcc(run_write, run_read):
     common.g.query("UNWIND range(1, 1000) AS x CREATE (:Node {id: x})")
 
@@ -144,3 +164,17 @@ def test_mvcc_label():
             ]
             for i in range(1, 1001)
         ]
+
+
+def test_mvcc_relationship():
+    res_write, res_read = mvcc(run_write_relationship, run_read_relationship)
+
+    res = common.g.query("MATCH (n)-[r]->(m) RETURN r.id")
+    assert res.result_set == [[i] for i in range(1, 100)]
+
+    assert res_write == [(x, x + 1) for x in range(1, 100)]
+
+    for r in res_read:
+        version = r[2]
+        res = r[1]
+        assert res == [[i] for i in range(1, version)]

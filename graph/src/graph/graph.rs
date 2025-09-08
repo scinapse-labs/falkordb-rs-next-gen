@@ -3,7 +3,7 @@ use std::{
     hash::Hash,
     num::NonZeroUsize,
     rc::Rc,
-    sync::{Arc, Mutex, RwLock, mpsc},
+    sync::{Arc, Mutex, mpsc},
     time::{Duration, Instant},
 };
 
@@ -20,7 +20,7 @@ use crate::{
     ast::ExprIR,
     cypher::Parser,
     graph::{
-        matrix::{Dup, ElementWiseAdd, ElementWiseMultiply, Matrix, MxM, New, Remove, Set, Size},
+        matrix::{Dup, ElementWiseAdd, MaskedElementWiseMultiply, MxM, New, Remove, Set, Size},
         tensor::Tensor,
         versioned_matrix::VersionedMatrix,
     },
@@ -105,44 +105,97 @@ impl Plan {
 }
 
 #[derive(Clone)]
-struct AttributeStore<T: Eq + Hash + Clone + Send + Sync> {
-    attributes: Arc<RwLock<HashMap<T, OrderMap<AttrId, Value>>>>,
+struct BlockVec<T: Default, const N: usize> {
+    segments: Vec<Box<[Option<T>; N]>>,
+    len: usize,
 }
 
-impl<T: Eq + Hash + Clone + Send + Sync> AttributeStore<T> {
+impl<T: Default, const N: usize> BlockVec<T, N> {
+    const fn new() -> Self {
+        Self {
+            segments: Vec::new(),
+            len: 0,
+        }
+    }
+
+    fn get(
+        &self,
+        key: u64,
+    ) -> Option<&T> {
+        self.segments
+            .get((key as usize) / N)?
+            .get((key as usize) % N)?
+            .as_ref()
+    }
+
+    fn get_mut(
+        &mut self,
+        key: u64,
+    ) -> Option<&mut T> {
+        self.segments
+            .get_mut((key as usize) / N)?
+            .get_mut((key as usize) % N)?
+            .as_mut()
+    }
+
+    fn insert(
+        &mut self,
+        key: u64,
+    ) -> &mut T {
+        while (key as usize) / N >= self.segments.len() {
+            self.segments.push(Box::new([(); N].map(|_| None)));
+        }
+        let slot = &mut self.segments[(key as usize) / N][(key as usize) % N];
+        if slot.is_none() {
+            self.len += 1;
+            *slot = Some(T::default());
+        }
+        slot.as_mut().unwrap()
+    }
+
+    fn remove(
+        &mut self,
+        key: u64,
+    ) -> Option<T> {
+        self.segments
+            .get_mut((key as usize) / N)?
+            .get_mut((key as usize) % N)?
+            .take()
+    }
+}
+
+#[derive(Clone)]
+struct AttributeStore {
+    attributes: Arc<AtomicRefCell<BlockVec<OrderMap<AttrId, Value>, 1024>>>,
+}
+
+impl AttributeStore {
     pub fn new() -> Self {
         Self {
-            attributes: Arc::new(RwLock::new(HashMap::new())),
+            attributes: Arc::new(AtomicRefCell::new(BlockVec::new())),
         }
     }
 
     pub fn remove(
         &mut self,
-        key: &T,
+        key: u64,
     ) -> Option<OrderMap<AttrId, Value>> {
-        self.attributes.write().unwrap().remove(key)
-    }
-
-    pub fn contains_key(
-        &self,
-        key: &T,
-    ) -> bool {
-        self.attributes.read().unwrap().contains_key(key)
+        self.attributes.borrow_mut().remove(key)
     }
 
     pub fn get(
         &self,
-        key: &T,
+        key: u64,
     ) -> Option<OrderMap<AttrId, Value>> {
-        self.attributes.read().unwrap().get(key).cloned()
+        self.attributes.borrow().get(key).cloned()
     }
 
     pub fn remove_attr(
         &mut self,
-        key: &T,
+        key: u64,
         attr_id: AttrId,
     ) -> bool {
-        let mut attributes = self.attributes.write().unwrap();
+        let mut attributes = self.attributes.borrow_mut();
         if let Some(attrs) = attributes.get_mut(key) {
             let has_value = attrs.remove(&attr_id).is_some();
             if attrs.is_empty() {
@@ -156,29 +209,23 @@ impl<T: Eq + Hash + Clone + Send + Sync> AttributeStore<T> {
 
     pub fn insert_attr(
         &mut self,
-        key: T,
+        key: u64,
         attr_id: AttrId,
         value: Value,
     ) -> bool {
-        let mut attributes = self.attributes.write().unwrap();
-        attributes
-            .entry(key)
-            .or_default()
-            .insert(attr_id, value)
-            .is_some()
+        let mut attributes = self.attributes.borrow_mut();
+        attributes.insert(key).insert(attr_id, value).is_some()
     }
 
     pub fn new_version(&self) -> Self {
-        let attrs = self.attributes.read().unwrap();
-
         Self {
-            attributes: Arc::new(RwLock::new((*attrs).clone())),
+            attributes: Arc::new(AtomicRefCell::new(self.attributes.borrow().clone())),
         }
     }
 }
 
-unsafe impl<T: Eq + Hash + Clone + Send + Sync> Send for AttributeStore<T> {}
-unsafe impl<T: Eq + Hash + Clone + Send + Sync> Sync for AttributeStore<T> {}
+unsafe impl Send for AttributeStore {}
+unsafe impl Sync for AttributeStore {}
 
 #[derive(Clone)]
 pub struct Graph {
@@ -190,15 +237,15 @@ pub struct Graph {
     relationship_count: u64,
     deleted_nodes: RoaringTreemap,
     deleted_relationships: RoaringTreemap,
-    zero_matrix: Matrix,
-    adjacancy_matrix: Matrix,
+    zero_matrix: VersionedMatrix,
+    adjacancy_matrix: VersionedMatrix,
     node_labels_matrix: VersionedMatrix,
-    relationship_type_matrix: Matrix,
-    all_nodes_matrix: Matrix,
+    relationship_type_matrix: VersionedMatrix,
+    all_nodes_matrix: VersionedMatrix,
     labels_matices: Vec<VersionedMatrix>,
     relationship_matrices: Vec<Tensor>,
-    node_attrs: AttributeStore<NodeId>,
-    relationship_attrs: AttributeStore<RelationshipId>,
+    node_attrs: AttributeStore,
+    relationship_attrs: AttributeStore,
     node_indexer: Indexer,
     node_labels: Vec<Arc<String>>,
     relationship_types: Vec<Arc<String>>,
@@ -222,7 +269,7 @@ type IndexAction = (
     Arc<String>,
     Option<VersionedMatrix>,
     Indexer,
-    AttributeStore<NodeId>,
+    AttributeStore,
     Vec<Arc<String>>,
 );
 
@@ -260,7 +307,7 @@ static INDEXER_CHANNEL: Lazy<mpsc::Sender<IndexAction>> = Lazy::new(|| {
                     let mut doc = Document::new(n);
                     for (attr_id, fields) in &attr_ids {
                         if let Some(value) = node_attrs
-                            .get(&NodeId(n))
+                            .get(n)
                             .map_or_else(|| None, |attrs| attrs.get(attr_id).cloned())
                         {
                             for field in fields {
@@ -304,11 +351,11 @@ impl Graph {
             relationship_count: 0,
             deleted_nodes: RoaringTreemap::new(),
             deleted_relationships: RoaringTreemap::new(),
-            zero_matrix: Matrix::new(0, 0),
-            adjacancy_matrix: Matrix::new(n, n),
+            zero_matrix: VersionedMatrix::new(0, 0),
+            adjacancy_matrix: VersionedMatrix::new(n, n),
             node_labels_matrix: VersionedMatrix::new(0, 0),
-            relationship_type_matrix: Matrix::new(0, 0),
-            all_nodes_matrix: Matrix::new(n, n),
+            relationship_type_matrix: VersionedMatrix::new(0, 0),
+            all_nodes_matrix: VersionedMatrix::new(n, n),
             labels_matices: Vec::new(),
             relationship_matrices: Vec::new(),
             node_attrs: AttributeStore::new(),
@@ -634,10 +681,10 @@ impl Graph {
     ) -> bool {
         let attr_name = self.get_node_attribute_string(attr_id).unwrap();
         if value == Value::Null {
-            let removed = self.node_attrs.remove_attr(&id, attr_id);
+            let removed = self.node_attrs.remove_attr(id.0, attr_id);
 
             if removed {
-                if self.node_attrs.contains_key(&id) {
+                if self.node_attrs.get(id.0).is_some() {
                     for (_, label_id) in self.node_labels_matrix.iter(id.into(), id.into()) {
                         let label = self.node_labels[label_id as usize].clone();
                         if self
@@ -667,7 +714,7 @@ impl Graph {
             }
             removed
         } else {
-            let res = self.node_attrs.insert_attr(id, attr_id, value);
+            let res = self.node_attrs.insert_attr(id.0, attr_id, value);
             for (_, label_id) in self.node_labels_matrix.iter(id.into(), id.into()) {
                 let label = self.node_labels[label_id as usize].clone();
                 if self
@@ -697,7 +744,7 @@ impl Graph {
             self.resize();
             self.node_labels_matrix.set(id.0, label_id.0 as u64, true);
             if self.node_indexer.is_label_indexed(label.clone())
-                && self.node_attrs.contains_key(&id)
+                && self.node_attrs.get(id.0).is_some()
             {
                 index_add_docs
                     .entry(label.clone())
@@ -746,7 +793,7 @@ impl Graph {
             let label = self.node_labels[label_id].clone();
             self.node_labels_matrix.remove(id.0, label_id as _);
             let mut indexed = false;
-            if let Some(attrs) = self.node_attrs.get(&id) {
+            if let Some(attrs) = self.node_attrs.get(id.0) {
                 for (attr_id, _) in attrs {
                     let attr_name = self.get_node_attribute_string(attr_id).unwrap();
                     if self.node_indexer.is_attr_indexed(label.clone(), attr_name) {
@@ -763,7 +810,7 @@ impl Graph {
             }
         }
 
-        self.node_attrs.remove(&id);
+        self.node_attrs.remove(id.0);
     }
 
     pub fn get_node_relationships(
@@ -785,19 +832,19 @@ impl Graph {
         labels: &OrderSet<Arc<String>>,
     ) -> impl Iterator<Item = NodeId> + use<> {
         let iter = if labels.is_empty() {
-            self.all_nodes_matrix.iter(0, u64::MAX)
+            self.all_nodes_matrix.to_matrix().iter(0, u64::MAX)
         } else {
             let matrices = labels
                 .iter()
                 .map(|label| self.get_label_matrix(label))
                 .collect::<Option<Vec<_>>>();
             matrices.map_or_else(
-                || self.zero_matrix.iter(0, u64::MAX),
-                |matrices| {
-                    let mut iter = matrices.iter();
+                || self.zero_matrix.to_matrix().iter(0, u64::MAX),
+                |mut matrices| {
+                    let mut iter = matrices.iter_mut();
                     let mut m = iter.next().unwrap().to_matrix();
                     for label_matrix in iter {
-                        m.element_wise_multiply(&label_matrix.to_matrix());
+                        m.element_wise_multiply(None, None, Some(&label_matrix.to_matrix()), None);
                     }
                     m.iter(0, u64::MAX)
                 },
@@ -831,7 +878,7 @@ impl Graph {
         attr_id: AttrId,
     ) -> Option<Value> {
         self.node_attrs
-            .get(&id)
+            .get(id.0)
             .map_or_else(|| None, |attrs| attrs.get(&attr_id).cloned())
     }
 
@@ -906,9 +953,9 @@ impl Graph {
         value: Value,
     ) -> bool {
         if value == Value::Null {
-            self.relationship_attrs.remove_attr(&id, attr_id)
+            self.relationship_attrs.remove_attr(id.0, attr_id)
         } else {
-            self.relationship_attrs.insert_attr(id, attr_id, value)
+            self.relationship_attrs.insert_attr(id.0, attr_id, value)
         }
     }
 
@@ -951,7 +998,7 @@ impl Graph {
             let label = self.relationship_types.get(type_id.0).cloned().unwrap();
             for (id, _, _) in &rels {
                 self.relationship_type_matrix.remove(*id, type_id.0 as u64);
-                self.relationship_attrs.remove(&RelationshipId(*id));
+                self.relationship_attrs.remove(*id);
             }
             self.get_relationship_matrix_mut(&label).remove_all(rels);
         }
@@ -997,37 +1044,50 @@ impl Graph {
             .iter()
             .map(|label| self.get_label_matrix(label))
             .collect::<Option<Vec<_>>>();
-        let iter = if let (Some(matrices), Some(src_labels_matrices), Some(dest_labels_matrices)) =
-            (matrices, src_labels_matrices, dest_labels_matrices)
+        let iter = if let (
+            Some(matrices),
+            Some(mut src_labels_matrices),
+            Some(mut dest_labels_matrices),
+        ) = (matrices, src_labels_matrices, dest_labels_matrices)
         {
             let mut iter = matrices.iter();
-            let mut m = iter
-                .next()
-                .map_or_else(|| &self.adjacancy_matrix, Tensor::matrix)
-                .dup();
+            let mut m = iter.next().map_or_else(
+                || self.adjacancy_matrix.to_matrix(),
+                |t| Tensor::matrix(t).clone(),
+            );
             for relationship_matrix in iter {
                 m.element_wise_add(relationship_matrix.matrix());
             }
 
             if !src_labels_matrices.is_empty() {
-                let mut iter = src_labels_matrices.iter();
+                let mut iter = src_labels_matrices.iter_mut();
                 let mut src_matrix = iter.next().unwrap().to_matrix();
                 for label_matrix in iter {
-                    src_matrix.element_wise_multiply(&label_matrix.to_matrix());
+                    src_matrix.element_wise_multiply(
+                        None,
+                        None,
+                        Some(&label_matrix.to_matrix()),
+                        None,
+                    );
                 }
                 m.rmxm(&src_matrix);
             }
             if !dest_labels_matrices.is_empty() {
-                let mut iter = dest_labels_matrices.iter();
+                let mut iter = dest_labels_matrices.iter_mut();
                 let mut dest_matrix = iter.next().unwrap().to_matrix();
                 for label_matrix in iter {
-                    dest_matrix.element_wise_multiply(&label_matrix.to_matrix());
+                    dest_matrix.element_wise_multiply(
+                        None,
+                        None,
+                        Some(&label_matrix.to_matrix()),
+                        None,
+                    );
                 }
                 m.lmxm(&dest_matrix);
             }
             m.iter(0, u64::MAX)
         } else {
-            self.zero_matrix.iter(0, u64::MAX)
+            self.zero_matrix.to_matrix().iter(0, u64::MAX)
         };
 
         iter.map(|(src, dest)| (NodeId(src), NodeId(dest)))
@@ -1053,7 +1113,7 @@ impl Graph {
         attr_id: AttrId,
     ) -> Option<Value> {
         self.relationship_attrs
-            .get(&id)
+            .get(id.0)
             .map_or_else(|| None, |attrs| attrs.get(&attr_id).cloned())
     }
 
@@ -1098,7 +1158,7 @@ impl Graph {
         &self,
         id: NodeId,
     ) -> OrderMap<AttrId, Value> {
-        self.node_attrs.get(&id).unwrap_or_default()
+        self.node_attrs.get(id.0).unwrap_or_default()
     }
 
     #[must_use]
@@ -1106,7 +1166,7 @@ impl Graph {
         &self,
         id: RelationshipId,
     ) -> OrderMap<AttrId, Value> {
-        self.relationship_attrs.get(&id).unwrap_or_default()
+        self.relationship_attrs.get(id.0).unwrap_or_default()
     }
 
     pub fn create_index(
@@ -1162,7 +1222,7 @@ impl Graph {
             let mut docs = vec![];
             for id in ids {
                 let mut doc = Document::new(id);
-                let attrs = self.node_attrs.get(&NodeId(id)).unwrap();
+                let attrs = self.node_attrs.get(id).unwrap();
                 for (key, fields) in &fields {
                     let attr_id = self.get_node_attribute_id(key.as_str()).unwrap();
                     let value = attrs.get(&attr_id).cloned().unwrap();
@@ -1296,8 +1356,10 @@ impl MvccGraph {
         new_graph: Arc<AtomicRefCell<Graph>>,
     ) {
         if self.graph.borrow().version + 1 == new_graph.borrow().version {
+            new_graph.borrow().adjacancy_matrix.wait();
+            new_graph.borrow().node_labels_matrix.wait();
+            new_graph.borrow().relationship_type_matrix.wait();
             self.graph = new_graph;
-            self.graph.borrow().node_labels_matrix.wait();
         } else {
             todo!();
         }

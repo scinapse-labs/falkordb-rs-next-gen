@@ -33,6 +33,10 @@ pub enum IR {
         index: Arc<String>,
         query: Rc<IndexQuery<QueryExpr>>,
     },
+    NodeByIdScan {
+        node: Rc<QueryNode>,
+        id: QueryExpr,
+    },
     RelationshipScan(Rc<QueryRelationship>),
     ExpandInto(Rc<QueryRelationship>),
     PathBuilder(Vec<Rc<QueryPath>>),
@@ -91,6 +95,9 @@ impl Display for IR {
             Self::NodeByLabelScan(node) => write!(f, "Node By Label Scan | {node}"),
             Self::NodeByIndexScan { node, .. } => {
                 write!(f, "Node By Index Scan | {node}")
+            }
+            Self::NodeByIdScan { node, .. } => {
+                write!(f, "Node By ID Scan | {node}")
             }
             Self::RelationshipScan(rel) => write!(f, "RelationshipScan | {rel}"),
             Self::ExpandInto(rel) => write!(f, "Expand Into | {rel}"),
