@@ -1,13 +1,15 @@
-use crate::graph::matrix::{self, Dup, Get, Matrix, New, Remove, Set, Size};
+use crate::graph::{
+    matrix::{Dup, Get, New, Remove, Set, Size},
+    versioned_matrix::{self, VersionedMatrix},
+};
 
 #[allow(non_upper_case_globals)]
 pub const GrB_INDEX_MAX: u64 = (1u64 << 60) - 1;
 
-#[derive(Clone)]
 pub struct Tensor {
-    m: Matrix,
-    mt: Matrix,
-    me: Matrix,
+    m: VersionedMatrix,
+    mt: VersionedMatrix,
+    me: VersionedMatrix,
 }
 
 impl New for Tensor {
@@ -16,9 +18,9 @@ impl New for Tensor {
         ncols: u64,
     ) -> Self {
         Self {
-            m: Matrix::new(nrows, ncols),
-            mt: Matrix::new(ncols, nrows),
-            me: Matrix::new(GrB_INDEX_MAX, GrB_INDEX_MAX),
+            m: VersionedMatrix::new(nrows, ncols),
+            mt: VersionedMatrix::new(ncols, nrows),
+            me: VersionedMatrix::new(GrB_INDEX_MAX, GrB_INDEX_MAX),
         }
     }
 }
@@ -89,7 +91,7 @@ impl Tensor {
     }
 
     #[must_use]
-    pub const fn matrix(&self) -> &Matrix {
+    pub const fn matrix(&self) -> &VersionedMatrix {
         &self.m
     }
 
@@ -112,8 +114,8 @@ impl Tensor {
 
 pub struct Iter<'a> {
     t: &'a Tensor,
-    mit: matrix::Iter,
-    vit: Option<matrix::Iter>,
+    mit: versioned_matrix::Iter,
+    vit: Option<versioned_matrix::Iter>,
     transpose: bool,
     src: u64,
     dest: u64,

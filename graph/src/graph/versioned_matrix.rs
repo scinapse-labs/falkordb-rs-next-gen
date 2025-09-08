@@ -42,7 +42,6 @@ impl DerefMut for Cow<Matrix> {
     }
 }
 
-#[derive(Clone)]
 pub struct VersionedMatrix {
     m: Matrix,
     dp: Cow<Matrix>,
@@ -74,6 +73,7 @@ impl Size for VersionedMatrix {
         nrows: u64,
         ncols: u64,
     ) {
+        // TODO: fix cannot resize m without duplication
         self.m.resize(nrows, ncols);
         self.dp.resize(nrows, ncols);
         self.dm.resize(nrows, ncols);
@@ -160,7 +160,7 @@ impl ElementWiseAdd for VersionedMatrix {
         &mut self,
         b: &Self,
     ) {
-        // TODO: fixß
+        // TODO: fix
         self.dp.element_wise_add(&b.m);
         self.dp.element_wise_add(&b.dp);
         self.dm.element_wise_add(&b.dm);
@@ -264,6 +264,9 @@ pub struct Iter {
     dpit: matrix::Iter,
     dm: Cow<Matrix>,
 }
+
+unsafe impl Send for Iter {}
+unsafe impl Sync for Iter {}
 
 impl Iter {
     /// Creates a new iterator for traversing all elements in a matrix.

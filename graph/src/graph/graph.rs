@@ -22,7 +22,7 @@ use crate::{
     graph::{
         matrix::{Dup, ElementWiseAdd, MaskedElementWiseMultiply, MxM, New, Remove, Set, Size},
         tensor::Tensor,
-        versioned_matrix::VersionedMatrix,
+        versioned_matrix::{self, VersionedMatrix},
     },
     indexer::{Document, EntityType, IndexInfo, IndexQuery, IndexType, Indexer},
     optimizer::optimize,
@@ -227,7 +227,6 @@ impl AttributeStore {
 unsafe impl Send for AttributeStore {}
 unsafe impl Sync for AttributeStore {}
 
-#[derive(Clone)]
 pub struct Graph {
     node_cap: u64,
     relationship_cap: u64,
@@ -267,7 +266,7 @@ unsafe impl Sync for Graph {}
 type IndexAction = (
     i32,
     Arc<String>,
-    Option<VersionedMatrix>,
+    Option<versioned_matrix::Iter>,
     Indexer,
     AttributeStore,
     Vec<Arc<String>>,
@@ -302,8 +301,7 @@ static INDEXER_CHANNEL: Lazy<mpsc::Sender<IndexAction>> = Lazy::new(|| {
                         .collect::<Vec<_>>()
                 };
                 let mut add_docs = vec![];
-                let value = lm.unwrap().iter(0, u64::MAX);
-                for (n, _) in value {
+                for (n, _) in lm.unwrap() {
                     let mut doc = Document::new(n);
                     for (attr_id, fields) in &attr_ids {
                         if let Some(value) = node_attrs
@@ -521,33 +519,35 @@ impl Graph {
     fn get_label_matrix(
         &self,
         label: &str,
-    ) -> Option<VersionedMatrix> {
+    ) -> Option<&VersionedMatrix> {
         self.node_labels
             .iter()
             .position(|l| l.as_str() == label)
-            .map(|i| self.labels_matices[i].clone())
+            .map(|i| &self.labels_matices[i])
     }
 
     fn get_label_matrix_mut(
         &mut self,
         label: &Arc<String>,
-    ) -> VersionedMatrix {
+    ) -> &mut VersionedMatrix {
         if !self.node_labels.contains(label) {
             self.node_labels.push(label.clone());
 
             let m = VersionedMatrix::new(self.node_cap, self.node_cap);
-            self.labels_matices
-                .insert(self.node_labels.len() - 1, m.clone());
-            return m;
+            self.labels_matices.insert(self.node_labels.len() - 1, m);
         }
 
-        self.get_label_matrix(label).unwrap()
+        self.node_labels
+            .iter()
+            .position(|l| l.as_str() == label.as_str())
+            .map(|i| &mut self.labels_matices[i])
+            .unwrap()
     }
 
     fn get_relationship_matrix_mut(
         &mut self,
         relationship_type: &Arc<String>,
-    ) -> Tensor {
+    ) -> &mut Tensor {
         if !self.relationship_types.contains(relationship_type) {
             self.relationship_types.push(relationship_type.clone());
 
@@ -560,14 +560,14 @@ impl Graph {
         self.relationship_types
             .iter()
             .position(|l| l.as_str() == relationship_type.as_str())
-            .map(|i| self.relationship_matrices[i].clone())
+            .map(|i| &mut self.relationship_matrices[i])
             .unwrap()
     }
 
     fn get_relationship_matrix(
         &self,
         relationship_type: &Arc<String>,
-    ) -> Option<Tensor> {
+    ) -> Option<&Tensor> {
         if !self.relationship_types.contains(relationship_type) {
             return None;
         }
@@ -575,7 +575,7 @@ impl Graph {
         self.relationship_types
             .iter()
             .position(|l| l.as_str() == relationship_type.as_str())
-            .map(|i| self.relationship_matrices[i].clone())
+            .map(|i| &self.relationship_matrices[i])
     }
 
     pub fn get_node_attribute_id(
@@ -1051,12 +1051,12 @@ impl Graph {
         ) = (matrices, src_labels_matrices, dest_labels_matrices)
         {
             let mut iter = matrices.iter();
-            let mut m = iter.next().map_or_else(
-                || self.adjacancy_matrix.to_matrix(),
-                |t| Tensor::matrix(t).clone(),
-            );
+            let mut m = iter
+                .next()
+                .map_or_else(|| &self.adjacancy_matrix, |t| Tensor::matrix(t))
+                .to_matrix();
             for relationship_matrix in iter {
-                m.element_wise_add(relationship_matrix.matrix());
+                m.element_wise_add(&relationship_matrix.matrix().to_matrix());
             }
 
             if !src_labels_matrices.is_empty() {
@@ -1203,7 +1203,7 @@ impl Graph {
             .send((
                 0,
                 label,
-                Some(lm),
+                Some(lm.iter(0, u64::MAX)),
                 self.node_indexer.clone(),
                 self.node_attrs.clone(),
                 self.node_attrs_name.clone(),
@@ -1359,6 +1359,9 @@ impl MvccGraph {
             new_graph.borrow().adjacancy_matrix.wait();
             new_graph.borrow().node_labels_matrix.wait();
             new_graph.borrow().relationship_type_matrix.wait();
+            for tensor in &new_graph.borrow().relationship_matrices {
+                tensor.wait();
+            }
             self.graph = new_graph;
         } else {
             todo!();
