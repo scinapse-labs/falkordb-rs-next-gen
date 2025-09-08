@@ -1,46 +1,10 @@
-use std::ops::{Deref, DerefMut};
-
-use crate::graph::matrix::{
-    self, Descriptor, Dup, ElementWiseAdd, Get, MaskedElementWiseMultiply, Matrix, New, Remove,
-    Set, Size, Transpose,
+use crate::graph::{
+    cow::Cow,
+    matrix::{
+        self, Descriptor, Dup, ElementWiseAdd, Get, MaskedElementWiseMultiply, Matrix, New, Remove,
+        Set, Size, Transpose,
+    },
 };
-
-#[derive(Clone)]
-struct Cow<T: Dup<T> + Clone> {
-    inner: T,
-    dup: bool,
-}
-
-impl<T: Dup<T> + Clone> Cow<T> {
-    const fn new(inner: T) -> Self {
-        Self { inner, dup: false }
-    }
-
-    fn new_version(&self) -> Self {
-        Self {
-            inner: self.inner.clone(),
-            dup: true,
-        }
-    }
-}
-
-impl Deref for Cow<Matrix> {
-    type Target = Matrix;
-
-    fn deref(&self) -> &Self::Target {
-        &self.inner
-    }
-}
-
-impl DerefMut for Cow<Matrix> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        if self.dup {
-            self.inner = self.inner.dup();
-            self.dup = false;
-        }
-        &mut self.inner
-    }
-}
 
 pub struct VersionedMatrix {
     m: Matrix,

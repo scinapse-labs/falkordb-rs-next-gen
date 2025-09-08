@@ -20,6 +20,7 @@ use crate::{
     ast::ExprIR,
     cypher::Parser,
     graph::{
+        block_vec::BlockVec,
         matrix::{Dup, ElementWiseAdd, MaskedElementWiseMultiply, MxM, New, Remove, Set, Size},
         tensor::Tensor,
         versioned_matrix::{self, VersionedMatrix},
@@ -105,74 +106,14 @@ impl Plan {
 }
 
 #[derive(Clone)]
-struct BlockVec<T: Default, const N: usize> {
-    segments: Vec<Box<[Option<T>; N]>>,
-    len: usize,
-}
-
-impl<T: Default, const N: usize> BlockVec<T, N> {
-    const fn new() -> Self {
-        Self {
-            segments: Vec::new(),
-            len: 0,
-        }
-    }
-
-    fn get(
-        &self,
-        key: u64,
-    ) -> Option<&T> {
-        self.segments
-            .get((key as usize) / N)?
-            .get((key as usize) % N)?
-            .as_ref()
-    }
-
-    fn get_mut(
-        &mut self,
-        key: u64,
-    ) -> Option<&mut T> {
-        self.segments
-            .get_mut((key as usize) / N)?
-            .get_mut((key as usize) % N)?
-            .as_mut()
-    }
-
-    fn insert(
-        &mut self,
-        key: u64,
-    ) -> &mut T {
-        while (key as usize) / N >= self.segments.len() {
-            self.segments.push(Box::new([(); N].map(|_| None)));
-        }
-        let slot = &mut self.segments[(key as usize) / N][(key as usize) % N];
-        if slot.is_none() {
-            self.len += 1;
-            *slot = Some(T::default());
-        }
-        slot.as_mut().unwrap()
-    }
-
-    fn remove(
-        &mut self,
-        key: u64,
-    ) -> Option<T> {
-        self.segments
-            .get_mut((key as usize) / N)?
-            .get_mut((key as usize) % N)?
-            .take()
-    }
-}
-
-#[derive(Clone)]
 struct AttributeStore {
-    attributes: Arc<AtomicRefCell<BlockVec<OrderMap<AttrId, Value>, 1024>>>,
+    attributes: Arc<AtomicRefCell<BlockVec<OrderMap<AttrId, Value>>>>,
 }
 
 impl AttributeStore {
     pub fn new() -> Self {
         Self {
-            attributes: Arc::new(AtomicRefCell::new(BlockVec::new())),
+            attributes: Arc::new(AtomicRefCell::new(BlockVec::new(1024))),
         }
     }
 
@@ -219,7 +160,7 @@ impl AttributeStore {
 
     pub fn new_version(&self) -> Self {
         Self {
-            attributes: Arc::new(AtomicRefCell::new(self.attributes.borrow().clone())),
+            attributes: Arc::new(AtomicRefCell::new(self.attributes.borrow().new_version())),
         }
     }
 }
