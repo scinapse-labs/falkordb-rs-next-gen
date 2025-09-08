@@ -53,7 +53,7 @@ unsafe impl Sync for VersionedMatrix {}
 
 impl VersionedMatrix {
     pub fn wait(&self) {
-        self.m.wait();
+        debug_assert!(!self.m.pending());
         self.dp.wait();
         self.dm.wait();
     }
@@ -73,7 +73,7 @@ impl Size for VersionedMatrix {
         nrows: u64,
         ncols: u64,
     ) {
-        // TODO: fix cannot resize m without duplication
+        self.m = self.m.dup();
         self.m.resize(nrows, ncols);
         self.dp.resize(nrows, ncols);
         self.dm.resize(nrows, ncols);
@@ -120,7 +120,7 @@ impl VersionedMatrix {
 
     #[must_use]
     pub fn to_matrix(&self) -> Matrix {
-        // TODO: fix
+        // TODO: remove
         let mut m = self.m.dup();
         m.remove_all(&self.dm);
         m.element_wise_add(&self.dp);
@@ -141,6 +141,7 @@ impl Remove for VersionedMatrix {
         j: u64,
     ) {
         if self.m.get(i, j).is_some() {
+            debug_assert!(self.dp.get(i, j).is_none());
             self.dm.set(i, j, true);
         } else {
             self.dp.remove(i, j);
@@ -235,8 +236,10 @@ impl Set for VersionedMatrix {
         value: bool,
     ) {
         if self.m.get(i, j).is_some() {
+            debug_assert!(self.dp.get(i, j).is_none());
             self.dm.remove(i, j);
         } else {
+            debug_assert!(self.dm.get(i, j).is_none());
             self.dp.set(i, j, value);
         }
     }
