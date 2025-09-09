@@ -20,8 +20,8 @@ use crate::graph::GraphBLAS::{
     GrB_Matrix_wait, GrB_Mode, GrB_WaitMode, GrB_finalize, GrB_mxm, GrB_transpose,
     GxB_ANY_PAIR_BOOL, GxB_Iterator, GxB_Iterator_free, GxB_Iterator_new,
     GxB_Matrix_Iterator_attach, GxB_Matrix_Iterator_getIndex, GxB_Matrix_Iterator_next,
-    GxB_Matrix_fprint, GxB_Option_Field, GxB_Print_Level, GxB_init, GxB_rowIterator_getRowIndex,
-    GxB_rowIterator_nextRow, GxB_rowIterator_seekRow,
+    GxB_Matrix_fprint, GxB_Matrix_memoryUsage, GxB_Option_Field, GxB_Print_Level, GxB_init,
+    GxB_rowIterator_getRowIndex, GxB_rowIterator_nextRow, GxB_rowIterator_seekRow,
 };
 
 /// Initializes the GraphBLAS library in non-blocking mode.
@@ -369,6 +369,16 @@ impl Matrix {
                     debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
                 }
             }
+        }
+    }
+
+    #[must_use]
+    pub fn memory_usage(&self) -> usize {
+        unsafe {
+            let mut usage = 0usize;
+            let info = GxB_Matrix_memoryUsage(&raw mut usage, *self.m);
+            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+            usage
         }
     }
 }

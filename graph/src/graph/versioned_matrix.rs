@@ -21,6 +21,11 @@ impl VersionedMatrix {
         self.dp.wait();
         self.dm.wait();
     }
+
+    #[must_use]
+    pub fn memory_usage(&self) -> usize {
+        self.m.memory_usage() + self.dp.memory_usage() + self.dm.memory_usage()
+    }
 }
 
 impl Size for VersionedMatrix {

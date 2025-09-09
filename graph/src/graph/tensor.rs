@@ -110,6 +110,11 @@ impl Tensor {
         self.mt.wait();
         self.me.wait();
     }
+
+    #[must_use]
+    pub fn memory_usage(&self) -> usize {
+        self.m.memory_usage() + self.mt.memory_usage() + self.me.memory_usage()
+    }
 }
 
 pub struct Iter<'a> {

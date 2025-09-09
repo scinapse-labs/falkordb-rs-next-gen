@@ -187,12 +187,12 @@ fn reply_compact_value(
                 for label in labels {
                     raw::reply_with_long_long(ctx.ctx, usize::from(label) as _);
                 }
-                let attrs = bg.get_node_attrs(id);
+                let attrs = bg.get_node_attr_ids(id);
                 raw::reply_with_array(ctx.ctx, attrs.len() as _);
-                for (key, value) in attrs {
+                for key in attrs {
                     raw::reply_with_array(ctx.ctx, 3);
                     raw::reply_with_long_long(ctx.ctx, usize::from(key) as _);
-                    reply_compact_value(ctx, runtime, value.clone());
+                    reply_compact_value(ctx, runtime, bg.get_node_attribute(id, key).unwrap());
                 }
             }
         }
@@ -221,12 +221,16 @@ fn reply_compact_value(
                 );
                 raw::reply_with_long_long(ctx.ctx, u64::from(from) as _);
                 raw::reply_with_long_long(ctx.ctx, u64::from(to) as _);
-                let attrs = bg.get_relationship_attrs(id);
+                let attrs = bg.get_relationship_attr_ids(id);
                 raw::reply_with_array(ctx.ctx, attrs.len() as _);
-                for (key, value) in attrs {
+                for key in attrs {
                     raw::reply_with_array(ctx.ctx, 3);
                     raw::reply_with_long_long(ctx.ctx, usize::from(key) as _);
-                    reply_compact_value(ctx, runtime, value.clone());
+                    reply_compact_value(
+                        ctx,
+                        runtime,
+                        bg.get_relationship_attribute(id, key).unwrap(),
+                    );
                 }
             }
         }
@@ -362,9 +366,9 @@ fn reply_verbose_value(
                         label.len(),
                     );
                 }
-                let attrs = bg.get_node_attrs(id);
+                let attrs = bg.get_node_attr_ids(id);
                 raw::reply_with_array(ctx.ctx, attrs.len() as _);
-                for (key, value) in attrs {
+                for key in attrs {
                     raw::reply_with_array(ctx.ctx, 2);
                     let key_name = bg.get_node_attribute_string(key).unwrap();
                     raw::reply_with_string_buffer(
@@ -372,7 +376,7 @@ fn reply_verbose_value(
                         key_name.as_ptr().cast::<c_char>(),
                         key_name.len(),
                     );
-                    reply_verbose_value(ctx, runtime, value.clone());
+                    reply_verbose_value(ctx, runtime, bg.get_node_attribute(id, key).unwrap());
                 }
             }
         }
@@ -404,9 +408,9 @@ fn reply_verbose_value(
                 );
                 raw::reply_with_long_long(ctx.ctx, u64::from(from) as _);
                 raw::reply_with_long_long(ctx.ctx, u64::from(to) as _);
-                let props = bg.get_relationship_attrs(id);
+                let props = bg.get_relationship_attr_ids(id);
                 raw::reply_with_array(ctx.ctx, props.len() as _);
-                for (key, value) in props {
+                for key in props {
                     raw::reply_with_array(ctx.ctx, 2);
                     let key_name = bg.get_relationship_attribute_string(key).unwrap();
                     raw::reply_with_string_buffer(
@@ -414,7 +418,11 @@ fn reply_verbose_value(
                         key_name.as_ptr().cast::<c_char>(),
                         key_name.len(),
                     );
-                    reply_verbose_value(ctx, runtime, value.clone());
+                    reply_verbose_value(
+                        ctx,
+                        runtime,
+                        bg.get_relationship_attribute(id, key).unwrap(),
+                    );
                 }
             }
         }
@@ -946,6 +954,27 @@ fn graph_explain(
     )
 }
 
+fn graph_memory(
+    ctx: &Context,
+    args: Vec<RedisString>,
+) -> RedisResult {
+    let mut args = args.into_iter().skip(1);
+    if args.len() != 1 {
+        return Err(RedisError::WrongArity);
+    }
+
+    let key = args.next_arg()?;
+    let key = ctx.open_key(&key);
+
+    let g = key
+        .get_value::<Arc<RwLock<MvccGraph>>>(&GRAPH_TYPE)?
+        .expect("Graph does not exist");
+
+    Ok(RedisValue::Integer(
+        g.read().unwrap().read().borrow().memory_usage() as i64,
+    ))
+}
+
 #[cfg(feature = "zipkin")]
 fn init_zipkin() {
     global::set_text_map_propagator(opentelemetry_zipkin::Propagator::new());
@@ -1041,6 +1070,7 @@ redis_module! {
         ["graph.EXPLAIN", graph_explain, "readonly", 1, 1, 1, ""],
         ["graph.LIST", graph_list, "readonly", 0, 0, 0, ""],
         ["graph.RECORD", graph_record, "write deny-oom", 1, 1, 1, ""],
+        ["graph.MEMORY", graph_memory, "readonly", 1, 1, 1, ""],
     ],
     configurations: [
         i64: [

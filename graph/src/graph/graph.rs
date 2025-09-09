@@ -124,11 +124,32 @@ impl AttributeStore {
         self.attributes.borrow_mut().remove(key)
     }
 
-    pub fn get(
+    pub fn get_attr(
         &self,
         key: u64,
-    ) -> Option<OrderMap<AttrId, Value>> {
-        self.attributes.borrow().get(key).cloned()
+        attr_id: AttrId,
+    ) -> Option<Value> {
+        self.attributes
+            .borrow()
+            .get(key)
+            .and_then(|attrs| attrs.get(&attr_id).cloned())
+    }
+
+    pub fn has_attributes(
+        &self,
+        key: u64,
+    ) -> bool {
+        self.attributes.borrow().get(key).is_some()
+    }
+
+    pub fn get_attr_ids(
+        &self,
+        key: u64,
+    ) -> Option<Vec<AttrId>> {
+        self.attributes
+            .borrow()
+            .get(key)
+            .map(|attrs| attrs.keys().copied().collect())
     }
 
     pub fn remove_attr(
@@ -245,10 +266,7 @@ static INDEXER_CHANNEL: Lazy<mpsc::Sender<IndexAction>> = Lazy::new(|| {
                 for (n, _) in lm.unwrap() {
                     let mut doc = Document::new(n);
                     for (attr_id, fields) in &attr_ids {
-                        if let Some(value) = node_attrs
-                            .get(n)
-                            .map_or_else(|| None, |attrs| attrs.get(attr_id).cloned())
-                        {
+                        if let Some(value) = node_attrs.get_attr(n, *attr_id) {
                             for field in fields {
                                 doc.set(field.clone(), value.clone());
                             }
@@ -625,7 +643,7 @@ impl Graph {
             let removed = self.node_attrs.remove_attr(id.0, attr_id);
 
             if removed {
-                if self.node_attrs.get(id.0).is_some() {
+                if self.node_attrs.has_attributes(id.0) {
                     for (_, label_id) in self.node_labels_matrix.iter(id.into(), id.into()) {
                         let label = self.node_labels[label_id as usize].clone();
                         if self
@@ -679,13 +697,13 @@ impl Graph {
         index_add_docs: &mut HashMap<Arc<String>, RoaringTreemap>,
     ) {
         for label in labels {
-            let mut label_matrix = self.get_label_matrix_mut(label);
+            let label_matrix = self.get_label_matrix_mut(label);
             label_matrix.set(id.0, id.0, true);
             let label_id = self.get_label_id(label).unwrap();
             self.resize();
             self.node_labels_matrix.set(id.0, label_id.0 as u64, true);
             if self.node_indexer.is_label_indexed(label.clone())
-                && self.node_attrs.get(id.0).is_some()
+                && self.node_attrs.has_attributes(id.0)
             {
                 index_add_docs
                     .entry(label.clone())
@@ -705,7 +723,7 @@ impl Graph {
             if !self.node_labels.contains(label) {
                 continue;
             }
-            let mut label_matrix = self.get_label_matrix_mut(label);
+            let label_matrix = self.get_label_matrix_mut(label);
             label_matrix.remove(id.0, id.0);
             let label_id = self.get_label_id(label).unwrap();
             self.node_labels_matrix.remove(id.0, label_id.0 as u64);
@@ -734,8 +752,8 @@ impl Graph {
             let label = self.node_labels[label_id].clone();
             self.node_labels_matrix.remove(id.0, label_id as _);
             let mut indexed = false;
-            if let Some(attrs) = self.node_attrs.get(id.0) {
-                for (attr_id, _) in attrs {
+            if let Some(attrs_ids) = self.node_attrs.get_attr_ids(id.0) {
+                for attr_id in attrs_ids {
                     let attr_name = self.get_node_attribute_string(attr_id).unwrap();
                     if self.node_indexer.is_attr_indexed(label.clone(), attr_name) {
                         indexed = true;
@@ -818,9 +836,7 @@ impl Graph {
         id: NodeId,
         attr_id: AttrId,
     ) -> Option<Value> {
-        self.node_attrs
-            .get(id.0)
-            .map_or_else(|| None, |attrs| attrs.get(&attr_id).cloned())
+        self.node_attrs.get_attr(id.0, attr_id)
     }
 
     pub fn reserve_relationship(&mut self) -> RelationshipId {
@@ -1053,9 +1069,7 @@ impl Graph {
         id: RelationshipId,
         attr_id: AttrId,
     ) -> Option<Value> {
-        self.relationship_attrs
-            .get(id.0)
-            .map_or_else(|| None, |attrs| attrs.get(&attr_id).cloned())
+        self.relationship_attrs.get_attr(id.0, attr_id)
     }
 
     fn resize(&mut self) {
@@ -1095,19 +1109,21 @@ impl Graph {
     }
 
     #[must_use]
-    pub fn get_node_attrs(
+    pub fn get_node_attr_ids(
         &self,
         id: NodeId,
-    ) -> OrderMap<AttrId, Value> {
-        self.node_attrs.get(id.0).unwrap_or_default()
+    ) -> Vec<AttrId> {
+        self.node_attrs.get_attr_ids(id.0).unwrap_or_default()
     }
 
     #[must_use]
-    pub fn get_relationship_attrs(
+    pub fn get_relationship_attr_ids(
         &self,
         id: RelationshipId,
-    ) -> OrderMap<AttrId, Value> {
-        self.relationship_attrs.get(id.0).unwrap_or_default()
+    ) -> Vec<AttrId> {
+        self.relationship_attrs
+            .get_attr_ids(id.0)
+            .unwrap_or_default()
     }
 
     pub fn create_index(
@@ -1163,10 +1179,9 @@ impl Graph {
             let mut docs = vec![];
             for id in ids {
                 let mut doc = Document::new(id);
-                let attrs = self.node_attrs.get(id).unwrap();
                 for (key, fields) in &fields {
                     let attr_id = self.get_node_attribute_id(key.as_str()).unwrap();
-                    let value = attrs.get(&attr_id).cloned().unwrap();
+                    let value = self.node_attrs.get_attr(id, attr_id).unwrap();
                     for field in fields {
                         doc.set(field.clone(), value.clone());
                     }
@@ -1260,6 +1275,25 @@ impl Graph {
     #[must_use]
     pub fn index_info(&self) -> Vec<IndexInfo> {
         self.node_indexer.index_info()
+    }
+
+    #[must_use]
+    pub fn memory_usage(&self) -> usize {
+        let mut size = 0usize;
+        size += self.adjacancy_matrix.memory_usage();
+        size += self.node_labels_matrix.memory_usage();
+        size += self.relationship_type_matrix.memory_usage();
+        size += self.all_nodes_matrix.memory_usage();
+        for label_matrix in &self.labels_matices {
+            size += label_matrix.memory_usage();
+        }
+        for relationship_matrix in &self.relationship_matrices {
+            size += relationship_matrix.memory_usage();
+        }
+        // size += self.node_attrs.memory_usage();
+        // size += self.relationship_attrs.memory_usage();
+        // size += self.node_indexer.memory_usage();
+        size
     }
 }
 
