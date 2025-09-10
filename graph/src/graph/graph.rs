@@ -131,6 +131,9 @@ impl AttributeStore {
         key: u64,
         attr_id: AttrId,
     ) -> Option<Value> {
+        if attr_id.0 as usize >= self.attributes.borrow().len() {
+            return None;
+        }
         self.attributes.borrow()[attr_id.0 as usize]
             .get(key)
             .cloned()
@@ -166,14 +169,10 @@ impl AttributeStore {
         key: u64,
         attr_id: AttrId,
     ) -> bool {
-        if self.attributes.borrow_mut()[attr_id.0 as usize]
-            .remove(key)
-            .is_some()
-        {
-            self.has_attributes(key)
-        } else {
-            false
-        }
+        (attr_id.0 as usize) < self.attributes.borrow().len()
+            && self.attributes.borrow_mut()[attr_id.0 as usize]
+                .remove(key)
+                .is_some()
     }
 
     pub fn insert_attr(
