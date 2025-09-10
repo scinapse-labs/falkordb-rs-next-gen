@@ -7,7 +7,6 @@ use std::{
     time::{Duration, Instant},
 };
 
-use atomic_refcell::AtomicRefCell;
 use itertools::Itertools;
 use lru::LruCache;
 use ordermap::{OrderMap, OrderSet};
@@ -18,7 +17,7 @@ use crate::{
     ast::ExprIR,
     cypher::Parser,
     graph::{
-        block_vec::BlockVec,
+        attribute_store::AttributeStore,
         matrix::{Dup, ElementWiseAdd, MaskedElementWiseMultiply, MxM, New, Remove, Set, Size},
         tensor::Tensor,
         versioned_matrix::{self, VersionedMatrix},
@@ -43,8 +42,6 @@ pub struct LabelId(usize);
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct TypeId(usize);
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct AttrId(usize);
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct NodeId(u64);
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct RelationshipId(u64);
@@ -57,12 +54,6 @@ impl From<LabelId> for usize {
 
 impl From<TypeId> for usize {
     fn from(val: TypeId) -> Self {
-        val.0
-    }
-}
-
-impl From<AttrId> for usize {
-    fn from(val: AttrId) -> Self {
         val.0
     }
 }
@@ -103,124 +94,6 @@ impl Plan {
         }
     }
 }
-
-#[derive(Clone)]
-struct AttributeStore {
-    attributes: Arc<AtomicRefCell<Vec<BlockVec<Value>>>>,
-    attrs_name: OrderSet<Arc<String>>,
-}
-
-impl AttributeStore {
-    pub fn new() -> Self {
-        Self {
-            attributes: Arc::new(AtomicRefCell::new(Vec::new())),
-            attrs_name: OrderSet::new(),
-        }
-    }
-
-    pub fn remove(
-        &mut self,
-        key: u64,
-    ) {
-        for attr in self.attributes.borrow_mut().iter_mut() {
-            attr.remove(key);
-        }
-    }
-
-    pub fn get_attr(
-        &self,
-        key: u64,
-        attr: &Arc<String>,
-    ) -> Option<Value> {
-        if let Some(idx) = self.attrs_name.get_index_of(attr) {
-            return self.attributes.borrow()[idx].get(key).cloned();
-        }
-        None
-    }
-
-    pub fn has_attributes(
-        &self,
-        key: u64,
-    ) -> bool {
-        for attr in self.attributes.borrow().iter() {
-            if attr.get(key).is_some() {
-                return true;
-            }
-        }
-        false
-    }
-
-    pub fn get_attrs(
-        &self,
-        key: u64,
-    ) -> Option<Vec<Arc<String>>> {
-        let mut ids = vec![];
-        for (i, attr) in self.attributes.borrow().iter().enumerate() {
-            if attr.get(key).is_some() {
-                ids.push(self.attrs_name[i].clone());
-            }
-        }
-        if ids.is_empty() { None } else { Some(ids) }
-    }
-
-    pub fn remove_attr(
-        &mut self,
-        key: u64,
-        attr: &Arc<String>,
-    ) -> bool {
-        if let Some(idx) = self.attrs_name.get_index_of(attr)
-            && self.attributes.borrow_mut()[idx].remove(key).is_some()
-        {
-            true
-        } else {
-            false
-        }
-    }
-
-    pub fn insert_attr(
-        &mut self,
-        key: u64,
-        attr: &Arc<String>,
-        value: Value,
-    ) -> bool {
-        let mut attributes = self.attributes.borrow_mut();
-        let idx = self.attrs_name.get_index_of(attr).map_or_else(
-            || {
-                attributes.push(BlockVec::new(1024));
-                self.attrs_name.insert(attr.clone());
-                attributes.len() - 1
-            },
-            |idx| idx,
-        );
-        let v = attributes[idx].insert(key);
-        let has_value = v.is_some();
-        *v = Some(value);
-        has_value
-    }
-
-    pub fn get_attr_id(
-        &self,
-        attr: &Arc<String>,
-    ) -> Option<AttrId> {
-        self.attrs_name.get_index_of(attr).map(AttrId)
-    }
-
-    pub fn new_version(&self) -> Self {
-        Self {
-            attributes: Arc::new(AtomicRefCell::new(
-                self.attributes
-                    .borrow()
-                    .iter()
-                    .map(BlockVec::new_version)
-                    .collect(),
-            )),
-            attrs_name: self.attrs_name.clone(),
-        }
-    }
-}
-
-unsafe impl Send for AttributeStore {}
-unsafe impl Sync for AttributeStore {}
 
 pub struct Graph {
     node_cap: u64,
@@ -331,8 +204,8 @@ impl Graph {
             all_nodes_matrix: VersionedMatrix::new(n, n),
             labels_matices: Vec::new(),
             relationship_matrices: Vec::new(),
-            node_attrs: AttributeStore::new(),
-            relationship_attrs: AttributeStore::new(),
+            node_attrs: AttributeStore::default(),
+            relationship_attrs: AttributeStore::default(),
             node_indexer: Indexer::default(),
             node_labels: Vec::new(),
             relationship_types: Vec::new(),
@@ -554,7 +427,7 @@ impl Graph {
     pub fn get_node_attribute_id(
         &self,
         attr: &Arc<String>,
-    ) -> Option<AttrId> {
+    ) -> Option<usize> {
         self.node_attrs.get_attr_id(attr)
     }
 
@@ -562,7 +435,7 @@ impl Graph {
     pub fn get_relationship_attribute_id(
         &self,
         attr: &Arc<String>,
-    ) -> Option<AttrId> {
+    ) -> Option<usize> {
         self.relationship_attrs.get_attr_id(attr)
     }
 
@@ -1235,51 +1108,13 @@ impl Graph {
         // size += self.node_indexer.memory_usage();
         size
     }
-}
 
-pub struct MvccGraph {
-    graph: Arc<AtomicRefCell<Graph>>,
-}
-
-unsafe impl Send for MvccGraph {}
-unsafe impl Sync for MvccGraph {}
-
-impl MvccGraph {
-    #[must_use]
-    pub fn new(
-        n: u64,
-        e: u64,
-        cache_size: usize,
-    ) -> Self {
-        Self {
-            graph: Arc::new(AtomicRefCell::new(Graph::new(n, e, cache_size, 0))),
-        }
-    }
-
-    #[must_use]
-    pub fn read(&self) -> Arc<AtomicRefCell<Graph>> {
-        self.graph.clone()
-    }
-
-    #[must_use]
-    pub fn write(&self) -> Arc<AtomicRefCell<Graph>> {
-        Arc::new(AtomicRefCell::new(self.graph.borrow().new_version()))
-    }
-
-    pub fn commit(
-        &mut self,
-        new_graph: Arc<AtomicRefCell<Graph>>,
-    ) {
-        if self.graph.borrow().version + 1 == new_graph.borrow().version {
-            new_graph.borrow().adjacancy_matrix.wait();
-            new_graph.borrow().node_labels_matrix.wait();
-            new_graph.borrow().relationship_type_matrix.wait();
-            for tensor in &new_graph.borrow().relationship_matrices {
-                tensor.wait();
-            }
-            self.graph = new_graph;
-        } else {
-            todo!();
+    pub fn wait(&self) {
+        self.adjacancy_matrix.wait();
+        self.node_labels_matrix.wait();
+        self.relationship_type_matrix.wait();
+        for tensor in &self.relationship_matrices {
+            tensor.wait();
         }
     }
 }

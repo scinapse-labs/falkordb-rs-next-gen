@@ -2,10 +2,7 @@
 #![allow(clippy::non_std_lazy_statics)]
 
 use graph::{
-    graph::{
-        graph::{MvccGraph, Plan},
-        matrix::init,
-    },
+    graph::{graph::Plan, matrix::init, mvcc_graph::MvccGraph},
     planner::IR,
     redisearch::{REDISEARCH_INIT_LIBRARY, RediSearch_Init},
     runtime::{
@@ -173,7 +170,7 @@ fn reply_compact_value(
                 for (key, value) in &x.attrs {
                     raw::reply_with_array(ctx.ctx, 3);
                     let key = runtime.g.borrow().get_node_attribute_id(key).unwrap();
-                    raw::reply_with_long_long(ctx.ctx, usize::from(key) as _);
+                    raw::reply_with_long_long(ctx.ctx, key as _);
                     reply_compact_value(ctx, runtime, value.clone());
                 }
             } else {
@@ -188,7 +185,7 @@ fn reply_compact_value(
                 for key in attrs {
                     raw::reply_with_array(ctx.ctx, 3);
                     let attr_id = bg.get_node_attribute_id(&key);
-                    raw::reply_with_long_long(ctx.ctx, usize::from(attr_id.unwrap()) as _);
+                    raw::reply_with_long_long(ctx.ctx, attr_id.unwrap() as _);
                     reply_compact_value(ctx, runtime, bg.get_node_attribute(id, &key).unwrap());
                 }
             }
@@ -207,7 +204,7 @@ fn reply_compact_value(
                 for (key, value) in &x.attrs {
                     raw::reply_with_array(ctx.ctx, 3);
                     let key = bg.get_relationship_attribute_id(key).unwrap();
-                    raw::reply_with_long_long(ctx.ctx, usize::from(key) as _);
+                    raw::reply_with_long_long(ctx.ctx, key as _);
                     reply_compact_value(ctx, runtime, value.clone());
                 }
             } else {
@@ -223,7 +220,7 @@ fn reply_compact_value(
                 for key in attrs {
                     raw::reply_with_array(ctx.ctx, 3);
                     let attr_id = bg.get_relationship_attribute_id(&key);
-                    raw::reply_with_long_long(ctx.ctx, usize::from(attr_id.unwrap()) as _);
+                    raw::reply_with_long_long(ctx.ctx, attr_id.unwrap() as _);
                     reply_compact_value(
                         ctx,
                         runtime,
