@@ -8,7 +8,8 @@ use std::collections::HashMap;
 use graph::{
     graph::{
         GraphBLAS::{GrB_Mode, GrB_init},
-        graph::{MvccGraph, Plan},
+        graph::Plan,
+        mvcc_graph::MvccGraph,
     },
     // redisearch::{
     //     REDISEARCH_INIT_LIBRARY, RediSearch_Init,

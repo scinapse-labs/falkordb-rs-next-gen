@@ -3,7 +3,8 @@ use std::collections::HashMap;
 use graph::{
     graph::{
         GraphBLAS::{GrB_Mode, GrB_init},
-        graph::{MvccGraph, Plan},
+        graph::Plan,
+        mvcc_graph::MvccGraph,
     },
     runtime::{
         functions::init_functions,
