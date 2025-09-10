@@ -3,14 +3,13 @@ use std::{
     hash::Hash,
     num::NonZeroUsize,
     rc::Rc,
-    sync::{Arc, Mutex, mpsc},
+    sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
 
 use atomic_refcell::AtomicRefCell;
 use itertools::Itertools;
 use lru::LruCache;
-use once_cell::sync::Lazy;
 use ordermap::{OrderMap, OrderSet};
 use orx_tree::DynTree;
 use roaring::RoaringTreemap;
@@ -243,71 +242,69 @@ unsafe impl Sync for PlanTree {}
 unsafe impl Send for Graph {}
 unsafe impl Sync for Graph {}
 
-type IndexAction = (
-    i32,
-    Arc<String>,
-    Option<versioned_matrix::Iter>,
-    Indexer,
-    AttributeStore,
-    Vec<Arc<String>>,
-);
-
-static INDEXER_CHANNEL: Lazy<mpsc::Sender<IndexAction>> = Lazy::new(|| {
-    let (sender, receiver) = mpsc::channel::<IndexAction>();
-    spawn(move || {
-        loop {
-            let Ok((action, label, lm, mut node_indexer, node_attrs, node_attrs_name)) =
-                receiver.recv()
-            else {
-                break;
+fn populate_index(
+    label: Arc<String>,
+    lm: versioned_matrix::Iter,
+    mut node_indexer: Indexer,
+    node_attrs: AttributeStore,
+    node_attrs_name: Vec<Arc<String>>,
+) {
+    spawn(
+        move || {
+            if node_indexer.pending_changes(label.clone()) > 1 {
+                node_indexer.enable(label);
+                return;
+            }
+            let attr_ids = {
+                node_indexer
+                    .get_fields(label.clone())
+                    .into_iter()
+                    .filter_map(|(attr, field)| {
+                        node_attrs_name
+                            .iter()
+                            .position(|p| p.as_str() == attr.as_str())
+                            .map(AttrId)
+                            .map(|id| (id, field))
+                    })
+                    .collect::<Vec<_>>()
             };
-
-            if action == 0 {
-                if node_indexer.pending_changes(label.clone()) > 1 {
-                    node_indexer.enable(label);
-                    continue;
-                }
-                let attr_ids = {
-                    node_indexer
-                        .get_fields(label.clone())
-                        .into_iter()
-                        .filter_map(|(attr, field)| {
-                            node_attrs_name
-                                .iter()
-                                .position(|p| p.as_str() == attr.as_str())
-                                .map(AttrId)
-                                .map(|id| (id, field))
-                        })
-                        .collect::<Vec<_>>()
-                };
-                let mut add_docs = vec![];
-                for (n, _) in lm.unwrap() {
-                    let mut doc = Document::new(n);
-                    for (attr_id, fields) in &attr_ids {
-                        if let Some(value) = node_attrs.get_attr(n, *attr_id) {
-                            for field in fields {
-                                doc.set(field.clone(), value.clone());
-                            }
+            let mut add_docs = vec![];
+            for (n, _) in lm {
+                let mut doc = Document::new(n);
+                for (attr_id, fields) in &attr_ids {
+                    if let Some(value) = node_attrs.get_attr(n, *attr_id) {
+                        for field in fields {
+                            doc.set(field.clone(), value.clone());
                         }
                     }
-                    add_docs.push(doc);
                 }
-                if node_indexer.pending_changes(label.clone()) > 1 {
-                    node_indexer.enable(label);
-                    continue;
-                }
-                let mut index_add_docs = HashMap::new();
-                index_add_docs.insert(label.clone(), add_docs);
-
-                node_indexer.commit(&mut index_add_docs, &mut HashMap::new());
-                node_indexer.enable(label);
-            } else if action == 1 {
-                node_indexer.remove(label);
+                add_docs.push(doc);
             }
-        }
-    });
-    sender
-});
+            if node_indexer.pending_changes(label.clone()) > 1 {
+                node_indexer.enable(label);
+                return;
+            }
+            let mut index_add_docs = HashMap::new();
+            index_add_docs.insert(label.clone(), add_docs);
+
+            node_indexer.commit(&mut index_add_docs, &mut HashMap::new());
+            node_indexer.enable(label);
+        },
+        Some(0),
+    );
+}
+
+fn drop_index(
+    label: Arc<String>,
+    mut node_indexer: Indexer,
+) {
+    spawn(
+        move || {
+            node_indexer.remove(label);
+        },
+        Some(0),
+    );
+}
 
 impl Graph {
     #[must_use]
@@ -1174,16 +1171,13 @@ impl Graph {
     ) {
         let lm = self.get_label_matrix(label).unwrap();
         let label = label.clone();
-        INDEXER_CHANNEL
-            .send((
-                0,
-                label,
-                Some(lm.iter(0, u64::MAX)),
-                self.node_indexer.clone(),
-                self.node_attrs.clone(),
-                self.node_attrs_name.clone(),
-            ))
-            .unwrap();
+        populate_index(
+            label,
+            lm.iter(0, u64::MAX),
+            self.node_indexer.clone(),
+            self.node_attrs.clone(),
+            self.node_attrs_name.clone(),
+        );
     }
 
     pub fn commit_index(
@@ -1252,16 +1246,7 @@ impl Graph {
                 if reindex {
                     self.populate_index(label);
                 } else {
-                    INDEXER_CHANNEL
-                        .send((
-                            1,
-                            label.clone(),
-                            None,
-                            self.node_indexer.clone(),
-                            self.node_attrs.clone(),
-                            self.node_attrs_name.clone(),
-                        ))
-                        .unwrap();
+                    drop_index(label.clone(), self.node_indexer.clone());
                 }
             }
             EntityType::Relationship => {}

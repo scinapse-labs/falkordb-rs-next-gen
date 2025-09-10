@@ -507,53 +507,56 @@ fn query_mut(
     };
     let graph = graph.clone();
     let query = Arc::new(query.to_string());
-    spawn(move || {
-        let graph = graph.clone();
-        let bc = bc;
-        let ctx = unsafe { raw::RedisModule_GetThreadSafeContext.unwrap()(bc.inner) };
-        let ctx = Context::new(ctx);
-        let res: Result<(), String> = {
-            tracing::debug_span!("query_execution", query = %query).in_scope(|| {
-                let Plan {
-                    plan,
-                    cached,
-                    parameters,
-                    ..
-                } = graph.read().unwrap().read().borrow().get_plan(&query)?;
-                let parameters = parameters
-                    .into_iter()
-                    .map(|(k, v)| Ok((k, evaluate_param(&v.root())?)))
-                    .collect::<Result<HashMap<_, _>, String>>()?;
-                let scope = CONFIGURATION_IMPORT_FOLDER.lock(&ctx);
-                let is_write = plan.iter().any(|n| matches!(n, IR::Commit));
-                let g = if is_write {
-                    graph.read().unwrap().write()
-                } else {
-                    graph.read().unwrap().read()
-                };
-                let mut runtime =
-                    Runtime::new(g.clone(), parameters, write, plan, false, (*scope).clone());
-                let mut result = runtime.query()?;
-                if is_write {
-                    graph.write().unwrap().commit(g);
+    spawn(
+        move || {
+            let graph = graph.clone();
+            let bc = bc;
+            let ctx = unsafe { raw::RedisModule_GetThreadSafeContext.unwrap()(bc.inner) };
+            let ctx = Context::new(ctx);
+            let res: Result<(), String> = {
+                tracing::debug_span!("query_execution", query = %query).in_scope(|| {
+                    let Plan {
+                        plan,
+                        cached,
+                        parameters,
+                        ..
+                    } = graph.read().unwrap().read().borrow().get_plan(&query)?;
+                    let parameters = parameters
+                        .into_iter()
+                        .map(|(k, v)| Ok((k, evaluate_param(&v.root())?)))
+                        .collect::<Result<HashMap<_, _>, String>>()?;
+                    let scope = CONFIGURATION_IMPORT_FOLDER.lock(&ctx);
+                    let is_write = plan.iter().any(|n| matches!(n, IR::Commit));
+                    let g = if is_write {
+                        graph.read().unwrap().write()
+                    } else {
+                        graph.read().unwrap().read()
+                    };
+                    let mut runtime =
+                        Runtime::new(g.clone(), parameters, write, plan, false, (*scope).clone());
+                    let mut result = runtime.query()?;
+                    if is_write {
+                        graph.write().unwrap().commit(g);
+                    }
+                    result.stats.cached = cached;
+                    if compact {
+                        reply_compact(&ctx, &runtime, result);
+                    } else {
+                        reply_verbose(&ctx, &runtime, result);
+                    }
+                    Ok(())
+                })
+            };
+            match res {
+                Ok(()) => {}
+                Err(err) => {
+                    let cerr = CString::new(err).unwrap();
+                    raw::reply_with_error(ctx.ctx, cerr.as_ptr().cast::<c_char>());
                 }
-                result.stats.cached = cached;
-                if compact {
-                    reply_compact(&ctx, &runtime, result);
-                } else {
-                    reply_verbose(&ctx, &runtime, result);
-                }
-                Ok(())
-            })
-        };
-        match res {
-            Ok(()) => {}
-            Err(err) => {
-                let cerr = CString::new(err).unwrap();
-                raw::reply_with_error(ctx.ctx, cerr.as_ptr().cast::<c_char>());
             }
-        }
-    });
+        },
+        None,
+    );
 }
 
 fn reply_stats(

@@ -32,21 +32,24 @@ impl ThreadPool {
     pub fn spawn<F>(
         &self,
         job: F,
+        idx: Option<usize>,
     ) where
         F: FnOnce() + Send + 'static,
     {
-        let idx = rand::random::<u32>() as usize % self.workers.len();
+        let idx = idx.unwrap_or_else(|| rand::random::<u32>() as usize) % self.workers.len();
         self.sender[idx].send(Box::new(job)).unwrap();
     }
 }
 
 static GLOBAL_THREAD_POOL: OnceCell<ThreadPool> = OnceCell::new();
 
-pub fn spawn<F>(job: F)
-where
+pub fn spawn<F>(
+    job: F,
+    idx: Option<usize>,
+) where
     F: FnOnce() + Send + 'static,
 {
     GLOBAL_THREAD_POOL
         .get_or_init(|| ThreadPool::new(num_cpus::get()))
-        .spawn(job);
+        .spawn(job, idx);
 }
