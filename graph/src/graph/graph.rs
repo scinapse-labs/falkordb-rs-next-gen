@@ -13,7 +13,6 @@ use lru::LruCache;
 use once_cell::sync::Lazy;
 use ordermap::{OrderMap, OrderSet};
 use orx_tree::DynTree;
-use rayon::spawn;
 use roaring::RoaringTreemap;
 
 use crate::{
@@ -29,6 +28,7 @@ use crate::{
     optimizer::optimize,
     planner::{IR, Planner},
     runtime::{pending::PendingRelationship, value::Value},
+    threadpool::spawn,
 };
 
 pub struct Plan {

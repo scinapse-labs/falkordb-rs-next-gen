@@ -13,6 +13,7 @@ use graph::{
         runtime::{GetVariables, QueryStatistics, ResultSummary, Runtime, evaluate_param},
         value::Value,
     },
+    threadpool::spawn,
 };
 use lazy_static::lazy_static;
 #[cfg(feature = "zipkin")]
@@ -26,7 +27,6 @@ use opentelemetry_sdk::{Resource, trace::SdkTracerProvider};
 #[cfg(feature = "zipkin")]
 use opentelemetry_zipkin::ZipkinExporter;
 use orx_tree::{Bfs, Collection, Dfs, NodeRef};
-use rayon::spawn;
 use redis_module::{
     Context, NextArg, REDISMODULE_OK, REDISMODULE_TYPE_METHOD_VERSION, RedisError, RedisGILGuard,
     RedisModule_Alloc, RedisModule_Calloc, RedisModule_Free, RedisModule_Realloc,

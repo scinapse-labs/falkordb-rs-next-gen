@@ -6,4 +6,5 @@ pub mod optimizer;
 pub mod planner;
 pub mod redisearch;
 pub mod runtime;
+pub mod threadpool;
 pub mod tree;
