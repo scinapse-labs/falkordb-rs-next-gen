@@ -285,6 +285,7 @@ dependencies = [
  "orx-tree",
  "redis-module",
  "redis-module-macros",
+ "ryu",
  "tracing",
  "tracing-opentelemetry",
  "tracing-subscriber",

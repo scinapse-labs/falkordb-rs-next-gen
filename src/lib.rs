@@ -632,10 +632,9 @@ fn reply_stats(
     }
     let str = format!("Cached execution: {}", i32::from(stats.cached));
     raw::reply_with_string_buffer(ctx.ctx, str.as_ptr().cast::<c_char>(), str.len());
-    let str = format!(
-        "Query internal execution time: {} milliseconds",
-        stats.execution_time
-    );
+    let mut buffer = ryu::Buffer::new();
+    let str = buffer.format(stats.execution_time);
+    let str = format!("Query internal execution time: {str} milliseconds");
     raw::reply_with_string_buffer(ctx.ctx, str.as_ptr().cast::<c_char>(), str.len());
     let str = format!("Graph version: {version}");
     raw::reply_with_string_buffer(ctx.ctx, str.as_ptr().cast::<c_char>(), str.len());
