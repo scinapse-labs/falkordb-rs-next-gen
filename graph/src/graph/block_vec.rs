@@ -56,7 +56,7 @@ impl<T> Block<T> {
     }
 }
 
-impl<T: Default + Clone> Dup<Block<T>> for Block<T> {
+impl<T: Default + Clone> Dup<Self> for Block<T> {
     fn dup(&self) -> Self {
         Self {
             vec: self.vec.clone(),

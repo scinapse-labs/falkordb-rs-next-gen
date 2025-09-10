@@ -584,6 +584,9 @@ pub struct Iter {
     max_row: u64,
 }
 
+unsafe impl Send for Iter {}
+unsafe impl Sync for Iter {}
+
 impl Drop for Iter {
     /// Frees the GraphBLAS iterator when the `Iter` is dropped.
     fn drop(&mut self) {

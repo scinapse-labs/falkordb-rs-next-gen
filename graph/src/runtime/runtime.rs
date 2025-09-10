@@ -971,10 +971,10 @@ impl<'a> Runtime {
                             .lazy_replace(move || {
                                 let mut vars = cvars.clone();
                                 match self.create(pattern, &mut vars) {
-                                    Ok(()) => {
-                                        self.set(on_create_set_items, &vars);
-                                        once(Ok(vars))
-                                    }
+                                    Ok(()) => match self.set(on_create_set_items, &vars) {
+                                        Ok(()) => once(Ok(vars)),
+                                        Err(e) => once(Err(e)),
+                                    },
                                     Err(e) => once(Err(e)),
                                 }
                             });
