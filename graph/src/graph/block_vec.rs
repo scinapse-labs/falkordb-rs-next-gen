@@ -66,7 +66,6 @@ impl<T: Default + Clone> Dup<Block<T>> for Block<T> {
 
 pub struct BlockVec<T: Default + Clone> {
     segments: Vec<Cow<Block<T>>>,
-    len: usize,
     block_cap: usize,
 }
 
@@ -75,7 +74,6 @@ impl<T: Default + Clone> BlockVec<T> {
     pub const fn new(block_cap: usize) -> Self {
         Self {
             segments: Vec::new(),
-            len: 0,
             block_cap,
         }
     }
@@ -84,7 +82,6 @@ impl<T: Default + Clone> BlockVec<T> {
     pub fn new_version(&self) -> Self {
         Self {
             segments: self.segments.clone(),
-            len: self.len,
             block_cap: self.block_cap,
         }
     }
@@ -112,7 +109,7 @@ impl<T: Default + Clone> BlockVec<T> {
     pub fn insert(
         &mut self,
         key: u64,
-    ) -> &mut T {
+    ) -> &mut Option<T> {
         while (key as usize) / self.block_cap >= self.segments.len() {
             self.segments.push(Cow::new(Block::new(self.block_cap)));
         }
@@ -120,12 +117,7 @@ impl<T: Default + Clone> BlockVec<T> {
         while (key as usize) % self.block_cap >= block.len() {
             block.push_new();
         }
-        let slot = block.idx_mut((key as usize) % self.block_cap);
-        if slot.is_none() {
-            self.len += 1;
-            *slot = Some(T::default());
-        }
-        slot.as_mut().unwrap()
+        block.idx_mut((key as usize) % self.block_cap)
     }
 
     pub fn remove(

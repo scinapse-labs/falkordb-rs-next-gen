@@ -107,21 +107,23 @@ impl Plan {
 
 #[derive(Clone)]
 struct AttributeStore {
-    attributes: Arc<AtomicRefCell<BlockVec<OrderMap<AttrId, Value>>>>,
+    attributes: Arc<AtomicRefCell<Vec<BlockVec<Value>>>>,
 }
 
 impl AttributeStore {
     pub fn new() -> Self {
         Self {
-            attributes: Arc::new(AtomicRefCell::new(BlockVec::new(1024))),
+            attributes: Arc::new(AtomicRefCell::new(Vec::new())),
         }
     }
 
     pub fn remove(
         &mut self,
         key: u64,
-    ) -> Option<OrderMap<AttrId, Value>> {
-        self.attributes.borrow_mut().remove(key)
+    ) {
+        for attr in self.attributes.borrow_mut().iter_mut() {
+            attr.remove(key);
+        }
     }
 
     pub fn get_attr(
@@ -129,27 +131,34 @@ impl AttributeStore {
         key: u64,
         attr_id: AttrId,
     ) -> Option<Value> {
-        self.attributes
-            .borrow()
+        self.attributes.borrow()[attr_id.0 as usize]
             .get(key)
-            .and_then(|attrs| attrs.get(&attr_id).cloned())
+            .cloned()
     }
 
     pub fn has_attributes(
         &self,
         key: u64,
     ) -> bool {
-        self.attributes.borrow().get(key).is_some()
+        for attr in self.attributes.borrow().iter() {
+            if attr.get(key).is_some() {
+                return true;
+            }
+        }
+        false
     }
 
     pub fn get_attr_ids(
         &self,
         key: u64,
     ) -> Option<Vec<AttrId>> {
-        self.attributes
-            .borrow()
-            .get(key)
-            .map(|attrs| attrs.keys().copied().collect())
+        let mut ids = vec![];
+        for (i, attr) in self.attributes.borrow().iter().enumerate() {
+            if attr.get(key).is_some() {
+                ids.push(AttrId(i));
+            }
+        }
+        if ids.is_empty() { None } else { Some(ids) }
     }
 
     pub fn remove_attr(
@@ -157,13 +166,11 @@ impl AttributeStore {
         key: u64,
         attr_id: AttrId,
     ) -> bool {
-        let mut attributes = self.attributes.borrow_mut();
-        if let Some(attrs) = attributes.get_mut(key) {
-            let has_value = attrs.remove(&attr_id).is_some();
-            if attrs.is_empty() {
-                attributes.remove(key);
-            }
-            has_value
+        if self.attributes.borrow_mut()[attr_id.0 as usize]
+            .remove(key)
+            .is_some()
+        {
+            self.has_attributes(key)
         } else {
             false
         }
@@ -176,12 +183,24 @@ impl AttributeStore {
         value: Value,
     ) -> bool {
         let mut attributes = self.attributes.borrow_mut();
-        attributes.insert(key).insert(attr_id, value).is_some()
+        while attributes.len() <= attr_id.0 {
+            attributes.push(BlockVec::new(1024));
+        }
+        let v = attributes[attr_id.0 as usize].insert(key);
+        let has_value = v.is_some();
+        *v = Some(value);
+        has_value
     }
 
     pub fn new_version(&self) -> Self {
         Self {
-            attributes: Arc::new(AtomicRefCell::new(self.attributes.borrow().new_version())),
+            attributes: Arc::new(AtomicRefCell::new(
+                self.attributes
+                    .borrow()
+                    .iter()
+                    .map(BlockVec::new_version)
+                    .collect(),
+            )),
         }
     }
 }
