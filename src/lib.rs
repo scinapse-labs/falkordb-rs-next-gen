@@ -172,11 +172,7 @@ fn reply_compact_value(
                 raw::reply_with_array(ctx.ctx, x.attrs.len() as _);
                 for (key, value) in &x.attrs {
                     raw::reply_with_array(ctx.ctx, 3);
-                    let key = runtime
-                        .g
-                        .borrow()
-                        .get_node_attribute_id(key.as_str())
-                        .unwrap();
+                    let key = runtime.g.borrow().get_node_attribute_id(key).unwrap();
                     raw::reply_with_long_long(ctx.ctx, usize::from(key) as _);
                     reply_compact_value(ctx, runtime, value.clone());
                 }
@@ -187,12 +183,13 @@ fn reply_compact_value(
                 for label in labels {
                     raw::reply_with_long_long(ctx.ctx, usize::from(label) as _);
                 }
-                let attrs = bg.get_node_attr_ids(id);
+                let attrs = bg.get_node_attrs(id);
                 raw::reply_with_array(ctx.ctx, attrs.len() as _);
                 for key in attrs {
                     raw::reply_with_array(ctx.ctx, 3);
-                    raw::reply_with_long_long(ctx.ctx, usize::from(key) as _);
-                    reply_compact_value(ctx, runtime, bg.get_node_attribute(id, key).unwrap());
+                    let attr_id = bg.get_node_attribute_id(&key);
+                    raw::reply_with_long_long(ctx.ctx, usize::from(attr_id.unwrap()) as _);
+                    reply_compact_value(ctx, runtime, bg.get_node_attribute(id, &key).unwrap());
                 }
             }
         }
@@ -221,15 +218,16 @@ fn reply_compact_value(
                 );
                 raw::reply_with_long_long(ctx.ctx, u64::from(from) as _);
                 raw::reply_with_long_long(ctx.ctx, u64::from(to) as _);
-                let attrs = bg.get_relationship_attr_ids(id);
+                let attrs = bg.get_relationship_attrs(id);
                 raw::reply_with_array(ctx.ctx, attrs.len() as _);
                 for key in attrs {
                     raw::reply_with_array(ctx.ctx, 3);
-                    raw::reply_with_long_long(ctx.ctx, usize::from(key) as _);
+                    let attr_id = bg.get_relationship_attribute_id(&key);
+                    raw::reply_with_long_long(ctx.ctx, usize::from(attr_id.unwrap()) as _);
                     reply_compact_value(
                         ctx,
                         runtime,
-                        bg.get_relationship_attribute(id, key).unwrap(),
+                        bg.get_relationship_attribute(id, &key).unwrap(),
                     );
                 }
             }
@@ -366,17 +364,16 @@ fn reply_verbose_value(
                         label.len(),
                     );
                 }
-                let attrs = bg.get_node_attr_ids(id);
+                let attrs = bg.get_node_attrs(id);
                 raw::reply_with_array(ctx.ctx, attrs.len() as _);
                 for key in attrs {
                     raw::reply_with_array(ctx.ctx, 2);
-                    let key_name = bg.get_node_attribute_string(key).unwrap();
                     raw::reply_with_string_buffer(
                         ctx.ctx,
-                        key_name.as_ptr().cast::<c_char>(),
-                        key_name.len(),
+                        key.as_ptr().cast::<c_char>(),
+                        key.len(),
                     );
-                    reply_verbose_value(ctx, runtime, bg.get_node_attribute(id, key).unwrap());
+                    reply_verbose_value(ctx, runtime, bg.get_node_attribute(id, &key).unwrap());
                 }
             }
         }
@@ -408,20 +405,19 @@ fn reply_verbose_value(
                 );
                 raw::reply_with_long_long(ctx.ctx, u64::from(from) as _);
                 raw::reply_with_long_long(ctx.ctx, u64::from(to) as _);
-                let props = bg.get_relationship_attr_ids(id);
+                let props = bg.get_relationship_attrs(id);
                 raw::reply_with_array(ctx.ctx, props.len() as _);
                 for key in props {
                     raw::reply_with_array(ctx.ctx, 2);
-                    let key_name = bg.get_relationship_attribute_string(key).unwrap();
                     raw::reply_with_string_buffer(
                         ctx.ctx,
-                        key_name.as_ptr().cast::<c_char>(),
-                        key_name.len(),
+                        key.as_ptr().cast::<c_char>(),
+                        key.len(),
                     );
                     reply_verbose_value(
                         ctx,
                         runtime,
-                        bg.get_relationship_attribute(id, key).unwrap(),
+                        bg.get_relationship_attribute(id, &key).unwrap(),
                     );
                 }
             }

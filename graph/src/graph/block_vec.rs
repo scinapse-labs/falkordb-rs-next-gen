@@ -38,7 +38,7 @@ impl<T> Block<T> {
         self.vec.push(None);
     }
 
-    pub fn len(&self) -> usize {
+    pub const fn len(&self) -> usize {
         self.vec.len()
     }
 

@@ -380,10 +380,9 @@ impl Pending {
                 .sum::<usize>();
             for (id, attrs) in &self.set_nodes_attrs {
                 for (key, value) in attrs {
-                    let attr_id = g.borrow_mut().get_or_add_node_attribute_id(key);
                     if g.borrow_mut().set_node_attribute(
                         *id,
-                        attr_id,
+                        key,
                         value.clone(),
                         &mut self.index_add_docs,
                         &mut self.index_remove_docs,
@@ -406,9 +405,8 @@ impl Pending {
                 .sum::<usize>();
             for (id, attrs) in &self.set_relationships_attrs {
                 for (key, value) in attrs {
-                    let attr_id = g.borrow_mut().get_or_add_relationship_attribute_id(key);
                     if g.borrow_mut()
-                        .set_relationship_attribute(*id, attr_id, value.clone())
+                        .set_relationship_attribute(*id, key, value.clone())
                     {
                         stats.borrow_mut().properties_removed += 1;
                     }

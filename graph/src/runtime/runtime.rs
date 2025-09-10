@@ -1626,7 +1626,7 @@ impl<'a> Runtime {
         for (entity, value, replace) in items {
             let run_expr = self.run_expr(value, value.root().idx(), vars, None)?;
             let value = run_expr;
-            let (entity, property, labels) = match entity.root().data() {
+            let (entity, attr, labels) = match entity.root().data() {
                 ExprIR::Variable(name) => (vars.get(name).unwrap(), None, None),
                 ExprIR::FuncInvocation(func) if func.name == "property" => {
                     let ExprIR::String(property) = entity.root().child(1).data() else {
@@ -1666,25 +1666,22 @@ impl<'a> Runtime {
                     {
                         continue;
                     }
-                    if let Some(property) = property {
-                        if let Some(attr_id) = self.g.borrow().get_node_attribute_id(property)
-                            && let Some(v) = self.g.borrow().get_node_attribute(id, attr_id)
+                    if let Some(attr) = attr {
+                        if let Some(v) = self.g.borrow().get_node_attribute(id, attr)
                             && v == value
                         {
                             continue;
                         }
 
-                        self.pending.borrow_mut().set_node_attribute(
-                            id,
-                            property.clone(),
-                            value,
-                        )?;
+                        self.pending
+                            .borrow_mut()
+                            .set_node_attribute(id, attr.clone(), value)?;
                     } else if let Value::Map(map) = value {
                         if *replace {
-                            for key in self.g.borrow().get_node_attr_ids(id) {
+                            for key in self.g.borrow().get_node_attrs(id) {
                                 self.pending.borrow_mut().set_node_attribute(
                                     id,
-                                    self.g.borrow().get_node_attribute_string(key).unwrap(),
+                                    key,
                                     Value::Null,
                                 )?;
                             }
@@ -1700,10 +1697,10 @@ impl<'a> Runtime {
                         let g = self.g.borrow();
                         let attrs = self.get_node_attrs(id);
                         if *replace {
-                            for key in g.get_node_attr_ids(id) {
+                            for key in g.get_node_attrs(id) {
                                 self.pending.borrow_mut().set_node_attribute(
                                     id,
-                                    g.get_node_attribute_string(key).unwrap(),
+                                    key,
                                     Value::Null,
                                 )?;
                             }
@@ -1724,10 +1721,8 @@ impl<'a> Runtime {
                     {
                         continue;
                     }
-                    if let Some(property) = property {
-                        if let Some(attr_id) =
-                            self.g.borrow().get_relationship_attribute_id(property)
-                            && let Some(v) = self.g.borrow().get_relationship_attribute(id, attr_id)
+                    if let Some(attr) = attr {
+                        if let Some(v) = self.g.borrow().get_relationship_attribute(id, attr)
                             && v == value
                         {
                             continue;
@@ -1735,17 +1730,17 @@ impl<'a> Runtime {
 
                         self.pending.borrow_mut().set_relationship_attribute(
                             id,
-                            property.clone(),
+                            attr.clone(),
                             value,
                         )?;
                     } else if let Value::Relationship(sid, _, _) = value {
                         let g = self.g.borrow();
                         let attrs = self.get_relationship_attrs(sid);
                         if *replace {
-                            for key in g.get_relationship_attr_ids(id) {
+                            for key in g.get_relationship_attrs(id) {
                                 self.pending.borrow_mut().set_relationship_attribute(
                                     id,
-                                    g.get_relationship_attribute_string(key).unwrap(),
+                                    key,
                                     Value::Null,
                                 )?;
                             }
@@ -1818,10 +1813,8 @@ impl<'a> Runtime {
                             && !filter_attrs.is_empty()
                         {
                             let g = self.g.borrow();
-                            for (key, avalue) in filter_attrs.iter() {
-                                if let Some(key) = g.get_relationship_attribute_id(key)
-                                    && let Some(pvalue) = g.get_relationship_attribute(*v, key)
-                                {
+                            for (attr, avalue) in filter_attrs.iter() {
+                                if let Some(pvalue) = g.get_relationship_attribute(*v, attr) {
                                     if *avalue == pvalue {
                                         continue;
                                     }
@@ -1915,10 +1908,8 @@ impl<'a> Runtime {
                 && !attrs.is_empty()
             {
                 let g = self.g.borrow();
-                for (key, avalue) in attrs.iter() {
-                    if let Some(key) = g.get_node_attribute_id(key)
-                        && let Some(pvalue) = g.get_node_attribute(v, key)
-                    {
+                for (attr, avalue) in attrs.iter() {
+                    if let Some(pvalue) = g.get_node_attribute(v, attr) {
                         if *avalue == pvalue {
                             continue;
                         }
@@ -1992,10 +1983,8 @@ impl<'a> Runtime {
                         && !attrs.is_empty()
                     {
                         let g = self.g.borrow();
-                        for (key, avalue) in attrs.iter() {
-                            if let Some(key) = g.get_node_attribute_id(key)
-                                && let Some(pvalue) = g.get_node_attribute(v, key)
-                            {
+                        for (attr, avalue) in attrs.iter() {
+                            if let Some(pvalue) = g.get_node_attribute(v, attr) {
                                 if *avalue == pvalue {
                                     continue;
                                 }
@@ -2165,32 +2154,23 @@ impl<'a> Runtime {
     pub fn get_node_attribute(
         &self,
         id: NodeId,
-        attribute: &Arc<String>,
+        attr: &Arc<String>,
     ) -> Option<Value> {
-        if let Some(value) = self.pending.borrow().get_node_attribute(id, attribute) {
+        if let Some(value) = self.pending.borrow().get_node_attribute(id, attr) {
             return Some(value.clone());
         }
-        let g = self.g.borrow();
-        g.get_node_attribute_id(attribute.as_str())
-            .and_then(|attr_id| g.get_node_attribute(id, attr_id))
+        self.g.borrow().get_node_attribute(id, attr)
     }
 
     pub fn get_relationship_attribute(
         &self,
         id: RelationshipId,
-        attribute: &Arc<String>,
+        attr: &Arc<String>,
     ) -> Option<Value> {
-        if let Some(value) = self
-            .pending
-            .borrow()
-            .get_relationship_attribute(id, attribute)
-        {
+        if let Some(value) = self.pending.borrow().get_relationship_attribute(id, attr) {
             return Some(value.clone());
         }
-        self.g
-            .borrow()
-            .get_relationship_attribute_id(attribute.as_str())
-            .and_then(|attr_id| self.g.borrow().get_relationship_attribute(id, attr_id))
+        self.g.borrow().get_relationship_attribute(id, attr)
     }
 
     pub fn get_node_labels(
@@ -2211,14 +2191,9 @@ impl<'a> Runtime {
         }
         let g = self.g.borrow();
         let mut actual: OrderMap<Arc<String>, Value> = g
-            .get_node_attr_ids(id)
+            .get_node_attrs(id)
             .iter()
-            .map(|k| {
-                (
-                    g.get_node_attribute_string(*k).unwrap(),
-                    g.get_node_attribute(id, *k).unwrap(),
-                )
-            })
+            .map(|attr| (attr.clone(), g.get_node_attribute(id, attr).unwrap()))
             .collect();
         self.pending.borrow().update_node_attrs(id, &mut actual);
         actual
@@ -2230,12 +2205,12 @@ impl<'a> Runtime {
     ) -> OrderMap<Arc<String>, Value> {
         let g = self.g.borrow();
         let mut actual: OrderMap<Arc<String>, Value> = g
-            .get_relationship_attr_ids(id)
+            .get_relationship_attrs(id)
             .iter()
-            .map(|k| {
+            .map(|attr| {
                 (
-                    g.get_relationship_attribute_string(*k).unwrap(),
-                    g.get_relationship_attribute(id, *k).unwrap(),
+                    attr.clone(),
+                    g.get_relationship_attribute(id, attr).unwrap(),
                 )
             })
             .collect();

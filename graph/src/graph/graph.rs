@@ -107,12 +107,14 @@ impl Plan {
 #[derive(Clone)]
 struct AttributeStore {
     attributes: Arc<AtomicRefCell<Vec<BlockVec<Value>>>>,
+    attrs_name: OrderSet<Arc<String>>,
 }
 
 impl AttributeStore {
     pub fn new() -> Self {
         Self {
             attributes: Arc::new(AtomicRefCell::new(Vec::new())),
+            attrs_name: OrderSet::new(),
         }
     }
 
@@ -128,14 +130,12 @@ impl AttributeStore {
     pub fn get_attr(
         &self,
         key: u64,
-        attr_id: AttrId,
+        attr: &Arc<String>,
     ) -> Option<Value> {
-        if attr_id.0 as usize >= self.attributes.borrow().len() {
-            return None;
+        if let Some(idx) = self.attrs_name.get_index_of(attr) {
+            return self.attributes.borrow()[idx].get(key).cloned();
         }
-        self.attributes.borrow()[attr_id.0 as usize]
-            .get(key)
-            .cloned()
+        None
     }
 
     pub fn has_attributes(
@@ -150,14 +150,14 @@ impl AttributeStore {
         false
     }
 
-    pub fn get_attr_ids(
+    pub fn get_attrs(
         &self,
         key: u64,
-    ) -> Option<Vec<AttrId>> {
+    ) -> Option<Vec<Arc<String>>> {
         let mut ids = vec![];
         for (i, attr) in self.attributes.borrow().iter().enumerate() {
             if attr.get(key).is_some() {
-                ids.push(AttrId(i));
+                ids.push(self.attrs_name[i].clone());
             }
         }
         if ids.is_empty() { None } else { Some(ids) }
@@ -166,28 +166,43 @@ impl AttributeStore {
     pub fn remove_attr(
         &mut self,
         key: u64,
-        attr_id: AttrId,
+        attr: &Arc<String>,
     ) -> bool {
-        (attr_id.0 as usize) < self.attributes.borrow().len()
-            && self.attributes.borrow_mut()[attr_id.0 as usize]
-                .remove(key)
-                .is_some()
+        if let Some(idx) = self.attrs_name.get_index_of(attr)
+            && self.attributes.borrow_mut()[idx].remove(key).is_some()
+        {
+            true
+        } else {
+            false
+        }
     }
 
     pub fn insert_attr(
         &mut self,
         key: u64,
-        attr_id: AttrId,
+        attr: &Arc<String>,
         value: Value,
     ) -> bool {
         let mut attributes = self.attributes.borrow_mut();
-        while attributes.len() <= attr_id.0 {
-            attributes.push(BlockVec::new(1024));
-        }
-        let v = attributes[attr_id.0 as usize].insert(key);
+        let idx = self.attrs_name.get_index_of(attr).map_or_else(
+            || {
+                attributes.push(BlockVec::new(1024));
+                self.attrs_name.insert(attr.clone());
+                attributes.len() - 1
+            },
+            |idx| idx,
+        );
+        let v = attributes[idx].insert(key);
         let has_value = v.is_some();
         *v = Some(value);
         has_value
+    }
+
+    pub fn get_attr_id(
+        &self,
+        attr: &Arc<String>,
+    ) -> Option<AttrId> {
+        self.attrs_name.get_index_of(attr).map(AttrId)
     }
 
     pub fn new_version(&self) -> Self {
@@ -199,6 +214,7 @@ impl AttributeStore {
                     .map(BlockVec::new_version)
                     .collect(),
             )),
+            attrs_name: self.attrs_name.clone(),
         }
     }
 }
@@ -227,8 +243,6 @@ pub struct Graph {
     node_indexer: Indexer,
     node_labels: Vec<Arc<String>>,
     relationship_types: Vec<Arc<String>>,
-    node_attrs_name: Vec<Arc<String>>,
-    relationship_attrs_name: Vec<Arc<String>>,
     cache: Arc<Mutex<LruCache<String, PlanTree>>>,
     pub version: u64,
 }
@@ -247,7 +261,6 @@ fn populate_index(
     lm: versioned_matrix::Iter,
     mut node_indexer: Indexer,
     node_attrs: AttributeStore,
-    node_attrs_name: Vec<Arc<String>>,
 ) {
     spawn(
         move || {
@@ -255,24 +268,12 @@ fn populate_index(
                 node_indexer.enable(label);
                 return;
             }
-            let attr_ids = {
-                node_indexer
-                    .get_fields(label.clone())
-                    .into_iter()
-                    .filter_map(|(attr, field)| {
-                        node_attrs_name
-                            .iter()
-                            .position(|p| p.as_str() == attr.as_str())
-                            .map(AttrId)
-                            .map(|id| (id, field))
-                    })
-                    .collect::<Vec<_>>()
-            };
+            let attrs = { node_indexer.get_fields(label.clone()) };
             let mut add_docs = vec![];
             for (n, _) in lm {
                 let mut doc = Document::new(n);
-                for (attr_id, fields) in &attr_ids {
-                    if let Some(value) = node_attrs.get_attr(n, *attr_id) {
+                for (attr, fields) in &attrs {
+                    if let Some(value) = node_attrs.get_attr(n, attr) {
                         for field in fields {
                             doc.set(field.clone(), value.clone());
                         }
@@ -335,8 +336,6 @@ impl Graph {
             node_indexer: Indexer::default(),
             node_labels: Vec::new(),
             relationship_types: Vec::new(),
-            node_attrs_name: Vec::new(),
-            relationship_attrs_name: Vec::new(),
             cache: Arc::new(Mutex::new(LruCache::new(
                 NonZeroUsize::new(cache_size).unwrap(),
             ))),
@@ -373,8 +372,6 @@ impl Graph {
             node_indexer: self.node_indexer.clone(),
             node_labels: self.node_labels.clone(),
             relationship_types: self.relationship_types.clone(),
-            node_attrs_name: self.node_attrs_name.clone(),
-            relationship_attrs_name: self.relationship_attrs_name.clone(),
             cache: self.cache.clone(),
             version: self.version + 1,
         }
@@ -413,9 +410,10 @@ impl Graph {
 
     #[must_use]
     pub fn get_attrs(&self) -> Vec<Arc<String>> {
-        self.node_attrs_name
+        self.node_attrs
+            .attrs_name
             .iter()
-            .chain(self.relationship_attrs_name.iter())
+            .chain(self.relationship_attrs.attrs_name.iter())
             .cloned()
             .collect()
     }
@@ -552,72 +550,20 @@ impl Graph {
             .map(|i| &self.relationship_matrices[i])
     }
 
+    #[must_use]
     pub fn get_node_attribute_id(
         &self,
-        key: &str,
+        attr: &Arc<String>,
     ) -> Option<AttrId> {
-        self.node_attrs_name
-            .iter()
-            .position(|p| p.as_str() == key)
-            .map(AttrId)
+        self.node_attrs.get_attr_id(attr)
     }
 
     #[must_use]
-    pub fn get_node_attribute_string(
-        &self,
-        id: AttrId,
-    ) -> Option<Arc<String>> {
-        self.node_attrs_name.get(id.0).cloned()
-    }
-
-    pub fn get_or_add_node_attribute_id(
-        &mut self,
-        key: &Arc<String>,
-    ) -> AttrId {
-        AttrId(
-            self.node_attrs_name
-                .iter()
-                .position(|p| p.as_str() == key.as_str())
-                .unwrap_or_else(|| {
-                    let len = self.node_attrs_name.len();
-                    self.node_attrs_name.push(key.clone());
-                    len
-                }),
-        )
-    }
-
-    pub fn get_or_add_relationship_attribute_id(
-        &mut self,
-        key: &String,
-    ) -> AttrId {
-        AttrId(
-            self.relationship_attrs_name
-                .iter()
-                .position(|p| p.as_str() == key)
-                .unwrap_or_else(|| {
-                    let len = self.relationship_attrs_name.len();
-                    self.relationship_attrs_name.push(Arc::new(key.clone()));
-                    len
-                }),
-        )
-    }
-
     pub fn get_relationship_attribute_id(
         &self,
-        key: &str,
+        attr: &Arc<String>,
     ) -> Option<AttrId> {
-        self.relationship_attrs_name
-            .iter()
-            .position(|p| p.as_str() == key)
-            .map(AttrId)
-    }
-
-    #[must_use]
-    pub fn get_relationship_attribute_string(
-        &self,
-        id: AttrId,
-    ) -> Option<Arc<String>> {
-        self.relationship_attrs_name.get(id.0).cloned()
+        self.relationship_attrs.get_attr_id(attr)
     }
 
     pub fn reserve_node(&mut self) -> NodeId {
@@ -648,14 +594,13 @@ impl Graph {
     pub fn set_node_attribute(
         &mut self,
         id: NodeId,
-        attr_id: AttrId,
+        attr: &Arc<String>,
         value: Value,
         index_add_docs: &mut HashMap<Arc<String>, RoaringTreemap>,
         index_remove_docs: &mut HashMap<Arc<String>, RoaringTreemap>,
     ) -> bool {
-        let attr_name = self.get_node_attribute_string(attr_id).unwrap();
         if value == Value::Null {
-            let removed = self.node_attrs.remove_attr(id.0, attr_id);
+            let removed = self.node_attrs.remove_attr(id.0, attr);
 
             if removed {
                 if self.node_attrs.has_attributes(id.0) {
@@ -663,7 +608,7 @@ impl Graph {
                         let label = self.node_labels[label_id as usize].clone();
                         if self
                             .node_indexer
-                            .is_attr_indexed(label.clone(), attr_name.clone())
+                            .is_attr_indexed(label.clone(), attr.clone())
                         {
                             index_add_docs
                                 .entry(label)
@@ -676,7 +621,7 @@ impl Graph {
                         let label = self.node_labels[label_id as usize].clone();
                         if self
                             .node_indexer
-                            .is_attr_indexed(label.clone(), attr_name.clone())
+                            .is_attr_indexed(label.clone(), attr.clone())
                         {
                             index_remove_docs
                                 .entry(label)
@@ -688,12 +633,12 @@ impl Graph {
             }
             removed
         } else {
-            let res = self.node_attrs.insert_attr(id.0, attr_id, value);
+            let res = self.node_attrs.insert_attr(id.0, attr, value);
             for (_, label_id) in self.node_labels_matrix.iter(id.into(), id.into()) {
                 let label = self.node_labels[label_id as usize].clone();
                 if self
                     .node_indexer
-                    .is_attr_indexed(label.clone(), attr_name.clone())
+                    .is_attr_indexed(label.clone(), attr.clone())
                 {
                     index_add_docs
                         .entry(label)
@@ -767,10 +712,9 @@ impl Graph {
             let label = self.node_labels[label_id].clone();
             self.node_labels_matrix.remove(id.0, label_id as _);
             let mut indexed = false;
-            if let Some(attrs_ids) = self.node_attrs.get_attr_ids(id.0) {
-                for attr_id in attrs_ids {
-                    let attr_name = self.get_node_attribute_string(attr_id).unwrap();
-                    if self.node_indexer.is_attr_indexed(label.clone(), attr_name) {
+            if let Some(attrs) = self.node_attrs.get_attrs(id.0) {
+                for attr in attrs {
+                    if self.node_indexer.is_attr_indexed(label.clone(), attr) {
                         indexed = true;
                         break;
                     }
@@ -849,9 +793,9 @@ impl Graph {
     pub fn get_node_attribute(
         &self,
         id: NodeId,
-        attr_id: AttrId,
+        attr: &Arc<String>,
     ) -> Option<Value> {
-        self.node_attrs.get_attr(id.0, attr_id)
+        self.node_attrs.get_attr(id.0, attr)
     }
 
     pub fn reserve_relationship(&mut self) -> RelationshipId {
@@ -921,13 +865,13 @@ impl Graph {
     pub fn set_relationship_attribute(
         &mut self,
         id: RelationshipId,
-        attr_id: AttrId,
+        attr: &Arc<String>,
         value: Value,
     ) -> bool {
         if value == Value::Null {
-            self.relationship_attrs.remove_attr(id.0, attr_id)
+            self.relationship_attrs.remove_attr(id.0, attr)
         } else {
-            self.relationship_attrs.insert_attr(id.0, attr_id, value)
+            self.relationship_attrs.insert_attr(id.0, attr, value)
         }
     }
 
@@ -1082,9 +1026,9 @@ impl Graph {
     pub fn get_relationship_attribute(
         &self,
         id: RelationshipId,
-        attr_id: AttrId,
+        attr: &Arc<String>,
     ) -> Option<Value> {
-        self.relationship_attrs.get_attr(id.0, attr_id)
+        self.relationship_attrs.get_attr(id.0, attr)
     }
 
     fn resize(&mut self) {
@@ -1124,21 +1068,19 @@ impl Graph {
     }
 
     #[must_use]
-    pub fn get_node_attr_ids(
+    pub fn get_node_attrs(
         &self,
         id: NodeId,
-    ) -> Vec<AttrId> {
-        self.node_attrs.get_attr_ids(id.0).unwrap_or_default()
+    ) -> Vec<Arc<String>> {
+        self.node_attrs.get_attrs(id.0).unwrap_or_default()
     }
 
     #[must_use]
-    pub fn get_relationship_attr_ids(
+    pub fn get_relationship_attrs(
         &self,
         id: RelationshipId,
-    ) -> Vec<AttrId> {
-        self.relationship_attrs
-            .get_attr_ids(id.0)
-            .unwrap_or_default()
+    ) -> Vec<Arc<String>> {
+        self.relationship_attrs.get_attrs(id.0).unwrap_or_default()
     }
 
     pub fn create_index(
@@ -1151,9 +1093,6 @@ impl Graph {
         match entity_type {
             EntityType::Node => {
                 let len = self.get_label_matrix_mut(label).nvals();
-                for attr in attrs {
-                    self.get_or_add_node_attribute_id(attr);
-                }
                 {
                     self.node_indexer
                         .create_index(index_type, label.clone(), attrs, len)?;
@@ -1176,7 +1115,6 @@ impl Graph {
             lm.iter(0, u64::MAX),
             self.node_indexer.clone(),
             self.node_attrs.clone(),
-            self.node_attrs_name.clone(),
         );
     }
 
@@ -1192,8 +1130,7 @@ impl Graph {
             for id in ids {
                 let mut doc = Document::new(id);
                 for (key, fields) in &fields {
-                    let attr_id = self.get_node_attribute_id(key.as_str()).unwrap();
-                    let value = self.node_attrs.get_attr(id, attr_id).unwrap();
+                    let value = self.node_attrs.get_attr(id, key).unwrap();
                     for field in fields {
                         doc.set(field.clone(), value.clone());
                     }
