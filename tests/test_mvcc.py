@@ -63,11 +63,18 @@ def run_read_label(id):
 def run_write_relationship(id):
     db = FalkorDB()
     g = db.select_graph("test")
-    res = g.query(
-        "MATCH (n:Node) WHERE id(n) = $id WITH n MATCH (m:Node) WHERE id(m) = $id + 1 CREATE (n)-[:RELATES_TO {id: $id}]->(m)",
-        params={"id": id},
-    )
-    assert res.relationships_created == 1
+    if id % 2 == 0:
+        res = g.query(
+            "MATCH (n:Node) WHERE id(n) = 0 WITH n MATCH (m:Node) WHERE id(m) = 1 CREATE (n)-[:RELATES_TO {id: 0}]->(m)",
+            params={"id": id},
+        )
+        assert res.relationships_created == 1
+    else:
+        res = g.query(
+            "MATCH (n)-[r:RELATES_TO {id: $id}]->(m) DELETE r",
+            params={"id": id},
+        )
+        assert res.relationships_deleted == 1
     version = int(res._raw_stats[-1][15:])
     return (id, version)
 
@@ -80,14 +87,14 @@ def run_read_relationship(id):
     return (id, res.result_set, version)
 
 
-def mvcc(run_write, run_read):
-    common.g.query("UNWIND range(1, 1000) AS x CREATE (:Node {id: x})")
+def mvcc(data_query, run_write, run_read):
+    common.g.query(data_query)
 
     pool1 = Pool(1)
     pool8 = Pool(8)
 
-    res_write = pool1.map_async(run_write, range(1, 100))
-    res_read = pool8.map_async(run_read, range(1, 100))
+    res_write = pool1.map_async(run_write, range(1, 101))
+    res_read = pool8.map_async(run_read, range(1, 101))
 
     res_write.wait()
     res_read.wait()
@@ -109,15 +116,19 @@ def test_mvcc_version_discard_on_error():
 
 
 def test_mvcc_attribute():
-    res_write, res_read = mvcc(run_write_attribute, run_read_attribute)
+    res_write, res_read = mvcc(
+        "UNWIND range(1, 1000) AS x CREATE (:Node {id: x})",
+        run_write_attribute,
+        run_read_attribute,
+    )
 
     res = common.g.query("MATCH (n) RETURN n.id")
     assert res.result_set == [
-        [0 if i < 100 and i % 2 == 0 else None if i < 100 and i % 2 == 1 else i]
+        [0 if i < 101 and i % 2 == 0 else None if i < 101 and i % 2 == 1 else i]
         for i in range(1, 1001)
     ]
 
-    assert res_write == [(x, x + 1) for x in range(1, 100)]
+    assert res_write == [(x, x + 1) for x in range(1, 101)]
 
     for r in res_read:
         version = r[2]
@@ -135,21 +146,25 @@ def test_mvcc_attribute():
 
 
 def test_mvcc_label():
-    res_write, res_read = mvcc(run_write_label, run_read_label)
+    res_write, res_read = mvcc(
+        "UNWIND range(1, 1000) AS x CREATE (:Node {id: x})",
+        run_write_label,
+        run_read_label,
+    )
 
     res = common.g.query("MATCH (n) RETURN labels(n)")
     assert res.result_set == [
         [
             (
                 ["Node", "L"]
-                if i < 100 and i % 2 == 0
-                else [] if i < 100 and i % 2 == 1 else ["Node"]
+                if i < 101 and i % 2 == 0
+                else [] if i < 101 and i % 2 == 1 else ["Node"]
             )
         ]
         for i in range(1, 1001)
     ]
 
-    assert res_write == [(x, x + 1) for x in range(1, 100)]
+    assert res_write == [(x, x + 1) for x in range(1, 101)]
 
     for r in res_read:
         version = r[2]
@@ -167,14 +182,31 @@ def test_mvcc_label():
 
 
 def test_mvcc_relationship():
-    res_write, res_read = mvcc(run_write_relationship, run_read_relationship)
+    res_write, res_read = mvcc(
+        "CREATE (a:Node {id: 0}), (b:Node {id: 1}) WITH a, b UNWIND range(1, 1000) AS x CREATE (a)-[:RELATES_TO {id: x}]->(b)",
+        run_write_relationship,
+        run_read_relationship,
+    )
 
     res = common.g.query("MATCH (n)-[r]->(m) RETURN r.id")
-    assert res.result_set == [[i] for i in range(1, 100)]
+    assert res.result_set == [
+        [i if i < 101 and i % 2 == 0 else 0 if i < 101 and i % 2 == 1 else i]
+        for i in range(1, 1001)
+    ]
 
-    assert res_write == [(x, x + 1) for x in range(1, 100)]
+    assert res_write == [(x, x + 1) for x in range(1, 101)]
 
     for r in res_read:
         version = r[2]
         res = r[1]
-        assert res == [[i] for i in range(1, version)]
+        assert res == [
+            [
+                (
+                    i
+                    if i < version and i % 2 == 0
+                    else 0 if i < version and i % 2 == 1 else i
+                )
+            ]
+            for i in range(1, 1001)
+            if version % 2 == 1 or i != version - 1
+        ]

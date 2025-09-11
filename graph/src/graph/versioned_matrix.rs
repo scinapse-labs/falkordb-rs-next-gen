@@ -7,7 +7,7 @@ use crate::graph::{
 };
 
 pub struct VersionedMatrix {
-    m: Matrix,
+    m: Cow<Matrix>,
     dp: Cow<Matrix>,
     dm: Cow<Matrix>,
 }
@@ -42,7 +42,6 @@ impl Size for VersionedMatrix {
         nrows: u64,
         ncols: u64,
     ) {
-        self.m = self.m.dup();
         self.m.resize(nrows, ncols);
         self.dp.resize(nrows, ncols);
         self.dm.resize(nrows, ncols);
@@ -59,7 +58,7 @@ impl New for VersionedMatrix {
         ncols: u64,
     ) -> Self {
         Self {
-            m: Matrix::new(nrows, ncols),
+            m: Cow::new(Matrix::new(nrows, ncols)),
             dp: Cow::new(Matrix::new(nrows, ncols)),
             dm: Cow::new(Matrix::new(nrows, ncols)),
         }
@@ -69,7 +68,7 @@ impl New for VersionedMatrix {
 impl Dup<Self> for VersionedMatrix {
     fn dup(&self) -> Self {
         Self {
-            m: self.m.clone(),
+            m: self.m.new_version(),
             dp: self.dp.new_version(),
             dm: self.dm.new_version(),
         }
@@ -224,7 +223,7 @@ where
     /// A new matrix that is the transpose of the original.
     fn transpose(&self) -> Self {
         Self {
-            m: self.m.transpose(),
+            m: Cow::new(self.m.transpose()),
             dp: Cow::new(self.dp.transpose()),
             dm: Cow::new(self.dm.transpose()),
         }
