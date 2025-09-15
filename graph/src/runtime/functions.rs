@@ -7,17 +7,16 @@
 use crate::{
     indexer::{IndexInfo, IndexStatus, IndexType},
     runtime::{
+        ordermap::OrderMap,
         runtime::Runtime,
         value::{Value, ValueTypeOf},
     },
 };
 use itertools::Itertools;
-use ordermap::OrderMap;
 use rand::Rng;
 use std::{
     collections::HashMap,
     fmt::{Debug, Display},
-    rc::Rc,
     sync::{Arc, OnceLock},
 };
 
@@ -222,7 +221,7 @@ impl GraphFn {
 
 #[derive(Default, Debug)]
 pub struct Functions {
-    functions: HashMap<String, Rc<GraphFn>>,
+    functions: HashMap<String, Arc<GraphFn>>,
 }
 
 #[allow(clippy::non_send_fields_in_send_ty)]
@@ -248,7 +247,7 @@ impl Functions {
             !self.functions.contains_key(&lower_name),
             "Function '{name}' already exists"
         );
-        let graph_fn = Rc::new(GraphFn::new(
+        let graph_fn = Arc::new(GraphFn::new(
             name,
             func,
             write,
@@ -271,7 +270,7 @@ impl Functions {
             !self.functions.contains_key(&name),
             "Function '{name}' already exists"
         );
-        let graph_fn = Rc::new(GraphFn::new(
+        let graph_fn = Arc::new(GraphFn::new(
             &name,
             func,
             write,
@@ -285,7 +284,7 @@ impl Functions {
         &self,
         name: &str,
         fn_type: &FnType,
-    ) -> Result<Rc<GraphFn>, String> {
+    ) -> Result<Arc<GraphFn>, String> {
         self.functions
             .get(name.to_lowercase().as_str())
             .and_then(|graph_fn| {
@@ -2334,7 +2333,7 @@ fn db_labels(
             .get_labels()
             .into_iter()
             .map(|l| {
-                let mut map = OrderMap::new();
+                let mut map = OrderMap::default();
                 map.insert(Arc::new(String::from("label")), Value::String(l));
                 Value::Map(Arc::new(map))
             })
@@ -2351,7 +2350,7 @@ fn db_types(
             .get_types()
             .into_iter()
             .map(|t| {
-                let mut map = OrderMap::new();
+                let mut map = OrderMap::default();
                 map.insert(Arc::new(String::from("relationshipType")), Value::String(t));
                 Value::Map(Arc::new(map))
             })
@@ -2368,7 +2367,7 @@ fn db_properties(
             .get_attrs()
             .into_iter()
             .map(|p| {
-                let mut map = OrderMap::new();
+                let mut map = OrderMap::default();
                 map.insert(Arc::new(String::from("propertyKey")), Value::String(p));
                 Value::Map(Arc::new(map))
             })
@@ -2392,13 +2391,13 @@ fn db_indexes(
                      status,
                      fields,
                  }| {
-                    let mut map = OrderMap::new();
+                    let mut map = OrderMap::default();
                     map.insert(Arc::new(String::from("label")), Value::String(label));
                     map.insert(
                         Arc::new(String::from("properties")),
                         Value::List(fields.keys().map(|f| Value::String(f.clone())).collect()),
                     );
-                    let mut types_map = OrderMap::new();
+                    let mut types_map = OrderMap::default();
                     for (attr, fields) in fields {
                         let mut types = vec![];
                         for field in fields {

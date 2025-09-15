@@ -11,6 +11,7 @@ use crate::{
     runtime::{
         functions::FnType,
         iter::{Aggregate, CondInspectIter, LazyReplace, TryFlatMap, TryMap},
+        ordermap::OrderMap,
         pending::Pending,
         value::{
             CompareValue, Contains, DeletedNode, DeletedRelationship, DisjointOrNull, Env, Value,
@@ -20,7 +21,7 @@ use crate::{
 };
 use atomic_refcell::AtomicRefCell;
 use once_cell::unsync::Lazy;
-use ordermap::{OrderMap, OrderSet};
+use ordermap::OrderSet;
 use orx_tree::{Bfs, Dyn, DynNode, DynTree, NodeIdx, NodeRef};
 use reqwest::blocking::get;
 use std::{
@@ -187,7 +188,7 @@ impl<'a> Runtime {
             parameters,
             g,
             write,
-            pending: Lazy::new(|| RefCell::new(Pending::default())),
+            pending: Lazy::new(|| RefCell::new(Pending::new())),
             stats: RefCell::new(QueryStatistics::default()),
             plan,
             return_names,
@@ -1593,6 +1594,10 @@ impl<'a> Runtime {
                         )?;
                     }
                     if let Some(labels) = labels {
+                        let labels = labels
+                            .iter()
+                            .filter_map(|l| self.g.borrow_mut().get_label_id(l.as_str()))
+                            .collect();
                         self.pending.borrow_mut().remove_node_labels(node, labels);
                     }
                 }
@@ -1705,13 +1710,19 @@ impl<'a> Runtime {
                                 )?;
                             }
                         }
-                        for (key, value) in attrs {
-                            self.pending
-                                .borrow_mut()
-                                .set_node_attribute(id, key, value.clone())?;
+                        for (key, value) in attrs.iter() {
+                            self.pending.borrow_mut().set_node_attribute(
+                                id,
+                                key.clone(),
+                                value.clone(),
+                            )?;
                         }
                     }
                     if let Some(labels) = labels {
+                        let labels = labels
+                            .iter()
+                            .map(|l| self.g.borrow_mut().get_label_id_mut(l.as_str()))
+                            .collect();
                         self.pending.borrow_mut().set_node_labels(id, labels);
                     }
                 }
@@ -1745,10 +1756,10 @@ impl<'a> Runtime {
                                 )?;
                             }
                         }
-                        for (key, value) in attrs {
+                        for (key, value) in attrs.iter() {
                             self.pending.borrow_mut().set_relationship_attribute(
                                 id,
-                                key,
+                                key.clone(),
                                 value.clone(),
                             )?;
                         }
@@ -2088,15 +2099,19 @@ impl<'a> Runtime {
         for node in pattern.nodes() {
             let id = self.g.borrow_mut().reserve_node();
             self.pending.borrow_mut().created_node(id);
-            self.pending
-                .borrow_mut()
-                .set_node_labels(id, node.labels.clone());
+            let labels = node
+                .labels
+                .iter()
+                .map(|l| self.g.borrow_mut().get_label_id_mut(l.as_str()))
+                .collect();
+            self.pending.borrow_mut().set_node_labels(id, labels);
             let attrs = self.run_expr(&node.attrs, node.attrs.root().idx(), vars, None)?;
             match attrs {
                 Value::Map(attrs) => {
-                    self.pending
-                        .borrow_mut()
-                        .set_node_attributes(id, Arc::unwrap_or_clone(attrs))?;
+                    self.pending.borrow_mut().set_node_attributes(
+                        id,
+                        attrs.iter().map(|(k, v)| (k.clone(), v.clone())).collect(),
+                    )?;
                 }
                 _ => unreachable!(),
             }
@@ -2138,9 +2153,10 @@ impl<'a> Runtime {
             let attrs = self.run_expr(&rel.attrs, rel.attrs.root().idx(), vars, None)?;
             match attrs {
                 Value::Map(attrs) => {
-                    self.pending
-                        .borrow_mut()
-                        .set_relationship_attributes(id, Arc::unwrap_or_clone(attrs))?;
+                    self.pending.borrow_mut().set_relationship_attributes(
+                        id,
+                        attrs.iter().map(|(k, v)| (k.clone(), v.clone())).collect(),
+                    )?;
                 }
                 _ => {
                     return Err(String::from("Invalid relationship properties"));
@@ -2177,9 +2193,17 @@ impl<'a> Runtime {
         &self,
         id: NodeId,
     ) -> OrderSet<Arc<String>> {
-        let mut labels = self.g.borrow().get_node_labels(id).collect::<OrderSet<_>>();
+        let mut labels = self
+            .g
+            .borrow()
+            .get_node_label_ids(id)
+            .collect::<OrderSet<_>>();
         self.pending.borrow().update_node_labels(id, &mut labels);
+
         labels
+            .iter()
+            .map(|l| self.g.borrow().get_label_by_id(*l))
+            .collect()
     }
 
     pub fn get_node_attrs(

@@ -16,7 +16,7 @@ use crate::{
 pub enum IR {
     Empty,
     Optional(Vec<Variable>),
-    Call(Rc<GraphFn>, Vec<QueryExpr>, Vec<Variable>),
+    Call(Arc<GraphFn>, Vec<QueryExpr>, Vec<Variable>),
     Unwind(QueryExpr, Variable),
     Create(QueryGraph),
     Merge(

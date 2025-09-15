@@ -10,12 +10,10 @@ use std::{
     sync::Arc,
 };
 
-use ordermap::OrderMap;
-
 use crate::{
     ast::Variable,
     graph::graph::{LabelId, NodeId, RelationshipId, TypeId},
-    runtime::functions::Type,
+    runtime::{functions::Type, ordermap::OrderMap},
 };
 
 #[derive(Clone, Debug, PartialEq)]

@@ -13,7 +13,7 @@ use crate::graph::GraphBLAS::{
     GrB_DESC_RSCT0T1, GrB_DESC_RSCT1, GrB_DESC_RST0, GrB_DESC_RST0T1, GrB_DESC_RST1, GrB_DESC_RT0,
     GrB_DESC_RT0T1, GrB_DESC_RT1, GrB_DESC_S, GrB_DESC_SC, GrB_DESC_SCT0, GrB_DESC_SCT0T1,
     GrB_DESC_SCT1, GrB_DESC_ST0, GrB_DESC_ST0T1, GrB_DESC_ST1, GrB_DESC_T0, GrB_DESC_T0T1,
-    GrB_DESC_T1, GrB_Descriptor, GrB_Info, GrB_Matrix, GrB_Matrix_dup,
+    GrB_DESC_T1, GrB_Descriptor, GrB_Info, GrB_Matrix, GrB_Matrix_clear, GrB_Matrix_dup,
     GrB_Matrix_eWiseAdd_Semiring, GrB_Matrix_eWiseMult_Semiring, GrB_Matrix_extractElement_BOOL,
     GrB_Matrix_free, GrB_Matrix_get_INT32, GrB_Matrix_ncols, GrB_Matrix_new, GrB_Matrix_nrows,
     GrB_Matrix_nvals, GrB_Matrix_removeElement, GrB_Matrix_resize, GrB_Matrix_setElement_BOOL,
@@ -108,6 +108,11 @@ pub trait Set {
         j: u64,
         value: bool,
     );
+
+    fn set_all(
+        &mut self,
+        b: &Matrix,
+    );
 }
 
 /// A trait for removing elements from a matrix.
@@ -125,7 +130,7 @@ pub trait Remove {
 
     fn remove_all(
         &mut self,
-        b: &Self,
+        b: &Matrix,
     );
 }
 
@@ -381,6 +386,13 @@ impl Matrix {
             usage
         }
     }
+
+    pub fn clear(&mut self) {
+        unsafe {
+            let info = GrB_Matrix_clear(*self.m);
+            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+        }
+    }
 }
 
 impl Size for Matrix {
@@ -553,6 +565,13 @@ impl Set for Matrix {
             let info = GrB_Matrix_setElement_BOOL(*self.m, value, i, j);
             debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
         }
+    }
+
+    fn set_all(
+        &mut self,
+        b: &Matrix,
+    ) {
+        self.element_wise_add(b);
     }
 }
 

@@ -9,7 +9,7 @@ use std::{
 
 use itertools::Itertools;
 use lru::LruCache;
-use ordermap::{OrderMap, OrderSet};
+use ordermap::OrderSet;
 use orx_tree::DynTree;
 use roaring::RoaringTreemap;
 
@@ -18,7 +18,9 @@ use crate::{
     cypher::Parser,
     graph::{
         attribute_store::AttributeStore,
-        matrix::{Dup, ElementWiseAdd, MaskedElementWiseMultiply, MxM, New, Remove, Set, Size},
+        matrix::{
+            Dup, ElementWiseAdd, MaskedElementWiseMultiply, Matrix, MxM, New, Remove, Set, Size,
+        },
         tensor::Tensor,
         versioned_matrix::{self, VersionedMatrix},
     },
@@ -38,7 +40,7 @@ pub struct Plan {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct LabelId(usize);
+pub struct LabelId(pub usize);
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct TypeId(usize);
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -251,6 +253,11 @@ impl Graph {
     }
 
     #[must_use]
+    pub const fn get_node_count(&self) -> u64 {
+        self.node_count
+    }
+
+    #[must_use]
     pub const fn get_labels_count(&self) -> usize {
         self.node_labels.len()
     }
@@ -289,6 +296,25 @@ impl Graph {
             .chain(self.relationship_attrs.attrs_name.iter())
             .cloned()
             .collect()
+    }
+
+    pub fn get_label_id_mut(
+        &mut self,
+        label: &str,
+    ) -> LabelId {
+        if let Some(pos) = self
+            .node_labels
+            .iter()
+            .position(|l| l.as_str() == label)
+            .map(LabelId)
+        {
+            return pos;
+        }
+
+        self.node_labels.push(Arc::new(label.to_string()));
+        self.labels_matices
+            .push(VersionedMatrix::new(self.node_cap, self.node_cap));
+        LabelId(self.node_labels.len() - 1)
     }
 
     pub fn get_label_id(
@@ -523,43 +549,38 @@ impl Graph {
         }
     }
 
-    pub fn set_node_labels(
+    pub fn set_nodes_labels(
         &mut self,
-        id: NodeId,
-        labels: &OrderSet<Arc<String>>,
+        nodes_labels: &mut Matrix,
         index_add_docs: &mut HashMap<Arc<String>, RoaringTreemap>,
     ) {
-        for label in labels {
-            let label_matrix = self.get_label_matrix_mut(label);
-            label_matrix.set(id.0, id.0, true);
-            let label_id = self.get_label_id(label).unwrap();
-            self.resize();
-            self.node_labels_matrix.set(id.0, label_id.0 as u64, true);
+        nodes_labels.resize(self.node_cap, self.node_labels.len() as u64);
+        self.resize();
+        self.node_labels_matrix.set_all(nodes_labels);
+
+        for (id, label_id) in nodes_labels.iter(0, u64::MAX) {
+            self.labels_matices[label_id as usize].set(id, id, true);
+            let label = self.node_labels[label_id as usize].clone();
             if self.node_indexer.is_label_indexed(label.clone())
-                && self.node_attrs.has_attributes(id.0)
+                && self.node_attrs.has_attributes(id)
             {
-                index_add_docs
-                    .entry(label.clone())
-                    .or_default()
-                    .insert(u64::from(id));
+                index_add_docs.entry(label.clone()).or_default().insert(id);
             }
         }
     }
 
-    pub fn remove_node_labels(
+    pub fn remove_nodes_labels(
         &mut self,
-        id: NodeId,
-        labels: &OrderSet<Arc<String>>,
+        nodes_labels: &mut Matrix,
         remove_docs: &mut HashMap<Arc<String>, RoaringTreemap>,
     ) {
-        for label in labels {
-            if !self.node_labels.contains(label) {
-                continue;
-            }
-            let label_matrix = self.get_label_matrix_mut(label);
-            label_matrix.remove(id.0, id.0);
-            let label_id = self.get_label_id(label).unwrap();
-            self.node_labels_matrix.remove(id.0, label_id.0 as u64);
+        nodes_labels.resize(self.node_cap, self.node_labels.len() as u64);
+        self.resize();
+        self.node_labels_matrix.remove_all(nodes_labels);
+
+        for (id, label_id) in nodes_labels.iter(0, u64::MAX) {
+            self.labels_matices[label_id as usize].remove(id, id);
+            let label = self.node_labels[label_id as usize].clone();
             if self.node_indexer.is_label_indexed(label.clone()) {
                 remove_docs
                     .entry(label.clone())
@@ -686,7 +707,7 @@ impl Graph {
 
     pub fn create_relationships(
         &mut self,
-        relationships: &OrderMap<RelationshipId, PendingRelationship>,
+        relationships: &HashMap<RelationshipId, PendingRelationship>,
     ) {
         self.relationship_count += relationships.len() as u64;
         self.reserved_relationship_count -= relationships.len() as u64;

@@ -24,6 +24,10 @@ use opentelemetry_sdk::{Resource, trace::SdkTracerProvider};
 #[cfg(feature = "zipkin")]
 use opentelemetry_zipkin::ZipkinExporter;
 use orx_tree::{Bfs, Collection, Dfs, NodeRef};
+#[cfg(feature = "pyro")]
+use pyroscope::PyroscopeAgent;
+#[cfg(feature = "pyro")]
+use pyroscope_pprofrs::{PprofConfig, pprof_backend};
 use redis_module::{
     Context, NextArg, REDISMODULE_OK, REDISMODULE_TYPE_METHOD_VERSION, RedisError, RedisGILGuard,
     RedisModule_Alloc, RedisModule_Calloc, RedisModule_Free, RedisModule_Realloc,
@@ -31,6 +35,8 @@ use redis_module::{
     RedisModuleTypeMethods, RedisResult, RedisString, RedisValue, Status,
     configuration::ConfigurationFlags, native_types::RedisType, raw, redis_module,
 };
+#[cfg(feature = "pyro")]
+use std::mem;
 use std::{
     collections::HashMap,
     ffi::CString,
@@ -167,7 +173,7 @@ fn reply_compact_value(
                     raw::reply_with_long_long(ctx.ctx, usize::from(*label) as _);
                 }
                 raw::reply_with_array(ctx.ctx, x.attrs.len() as _);
-                for (key, value) in &x.attrs {
+                for (key, value) in x.attrs.iter() {
                     raw::reply_with_array(ctx.ctx, 3);
                     let key = runtime.g.borrow().get_node_attribute_id(key).unwrap();
                     raw::reply_with_long_long(ctx.ctx, key as _);
@@ -201,7 +207,7 @@ fn reply_compact_value(
                 raw::reply_with_long_long(ctx.ctx, u64::from(to) as _);
                 raw::reply_with_array(ctx.ctx, x.attrs.len() as _);
                 let bg = runtime.g.borrow();
-                for (key, value) in &x.attrs {
+                for (key, value) in x.attrs.iter() {
                     raw::reply_with_array(ctx.ctx, 3);
                     let key = bg.get_relationship_attribute_id(key).unwrap();
                     raw::reply_with_long_long(ctx.ctx, key as _);
@@ -342,7 +348,7 @@ fn reply_verbose_value(
                     );
                 }
                 raw::reply_with_array(ctx.ctx, x.attrs.len() as _);
-                for (key, value) in &x.attrs {
+                for (key, value) in x.attrs.iter() {
                     raw::reply_with_array(ctx.ctx, 2);
                     raw::reply_with_string_buffer(
                         ctx.ctx,
@@ -383,7 +389,7 @@ fn reply_verbose_value(
                 raw::reply_with_long_long(ctx.ctx, u64::from(from) as _);
                 raw::reply_with_long_long(ctx.ctx, u64::from(to) as _);
                 raw::reply_with_array(ctx.ctx, x.attrs.len() as _);
-                for (key, value) in &x.attrs {
+                for (key, value) in x.attrs.iter() {
                     raw::reply_with_array(ctx.ctx, 3);
                     raw::reply_with_string_buffer(
                         ctx.ctx,
@@ -1006,6 +1012,15 @@ fn graph_init(
 ) -> Status {
     #[cfg(feature = "zipkin")]
     init_zipkin();
+    #[cfg(feature = "pyro")]
+    {
+        let agent = PyroscopeAgent::builder("http://localhost:4040", "falkordb")
+            .backend(pprof_backend(PprofConfig::new().sample_rate(100)))
+            .build()
+            .unwrap();
+        let agent_running = agent.start().unwrap();
+        mem::forget(agent_running);
+    }
     unsafe {
         let result = RediSearch_Init(ctx.ctx as _, REDISEARCH_INIT_LIBRARY as c_int);
         if result == REDISMODULE_OK as c_int {

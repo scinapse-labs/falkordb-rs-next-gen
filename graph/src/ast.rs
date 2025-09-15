@@ -78,7 +78,7 @@ pub enum ExprIR {
     Pow,
     Modulo,
     Distinct,
-    FuncInvocation(Rc<GraphFn>),
+    FuncInvocation(Arc<GraphFn>),
     Quantifier(QuantifierType, Variable),
     ListComprehension(Variable),
     Paren,
@@ -569,7 +569,7 @@ pub type QueryExpr = Rc<DynTree<ExprIR>>;
 #[derive(Debug)]
 pub enum QueryIR {
     Call(
-        Rc<GraphFn>,
+        Arc<GraphFn>,
         Vec<QueryExpr>,
         Vec<Variable>,
         Option<QueryExpr>,

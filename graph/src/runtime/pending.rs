@@ -1,13 +1,17 @@
 use std::{cell::RefCell, collections::HashMap, sync::Arc};
 
 use atomic_refcell::AtomicRefCell;
-use ordermap::{OrderMap, OrderSet};
+use ordermap::OrderSet;
 use roaring::RoaringTreemap;
 
 use crate::{
-    graph::graph::{Graph, NodeId, RelationshipId},
+    graph::{
+        graph::{Graph, LabelId, NodeId, RelationshipId},
+        matrix::{Matrix, New, Set, Size},
+    },
     runtime::{
         functions::Type,
+        ordermap::OrderMap,
         runtime::QueryStatistics,
         value::{Value, ValueTypeOf},
     },
@@ -34,21 +38,36 @@ impl PendingRelationship {
     }
 }
 
-#[derive(Default)]
 pub struct Pending {
     created_nodes: RoaringTreemap,
-    created_relationships: OrderMap<RelationshipId, PendingRelationship>,
+    created_relationships: HashMap<RelationshipId, PendingRelationship>,
     deleted_nodes: RoaringTreemap,
     deleted_relationships: OrderSet<(RelationshipId, NodeId, NodeId)>,
-    set_nodes_attrs: OrderMap<NodeId, OrderMap<Arc<String>, Value>>,
-    set_relationships_attrs: OrderMap<RelationshipId, OrderMap<Arc<String>, Value>>,
-    set_node_labels: OrderMap<NodeId, OrderSet<Arc<String>>>,
-    remove_node_labels: OrderMap<NodeId, OrderSet<Arc<String>>>,
+    set_nodes_attrs: HashMap<NodeId, Vec<(Arc<String>, Value)>>,
+    set_relationships_attrs: HashMap<RelationshipId, Vec<(Arc<String>, Value)>>,
+    set_node_labels: Matrix,
+    remove_node_labels: Matrix,
     index_add_docs: HashMap<Arc<String>, RoaringTreemap>,
     index_remove_docs: HashMap<Arc<String>, RoaringTreemap>,
 }
 
 impl Pending {
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            created_nodes: RoaringTreemap::new(),
+            created_relationships: HashMap::new(),
+            deleted_nodes: RoaringTreemap::new(),
+            deleted_relationships: OrderSet::new(),
+            set_nodes_attrs: HashMap::new(),
+            set_relationships_attrs: HashMap::new(),
+            set_node_labels: Matrix::new(0, 0),
+            remove_node_labels: Matrix::new(0, 0),
+            index_add_docs: HashMap::new(),
+            index_remove_docs: HashMap::new(),
+        }
+    }
+
     pub fn created_node(
         &mut self,
         id: NodeId,
@@ -59,7 +78,7 @@ impl Pending {
     pub fn set_node_attributes(
         &mut self,
         id: NodeId,
-        attrs: OrderMap<Arc<String>, Value>,
+        attrs: Vec<(Arc<String>, Value)>,
     ) -> Result<(), String> {
         for (_, value) in &attrs {
             if value
@@ -116,7 +135,7 @@ impl Pending {
         self.set_nodes_attrs
             .entry(id)
             .or_default()
-            .insert(key, value);
+            .push((key, value));
         Ok(())
     }
 
@@ -128,7 +147,7 @@ impl Pending {
     ) -> Option<&Value> {
         self.set_nodes_attrs
             .get(&id)
-            .and_then(|attrs| attrs.get(key))
+            .and_then(|attrs| attrs.iter().find(|(k, _)| k == key).map(|(_, v)| v))
     }
 
     pub fn update_node_attrs(
@@ -150,31 +169,60 @@ impl Pending {
     pub fn set_node_labels(
         &mut self,
         id: NodeId,
-        labels: OrderSet<Arc<String>>,
+        labels: Vec<LabelId>,
     ) {
-        self.set_node_labels.insert(id, labels);
+        self.set_node_labels.resize(
+            self.set_node_labels.nrows().max(u64::from(id) + 1),
+            self.set_node_labels.ncols().max(
+                labels
+                    .iter()
+                    .map(|l| usize::from(*l) as u64)
+                    .max()
+                    .unwrap_or(0)
+                    + 1,
+            ),
+        );
+        for label in &labels {
+            self.set_node_labels
+                .set(id.into(), usize::from(*label) as u64, true);
+        }
     }
 
     pub fn remove_node_labels(
         &mut self,
         id: NodeId,
-        labels: OrderSet<Arc<String>>,
+        labels: Vec<LabelId>,
     ) {
-        self.remove_node_labels.insert(id, labels);
+        self.remove_node_labels.resize(
+            self.remove_node_labels.nrows().max(u64::from(id) + 1),
+            self.remove_node_labels.ncols().max(
+                labels
+                    .iter()
+                    .map(|l| usize::from(*l) as u64)
+                    .max()
+                    .unwrap_or(0)
+                    + 1,
+            ),
+        );
+        for label in &labels {
+            self.remove_node_labels
+                .set(id.into(), usize::from(*label) as u64, true);
+        }
     }
 
     pub fn update_node_labels(
         &self,
         id: NodeId,
-        labels: &mut OrderSet<Arc<String>>,
+        labels: &mut OrderSet<LabelId>,
     ) {
-        if let Some(added) = self.set_node_labels.get(&id) {
-            labels.extend(added.iter().cloned());
-        }
-        if let Some(removed) = self.remove_node_labels.get(&id) {
-            for label in removed {
-                labels.remove(label);
-            }
+        labels.extend(
+            self.set_node_labels
+                .iter(id.into(), id.into())
+                .map(|(_, label_id)| LabelId(label_id as usize)),
+        );
+
+        for (_, label) in self.remove_node_labels.iter(id.into(), id.into()) {
+            labels.remove(&LabelId(label as usize));
         }
     }
 
@@ -199,7 +247,7 @@ impl Pending {
     pub fn set_relationship_attributes(
         &mut self,
         id: RelationshipId,
-        attrs: OrderMap<Arc<String>, Value>,
+        attrs: Vec<(Arc<String>, Value)>,
     ) -> Result<(), String> {
         for (_, value) in &attrs {
             if value
@@ -256,7 +304,7 @@ impl Pending {
         self.set_relationships_attrs
             .entry(id)
             .or_default()
-            .insert(key, value);
+            .push((key, value));
         Ok(())
     }
 
@@ -268,7 +316,7 @@ impl Pending {
     ) -> Option<&Value> {
         self.set_relationships_attrs
             .get(&id)
-            .and_then(|attrs| attrs.get(key))
+            .and_then(|attrs| attrs.iter().find(|(k, _)| k == key).map(|(_, v)| v))
     }
 
     pub fn update_relationship_attrs(
@@ -354,25 +402,23 @@ impl Pending {
             }
             self.deleted_nodes.clear();
         }
-        if !self.set_node_labels.is_empty() {
-            for (id, labels) in &self.set_node_labels {
-                g.borrow_mut()
-                    .set_node_labels(*id, labels, &mut self.index_add_docs);
-            }
+        if self.set_node_labels.nvals() > 0 {
+            g.borrow_mut()
+                .set_nodes_labels(&mut self.set_node_labels, &mut self.index_add_docs);
+
             self.set_node_labels.clear();
         }
-        if !self.remove_node_labels.is_empty() {
-            for (id, labels) in &self.remove_node_labels {
-                g.borrow_mut()
-                    .remove_node_labels(*id, labels, &mut self.index_remove_docs);
-            }
+        if self.remove_node_labels.nvals() > 0 {
+            g.borrow_mut()
+                .remove_nodes_labels(&mut self.remove_node_labels, &mut self.index_remove_docs);
+
             self.remove_node_labels.clear();
         }
         if !self.set_nodes_attrs.is_empty() {
             stats.borrow_mut().properties_set += self
                 .set_nodes_attrs
                 .values()
-                .flat_map(|v| v.values())
+                .flat_map(|v| v.iter().map(|(_, val)| val))
                 .map(|v| match *v {
                     Value::Null => 0,
                     _ => 1,
@@ -397,7 +443,7 @@ impl Pending {
             stats.borrow_mut().properties_set += self
                 .set_relationships_attrs
                 .values()
-                .flat_map(|v| v.values())
+                .flat_map(|v| v.iter().map(|(_, val)| val))
                 .map(|v| match *v {
                     Value::Null => 0,
                     _ => 1,

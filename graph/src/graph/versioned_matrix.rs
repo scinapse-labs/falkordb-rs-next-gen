@@ -118,9 +118,10 @@ impl Remove for VersionedMatrix {
 
     fn remove_all(
         &mut self,
-        b: &Self,
+        b: &Matrix,
     ) {
-        todo!()
+        self.dp.remove_all(b);
+        self.dm.element_wise_add(b);
     }
 }
 
@@ -210,6 +211,14 @@ impl Set for VersionedMatrix {
             debug_assert!(self.dm.get(i, j).is_none());
             self.dp.set(i, j, value);
         }
+    }
+
+    fn set_all(
+        &mut self,
+        b: &Matrix,
+    ) {
+        self.dp.element_wise_add(b);
+        self.dm.remove_all(b);
     }
 }
 
