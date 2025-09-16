@@ -68,6 +68,16 @@ impl Pending {
         }
     }
 
+    pub fn resize(
+        &mut self,
+        node_cap: u64,
+        labels_count: usize,
+    ) {
+        self.set_node_labels.resize(node_cap, labels_count as u64);
+        self.remove_node_labels
+            .resize(node_cap, labels_count as u64);
+    }
+
     pub fn created_node(
         &mut self,
         id: NodeId,
@@ -171,17 +181,22 @@ impl Pending {
         id: NodeId,
         labels: Vec<LabelId>,
     ) {
-        self.set_node_labels.resize(
-            self.set_node_labels.nrows().max(u64::from(id) + 1),
-            self.set_node_labels.ncols().max(
-                labels
-                    .iter()
-                    .map(|l| usize::from(*l) as u64)
-                    .max()
-                    .unwrap_or(0)
-                    + 1,
-            ),
-        );
+        let max_label = labels
+            .iter()
+            .map(|l| usize::from(*l) as u64)
+            .max()
+            .unwrap_or(0);
+        let mut cap = self.set_node_labels.nrows();
+        if cap <= u64::from(id) {
+            while cap <= u64::from(id) {
+                cap *= 2;
+            }
+            self.set_node_labels
+                .resize(cap, self.set_node_labels.ncols().max(max_label + 1));
+        }
+        if self.set_node_labels.ncols() <= max_label {
+            self.set_node_labels.resize(cap, max_label + 1);
+        }
         for label in &labels {
             self.set_node_labels
                 .set(id.into(), usize::from(*label) as u64, true);

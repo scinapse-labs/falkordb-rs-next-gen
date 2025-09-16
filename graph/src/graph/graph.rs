@@ -258,6 +258,11 @@ impl Graph {
     }
 
     #[must_use]
+    pub const fn get_node_cap(&self) -> u64 {
+        self.node_cap
+    }
+
+    #[must_use]
     pub const fn get_labels_count(&self) -> usize {
         self.node_labels.len()
     }

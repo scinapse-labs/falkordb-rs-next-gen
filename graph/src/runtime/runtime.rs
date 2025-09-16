@@ -933,6 +933,9 @@ impl<'a> Runtime {
                 };
 
                 let idx = idx.clone();
+                self.pending
+                    .borrow_mut()
+                    .resize(self.g.borrow().get_node_cap(), self.get_labels().len());
                 Ok(iter
                     .try_flat_map(move |mut vars| {
                         self.create(pattern, &mut vars)?;
