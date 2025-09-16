@@ -996,6 +996,9 @@ impl<'a> Runtime {
             }
             IR::Set(items) => {
                 let idx = idx.clone();
+                self.pending
+                    .borrow_mut()
+                    .resize(self.g.borrow().get_node_cap(), self.get_labels().len());
                 Ok(iter
                     .try_map(move |vars| {
                         self.set(items, &vars)?;
@@ -1696,9 +1699,9 @@ impl<'a> Runtime {
                                 value.clone(),
                             )?;
                         }
-                    } else if let Value::Node(id) = value {
+                    } else if let Value::Node(tid) = value {
                         let g = self.g.borrow();
-                        let attrs = self.get_node_attrs(id);
+                        let attrs = self.get_node_attrs(tid);
                         if *replace {
                             for key in g.get_node_attrs(id) {
                                 self.pending.borrow_mut().set_node_attribute(
