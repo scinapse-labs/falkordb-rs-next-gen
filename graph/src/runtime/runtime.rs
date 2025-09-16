@@ -36,7 +36,6 @@ use std::{
     sync::Arc,
     time::Instant,
 };
-use tracing::instrument;
 
 pub struct ResultSummary {
     pub stats: QueryStatistics,
@@ -241,7 +240,6 @@ impl<'a> Runtime {
         }
     }
 
-    #[instrument(name = "run_agg_expr", level = "debug", skip(self, ir), fields(expr_type = ?ir.node(&idx).data()))]
     fn run_agg_expr(
         &self,
         ir: &DynTree<ExprIR>,
@@ -275,7 +273,6 @@ impl<'a> Runtime {
 
     #[allow(clippy::too_many_lines)]
     #[allow(clippy::cognitive_complexity)]
-    #[instrument(name = "run_expr", level = "debug", skip(self), fields(expr_type = ?ir.node(&idx).data()))]
     fn run_expr(
         &self,
         ir: &DynTree<ExprIR>,
@@ -704,7 +701,6 @@ impl<'a> Runtime {
         Ok(res.pop().unwrap())
     }
 
-    #[instrument(name = "run_iter_expr", level = "debug", skip(self), fields(expr_type = ?ir.node(&idx).data()))]
     fn run_iter_expr(
         &self,
         ir: &DynTree<ExprIR>,
@@ -812,7 +808,6 @@ impl<'a> Runtime {
     }
 
     #[allow(clippy::too_many_lines)]
-    #[instrument(name = "run", level = "debug", skip(self, idx))]
     fn run(
         &self,
         idx: &NodeIdx<Dyn<IR>>,

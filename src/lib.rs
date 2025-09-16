@@ -13,16 +13,6 @@ use graph::{
     threadpool::spawn,
 };
 use lazy_static::lazy_static;
-#[cfg(feature = "zipkin")]
-use opentelemetry::global;
-#[cfg(feature = "zipkin")]
-use opentelemetry::trace::TracerProvider;
-#[cfg(feature = "zipkin")]
-use opentelemetry_sdk::trace::{BatchConfigBuilder, BatchSpanProcessor};
-#[cfg(feature = "zipkin")]
-use opentelemetry_sdk::{Resource, trace::SdkTracerProvider};
-#[cfg(feature = "zipkin")]
-use opentelemetry_zipkin::ZipkinExporter;
 use orx_tree::{Bfs, Collection, Dfs, NodeRef};
 #[cfg(feature = "pyro")]
 use pyroscope::PyroscopeAgent;
@@ -46,12 +36,6 @@ use std::{
 };
 #[cfg(feature = "fuzz")]
 use std::{fs::File, io::Write};
-#[cfg(feature = "zipkin")]
-use tracing_opentelemetry::OpenTelemetryLayer;
-#[cfg(feature = "zipkin")]
-use tracing_subscriber::layer::SubscriberExt;
-#[cfg(feature = "zipkin")]
-use tracing_subscriber::util::SubscriberInitExt;
 
 const EMPTY_KEY_ERR: RedisResult = Err(RedisError::Str("ERR Invalid graph operation on empty key"));
 
@@ -512,40 +496,38 @@ fn query_mut(
             let bc = bc;
             let ctx = unsafe { raw::RedisModule_GetThreadSafeContext.unwrap()(bc.inner) };
             let ctx = Context::new(ctx);
-            let res: Result<(), String> = {
-                tracing::debug_span!("query_execution", query = %query).in_scope(|| {
-                    let Plan {
-                        plan,
-                        cached,
-                        parameters,
-                        ..
-                    } = graph.read().unwrap().read().borrow().get_plan(&query)?;
-                    let parameters = parameters
-                        .into_iter()
-                        .map(|(k, v)| Ok((k, evaluate_param(&v.root())?)))
-                        .collect::<Result<HashMap<_, _>, String>>()?;
-                    let scope = CONFIGURATION_IMPORT_FOLDER.lock(&ctx);
-                    let is_write = plan.iter().any(|n| matches!(n, IR::Commit));
-                    let g = if is_write {
-                        graph.read().unwrap().write()
-                    } else {
-                        graph.read().unwrap().read()
-                    };
-                    let mut runtime =
-                        Runtime::new(g.clone(), parameters, write, plan, false, (*scope).clone());
-                    let mut result = runtime.query()?;
-                    if is_write {
-                        graph.write().unwrap().commit(g);
-                    }
-                    result.stats.cached = cached;
-                    if compact {
-                        reply_compact(&ctx, &runtime, result);
-                    } else {
-                        reply_verbose(&ctx, &runtime, result);
-                    }
-                    Ok(())
-                })
-            };
+            let res: Result<(), String> = (|| {
+                let Plan {
+                    plan,
+                    cached,
+                    parameters,
+                    ..
+                } = graph.read().unwrap().read().borrow().get_plan(&query)?;
+                let parameters = parameters
+                    .into_iter()
+                    .map(|(k, v)| Ok((k, evaluate_param(&v.root())?)))
+                    .collect::<Result<HashMap<_, _>, String>>()?;
+                let scope = CONFIGURATION_IMPORT_FOLDER.lock(&ctx);
+                let is_write = plan.iter().any(|n| matches!(n, IR::Commit));
+                let g = if is_write {
+                    graph.read().unwrap().write()
+                } else {
+                    graph.read().unwrap().read()
+                };
+                let mut runtime =
+                    Runtime::new(g.clone(), parameters, write, plan, false, (*scope).clone());
+                let mut result = runtime.query()?;
+                if is_write {
+                    graph.write().unwrap().commit(g);
+                }
+                result.stats.cached = cached;
+                if compact {
+                    reply_compact(&ctx, &runtime, result);
+                } else {
+                    reply_verbose(&ctx, &runtime, result);
+                }
+                Ok(())
+            })();
             match res {
                 Ok(()) => {}
                 Err(err) => {
@@ -976,42 +958,10 @@ fn graph_memory(
     ))
 }
 
-#[cfg(feature = "zipkin")]
-fn init_zipkin() {
-    global::set_text_map_propagator(opentelemetry_zipkin::Propagator::new());
-
-    let exporter = ZipkinExporter::builder().build().unwrap();
-
-    let batch = BatchSpanProcessor::builder(exporter)
-        .with_batch_config(
-            BatchConfigBuilder::default()
-                .with_max_queue_size(4096)
-                .build(),
-        )
-        .build();
-
-    let provider = SdkTracerProvider::builder()
-        .with_span_processor(batch)
-        .with_sampler(opentelemetry_sdk::trace::Sampler::AlwaysOn)
-        .with_resource(
-            Resource::builder_empty()
-                .with_service_name("falkordb-graph-engine")
-                .build(),
-        )
-        .build();
-    let tracer = provider.tracer("falkordb-graph-engine");
-    let layer = OpenTelemetryLayer::new(tracer);
-    tracing_subscriber::registry().with(layer).init();
-
-    global::set_tracer_provider(provider);
-}
-
 fn graph_init(
     ctx: &Context,
     _: &Vec<RedisString>,
 ) -> Status {
-    #[cfg(feature = "zipkin")]
-    init_zipkin();
     #[cfg(feature = "pyro")]
     {
         let agent = PyroscopeAgent::builder("http://localhost:4040", "falkordb")
