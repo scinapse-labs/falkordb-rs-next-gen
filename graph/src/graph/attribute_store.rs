@@ -28,7 +28,7 @@ impl AttributeStore {
         attr: &Arc<String>,
     ) -> Option<Value> {
         if let Some(idx) = self.attrs_name.get_index_of(attr) {
-            return self.attributes.borrow()[idx].get(key).cloned();
+            return self.attributes.borrow()[idx].get(key);
         }
         None
     }
@@ -39,7 +39,7 @@ impl AttributeStore {
         key: u64,
     ) -> bool {
         for attr in self.attributes.borrow().iter() {
-            if attr.get(key).is_some() {
+            if attr.exists(key) {
                 return true;
             }
         }
@@ -53,7 +53,7 @@ impl AttributeStore {
     ) -> Option<Vec<Arc<String>>> {
         let mut ids = vec![];
         for (i, attr) in self.attributes.borrow().iter().enumerate() {
-            if attr.get(key).is_some() {
+            if attr.exists(key) {
                 ids.push(self.attrs_name[i].clone());
             }
         }
@@ -89,10 +89,7 @@ impl AttributeStore {
             },
             |idx| idx,
         );
-        let v = attributes[idx].insert(key);
-        let has_value = v.is_some();
-        *v = Some(value);
-        has_value
+        attributes[idx].insert(key, value)
     }
 
     #[must_use]

@@ -529,10 +529,15 @@ fn query_mut(
                 Ok(())
             })();
             match res {
-                Ok(()) => {}
+                Ok(()) => {
+                    drop(bc);
+                    unsafe { raw::RedisModule_FreeThreadSafeContext.unwrap()(ctx.ctx) };
+                }
                 Err(err) => {
                     let cerr = CString::new(err).unwrap();
                     raw::reply_with_error(ctx.ctx, cerr.as_ptr().cast::<c_char>());
+                    drop(bc);
+                    unsafe { raw::RedisModule_FreeThreadSafeContext.unwrap()(ctx.ctx) };
                 }
             }
         },

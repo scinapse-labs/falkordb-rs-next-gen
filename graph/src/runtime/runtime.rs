@@ -280,6 +280,43 @@ impl<'a> Runtime {
         env: &Env,
         agg_group_key: Option<u64>,
     ) -> Result<Value, String> {
+        match ir.node(&idx).data() {
+            ExprIR::Null => return Ok(Value::Null),
+            ExprIR::Bool(x) => return Ok(Value::Bool(*x)),
+            ExprIR::Integer(x) => return Ok(Value::Int(*x)),
+            ExprIR::Float(x) => return Ok(Value::Float(*x)),
+            ExprIR::String(x) => return Ok(Value::String(x.clone())),
+            ExprIR::Variable(x) => {
+                return env
+                    .get(x)
+                    .ok_or_else(|| format!("Variable {} not found", x.as_str()));
+            }
+
+            ExprIR::Parameter(x) => {
+                return self.parameters.get(x).map_or_else(
+                    || Err(format!("Parameter {x} not found")),
+                    |v| Ok(v.clone()),
+                );
+            }
+            ExprIR::Map => {
+                return Ok(Value::Map(Arc::new(
+                    ir.node(&idx)
+                        .children()
+                        .map(|child| {
+                            Ok((
+                                if let ExprIR::String(key) = child.data() {
+                                    key.clone()
+                                } else {
+                                    todo!();
+                                },
+                                self.run_expr(ir, child.child(0).idx(), env, agg_group_key)?,
+                            ))
+                        })
+                        .collect::<Result<_, String>>()?,
+                )));
+            }
+            _ => {}
+        }
         let mut res = vec![];
         let mut stack = vec![(idx, false)];
         while let Some((idx, reenter)) = stack.pop() {
