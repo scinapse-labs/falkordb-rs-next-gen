@@ -1448,20 +1448,24 @@ impl<'a> Runtime {
                 rel.alias.clone(),
                 rel.types.clone(),
                 rel.attrs.clone(),
-                resolved_pattern
-                    .nodes()
-                    .iter()
-                    .filter(|n| n.alias == rel.from.alias)
-                    .next()
-                    .unwrap()
-                    .clone(),
-                resolved_pattern
-                    .nodes()
-                    .iter()
-                    .filter(|n| n.alias == rel.to.alias)
-                    .next()
-                    .unwrap()
-                    .clone(),
+                Rc::new(QueryNode::new(
+                    rel.from.alias.clone(),
+                    rel.from
+                        .labels
+                        .iter()
+                        .map(|l| self.g.borrow_mut().get_label_id_mut(l.as_str()))
+                        .collect(),
+                    rel.from.attrs.clone(),
+                )),
+                Rc::new(QueryNode::new(
+                    rel.to.alias.clone(),
+                    rel.to
+                        .labels
+                        .iter()
+                        .map(|l| self.g.borrow_mut().get_label_id_mut(l.as_str()))
+                        .collect(),
+                    rel.to.attrs.clone(),
+                )),
                 rel.bidirectional,
             )));
         }
