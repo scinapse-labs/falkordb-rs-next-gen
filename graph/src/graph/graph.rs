@@ -644,30 +644,48 @@ impl Graph {
             })
     }
 
+    #[must_use]
     pub fn get_nodes(
         &self,
         labels: &OrderSet<Arc<String>>,
-    ) -> impl Iterator<Item = NodeId> + use<> {
-        let iter = if labels.is_empty() {
-            self.all_nodes_matrix.to_matrix().iter(0, u64::MAX)
-        } else {
-            let matrices = labels
-                .iter()
-                .map(|label| self.get_label_matrix(label))
-                .collect::<Option<Vec<_>>>();
-            matrices.map_or_else(
-                || self.zero_matrix.to_matrix().iter(0, u64::MAX),
-                |mut matrices| {
-                    let mut iter = matrices.iter_mut();
-                    let mut m = iter.next().unwrap().to_matrix();
-                    for label_matrix in iter {
-                        m.element_wise_multiply(None, None, Some(&label_matrix.to_matrix()), None);
-                    }
-                    m.iter(0, u64::MAX)
-                },
-            )
-        };
-        iter.map(|(id, _)| NodeId(id))
+    ) -> Box<dyn Iterator<Item = NodeId>> {
+        if labels.is_empty() {
+            return Box::new(
+                self.all_nodes_matrix
+                    .iter(0, u64::MAX)
+                    .map(|(id, _)| NodeId(id)),
+            );
+        }
+        if labels.len() == 1 {
+            if let Some(label_matrix) = self.get_label_matrix(&labels[0]) {
+                return Box::new(label_matrix.iter(0, u64::MAX).map(|(id, _)| NodeId(id)));
+            }
+            return Box::new(std::iter::empty());
+        }
+        let matrices = labels
+            .iter()
+            .map(|label| self.get_label_matrix(label))
+            .collect::<Option<Vec<_>>>();
+        Box::new(
+            matrices
+                .map_or_else(
+                    || self.zero_matrix.to_matrix().iter(0, u64::MAX),
+                    |mut matrices| {
+                        let mut iter = matrices.iter_mut();
+                        let mut m = iter.next().unwrap().to_matrix();
+                        for label_matrix in iter {
+                            m.element_wise_multiply(
+                                None,
+                                None,
+                                Some(&label_matrix.to_matrix()),
+                                None,
+                            );
+                        }
+                        m.iter(0, u64::MAX)
+                    },
+                )
+                .map(|(id, _)| NodeId(id)),
+        )
     }
 
     #[allow(clippy::cast_possible_truncation)]
