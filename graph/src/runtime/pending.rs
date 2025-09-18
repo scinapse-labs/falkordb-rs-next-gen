@@ -43,8 +43,8 @@ pub struct Pending {
     created_relationships: HashMap<RelationshipId, PendingRelationship>,
     deleted_nodes: RoaringTreemap,
     deleted_relationships: OrderSet<(RelationshipId, NodeId, NodeId)>,
-    set_nodes_attrs: HashMap<NodeId, Vec<(Arc<String>, Value)>>,
-    set_relationships_attrs: HashMap<RelationshipId, Vec<(Arc<String>, Value)>>,
+    set_nodes_attrs: HashMap<NodeId, OrderMap<Arc<String>, Value>>,
+    set_relationships_attrs: HashMap<RelationshipId, OrderMap<Arc<String>, Value>>,
     set_node_labels: Matrix,
     remove_node_labels: Matrix,
     index_add_docs: HashMap<Arc<String>, RoaringTreemap>,
@@ -88,9 +88,9 @@ impl Pending {
     pub fn set_node_attributes(
         &mut self,
         id: NodeId,
-        attrs: Vec<(Arc<String>, Value)>,
+        attrs: OrderMap<Arc<String>, Value>,
     ) -> Result<(), String> {
-        for (_, value) in &attrs {
+        for (_, value) in attrs.iter() {
             if value
                 .value_of_type(&Type::Union(vec![
                     Type::Bool,
@@ -145,7 +145,7 @@ impl Pending {
         self.set_nodes_attrs
             .entry(id)
             .or_default()
-            .push((key, value));
+            .insert(key, value);
         Ok(())
     }
 
@@ -157,7 +157,7 @@ impl Pending {
     ) -> Option<&Value> {
         self.set_nodes_attrs
             .get(&id)
-            .and_then(|attrs| attrs.iter().find(|(k, _)| k == key).map(|(_, v)| v))
+            .and_then(|attrs| attrs.iter().find(|(k, _)| *k == key).map(|(_, v)| v))
     }
 
     pub fn update_node_attrs(
@@ -166,7 +166,7 @@ impl Pending {
         attrs: &mut OrderMap<Arc<String>, Value>,
     ) {
         if let Some(added) = self.set_nodes_attrs.get(&id) {
-            for (key, value) in added {
+            for (key, value) in added.iter() {
                 if *value == Value::Null {
                     attrs.remove(key);
                 } else {
@@ -179,7 +179,7 @@ impl Pending {
     pub fn set_node_labels(
         &mut self,
         id: NodeId,
-        labels: Vec<LabelId>,
+        labels: &OrderSet<LabelId>,
     ) {
         let max_label = labels
             .iter()
@@ -197,7 +197,7 @@ impl Pending {
         if self.set_node_labels.ncols() <= max_label {
             self.set_node_labels.resize(cap, max_label + 1);
         }
-        for label in &labels {
+        for label in labels {
             self.set_node_labels
                 .set(id.into(), usize::from(*label) as u64, true);
         }
@@ -262,9 +262,9 @@ impl Pending {
     pub fn set_relationship_attributes(
         &mut self,
         id: RelationshipId,
-        attrs: Vec<(Arc<String>, Value)>,
+        attrs: OrderMap<Arc<String>, Value>,
     ) -> Result<(), String> {
-        for (_, value) in &attrs {
+        for (_, value) in attrs.iter() {
             if value
                 .value_of_type(&Type::Union(vec![
                     Type::Bool,
@@ -319,7 +319,7 @@ impl Pending {
         self.set_relationships_attrs
             .entry(id)
             .or_default()
-            .push((key, value));
+            .insert(key, value);
         Ok(())
     }
 
@@ -331,7 +331,7 @@ impl Pending {
     ) -> Option<&Value> {
         self.set_relationships_attrs
             .get(&id)
-            .and_then(|attrs| attrs.iter().find(|(k, _)| k == key).map(|(_, v)| v))
+            .and_then(|attrs| attrs.iter().find(|(k, _)| *k == key).map(|(_, v)| v))
     }
 
     pub fn update_relationship_attrs(
@@ -340,7 +340,7 @@ impl Pending {
         attrs: &mut OrderMap<Arc<String>, Value>,
     ) {
         if let Some(added) = self.set_relationships_attrs.get(&id) {
-            for (key, value) in added {
+            for (key, value) in added.iter() {
                 if *value == Value::Null {
                     attrs.remove(key);
                 } else {
@@ -440,7 +440,7 @@ impl Pending {
                 })
                 .sum::<usize>();
             for (id, attrs) in &self.set_nodes_attrs {
-                for (key, value) in attrs {
+                for (key, value) in attrs.iter() {
                     if g.borrow_mut().set_node_attribute(
                         *id,
                         key,
@@ -465,7 +465,7 @@ impl Pending {
                 })
                 .sum::<usize>();
             for (id, attrs) in &self.set_relationships_attrs {
-                for (key, value) in attrs {
+                for (key, value) in attrs.iter() {
                     if g.borrow_mut()
                         .set_relationship_attribute(*id, key, value.clone())
                     {

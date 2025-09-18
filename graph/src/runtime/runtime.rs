@@ -5,7 +5,7 @@
 
 use crate::{
     ast::{ExprIR, QuantifierType, QueryExpr, QueryGraph, QueryNode, QueryRelationship, Variable},
-    graph::graph::{Graph, NodeId, RelationshipId},
+    graph::graph::{Graph, LabelId, NodeId, RelationshipId},
     indexer::IndexQuery,
     planner::IR,
     runtime::{
@@ -299,7 +299,7 @@ impl<'a> Runtime {
                 );
             }
             ExprIR::Map => {
-                return Ok(Value::Map(Arc::new(
+                return Ok(Value::Map(
                     ir.node(&idx)
                         .children()
                         .map(|child| {
@@ -313,7 +313,7 @@ impl<'a> Runtime {
                             ))
                         })
                         .collect::<Result<_, String>>()?,
-                )));
+                ));
             }
             _ => {}
         }
@@ -665,7 +665,7 @@ impl<'a> Runtime {
 
                     res.push((func.func)(self, args)?);
                 }
-                ExprIR::Map => res.push(Value::Map(Arc::new(
+                ExprIR::Map => res.push(Value::Map(
                     node.children()
                         .map(|child| {
                             Ok((
@@ -678,7 +678,7 @@ impl<'a> Runtime {
                             ))
                         })
                         .collect::<Result<_, String>>()?,
-                ))),
+                )),
                 ExprIR::Quantifier(quantifier, var) => {
                     let list = self.run_expr(ir, node.child(0).idx(), env, agg_group_key)?;
                     match list {
@@ -968,9 +968,10 @@ impl<'a> Runtime {
                 self.pending
                     .borrow_mut()
                     .resize(self.g.borrow().get_node_cap(), self.get_labels().len());
+                let resolved_pattern = self.resolve_pattern(pattern);
                 Ok(iter
                     .try_flat_map(move |mut vars| {
-                        self.create(pattern, &mut vars)?;
+                        self.create(&resolved_pattern, &mut vars)?;
 
                         if parent_commit {
                             return Ok(
@@ -1006,7 +1007,8 @@ impl<'a> Runtime {
                             })
                             .lazy_replace(move || {
                                 let mut vars = cvars.clone();
-                                match self.create(pattern, &mut vars) {
+                                let resolved_pattern = self.resolve_pattern(pattern);
+                                match self.create(&resolved_pattern, &mut vars) {
                                     Ok(()) => match self.set(on_create_set_items, &vars) {
                                         Ok(()) => once(Ok(vars)),
                                         Err(e) => once(Err(e)),
@@ -1426,6 +1428,49 @@ impl<'a> Runtime {
         }
     }
 
+    fn resolve_pattern(
+        &self,
+        pattern: &QueryGraph<Arc<String>, Arc<String>>,
+    ) -> QueryGraph<Arc<String>, LabelId> {
+        let mut resolved_pattern = QueryGraph::default();
+        for node in pattern.nodes() {
+            resolved_pattern.add_node(Rc::new(QueryNode::new(
+                node.alias.clone(),
+                node.labels
+                    .iter()
+                    .map(|l| self.g.borrow_mut().get_label_id_mut(l.as_str()))
+                    .collect(),
+                node.attrs.clone(),
+            )));
+        }
+        for rel in pattern.relationships() {
+            resolved_pattern.add_relationship(Rc::new(QueryRelationship::new(
+                rel.alias.clone(),
+                rel.types.clone(),
+                rel.attrs.clone(),
+                resolved_pattern
+                    .nodes()
+                    .iter()
+                    .filter(|n| n.alias == rel.from.alias)
+                    .next()
+                    .unwrap()
+                    .clone(),
+                resolved_pattern
+                    .nodes()
+                    .iter()
+                    .filter(|n| n.alias == rel.to.alias)
+                    .next()
+                    .unwrap()
+                    .clone(),
+                rel.bidirectional,
+            )));
+        }
+        for path in pattern.paths() {
+            resolved_pattern.add_path(path.clone());
+        }
+        resolved_pattern
+    }
+
     fn load_csv_file(
         path: &str,
         headers: bool,
@@ -1453,7 +1498,7 @@ impl<'a> Runtime {
                         let mut env = vars.clone();
                         env.insert(
                             var,
-                            Value::Map(Arc::new(
+                            Value::Map(
                                 record
                                     .iter()
                                     .enumerate()
@@ -1470,7 +1515,7 @@ impl<'a> Runtime {
                                         }
                                     })
                                     .collect::<OrderMap<_, _>>(),
-                            )),
+                            ),
                         );
                         Ok(env)
                     }
@@ -1532,7 +1577,7 @@ impl<'a> Runtime {
                         let mut env = vars.clone();
                         env.insert(
                             var,
-                            Value::Map(Arc::new(
+                            Value::Map(
                                 record
                                     .iter()
                                     .enumerate()
@@ -1549,7 +1594,7 @@ impl<'a> Runtime {
                                         }
                                     })
                                     .collect::<OrderMap<_, _>>(),
-                            )),
+                            ),
                         );
                         Ok(env)
                     }
@@ -1761,7 +1806,7 @@ impl<'a> Runtime {
                             .iter()
                             .map(|l| self.g.borrow_mut().get_label_id_mut(l.as_str()))
                             .collect();
-                        self.pending.borrow_mut().set_node_labels(id, labels);
+                        self.pending.borrow_mut().set_node_labels(id, &labels);
                     }
                 }
                 Value::Relationship(id, src, dest) => {
@@ -1817,7 +1862,7 @@ impl<'a> Runtime {
 
     fn relationship_scan(
         &'a self,
-        relationship_pattern: &'a QueryRelationship,
+        relationship_pattern: &'a QueryRelationship<Arc<String>, Arc<String>>,
         vars: Env,
     ) -> Result<Box<dyn Iterator<Item = Result<Env, String>> + 'a>, String> {
         let filter_attrs = self.run_expr(
@@ -1900,7 +1945,7 @@ impl<'a> Runtime {
 
     fn expand_into(
         &'a self,
-        relationship_pattern: &'a QueryRelationship,
+        relationship_pattern: &'a QueryRelationship<Arc<String>, Arc<String>>,
         vars: Env,
     ) -> Result<Box<dyn Iterator<Item = Result<Env, String>> + 'a>, String> {
         let src = vars.get(&relationship_pattern.from.alias).map_or_else(
@@ -1941,7 +1986,7 @@ impl<'a> Runtime {
 
     fn node_by_label_scan(
         &'a self,
-        node_pattern: &'a QueryNode,
+        node_pattern: &'a QueryNode<Arc<String>>,
         vars: Env,
     ) -> Result<Box<dyn Iterator<Item = Result<Env, String>> + 'a>, String> {
         let attrs = self.run_expr(
@@ -2007,7 +2052,7 @@ impl<'a> Runtime {
 
     fn node_by_index_scan(
         &'a self,
-        node_pattern: &'a QueryNode,
+        node_pattern: &'a QueryNode<Arc<String>>,
         index: &Arc<String>,
         query: &IndexQuery<QueryExpr>,
         vars: Env,
@@ -2050,7 +2095,7 @@ impl<'a> Runtime {
 
     fn node_by_id_scan(
         &'a self,
-        node_pattern: &'a QueryNode,
+        node_pattern: &'a QueryNode<Arc<String>>,
         id: &QueryExpr,
         mut vars: Env,
     ) -> Result<Box<dyn Iterator<Item = Result<Env, String>> + 'a>, String> {
@@ -2131,25 +2176,17 @@ impl<'a> Runtime {
 
     fn create(
         &self,
-        pattern: &QueryGraph,
+        pattern: &QueryGraph<Arc<String>, LabelId>,
         vars: &mut Env,
     ) -> Result<(), String> {
         for node in pattern.nodes() {
             let id = self.g.borrow_mut().reserve_node();
             self.pending.borrow_mut().created_node(id);
-            let labels = node
-                .labels
-                .iter()
-                .map(|l| self.g.borrow_mut().get_label_id_mut(l.as_str()))
-                .collect();
-            self.pending.borrow_mut().set_node_labels(id, labels);
+            self.pending.borrow_mut().set_node_labels(id, &node.labels);
             let attrs = self.run_expr(&node.attrs, node.attrs.root().idx(), vars, None)?;
             match attrs {
                 Value::Map(attrs) => {
-                    self.pending.borrow_mut().set_node_attributes(
-                        id,
-                        attrs.iter().map(|(k, v)| (k.clone(), v.clone())).collect(),
-                    )?;
+                    self.pending.borrow_mut().set_node_attributes(id, attrs)?;
                 }
                 _ => unreachable!(),
             }
@@ -2191,10 +2228,9 @@ impl<'a> Runtime {
             let attrs = self.run_expr(&rel.attrs, rel.attrs.root().idx(), vars, None)?;
             match attrs {
                 Value::Map(attrs) => {
-                    self.pending.borrow_mut().set_relationship_attributes(
-                        id,
-                        attrs.iter().map(|(k, v)| (k.clone(), v.clone())).collect(),
-                    )?;
+                    self.pending
+                        .borrow_mut()
+                        .set_relationship_attributes(id, attrs)?;
                 }
                 _ => {
                     return Err(String::from("Invalid relationship properties"));
@@ -2319,7 +2355,7 @@ pub fn evaluate_param(expr: &DynNode<ExprIR>) -> Result<Value, String> {
                 .map(|c| evaluate_param(&c))
                 .collect::<Result<Vec<_>, _>>()?,
         )),
-        ExprIR::Map => Ok(Value::Map(Arc::new(
+        ExprIR::Map => Ok(Value::Map(
             expr.children()
                 .map(|ir| match ir.data() {
                     ExprIR::String(key) => {
@@ -2328,7 +2364,7 @@ pub fn evaluate_param(expr: &DynNode<ExprIR>) -> Result<Value, String> {
                     _ => todo!(),
                 })
                 .collect::<Result<OrderMap<_, _>, _>>()?,
-        ))),
+        )),
         ExprIR::Negate => {
             let v = evaluate_param(&expr.child(0))?;
             match v {

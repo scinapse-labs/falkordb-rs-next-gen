@@ -132,8 +132,8 @@ pub fn optimize(
 
 fn get_index(
     graph: &Graph,
-    node: &Rc<crate::ast::QueryNode>,
-) -> Option<(Rc<QueryNode>, Arc<String>, DynTree<ExprIR>)> {
+    node: &Rc<QueryNode<Arc<String>>>,
+) -> Option<(Rc<QueryNode<Arc<String>>>, Arc<String>, DynTree<ExprIR>)> {
     for label in &node.labels {
         for attr in node.attrs.root().children() {
             if let ExprIR::String(attr_str) = attr.data()

@@ -1434,7 +1434,7 @@ impl<'a> Parser<'a> {
     fn parse_pattern(
         &mut self,
         clause: &Keyword,
-    ) -> Result<QueryGraph, String> {
+    ) -> Result<QueryGraph<Arc<String>, Arc<String>>, String> {
         let mut query_graph = QueryGraph::default();
         let mut nodes_alias = HashSet::new();
         loop {
@@ -2060,7 +2060,7 @@ impl<'a> Parser<'a> {
     fn parse_node_pattern(
         &mut self,
         clause: &Keyword,
-    ) -> Result<Rc<QueryNode>, String> {
+    ) -> Result<Rc<QueryNode<Arc<String>>>, String> {
         match_token!(self.lexer, LParen);
         let alias = if let Ok(id) = self.parse_ident() {
             self.create_var(Some(id), Type::Node)?
@@ -2085,9 +2085,15 @@ impl<'a> Parser<'a> {
 
     fn parse_relationship_pattern(
         &mut self,
-        src: Rc<QueryNode>,
+        src: Rc<QueryNode<Arc<String>>>,
         clause: &Keyword,
-    ) -> Result<(Rc<QueryRelationship>, Rc<QueryNode>), String> {
+    ) -> Result<
+        (
+            Rc<QueryRelationship<Arc<String>, Arc<String>>>,
+            Rc<QueryNode<Arc<String>>>,
+        ),
+        String,
+    > {
         let is_incoming = optional_match_token!(self.lexer, LessThan);
         match_token!(self.lexer, Dash);
         let has_details = optional_match_token!(self.lexer, LBrace);

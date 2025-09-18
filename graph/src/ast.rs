@@ -297,14 +297,14 @@ impl SupportAggregation for DynTree<ExprIR> {
 }
 
 #[derive(Debug)]
-pub struct QueryNode {
+pub struct QueryNode<L> {
     pub alias: Variable,
-    pub labels: OrderSet<Arc<String>>,
+    pub labels: OrderSet<L>,
     pub attrs: QueryExpr,
 }
 
 #[cfg_attr(tarpaulin, skip)]
-impl Display for QueryNode {
+impl<L: Display> Display for QueryNode<L> {
     fn fmt(
         &self,
         f: &mut std::fmt::Formatter<'_>,
@@ -316,16 +316,16 @@ impl Display for QueryNode {
             f,
             "({}:{})",
             self.alias.as_str(),
-            self.labels.iter().map(|label| label.as_str()).join(":")
+            self.labels.iter().join(":")
         )
     }
 }
 
-impl QueryNode {
+impl<L> QueryNode<L> {
     #[must_use]
     pub const fn new(
         alias: Variable,
-        labels: OrderSet<Arc<String>>,
+        labels: OrderSet<L>,
         attrs: QueryExpr,
     ) -> Self {
         Self {
@@ -337,17 +337,17 @@ impl QueryNode {
 }
 
 #[derive(Debug)]
-pub struct QueryRelationship {
+pub struct QueryRelationship<T, L> {
     pub alias: Variable,
-    pub types: Vec<Arc<String>>,
+    pub types: Vec<T>,
     pub attrs: QueryExpr,
-    pub from: Rc<QueryNode>,
-    pub to: Rc<QueryNode>,
+    pub from: Rc<QueryNode<L>>,
+    pub to: Rc<QueryNode<L>>,
     pub bidirectional: bool,
 }
 
 #[cfg_attr(tarpaulin, skip)]
-impl Display for QueryRelationship {
+impl<T: Display, L: Display> Display for QueryRelationship<T, L> {
     fn fmt(
         &self,
         f: &mut std::fmt::Formatter<'_>,
@@ -368,21 +368,21 @@ impl Display for QueryRelationship {
             "({})-[{}:{}]-{}({})",
             self.from.alias.as_str(),
             self.alias.as_str(),
-            self.types.iter().map(|label| label.as_str()).join("|"),
+            self.types.iter().join("|"),
             direction,
             self.to.alias.as_str()
         )
     }
 }
 
-impl QueryRelationship {
+impl<T, L> QueryRelationship<T, L> {
     #[must_use]
     pub const fn new(
         alias: Variable,
-        types: Vec<Arc<String>>,
+        types: Vec<T>,
         attrs: QueryExpr,
-        from: Rc<QueryNode>,
-        to: Rc<QueryNode>,
+        from: Rc<QueryNode<L>>,
+        to: Rc<QueryNode<L>>,
         bidirectional: bool,
     ) -> Self {
         Self {
@@ -413,14 +413,14 @@ impl QueryPath {
 }
 
 #[derive(Clone, Debug, Default)]
-pub struct QueryGraph {
-    nodes: OrderMap<Variable, Rc<QueryNode>>,
-    relationships: OrderMap<Variable, Rc<QueryRelationship>>,
+pub struct QueryGraph<T, L> {
+    nodes: OrderMap<Variable, Rc<QueryNode<L>>>,
+    relationships: OrderMap<Variable, Rc<QueryRelationship<T, L>>>,
     paths: OrderMap<Variable, Rc<QueryPath>>,
 }
 
 #[cfg_attr(tarpaulin, skip)]
-impl Display for QueryGraph {
+impl<T: Display, L: Display> Display for QueryGraph<T, L> {
     fn fmt(
         &self,
         f: &mut std::fmt::Formatter<'_>,
@@ -438,17 +438,17 @@ impl Display for QueryGraph {
     }
 }
 
-impl QueryGraph {
+impl<T, L> QueryGraph<T, L> {
     pub fn add_node(
         &mut self,
-        node: Rc<QueryNode>,
+        node: Rc<QueryNode<L>>,
     ) -> bool {
         self.nodes.insert(node.alias.clone(), node).is_none()
     }
 
     pub fn add_relationship(
         &mut self,
-        relationship: Rc<QueryRelationship>,
+        relationship: Rc<QueryRelationship<T, L>>,
     ) -> bool {
         self.relationships
             .insert(relationship.alias.clone(), relationship)
@@ -473,12 +473,12 @@ impl QueryGraph {
     }
 
     #[must_use]
-    pub fn nodes(&self) -> Vec<Rc<QueryNode>> {
+    pub fn nodes(&self) -> Vec<Rc<QueryNode<L>>> {
         self.nodes.values().cloned().collect()
     }
 
     #[must_use]
-    pub fn relationships(&self) -> Vec<Rc<QueryRelationship>> {
+    pub fn relationships(&self) -> Vec<Rc<QueryRelationship<T, L>>> {
         self.relationships.values().cloned().collect()
     }
 
@@ -491,7 +491,11 @@ impl QueryGraph {
     pub fn filter_visited(
         &self,
         visited: &HashSet<u32>,
-    ) -> Self {
+    ) -> Self
+    where
+        T: Default,
+        L: Default,
+    {
         let mut res = Self::default();
         for node in self.nodes.values() {
             if !visited.contains(&node.alias.id) {
@@ -512,7 +516,11 @@ impl QueryGraph {
     }
 
     #[must_use]
-    pub fn connected_components(&self) -> Vec<Self> {
+    pub fn connected_components(&self) -> Vec<Self>
+    where
+        T: Default,
+        L: Default,
+    {
         let mut visited = HashSet::new();
         let mut components = Vec::new();
 
@@ -531,7 +539,7 @@ impl QueryGraph {
 
     fn dfs(
         &self,
-        node: &Rc<QueryNode>,
+        node: &Rc<QueryNode<L>>,
         visited: &mut HashSet<u32>,
         component: &mut Self,
     ) {
@@ -575,17 +583,17 @@ pub enum QueryIR {
         Option<QueryExpr>,
     ),
     Match {
-        pattern: QueryGraph,
+        pattern: QueryGraph<Arc<String>, Arc<String>>,
         filter: Option<QueryExpr>,
         optional: bool,
     },
     Unwind(QueryExpr, Variable),
     Merge(
-        QueryGraph,
+        QueryGraph<Arc<String>, Arc<String>>,
         Vec<(QueryExpr, QueryExpr, bool)>,
         Vec<(QueryExpr, QueryExpr, bool)>,
     ),
-    Create(QueryGraph),
+    Create(QueryGraph<Arc<String>, Arc<String>>),
     Delete(Vec<QueryExpr>, bool),
     Set(Vec<(QueryExpr, QueryExpr, bool)>),
     Remove(Vec<QueryExpr>),

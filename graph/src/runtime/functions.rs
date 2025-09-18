@@ -1007,14 +1007,8 @@ fn properties(
     let mut iter = args.into_iter();
     match iter.next() {
         Some(Value::Map(map)) => Ok(Value::Map(map)),
-        Some(Value::Node(id)) => {
-            let properties = runtime.get_node_attrs(id);
-            Ok(Value::Map(Arc::new(properties)))
-        }
-        Some(Value::Relationship(id, _, _)) => {
-            let properties = runtime.get_relationship_attrs(id);
-            Ok(Value::Map(Arc::new(properties)))
-        }
+        Some(Value::Node(id)) => Ok(Value::Map(runtime.get_node_attrs(id))),
+        Some(Value::Relationship(id, _, _)) => Ok(Value::Map(runtime.get_relationship_attrs(id))),
         Some(Value::Null) => Ok(Value::Null),
 
         _ => unreachable!(),
@@ -2335,7 +2329,7 @@ fn db_labels(
             .map(|l| {
                 let mut map = OrderMap::default();
                 map.insert(Arc::new(String::from("label")), Value::String(l));
-                Value::Map(Arc::new(map))
+                Value::Map(map)
             })
             .collect(),
     ))
@@ -2352,7 +2346,7 @@ fn db_types(
             .map(|t| {
                 let mut map = OrderMap::default();
                 map.insert(Arc::new(String::from("relationshipType")), Value::String(t));
-                Value::Map(Arc::new(map))
+                Value::Map(map)
             })
             .collect(),
     ))
@@ -2369,7 +2363,7 @@ fn db_properties(
             .map(|p| {
                 let mut map = OrderMap::default();
                 map.insert(Arc::new(String::from("propertyKey")), Value::String(p));
-                Value::Map(Arc::new(map))
+                Value::Map(map)
             })
             .collect(),
     ))
@@ -2415,10 +2409,7 @@ fn db_indexes(
                         }
                         types_map.insert(attr, Value::List(types));
                     }
-                    map.insert(
-                        Arc::new(String::from("types")),
-                        Value::Map(Arc::new(types_map)),
-                    );
+                    map.insert(Arc::new(String::from("types")), Value::Map(types_map));
                     map.insert(Arc::new(String::from("options")), Value::Null);
                     map.insert(Arc::new(String::from("language")), Value::Null);
                     map.insert(Arc::new(String::from("stopwords")), Value::Null);
@@ -2438,7 +2429,7 @@ fn db_indexes(
                     );
                     map.insert(Arc::new(String::from("info")), Value::Null);
 
-                    Value::Map(Arc::new(map))
+                    Value::Map(map)
                 },
             )
             .collect(),
