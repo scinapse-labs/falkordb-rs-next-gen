@@ -28,7 +28,7 @@ use crate::{
     indexer::{Document, EntityType, IndexInfo, IndexQuery, IndexType, Indexer},
     optimizer::optimize,
     planner::{IR, Planner},
-    runtime::{pending::PendingRelationship, value::Value},
+    runtime::{ordermap::OrderMap, pending::PendingRelationship, value::Value},
     threadpool::spawn,
 };
 
@@ -496,54 +496,30 @@ impl Graph {
         }
     }
 
-    pub fn set_node_attribute(
+    pub fn set_node_attributes(
         &mut self,
         id: NodeId,
-        attr: &Arc<String>,
-        value: Value,
+        attrs: OrderMap<Arc<String>, Value>,
         index_add_docs: &mut HashMap<Arc<String>, RoaringTreemap>,
-        index_remove_docs: &mut HashMap<Arc<String>, RoaringTreemap>,
-    ) -> bool {
-        if value == Value::Null {
-            let removed = self.node_attrs.remove_attr(id.0, attr);
-
-            if removed {
-                if self.node_attrs.has_attributes(id.0) {
-                    for (_, label_id) in self.node_labels_matrix.iter(id.into(), id.into()) {
-                        let label = self.node_labels[label_id as usize].clone();
-                        if self
-                            .node_indexer
-                            .is_attr_indexed(label.clone(), attr.clone())
-                        {
-                            index_add_docs
-                                .entry(label)
-                                .or_default()
-                                .insert(u64::from(id));
-                        }
-                    }
-                } else {
-                    for (_, label_id) in self.node_labels_matrix.iter(id.into(), id.into()) {
-                        let label = self.node_labels[label_id as usize].clone();
-                        if self
-                            .node_indexer
-                            .is_attr_indexed(label.clone(), attr.clone())
-                        {
-                            index_remove_docs
-                                .entry(label)
-                                .or_default()
-                                .insert(u64::from(id));
-                        }
-                    }
+    ) -> usize {
+        let mut nremoved = 0;
+        let keys = attrs.keys().cloned().collect::<Vec<_>>();
+        for (attr, value) in attrs.into_iter() {
+            if value == Value::Null {
+                if self.node_attrs.remove_attr(id.0, &attr) {
+                    nremoved += 1;
                 }
+            } else if self.node_attrs.insert_attr(id.0, &attr, value) {
+                nremoved += 1;
             }
-            removed
-        } else {
-            let res = self.node_attrs.insert_attr(id.0, attr, value);
-            for (_, label_id) in self.node_labels_matrix.iter(id.into(), id.into()) {
+        }
+
+        for (_, label_id) in self.node_labels_matrix.iter(id.into(), id.into()) {
+            for key in &keys {
                 let label = self.node_labels[label_id as usize].clone();
                 if self
                     .node_indexer
-                    .is_attr_indexed(label.clone(), attr.clone())
+                    .is_attr_indexed(label.clone(), key.clone())
                 {
                     index_add_docs
                         .entry(label)
@@ -551,8 +527,8 @@ impl Graph {
                         .insert(u64::from(id));
                 }
             }
-            res
         }
+        nremoved
     }
 
     pub fn set_nodes_labels(
@@ -777,17 +753,22 @@ impl Graph {
         }
     }
 
-    pub fn set_relationship_attribute(
+    pub fn set_relationship_attributes(
         &mut self,
         id: RelationshipId,
-        attr: &Arc<String>,
-        value: Value,
-    ) -> bool {
-        if value == Value::Null {
-            self.relationship_attrs.remove_attr(id.0, attr)
-        } else {
-            self.relationship_attrs.insert_attr(id.0, attr, value)
+        attrs: OrderMap<Arc<String>, Value>,
+    ) -> usize {
+        let mut nremoved = 0;
+        for (attr, value) in attrs.into_iter() {
+            if value == Value::Null {
+                if self.relationship_attrs.remove_attr(id.0, &attr) {
+                    nremoved += 1;
+                }
+            } else if self.relationship_attrs.insert_attr(id.0, &attr, value) {
+                nremoved += 1;
+            }
         }
+        nremoved
     }
 
     #[must_use]

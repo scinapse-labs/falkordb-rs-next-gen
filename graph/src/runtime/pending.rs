@@ -439,20 +439,11 @@ impl Pending {
                     _ => 1,
                 })
                 .sum::<usize>();
-            for (id, attrs) in &self.set_nodes_attrs {
-                for (key, value) in attrs.iter() {
-                    if g.borrow_mut().set_node_attribute(
-                        *id,
-                        key,
-                        value.clone(),
-                        &mut self.index_add_docs,
-                        &mut self.index_remove_docs,
-                    ) {
-                        stats.borrow_mut().properties_removed += 1;
-                    }
-                }
+            for (id, attrs) in self.set_nodes_attrs.drain() {
+                stats.borrow_mut().properties_removed +=
+                    g.borrow_mut()
+                        .set_node_attributes(id, attrs, &mut self.index_add_docs);
             }
-            self.set_nodes_attrs.clear();
         }
         if !self.set_relationships_attrs.is_empty() {
             stats.borrow_mut().properties_set += self
@@ -464,14 +455,9 @@ impl Pending {
                     _ => 1,
                 })
                 .sum::<usize>();
-            for (id, attrs) in &self.set_relationships_attrs {
-                for (key, value) in attrs.iter() {
-                    if g.borrow_mut()
-                        .set_relationship_attribute(*id, key, value.clone())
-                    {
-                        stats.borrow_mut().properties_removed += 1;
-                    }
-                }
+            for (id, attrs) in self.set_relationships_attrs.drain() {
+                stats.borrow_mut().properties_removed +=
+                    g.borrow_mut().set_relationship_attributes(id, attrs);
             }
             self.set_relationships_attrs.clear();
         }

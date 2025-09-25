@@ -53,6 +53,10 @@ impl<K: PartialEq, V: PartialEq> OrderMap<K, V> {
         self.vec.iter().map(|(k, v)| (k, v))
     }
 
+    pub fn into_iter(self) -> impl Iterator<Item = (K, V)> {
+        self.vec.into_iter()
+    }
+
     #[must_use]
     pub const fn len(&self) -> usize {
         self.vec.len()
