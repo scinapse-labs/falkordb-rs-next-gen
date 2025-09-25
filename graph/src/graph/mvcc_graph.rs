@@ -38,7 +38,7 @@ impl MvccGraph {
         new_graph: Arc<AtomicRefCell<Graph>>,
     ) {
         if self.graph.borrow().version + 1 == new_graph.borrow().version {
-            new_graph.borrow().wait();
+            new_graph.borrow_mut().wait();
             self.graph = new_graph;
         } else {
             todo!();

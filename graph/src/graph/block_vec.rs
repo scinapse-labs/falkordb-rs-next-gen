@@ -39,13 +39,6 @@ impl<T: Clone> Block<T> {
         self.vec.borrow().len()
     }
 
-    pub fn push(
-        &mut self,
-        value: T,
-    ) {
-        self.vec.borrow_mut().push(Some(value));
-    }
-
     pub fn insert(
         &mut self,
         idx: usize,

@@ -105,7 +105,7 @@ impl Tensor {
         Iter::new(self, min_row, max_row, transpose)
     }
 
-    pub fn wait(&self) {
+    pub fn wait(&mut self) {
         self.m.wait();
         self.mt.wait();
         self.me.wait();

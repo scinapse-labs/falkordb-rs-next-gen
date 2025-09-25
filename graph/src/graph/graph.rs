@@ -19,10 +19,11 @@ use crate::{
     graph::{
         attribute_store::AttributeStore,
         matrix::{
-            Dup, ElementWiseAdd, MaskedElementWiseMultiply, Matrix, MxM, New, Remove, Set, Size,
+            Dup, MaskedElementWiseAdd, MaskedElementWiseMultiply, Matrix, MxM, New, Remove, Set,
+            Size,
         },
         tensor::Tensor,
-        versioned_matrix::{self, VersionedMatrix},
+        versioned_matrix::{self, SetAll, VersionedMatrix},
     },
     indexer::{Document, EntityType, IndexInfo, IndexQuery, IndexType, Indexer},
     optimizer::optimize,
@@ -587,10 +588,7 @@ impl Graph {
             self.labels_matices[label_id as usize].remove(id, id);
             let label = self.node_labels[label_id as usize].clone();
             if self.node_indexer.is_label_indexed(label.clone()) {
-                remove_docs
-                    .entry(label.clone())
-                    .or_default()
-                    .insert(u64::from(id));
+                remove_docs.entry(label.clone()).or_default().insert(id);
             }
         }
     }
@@ -889,7 +887,12 @@ impl Graph {
                 .map_or_else(|| &self.adjacancy_matrix, |t| Tensor::matrix(t))
                 .to_matrix();
             for relationship_matrix in iter {
-                m.element_wise_add(&relationship_matrix.matrix().to_matrix());
+                m.element_wise_add(
+                    None,
+                    None,
+                    Some(&relationship_matrix.matrix().to_matrix()),
+                    None,
+                );
             }
 
             if !src_labels_matrices.is_empty() {
@@ -1153,11 +1156,11 @@ impl Graph {
         size
     }
 
-    pub fn wait(&self) {
+    pub fn wait(&mut self) {
         self.adjacancy_matrix.wait();
         self.node_labels_matrix.wait();
         self.relationship_type_matrix.wait();
-        for tensor in &self.relationship_matrices {
+        for tensor in &mut self.relationship_matrices {
             tensor.wait();
         }
     }

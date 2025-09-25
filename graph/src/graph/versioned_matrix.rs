@@ -1,8 +1,8 @@
 use crate::graph::{
     cow::Cow,
     matrix::{
-        self, Descriptor, Dup, ElementWiseAdd, Get, MaskedElementWiseMultiply, Matrix, New, Remove,
-        Set, Size, Transpose,
+        self, Descriptor, Dup, Get, MaskedElementWiseAdd, MaskedElementWiseMultiply, Matrix, New,
+        Remove, Set, Size, Transpose,
     },
 };
 
@@ -16,10 +16,18 @@ unsafe impl Send for VersionedMatrix {}
 unsafe impl Sync for VersionedMatrix {}
 
 impl VersionedMatrix {
-    pub fn wait(&self) {
+    pub fn wait(&mut self) {
         debug_assert!(!self.m.pending());
         self.dp.wait();
         self.dm.wait();
+        if self.dp.nvals() >= 10000 {
+            self.m.element_wise_add(None, None, Some(&self.dp), None);
+            self.dp.clear();
+        }
+        if self.dm.nvals() >= 10000 {
+            self.m.remove_all(&self.dm);
+            self.dm.clear();
+        }
     }
 
     #[must_use]
@@ -91,7 +99,7 @@ impl VersionedMatrix {
         // TODO: remove
         let mut m = self.m.dup();
         m.remove_all(&self.dm);
-        m.element_wise_add(&self.dp);
+        m.element_wise_add(None, None, Some(&self.dp), None);
         m
     }
 
@@ -121,8 +129,15 @@ impl Remove for VersionedMatrix {
         b: &Matrix,
     ) {
         self.dp.remove_all(b);
-        self.dm.element_wise_add(b);
+        self.dm.element_wise_add(Some(&self.m), None, Some(b), None);
     }
+}
+
+pub trait ElementWiseAdd {
+    fn element_wise_add(
+        &mut self,
+        b: &Self,
+    );
 }
 
 impl ElementWiseAdd for VersionedMatrix {
@@ -131,9 +146,9 @@ impl ElementWiseAdd for VersionedMatrix {
         b: &Self,
     ) {
         // TODO: fix
-        self.dp.element_wise_add(&b.m);
-        self.dp.element_wise_add(&b.dp);
-        self.dm.element_wise_add(&b.dm);
+        self.dp.element_wise_add(None, None, Some(&b.m), None);
+        self.dp.element_wise_add(None, None, Some(&b.dp), None);
+        self.dm.element_wise_add(None, None, Some(&b.dm), None);
     }
 }
 
@@ -212,12 +227,22 @@ impl Set for VersionedMatrix {
             self.dp.set(i, j, value);
         }
     }
+}
 
+pub trait SetAll {
+    fn set_all(
+        &mut self,
+        b: &Matrix,
+    );
+}
+
+impl SetAll for VersionedMatrix {
     fn set_all(
         &mut self,
         b: &Matrix,
     ) {
-        self.dp.element_wise_add(b);
+        self.dp
+            .element_wise_add(Some(&self.m), None, Some(b), Some(Descriptor::C));
         self.dm.remove_all(b);
     }
 }

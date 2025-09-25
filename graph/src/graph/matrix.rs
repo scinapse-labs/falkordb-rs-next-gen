@@ -1,11 +1,6 @@
 #![allow(clippy::doc_markdown)]
 
-use std::{
-    mem::MaybeUninit,
-    os::raw::c_void,
-    ptr::null_mut,
-    sync::{Arc, Mutex},
-};
+use std::{mem::MaybeUninit, os::raw::c_void, ptr::null_mut, sync::Arc};
 
 use crate::graph::GraphBLAS::{
     GrB_BOOL, GrB_DESC_C, GrB_DESC_CT0, GrB_DESC_CT0T1, GrB_DESC_CT1, GrB_DESC_R, GrB_DESC_RC,
@@ -17,7 +12,7 @@ use crate::graph::GraphBLAS::{
     GrB_Matrix_eWiseAdd_Semiring, GrB_Matrix_eWiseMult_Semiring, GrB_Matrix_extractElement_BOOL,
     GrB_Matrix_free, GrB_Matrix_get_INT32, GrB_Matrix_ncols, GrB_Matrix_new, GrB_Matrix_nrows,
     GrB_Matrix_nvals, GrB_Matrix_removeElement, GrB_Matrix_resize, GrB_Matrix_setElement_BOOL,
-    GrB_Matrix_wait, GrB_Mode, GrB_WaitMode, GrB_finalize, GrB_mxm, GrB_transpose,
+    GrB_Matrix_wait, GrB_Mode, GrB_WaitMode, GrB_finalize, GrB_mxm, GrB_transpose, GxB_ANY_BOOL,
     GxB_ANY_PAIR_BOOL, GxB_Iterator, GxB_Iterator_free, GxB_Iterator_new,
     GxB_Matrix_Iterator_attach, GxB_Matrix_Iterator_getIndex, GxB_Matrix_Iterator_next,
     GxB_Matrix_fprint, GxB_Matrix_memoryUsage, GxB_Option_Field, GxB_Print_Level, GxB_init,
@@ -108,11 +103,6 @@ pub trait Set {
         j: u64,
         value: bool,
     );
-
-    fn set_all(
-        &mut self,
-        b: &Matrix,
-    );
 }
 
 /// A trait for removing elements from a matrix.
@@ -140,27 +130,33 @@ pub trait Transpose {
     fn transpose(&self) -> Self;
 }
 
-pub trait ElementWiseAdd {
+pub trait MaskedElementWiseAdd {
     fn element_wise_add(
         &mut self,
-        b: &Self,
+        mask: Option<&Matrix>,
+        a: Option<&Self>,
+        b: Option<&Self>,
+        descriptor: Option<Descriptor>,
     );
 }
 
-impl ElementWiseAdd for Matrix {
+impl MaskedElementWiseAdd for Matrix {
     fn element_wise_add(
         &mut self,
-        b: &Self,
+        mask: Option<&Matrix>,
+        a: Option<&Self>,
+        b: Option<&Self>,
+        descriptor: Option<Descriptor>,
     ) {
         unsafe {
             let info = GrB_Matrix_eWiseAdd_Semiring(
                 *self.m,
-                null_mut(),
-                null_mut(),
+                mask.map_or(null_mut(), |m| *m.m),
+                GxB_ANY_BOOL,
                 GxB_ANY_PAIR_BOOL,
-                *self.m,
-                *b.m,
-                null_mut(),
+                a.map_or(*self.m, |a| *a.m),
+                b.map_or(*self.m, |b| *b.m),
+                descriptor.map_or(null_mut(), |d| d.into()),
             );
             debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
         }
@@ -333,7 +329,6 @@ impl MxM for Matrix {
 pub struct Matrix {
     /// The underlying GraphBLAS matrix.
     m: Arc<GrB_Matrix>,
-    wait_lock: Arc<Mutex<()>>,
 }
 
 unsafe impl Send for Matrix {}
@@ -367,12 +362,9 @@ impl Matrix {
 
     pub fn wait(&self) {
         if self.pending() {
-            let _lock = self.wait_lock.lock();
-            if self.pending() {
-                unsafe {
-                    let info = GrB_Matrix_wait(*self.m, GrB_WaitMode::GrB_MATERIALIZE as _);
-                    debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
-                }
+            unsafe {
+                let info = GrB_Matrix_wait(*self.m, GrB_WaitMode::GrB_MATERIALIZE as _);
+                debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
             }
         }
     }
@@ -453,7 +445,6 @@ impl New for Matrix {
             debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
             Self {
                 m: Arc::new(m.assume_init()),
-                wait_lock: Arc::new(Mutex::new(())),
             }
         }
     }
@@ -472,7 +463,6 @@ impl Dup<Self> for Matrix {
                 debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
                 m.assume_init()
             }),
-            wait_lock: Arc::new(Mutex::new(())),
         }
     }
 }
@@ -565,13 +555,6 @@ impl Set for Matrix {
             let info = GrB_Matrix_setElement_BOOL(*self.m, value, i, j);
             debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
         }
-    }
-
-    fn set_all(
-        &mut self,
-        b: &Matrix,
-    ) {
-        self.element_wise_add(b);
     }
 }
 
