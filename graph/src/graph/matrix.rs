@@ -360,12 +360,10 @@ impl Matrix {
         }
     }
 
-    pub fn wait(&self) {
-        if self.pending() {
-            unsafe {
-                let info = GrB_Matrix_wait(*self.m, GrB_WaitMode::GrB_MATERIALIZE as _);
-                debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
-            }
+    pub fn wait(&mut self) {
+        unsafe {
+            let info = GrB_Matrix_wait(*self.m, GrB_WaitMode::GrB_MATERIALIZE as _);
+            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
         }
     }
 

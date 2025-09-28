@@ -18,8 +18,12 @@ unsafe impl Sync for VersionedMatrix {}
 impl VersionedMatrix {
     pub fn wait(&mut self) {
         debug_assert!(!self.m.pending());
-        self.dp.wait();
-        self.dm.wait();
+        if self.dp.pending() {
+            self.dp.wait();
+        }
+        if self.dm.pending() {
+            self.dm.wait();
+        }
         if self.dp.nvals() >= 10000 {
             self.m.element_wise_add(None, None, Some(&self.dp), None);
             self.dp.clear();
