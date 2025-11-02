@@ -27,7 +27,7 @@ lazy_static = "1.5.0"
 redis-module = { git = "https://github.com/AviAvni/redismodule-rs", branch = "patches-redisearch" }
 redis-module-macros = { git = "https://github.com/RedisLabsModules/redismodule-rs", tag = "v2.1.2" }
 ryu = "1.0.20"
-orx-tree = "1.8.0"
+orx-tree = "1.9.0"
 pyroscope = { version = "0.5.8", optional = true }
 pyroscope_pprofrs = { version = "0.2.10", optional = true }
 
