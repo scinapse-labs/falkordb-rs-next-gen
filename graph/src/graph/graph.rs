@@ -1144,5 +1144,8 @@ impl Graph {
         for tensor in &mut self.relationship_matrices {
             tensor.wait();
         }
+        for label_matrix in &mut self.labels_matices {
+            label_matrix.wait();
+        }
     }
 }
