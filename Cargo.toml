@@ -22,6 +22,7 @@ name = "falkordb"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+atomic_refcell = "0.1.13"
 graph = { path = "graph", version = "0.1.0" }
 lazy_static = "1.5.0"
 redis-module = { git = "https://github.com/AviAvni/redismodule-rs", branch = "patches-redisearch" }

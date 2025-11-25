@@ -299,6 +299,7 @@ dependencies = [
 name = "falkordb-rs"
 version = "0.1.0"
 dependencies = [
+ "atomic_refcell",
  "graph",
  "lazy_static",
  "orx-tree",

@@ -1136,16 +1136,4 @@ impl Graph {
         // size += self.node_indexer.memory_usage();
         size
     }
-
-    pub fn wait(&mut self) {
-        self.adjacancy_matrix.wait();
-        self.node_labels_matrix.wait();
-        self.relationship_type_matrix.wait();
-        for tensor in &mut self.relationship_matrices {
-            tensor.wait();
-        }
-        for label_matrix in &mut self.labels_matices {
-            label_matrix.wait();
-        }
-    }
 }
