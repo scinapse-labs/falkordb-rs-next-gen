@@ -16,25 +16,29 @@ use crate::{
 pub enum IR {
     Empty,
     Optional(Vec<Variable>),
-    Call(Rc<GraphFn>, Vec<QueryExpr>, Vec<Variable>),
+    Call(Arc<GraphFn>, Vec<QueryExpr>, Vec<Variable>),
     Unwind(QueryExpr, Variable),
-    Create(QueryGraph),
+    Create(QueryGraph<Arc<String>, Arc<String>>),
     Merge(
-        QueryGraph,
+        QueryGraph<Arc<String>, Arc<String>>,
         Vec<(QueryExpr, QueryExpr, bool)>,
         Vec<(QueryExpr, QueryExpr, bool)>,
     ),
     Delete(Vec<QueryExpr>, bool),
     Set(Vec<(QueryExpr, QueryExpr, bool)>),
     Remove(Vec<QueryExpr>),
-    NodeByLabelScan(Rc<QueryNode>),
+    NodeByLabelScan(Rc<QueryNode<Arc<String>>>),
     NodeByIndexScan {
-        node: Rc<QueryNode>,
+        node: Rc<QueryNode<Arc<String>>>,
         index: Arc<String>,
         query: Rc<IndexQuery<QueryExpr>>,
     },
-    RelationshipScan(Rc<QueryRelationship>),
-    ExpandInto(Rc<QueryRelationship>),
+    NodeByIdScan {
+        node: Rc<QueryNode<Arc<String>>>,
+        id: QueryExpr,
+    },
+    RelationshipScan(Rc<QueryRelationship<Arc<String>, Arc<String>>>),
+    ExpandInto(Rc<QueryRelationship<Arc<String>, Arc<String>>>),
     PathBuilder(Vec<Rc<QueryPath>>),
     Filter(QueryExpr),
     CartesianProduct,
@@ -92,6 +96,9 @@ impl Display for IR {
             Self::NodeByIndexScan { node, .. } => {
                 write!(f, "Node By Index Scan | {node}")
             }
+            Self::NodeByIdScan { node, .. } => {
+                write!(f, "Node By ID Scan | {node}")
+            }
             Self::RelationshipScan(rel) => write!(f, "RelationshipScan | {rel}"),
             Self::ExpandInto(rel) => write!(f, "Expand Into | {rel}"),
             Self::PathBuilder(_) => write!(f, "PathBuilder"),
@@ -123,7 +130,7 @@ pub struct Planner {
 impl Planner {
     fn plan_match(
         &mut self,
-        pattern: &QueryGraph,
+        pattern: &QueryGraph<Arc<String>, Arc<String>>,
         filter: Option<QueryExpr>,
     ) -> DynTree<IR> {
         let mut vec = vec![];

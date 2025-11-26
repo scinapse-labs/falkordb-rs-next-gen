@@ -509,6 +509,14 @@ def test_graph_crud():
     assert res.nodes_deleted == 3
     assert res.relationships_deleted == 3
 
+def test_match_node_by_id():
+    query("UNWIND range(0, 1000) AS x CREATE (n:N {v: x})", write=True)
+
+    res1 = query("MATCH (n) WHERE id(n) = 1000 RETURN n.v")
+    res2 = query("MATCH (n) WHERE n.v = 1000 RETURN n.v")
+
+    assert res1.result_set == res2.result_set == [[1000]]
+    assert res1.run_time_ms < res2.run_time_ms
 
 def test_node_labels():
     res = query("CREATE ()", write=True)
