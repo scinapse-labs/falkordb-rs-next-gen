@@ -2029,9 +2029,11 @@ impl<'a> Runtime<'a> {
             }
         };
         let g = self.g.borrow();
-        if node_pattern.labels.is_empty()
-            || g.get_node_labels(id)
-                .all(|label| node_pattern.labels.contains(&label))
+        let node_labels = g.get_node_labels(id).collect::<OrderSet<Arc<String>>>();
+        if node_pattern
+            .labels
+            .iter()
+            .all(|label| node_labels.contains(label))
         {
             vars.insert(&node_pattern.alias, Value::Node(id));
             Ok(Box::new(std::iter::once(Ok(vars))))
