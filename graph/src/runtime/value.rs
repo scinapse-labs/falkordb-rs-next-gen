@@ -231,7 +231,7 @@ impl Add for Value {
                 Ok(Self::List(new_list))
             }
             (Self::Map(a), Self::Map(b)) => {
-                let mut new_map = a.clone();
+                let mut new_map = a;
                 for (k, v) in b.iter() {
                     new_map.insert(k.clone(), v.clone());
                 }
