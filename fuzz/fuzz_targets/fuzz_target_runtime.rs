@@ -1,4 +1,4 @@
-#![feature(c_variadic)]
+// #![feature(c_variadic)]
 #![no_main]
 
 use std::{cell::RefCell, collections::HashMap};

@@ -17,7 +17,10 @@ use crate::{
     ast::ExprIR,
     cypher::Parser,
     graph::{
-        matrix::{Dup, ElementWiseAdd, ElementWiseMultiply, Matrix, MxM, New, Remove, Set, Size},
+        matrix::{
+            Dup, MaskedElementWiseAdd, MaskedElementWiseMultiply, Matrix, MxM, New, Remove, Set,
+            Size,
+        },
         tensor::Tensor,
     },
     indexer::{Document, EntityType, IndexInfo, IndexQuery, IndexType, Indexer},
@@ -109,12 +112,12 @@ pub struct Graph {
     relationship_count: u64,
     deleted_nodes: RoaringTreemap,
     deleted_relationships: RoaringTreemap,
-    zero_matrix: Matrix<bool>,
-    adjacancy_matrix: Matrix<bool>,
-    node_labels_matrix: Matrix<bool>,
-    relationship_type_matrix: Matrix<bool>,
-    all_nodes_matrix: Matrix<bool>,
-    labels_matices: HashMap<usize, Arc<Mutex<Matrix<bool>>>>,
+    zero_matrix: Matrix,
+    adjacancy_matrix: Matrix,
+    node_labels_matrix: Matrix,
+    relationship_type_matrix: Matrix,
+    all_nodes_matrix: Matrix,
+    labels_matices: HashMap<usize, Arc<Mutex<Matrix>>>,
     relationship_matrices: HashMap<usize, Tensor>,
     empty_map: OrderMap<AttrId, Value>,
     node_attrs: Arc<Mutex<HashMap<NodeId, OrderMap<AttrId, Value>>>>,
@@ -125,7 +128,7 @@ pub struct Graph {
     node_attrs_name: Arc<Mutex<Vec<Arc<String>>>>,
     relationship_attrs_name: Vec<Arc<String>>,
     cache: Mutex<LruCache<String, DynTree<IR>>>,
-    tx: mpsc::Sender<(i32, Arc<String>, Arc<Mutex<Matrix<bool>>>)>,
+    tx: mpsc::Sender<(i32, Arc<String>, Arc<Mutex<Matrix>>)>,
 }
 
 impl Graph {
@@ -145,11 +148,11 @@ impl Graph {
             relationship_count: 0,
             deleted_nodes: RoaringTreemap::new(),
             deleted_relationships: RoaringTreemap::new(),
-            zero_matrix: Matrix::<bool>::new(0, 0),
-            adjacancy_matrix: Matrix::<bool>::new(n, n),
-            node_labels_matrix: Matrix::<bool>::new(0, 0),
-            relationship_type_matrix: Matrix::<bool>::new(0, 0),
-            all_nodes_matrix: Matrix::<bool>::new(n, n),
+            zero_matrix: Matrix::new(0, 0),
+            adjacancy_matrix: Matrix::new(n, n),
+            node_labels_matrix: Matrix::new(0, 0),
+            relationship_type_matrix: Matrix::new(0, 0),
+            all_nodes_matrix: Matrix::new(n, n),
             labels_matices: HashMap::new(),
             relationship_matrices: HashMap::new(),
             empty_map: OrderMap::new(),
@@ -337,7 +340,7 @@ impl Graph {
     fn get_label_matrix(
         &self,
         label: &str,
-    ) -> Option<Arc<Mutex<Matrix<bool>>>> {
+    ) -> Option<Arc<Mutex<Matrix>>> {
         self.node_labels
             .iter()
             .position(|l| l.as_str() == label)
@@ -347,16 +350,13 @@ impl Graph {
     fn get_label_matrix_mut(
         &mut self,
         label: &Arc<String>,
-    ) -> Arc<Mutex<Matrix<bool>>> {
+    ) -> Arc<Mutex<Matrix>> {
         if !self.node_labels.contains(label) {
             self.node_labels.push(label.clone());
 
             self.labels_matices.insert(
                 self.node_labels.len() - 1,
-                Arc::new(Mutex::new(Matrix::<bool>::new(
-                    self.node_cap,
-                    self.node_cap,
-                ))),
+                Arc::new(Mutex::new(Matrix::new(self.node_cap, self.node_cap))),
             );
         }
 
@@ -692,7 +692,7 @@ impl Graph {
                     let mut m = iter.next().unwrap().lock().unwrap().dup();
                     for label_matrix in iter {
                         let label_matrix = &*label_matrix.lock().unwrap();
-                        m.element_wise_multiply(label_matrix);
+                        m.element_wise_multiply(None, None, Some(label_matrix), None);
                     }
                     m.iter(0, u64::MAX)
                 },
@@ -900,7 +900,7 @@ impl Graph {
                 |relationship_matrix| relationship_matrix.dup_bool(),
             );
             for relationship_matrix in iter {
-                m.element_wise_add(&relationship_matrix.dup_bool());
+                m.element_wise_add(None, None, Some(&relationship_matrix.dup_bool()), None);
             }
 
             if !src_labels_matrices.is_empty() {
@@ -908,7 +908,7 @@ impl Graph {
                 let mut src_matrix = iter.next().unwrap().lock().unwrap().dup();
                 for label_matrix in iter {
                     let label_matrix = &*label_matrix.lock().unwrap();
-                    src_matrix.element_wise_multiply(label_matrix);
+                    src_matrix.element_wise_multiply(None, None, Some(label_matrix), None);
                 }
                 m.rmxm(&src_matrix);
             }
@@ -917,7 +917,7 @@ impl Graph {
                 let mut dest_matrix = iter.next().unwrap().lock().unwrap().dup();
                 for label_matrix in iter {
                     let label_matrix = &*label_matrix.lock().unwrap();
-                    dest_matrix.element_wise_multiply(label_matrix);
+                    dest_matrix.element_wise_multiply(None, None, Some(label_matrix), None);
                 }
                 m.lmxm(&dest_matrix);
             }
