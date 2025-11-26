@@ -26,7 +26,7 @@
             "type": "lldb",
             "request": "launch",
             "name": "Launch Mac",
-            "program": "redis-server",
+            "program": "/usr/local/bin/redis-server",
             "args": [
                 "--loadmodule",
                 "${workspaceFolder}/target/debug/libfalkordb.dylib"

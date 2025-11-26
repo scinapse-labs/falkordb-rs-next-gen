@@ -59,7 +59,7 @@ pub enum Value {
     Float(f64),
     String(Arc<String>),
     List(Vec<Value>),
-    Map(Arc<OrderMap<Arc<String>, Value>>),
+    Map(OrderMap<Arc<String>, Value>),
     Node(NodeId),
     Relationship(RelationshipId, NodeId, NodeId),
     Path(Vec<Value>),
@@ -233,11 +233,11 @@ impl Add for Value {
                 Ok(Self::List(new_list))
             }
             (Self::Map(a), Self::Map(b)) => {
-                let mut new_map = (*a).clone();
-                for (k, v) in b.iter() {
+                let mut new_map = a;
+                for (k, v) in &b {
                     new_map.insert(k.clone(), v.clone());
                 }
-                Ok(Self::Map(Arc::new(new_map)))
+                Ok(Self::Map(new_map))
             }
             (Self::String(a), Self::String(b)) => Ok(Self::String(Arc::new(format!("{a}{b}")))),
             (Self::String(s), Self::Int(i)) => Ok(Self::String(Arc::new(format!("{s}{i}")))),
