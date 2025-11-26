@@ -1,3 +1,5 @@
+use std::sync::Mutex;
+
 use crate::graph::{
     cow::Cow,
     matrix::{
@@ -10,20 +12,15 @@ pub struct VersionedMatrix {
     m: Cow<Matrix>,
     dp: Cow<Matrix>,
     dm: Cow<Matrix>,
+    wait_lock: Mutex<()>,
 }
 
 unsafe impl Send for VersionedMatrix {}
 unsafe impl Sync for VersionedMatrix {}
 
 impl VersionedMatrix {
-    pub fn wait(&mut self) {
-        debug_assert!(!self.m.pending());
-        if self.dp.pending() {
-            self.dp.wait();
-        }
-        if self.dm.pending() {
-            self.dm.wait();
-        }
+    pub fn flush(&mut self) {
+        self.wait();
         if self.dp.nvals() >= 10000 {
             self.m.element_wise_add(None, None, Some(&self.dp), None);
             self.dp.clear();
@@ -32,6 +29,19 @@ impl VersionedMatrix {
             self.m.remove_all(&self.dm);
             self.dm.clear();
         }
+    }
+
+    pub fn wait(&self) {
+        debug_assert!(!self.m.pending());
+        let lock = self.wait_lock.lock().unwrap();
+        debug_assert!(!self.m.pending());
+        if self.dp.pending() {
+            self.dp.wait();
+        }
+        if self.dm.pending() {
+            self.dm.wait();
+        }
+        drop(lock);
     }
 
     #[must_use]
@@ -60,6 +70,7 @@ impl Size for VersionedMatrix {
     }
 
     fn nvals(&self) -> u64 {
+        self.wait();
         self.m.nvals() + self.dp.nvals() - self.dm.nvals()
     }
 }
@@ -73,6 +84,7 @@ impl New for VersionedMatrix {
             m: Cow::new(Matrix::new(nrows, ncols)),
             dp: Cow::new(Matrix::new(nrows, ncols)),
             dm: Cow::new(Matrix::new(nrows, ncols)),
+            wait_lock: Mutex::new(()),
         }
     }
 }
@@ -83,6 +95,7 @@ impl Dup<Self> for VersionedMatrix {
             m: self.m.new_version(),
             dp: self.dp.new_version(),
             dm: self.dm.new_version(),
+            wait_lock: Mutex::new(()),
         }
     }
 }
@@ -95,6 +108,7 @@ impl VersionedMatrix {
         min_row: u64,
         max_row: u64,
     ) -> Iter {
+        self.wait();
         Iter::new(self, min_row, max_row)
     }
 
@@ -203,6 +217,7 @@ impl Get for VersionedMatrix {
         i: u64,
         j: u64,
     ) -> Option<bool> {
+        self.wait();
         self.m.get(i, j).map_or_else(
             || self.dp.get(i, j),
             |value| {
@@ -264,6 +279,7 @@ where
             m: Cow::new(self.m.transpose()),
             dp: Cow::new(self.dp.transpose()),
             dm: Cow::new(self.dm.transpose()),
+            wait_lock: Mutex::new(()),
         }
     }
 }
