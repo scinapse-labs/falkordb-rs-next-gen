@@ -1029,8 +1029,8 @@ def test_substring(a, b, c):
 @given(st.lists(at_least_1_text_st, unique=True))
 def test_graph_list(a):
     for i in a:
-        common.client.select_graph(i).query("return 1")
-        common.client.connection.set(f"ng{i}", "ng")
+        common.client.select_graph(i).query("RETURN 1")
+        common.client.connection.set(f"ng:{i}", "ng")
     graphs = common.client.list_graphs()
 
     assert len(graphs) == len(a)
