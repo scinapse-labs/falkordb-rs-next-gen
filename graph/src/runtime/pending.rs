@@ -1,12 +1,13 @@
 use std::{cell::RefCell, collections::HashMap, sync::Arc};
 
-use ordermap::{OrderMap, OrderSet};
 use roaring::RoaringTreemap;
 
 use crate::{
     graph::graph::{Graph, NodeId, RelationshipId},
     runtime::{
         functions::Type,
+        ordermap::OrderMap,
+        orderset::OrderSet,
         runtime::QueryStatistics,
         value::{Value, ValueTypeOf},
     },
@@ -36,13 +37,13 @@ impl PendingRelationship {
 #[derive(Default)]
 pub struct Pending {
     created_nodes: RoaringTreemap,
-    created_relationships: OrderMap<RelationshipId, PendingRelationship>,
+    created_relationships: HashMap<RelationshipId, PendingRelationship>,
     deleted_nodes: RoaringTreemap,
     deleted_relationships: OrderSet<(RelationshipId, NodeId, NodeId)>,
-    set_nodes_attrs: OrderMap<NodeId, OrderMap<Arc<String>, Value>>,
-    set_relationships_attrs: OrderMap<RelationshipId, OrderMap<Arc<String>, Value>>,
-    set_node_labels: OrderMap<NodeId, OrderSet<Arc<String>>>,
-    remove_node_labels: OrderMap<NodeId, OrderSet<Arc<String>>>,
+    set_nodes_attrs: HashMap<NodeId, OrderMap<Arc<String>, Value>>,
+    set_relationships_attrs: HashMap<RelationshipId, OrderMap<Arc<String>, Value>>,
+    set_node_labels: HashMap<NodeId, OrderSet<Arc<String>>>,
+    remove_node_labels: HashMap<NodeId, OrderSet<Arc<String>>>,
     index_add_docs: HashMap<Arc<String>, RoaringTreemap>,
     index_remove_docs: HashMap<Arc<String>, RoaringTreemap>,
 }
@@ -60,7 +61,7 @@ impl Pending {
         id: NodeId,
         attrs: OrderMap<Arc<String>, Value>,
     ) -> Result<(), String> {
-        for (_, value) in &attrs {
+        for (_, value) in attrs.iter() {
             if value
                 .value_of_type(&Type::Union(vec![
                     Type::Bool,
@@ -136,7 +137,7 @@ impl Pending {
         attrs: &mut OrderMap<Arc<String>, Value>,
     ) {
         if let Some(added) = self.set_nodes_attrs.get(&id) {
-            for (key, value) in added {
+            for (key, value) in added.iter() {
                 if *value == Value::Null {
                     attrs.remove(key);
                 } else {
@@ -171,7 +172,7 @@ impl Pending {
             labels.extend(added.iter().cloned());
         }
         if let Some(removed) = self.remove_node_labels.get(&id) {
-            for label in removed {
+            for label in removed.iter() {
                 labels.remove(label);
             }
         }
@@ -200,7 +201,7 @@ impl Pending {
         id: RelationshipId,
         attrs: OrderMap<Arc<String>, Value>,
     ) -> Result<(), String> {
-        for (_, value) in &attrs {
+        for (_, value) in attrs.iter() {
             if value
                 .value_of_type(&Type::Union(vec![
                     Type::Bool,
@@ -276,7 +277,7 @@ impl Pending {
         attrs: &mut OrderMap<Arc<String>, Value>,
     ) {
         if let Some(added) = self.set_relationships_attrs.get(&id) {
-            for (key, value) in added {
+            for (key, value) in added.iter() {
                 if *value == Value::Null {
                     attrs.remove(key);
                 } else {
@@ -371,14 +372,14 @@ impl Pending {
             stats.borrow_mut().properties_set += self
                 .set_nodes_attrs
                 .values()
-                .flat_map(|v| v.values())
+                .flat_map(super::ordermap::OrderMap::values)
                 .map(|v| match *v {
                     Value::Null => 0,
                     _ => 1,
                 })
                 .sum::<usize>();
             for (id, attrs) in &self.set_nodes_attrs {
-                for (key, value) in attrs {
+                for (key, value) in attrs.iter() {
                     let attr_id = g.borrow_mut().get_or_add_node_attribute_id(key);
                     if g.borrow_mut().set_node_attribute(
                         *id,
@@ -397,14 +398,14 @@ impl Pending {
             stats.borrow_mut().properties_set += self
                 .set_relationships_attrs
                 .values()
-                .flat_map(|v| v.values())
+                .flat_map(super::ordermap::OrderMap::values)
                 .map(|v| match *v {
                     Value::Null => 0,
                     _ => 1,
                 })
                 .sum::<usize>();
             for (id, attrs) in &self.set_relationships_attrs {
-                for (key, value) in attrs {
+                for (key, value) in attrs.iter() {
                     let attr_id = g.borrow_mut().get_or_add_relationship_attribute_id(key);
                     if g.borrow_mut()
                         .set_relationship_attribute(*id, attr_id, value.clone())

@@ -3,6 +3,7 @@ use crate::ast::{
     QueryRelationship, Variable,
 };
 use crate::indexer::{EntityType, IndexType};
+use crate::runtime::orderset::OrderSet;
 use crate::{
     cypher::Token::RParen,
     runtime::{
@@ -12,7 +13,6 @@ use crate::{
     tree,
 };
 use itertools::Itertools;
-use ordermap::OrderSet;
 use orx_tree::{DynTree, NodeRef};
 use std::sync::Arc;
 use std::{
@@ -2179,7 +2179,7 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_labels(&mut self) -> Result<OrderSet<Arc<String>>, String> {
-        let mut labels = OrderSet::new();
+        let mut labels = OrderSet::default();
         while self.lexer.current() == Token::Colon {
             self.lexer.next();
             labels.insert(self.parse_ident()?);

@@ -10,12 +10,10 @@ use std::{
     sync::Arc,
 };
 
-use ordermap::OrderMap;
-
 use crate::{
     ast::Variable,
     graph::graph::{LabelId, NodeId, RelationshipId, TypeId},
-    runtime::functions::Type,
+    runtime::{functions::Type, ordermap::OrderMap},
 };
 
 #[derive(Clone, Debug, PartialEq)]
@@ -234,7 +232,7 @@ impl Add for Value {
             }
             (Self::Map(a), Self::Map(b)) => {
                 let mut new_map = a;
-                for (k, v) in &b {
+                for (k, v) in b.iter() {
                     new_map.insert(k.clone(), v.clone());
                 }
                 Ok(Self::Map(new_map))

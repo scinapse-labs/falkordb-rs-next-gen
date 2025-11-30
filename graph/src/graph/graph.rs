@@ -8,7 +8,6 @@ use std::{
 
 use itertools::Itertools;
 use lru::LruCache;
-use ordermap::{OrderMap, OrderSet};
 use orx_tree::DynTree;
 use rayon::spawn;
 use roaring::RoaringTreemap;
@@ -26,7 +25,7 @@ use crate::{
     indexer::{Document, EntityType, IndexInfo, IndexQuery, IndexType, Indexer},
     optimizer::optimize,
     planner::{IR, Planner},
-    runtime::{pending::PendingRelationship, value::Value},
+    runtime::{ordermap::OrderMap, orderset::OrderSet, pending::PendingRelationship, value::Value},
 };
 
 pub struct Plan {
@@ -155,7 +154,7 @@ impl Graph {
             all_nodes_matrix: Matrix::new(n, n),
             labels_matices: HashMap::new(),
             relationship_matrices: HashMap::new(),
-            empty_map: OrderMap::new(),
+            empty_map: OrderMap::default(),
             node_attrs: Arc::new(Mutex::new(HashMap::new())),
             relationship_attrs: HashMap::new(),
             node_indexer: Arc::new(Mutex::new(Indexer::default())),
@@ -220,11 +219,9 @@ impl Graph {
                     }
                     let mut index_add_docs = HashMap::new();
                     index_add_docs.insert(label.clone(), add_docs);
-                    let add_docs = Arc::new(Mutex::new(index_add_docs));
 
                     let mut node_indexer = node_indexer.lock().unwrap();
-                    let mut add_docs = add_docs.lock().unwrap();
-                    node_indexer.commit(&mut add_docs, &mut HashMap::new());
+                    node_indexer.commit(&mut index_add_docs, &mut HashMap::new());
                     node_indexer.enable(label);
                 } else if action == 1 {
                     let mut node_indexer = node_indexer.lock().unwrap();
@@ -579,7 +576,7 @@ impl Graph {
         labels: &OrderSet<Arc<String>>,
         index_add_docs: &mut HashMap<Arc<String>, RoaringTreemap>,
     ) {
-        for label in labels {
+        for label in labels.iter() {
             let label_matrix = self.get_label_matrix_mut(label);
             label_matrix.lock().unwrap().set(id.0, id.0, true);
             let label_id = self.get_label_id(label).unwrap();
@@ -606,7 +603,7 @@ impl Graph {
         labels: &OrderSet<Arc<String>>,
         remove_docs: &mut HashMap<Arc<String>, RoaringTreemap>,
     ) {
-        for label in labels {
+        for label in labels.iter() {
             if !self.node_labels.contains(label) {
                 continue;
             }
@@ -642,7 +639,7 @@ impl Graph {
             let label = self.node_labels[*label_id].clone();
             self.node_labels_matrix.remove(id.0, *label_id as _);
             let mut indexed = false;
-            for (attr_id, _) in node_attrs.get(&id).unwrap_or(&self.empty_map) {
+            for (attr_id, _) in node_attrs.get(&id).unwrap_or(&self.empty_map).iter() {
                 let attr_name = self.get_node_attribute_string(*attr_id).unwrap();
                 if node_indexer.is_attr_indexed(label.clone(), attr_name) {
                     indexed = true;
@@ -745,7 +742,7 @@ impl Graph {
 
     pub fn create_relationships(
         &mut self,
-        relationships: &OrderMap<RelationshipId, PendingRelationship>,
+        relationships: &HashMap<RelationshipId, PendingRelationship>,
     ) {
         self.relationship_count += relationships.len() as u64;
         self.reserved_relationship_count -= relationships.len() as u64;
