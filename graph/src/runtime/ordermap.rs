@@ -1,11 +1,17 @@
 use std::{hash::Hash, ops::Index};
 
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct OrderMap<K, V> {
     vec: Vec<(K, V)>,
 }
 
-impl<K: PartialEq, V: PartialEq> OrderMap<K, V> {
+impl<K, V> Default for OrderMap<K, V> {
+    fn default() -> Self {
+        Self { vec: Vec::new() }
+    }
+}
+
+impl<K: PartialEq, V> OrderMap<K, V> {
     #[must_use]
     pub const fn from_vec(vec: Vec<(K, V)>) -> Self {
         Self { vec }
@@ -69,6 +75,10 @@ impl<K: PartialEq, V: PartialEq> OrderMap<K, V> {
 
     pub fn keys(&self) -> impl Iterator<Item = &K> {
         self.vec.iter().map(|(k, _)| k)
+    }
+
+    pub fn values(&self) -> impl Iterator<Item = &V> {
+        self.vec.iter().map(|(_, v)| v)
     }
 }
 

@@ -1,7 +1,6 @@
 use std::{cell::RefCell, collections::HashMap, sync::Arc};
 
 use atomic_refcell::AtomicRefCell;
-use ordermap::OrderSet;
 use roaring::RoaringTreemap;
 
 use crate::{
@@ -12,6 +11,7 @@ use crate::{
     runtime::{
         functions::Type,
         ordermap::OrderMap,
+        orderset::OrderSet,
         runtime::QueryStatistics,
         value::{Value, ValueTypeOf},
     },
@@ -58,7 +58,7 @@ impl Pending {
             created_nodes: RoaringTreemap::new(),
             created_relationships: HashMap::new(),
             deleted_nodes: RoaringTreemap::new(),
-            deleted_relationships: OrderSet::new(),
+            deleted_relationships: OrderSet::default(),
             set_nodes_attrs: HashMap::new(),
             set_relationships_attrs: HashMap::new(),
             set_node_labels: Matrix::new(0, 0),
@@ -197,7 +197,7 @@ impl Pending {
         if self.set_node_labels.ncols() <= max_label {
             self.set_node_labels.resize(cap, max_label + 1);
         }
-        for label in labels {
+        for label in labels.iter() {
             self.set_node_labels
                 .set(id.into(), usize::from(*label) as u64, true);
         }
@@ -433,7 +433,7 @@ impl Pending {
             stats.borrow_mut().properties_set += self
                 .set_nodes_attrs
                 .values()
-                .flat_map(|v| v.iter().map(|(_, val)| val))
+                .flat_map(super::ordermap::OrderMap::values)
                 .map(|v| match *v {
                     Value::Null => 0,
                     _ => 1,
@@ -449,7 +449,7 @@ impl Pending {
             stats.borrow_mut().properties_set += self
                 .set_relationships_attrs
                 .values()
-                .flat_map(|v| v.iter().map(|(_, val)| val))
+                .flat_map(super::ordermap::OrderMap::values)
                 .map(|v| match *v {
                     Value::Null => 0,
                     _ => 1,

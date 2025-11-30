@@ -9,7 +9,6 @@ use std::{
 
 use itertools::Itertools;
 use lru::LruCache;
-use ordermap::OrderSet;
 use orx_tree::DynTree;
 use roaring::RoaringTreemap;
 
@@ -28,7 +27,7 @@ use crate::{
     indexer::{Document, EntityType, IndexInfo, IndexQuery, IndexType, Indexer},
     optimizer::optimize,
     planner::{IR, Planner},
-    runtime::{ordermap::OrderMap, pending::PendingRelationship, value::Value},
+    runtime::{ordermap::OrderMap, orderset::OrderSet, pending::PendingRelationship, value::Value},
     threadpool::spawn,
 };
 

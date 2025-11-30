@@ -1,9 +1,11 @@
 use std::sync::Arc;
 
 use atomic_refcell::AtomicRefCell;
-use ordermap::OrderSet;
 
-use crate::{graph::block_vec::BlockVec, runtime::value::Value};
+use crate::{
+    graph::block_vec::BlockVec,
+    runtime::{orderset::OrderSet, value::Value},
+};
 
 #[derive(Clone, Default)]
 pub struct AttributeStore {
