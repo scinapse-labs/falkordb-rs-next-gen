@@ -1752,7 +1752,7 @@ impl<'a> Runtime<'a> {
                                 )?;
                             }
                         }
-                        for (key, value) in attrs {
+                        for (key, value) in attrs.iter() {
                             let Some(key) = g.get_relationship_attribute_string(*key) else {
                                 continue;
                             };

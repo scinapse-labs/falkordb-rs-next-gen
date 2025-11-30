@@ -25,7 +25,7 @@ use crate::{
     indexer::{Document, EntityType, IndexInfo, IndexQuery, IndexType, Indexer},
     optimizer::optimize,
     planner::{IR, Planner},
-    runtime::{orderset::OrderSet, pending::PendingRelationship, value::Value},
+    runtime::{ordermap::OrderMap, orderset::OrderSet, pending::PendingRelationship, value::Value},
 };
 
 pub struct Plan {
@@ -118,9 +118,9 @@ pub struct Graph {
     all_nodes_matrix: Matrix,
     labels_matices: HashMap<usize, Arc<Mutex<Matrix>>>,
     relationship_matrices: HashMap<usize, Tensor>,
-    empty_map: HashMap<AttrId, Value>,
-    node_attrs: Arc<Mutex<HashMap<NodeId, HashMap<AttrId, Value>>>>,
-    relationship_attrs: HashMap<RelationshipId, HashMap<AttrId, Value>>,
+    empty_map: OrderMap<AttrId, Value>,
+    node_attrs: Arc<Mutex<HashMap<NodeId, OrderMap<AttrId, Value>>>>,
+    relationship_attrs: HashMap<RelationshipId, OrderMap<AttrId, Value>>,
     node_indexer: Arc<Mutex<Indexer>>,
     node_labels: Vec<Arc<String>>,
     relationship_types: Vec<Arc<String>>,
@@ -154,7 +154,7 @@ impl Graph {
             all_nodes_matrix: Matrix::new(n, n),
             labels_matices: HashMap::new(),
             relationship_matrices: HashMap::new(),
-            empty_map: HashMap::new(),
+            empty_map: OrderMap::default(),
             node_attrs: Arc::new(Mutex::new(HashMap::new())),
             relationship_attrs: HashMap::new(),
             node_indexer: Arc::new(Mutex::new(Indexer::default())),
@@ -639,7 +639,7 @@ impl Graph {
             let label = self.node_labels[*label_id].clone();
             self.node_labels_matrix.remove(id.0, *label_id as _);
             let mut indexed = false;
-            for (attr_id, _) in node_attrs.get(&id).unwrap_or(&self.empty_map) {
+            for (attr_id, _) in node_attrs.get(&id).unwrap_or(&self.empty_map).iter() {
                 let attr_name = self.get_node_attribute_string(*attr_id).unwrap();
                 if node_indexer.is_attr_indexed(label.clone(), attr_name) {
                     indexed = true;
@@ -990,7 +990,7 @@ impl Graph {
     pub fn get_node_attrs(
         &self,
         id: NodeId,
-    ) -> HashMap<AttrId, Value> {
+    ) -> OrderMap<AttrId, Value> {
         let node_attrs = self.node_attrs.lock().unwrap();
         node_attrs.get(&id).unwrap_or(&self.empty_map).clone()
     }
@@ -998,7 +998,7 @@ impl Graph {
     pub fn get_relationship_attrs(
         &self,
         id: RelationshipId,
-    ) -> &HashMap<AttrId, Value> {
+    ) -> &OrderMap<AttrId, Value> {
         self.relationship_attrs.get(&id).unwrap_or(&self.empty_map)
     }
 
