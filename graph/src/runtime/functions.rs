@@ -7,12 +7,12 @@
 use crate::{
     indexer::{IndexInfo, IndexStatus, IndexType},
     runtime::{
+        ordermap::OrderMap,
         runtime::Runtime,
         value::{Value, ValueTypeOf},
     },
 };
 use itertools::Itertools;
-use ordermap::OrderMap;
 use rand::Rng;
 use std::{
     collections::HashMap,
@@ -2327,7 +2327,7 @@ fn db_labels(
             .get_labels()
             .into_iter()
             .map(|l| {
-                let mut map = OrderMap::new();
+                let mut map = OrderMap::default();
                 map.insert(Arc::new(String::from("label")), Value::String(l));
                 Value::Map(map)
             })

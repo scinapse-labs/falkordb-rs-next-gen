@@ -11,6 +11,8 @@ use crate::{
     runtime::{
         functions::FnType,
         iter::{Aggregate, CondInspectIter, LazyReplace, TryFlatMap, TryMap},
+        ordermap::OrderMap,
+        orderset::OrderSet,
         pending::Pending,
         value::{
             CompareValue, Contains, DeletedNode, DeletedRelationship, DisjointOrNull, Env, Value,
@@ -19,7 +21,6 @@ use crate::{
     },
 };
 use once_cell::unsync::Lazy;
-use ordermap::{OrderMap, OrderSet};
 use orx_tree::{Bfs, Dyn, DynNode, DynTree, NodeIdx, NodeRef};
 use reqwest::blocking::get;
 use std::{
@@ -204,7 +205,7 @@ impl<'a> Runtime<'a> {
         let start = Instant::now();
         let idx = self.plan.root().idx();
         let mut result = vec![];
-        for env in self.run(&idx)? {
+        for env in self.run(idx)? {
             let env = env?;
             result.push(env);
         }
@@ -239,7 +240,7 @@ impl<'a> Runtime<'a> {
         }
     }
 
-    #[instrument(name = "run_agg_expr", level = "debug", skip(self, ir), fields(expr_type = ?ir.node(&idx).data()))]
+    #[instrument(name = "run_agg_expr", level = "debug", skip(self, ir), fields(expr_type = ?ir.node(idx).data()))]
     fn run_agg_expr(
         &self,
         ir: &DynTree<ExprIR>,
@@ -248,9 +249,9 @@ impl<'a> Runtime<'a> {
         acc: &mut Env,
         agg_group_key: u64,
     ) -> Result<(), String> {
-        match ir.node(&idx).data() {
+        match ir.node(idx).data() {
             ExprIR::FuncInvocation(func) if func.is_aggregate() => {
-                let key = match ir.node(&idx).child(ir.node(&idx).num_children() - 1).data() {
+                let key = match ir.node(idx).child(ir.node(idx).num_children() - 1).data() {
                     ExprIR::Variable(key) => key.clone(),
                     _ => {
                         return Err(String::from(
@@ -263,7 +264,7 @@ impl<'a> Runtime<'a> {
                 acc.insert(&key, self.run_expr(ir, idx, curr, Some(agg_group_key))?);
             }
             _ => {
-                for child in ir.node(&idx).children() {
+                for child in ir.node(idx).children() {
                     self.run_agg_expr(ir, child.idx(), curr, acc, agg_group_key)?;
                 }
             }
@@ -273,7 +274,7 @@ impl<'a> Runtime<'a> {
 
     #[allow(clippy::too_many_lines)]
     #[allow(clippy::cognitive_complexity)]
-    #[instrument(name = "run_expr", level = "debug", skip(self), fields(expr_type = ?ir.node(&idx).data()))]
+    #[instrument(name = "run_expr", level = "debug", skip(self), fields(expr_type = ?ir.node(idx).data()))]
     fn run_expr(
         &self,
         ir: &DynTree<ExprIR>,
@@ -284,7 +285,7 @@ impl<'a> Runtime<'a> {
         let mut res = vec![];
         let mut stack = vec![(idx, false)];
         while let Some((idx, reenter)) = stack.pop() {
-            let node = ir.node(&idx);
+            let node = ir.node(idx);
             match node.data() {
                 ExprIR::Null => res.push(Value::Null),
                 ExprIR::Bool(x) => res.push(Value::Bool(*x)),
@@ -702,18 +703,18 @@ impl<'a> Runtime<'a> {
         Ok(res.pop().unwrap())
     }
 
-    #[instrument(name = "run_iter_expr", level = "debug", skip(self), fields(expr_type = ?ir.node(&idx).data()))]
+    #[instrument(name = "run_iter_expr", level = "debug", skip(self), fields(expr_type = ?ir.node(idx).data()))]
     fn run_iter_expr(
         &self,
         ir: &DynTree<ExprIR>,
         idx: NodeIdx<Dyn<ExprIR>>,
         env: &Env,
     ) -> Result<Box<dyn Iterator<Item = Value>>, String> {
-        match ir.node(&idx).data() {
+        match ir.node(idx).data() {
             ExprIR::FuncInvocation(func) if func.name == "range" => {
-                let start = self.run_expr(ir, ir.node(&idx).child(0).idx(), env, None)?;
-                let end = self.run_expr(ir, ir.node(&idx).child(1).idx(), env, None)?;
-                let step = ir.node(&idx).get_child(2).map_or_else(
+                let start = self.run_expr(ir, ir.node(idx).child(0).idx(), env, None)?;
+                let end = self.run_expr(ir, ir.node(idx).child(1).idx(), env, None)?;
+                let step = ir.node(idx).get_child(2).map_or_else(
                     || Ok(Value::Int(1)),
                     |c| self.run_expr(ir, c.idx(), env, None),
                 )?;
@@ -813,7 +814,7 @@ impl<'a> Runtime<'a> {
     #[instrument(name = "run", level = "debug", skip(self, idx))]
     fn run(
         &'a self,
-        idx: &NodeIdx<Dyn<IR>>,
+        idx: NodeIdx<Dyn<IR>>,
     ) -> Result<Box<dyn Iterator<Item = Result<Env, String>> + 'a>, String> {
         let child0_idx = self.plan.node(idx).get_child(0).map(|n| n.idx());
         let iter = if matches!(
@@ -823,7 +824,7 @@ impl<'a> Runtime<'a> {
             if let Some(child_idx) = child0_idx
                 && self.plan.node(idx).num_children() > 1
             {
-                self.run(&child_idx)?
+                self.run(child_idx)?
             } else {
                 Box::new(once(Ok(Env::default())))
             }
@@ -848,7 +849,7 @@ impl<'a> Runtime<'a> {
         {
             unreachable!();
         } else if let Some(child_idx) = child0_idx {
-            self.run(&child_idx)?
+            self.run(child_idx)?
         } else {
             Box::new(once(Ok(Env::default())))
         };
@@ -856,17 +857,17 @@ impl<'a> Runtime<'a> {
             IR::Empty => Ok(Box::new(empty())),
             IR::Optional(vars) => {
                 let idx = idx.clone();
-                let child_idx = if self.plan.node(&idx).num_children() == 1 {
-                    self.plan.node(&idx).child(0).idx()
+                let child_idx = if self.plan.node(idx).num_children() == 1 {
+                    self.plan.node(idx).child(0).idx()
                 } else {
-                    self.plan.node(&idx).child(1).idx()
+                    self.plan.node(idx).child(1).idx()
                 };
                 Ok(iter
                     .try_flat_map(move |mut env| {
                         for v in vars {
                             env.insert(v, Value::Null);
                         }
-                        Ok(self.run(&child_idx)?.lazy_replace(move || once(Ok(env))))
+                        Ok(self.run(child_idx)?.lazy_replace(move || once(Ok(env))))
                     })
                     .cond_inspect(self.inspect, move |res| {
                         self.record.borrow_mut().push((idx.clone(), res.clone()));
@@ -950,17 +951,17 @@ impl<'a> Runtime<'a> {
             }
             IR::Merge(pattern, on_create_set_items, on_match_set_items) => {
                 let idx = idx.clone();
-                let child_idx = if self.plan.node(&idx).num_children() == 1 {
-                    self.plan.node(&idx).child(0).idx()
+                let child_idx = if self.plan.node(idx).num_children() == 1 {
+                    self.plan.node(idx).child(0).idx()
                 } else {
-                    self.plan.node(&idx).child(1).idx()
+                    self.plan.node(idx).child(1).idx()
                 };
                 Ok(iter
                     .try_flat_map(move |vars| {
                         let cvars = vars.clone();
 
                         let iter = self
-                            .run(&child_idx)?
+                            .run(child_idx)?
                             .try_map(move |v| {
                                 let mut vars = vars.clone();
                                 vars.merge(v);
@@ -1102,7 +1103,7 @@ impl<'a> Runtime<'a> {
                 for child in node.children().skip(1) {
                     let idx = child.idx();
                     iter = Box::new(iter.try_flat_map(move |vars1| {
-                        Ok(self.run(&idx)?.try_map(move |vars2| {
+                        Ok(self.run(idx)?.try_map(move |vars2| {
                             let mut vars = vars1.clone();
                             vars.merge(vars2);
                             Ok(vars)
@@ -1707,10 +1708,12 @@ impl<'a> Runtime<'a> {
                                 )?;
                             }
                         }
-                        for (key, value) in attrs {
-                            self.pending
-                                .borrow_mut()
-                                .set_node_attribute(id, key, value.clone())?;
+                        for (key, value) in attrs.iter() {
+                            self.pending.borrow_mut().set_node_attribute(
+                                id,
+                                key.clone(),
+                                value.clone(),
+                            )?;
                         }
                     }
                     if let Some(labels) = labels {

@@ -167,7 +167,7 @@ fn reply_compact_value(
                     raw::reply_with_long_long(ctx.ctx, usize::from(*label) as _);
                 }
                 raw::reply_with_array(ctx.ctx, x.attrs.len() as _);
-                for (key, value) in &x.attrs {
+                for (key, value) in x.attrs.iter() {
                     raw::reply_with_array(ctx.ctx, 3);
                     let key = runtime
                         .g
@@ -204,7 +204,7 @@ fn reply_compact_value(
                 raw::reply_with_long_long(ctx.ctx, u64::from(to) as _);
                 raw::reply_with_array(ctx.ctx, x.attrs.len() as _);
                 let bg = runtime.g.borrow();
-                for (key, value) in &x.attrs {
+                for (key, value) in x.attrs.iter() {
                     raw::reply_with_array(ctx.ctx, 3);
                     let key = bg.get_relationship_attribute_id(key).unwrap();
                     raw::reply_with_long_long(ctx.ctx, usize::from(key) as _);
@@ -340,7 +340,7 @@ fn reply_verbose_value(
                     );
                 }
                 raw::reply_with_array(ctx.ctx, x.attrs.len() as _);
-                for (key, value) in &x.attrs {
+                for (key, value) in x.attrs.iter() {
                     raw::reply_with_array(ctx.ctx, 2);
                     raw::reply_with_string_buffer(
                         ctx.ctx,
@@ -382,7 +382,7 @@ fn reply_verbose_value(
                 raw::reply_with_long_long(ctx.ctx, u64::from(from) as _);
                 raw::reply_with_long_long(ctx.ctx, u64::from(to) as _);
                 raw::reply_with_array(ctx.ctx, x.attrs.len() as _);
-                for (key, value) in &x.attrs {
+                for (key, value) in x.attrs.iter() {
                     raw::reply_with_array(ctx.ctx, 3);
                     raw::reply_with_string_buffer(
                         ctx.ctx,
@@ -656,7 +656,7 @@ fn record_mut(
             }
             Ok(env) => {
                 raw::reply_with_long_long(ctx.ctx, 1);
-                let vars = plan.node(idx).get_variables();
+                let vars = plan.node(*idx).get_variables();
                 raw::reply_with_array(ctx.ctx, vars.len() as _);
                 for name in &vars {
                     match env.get(name) {
@@ -676,7 +676,7 @@ fn record_mut(
     for idx in plan.root().indices::<Bfs>() {
         raw::reply_with_array(ctx.ctx, 4);
         raw::reply_with_long_long(ctx.ctx, ids.iter().position(|id| *id == idx).unwrap() as _);
-        match plan.node(&idx).parent() {
+        match plan.node(idx).parent() {
             Some(parent_idx) => {
                 raw::reply_with_long_long(
                     ctx.ctx,
@@ -687,9 +687,9 @@ fn record_mut(
                 raw::reply_with_null(ctx.ctx);
             }
         }
-        let node = plan.node(&idx).data().to_string();
+        let node = plan.node(idx).data().to_string();
         raw::reply_with_string_buffer(ctx.ctx, node.as_ptr().cast::<c_char>(), node.len());
-        let vars = plan.node(&idx).get_variables();
+        let vars = plan.node(idx).get_variables();
         raw::reply_with_array(ctx.ctx, vars.len() as _);
         for var in vars {
             raw::reply_with_string_buffer(
@@ -874,9 +874,9 @@ fn graph_explain(
             let ops = plan.root().indices::<Dfs>().collect::<Vec<_>>();
             raw::reply_with_array(ctx.ctx, ops.len() as _);
             for idx in ops {
-                let node = plan.node(&idx);
+                let node = plan.node(idx);
                 let depth = node.depth();
-                let str = format!("{}{}", " ".repeat(depth * 4), plan.node(&idx).data());
+                let str = format!("{}{}", " ".repeat(depth * 4), plan.node(idx).data());
                 raw::reply_with_string_buffer(ctx.ctx, str.as_ptr().cast::<c_char>(), str.len());
             }
             RedisResult::Ok(RedisValue::NoReply)

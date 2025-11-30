@@ -256,22 +256,22 @@ impl Planner {
         let mut res = iter.next().unwrap();
         let mut idx = res.root().idx();
         while matches!(
-            res.node(&idx).data(),
+            res.node(idx).data(),
             IR::Commit | IR::Sort(_) | IR::Skip(_) | IR::Limit(_) | IR::Distinct | IR::Filter(_)
         ) {
-            idx = res.node(&idx).child(0).idx();
+            idx = res.node(idx).child(0).idx();
         }
         for n in iter {
-            if res.node(&idx).num_children() > 0 {
+            if res.node(idx).num_children() > 0 {
                 idx = res
-                    .node_mut(&idx)
+                    .node_mut(idx)
                     .child_mut(0)
                     .push_sibling_tree(Side::Left, n);
             } else {
-                idx = res.node_mut(&idx).push_child_tree(n);
+                idx = res.node_mut(idx).push_child_tree(n);
             }
             while matches!(
-                res.node(&idx).data(),
+                res.node(idx).data(),
                 IR::Commit
                     | IR::Sort(_)
                     | IR::Skip(_)
@@ -279,7 +279,7 @@ impl Planner {
                     | IR::Distinct
                     | IR::Filter(_)
             ) {
-                idx = res.node(&idx).child(0).idx();
+                idx = res.node(idx).child(0).idx();
             }
         }
         if write {

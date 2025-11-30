@@ -1,12 +1,15 @@
 use std::{collections::HashSet, fmt::Display, hash::Hash, rc::Rc, sync::Arc};
 
 use itertools::Itertools;
-use ordermap::{OrderMap, OrderSet};
 use orx_tree::{Bfs, Collection, Dfs, DynTree, NodeRef};
 
 use crate::{
     indexer::{EntityType, IndexType},
-    runtime::functions::{GraphFn, Type},
+    runtime::{
+        functions::{GraphFn, Type},
+        ordermap::OrderMap,
+        orderset::OrderSet,
+    },
 };
 
 #[derive(Clone, Debug)]
@@ -176,7 +179,7 @@ impl Validate for DynTree<ExprIR> {
         env: &mut HashSet<u32>,
     ) -> Result<(), String> {
         for child in self.root().indices::<Bfs>() {
-            let child = self.node(&child);
+            let child = self.node(child);
 
             match child.data() {
                 ExprIR::Null
@@ -289,7 +292,7 @@ impl SupportAggregation for DynTree<ExprIR> {
     fn is_aggregation(&self) -> bool {
         self.root().indices::<Dfs>().any(|idx| {
             matches!(
-                self.node(&idx).data(),
+                self.node(idx).data(),
                 ExprIR::FuncInvocation(func) if func.is_aggregate()
             )
         })
@@ -304,7 +307,7 @@ pub struct QueryNode<L> {
 }
 
 #[cfg_attr(tarpaulin, skip)]
-impl<L: Display> Display for QueryNode<L> {
+impl<L: Display + PartialEq> Display for QueryNode<L> {
     fn fmt(
         &self,
         f: &mut std::fmt::Formatter<'_>,
@@ -412,15 +415,25 @@ impl QueryPath {
     }
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct QueryGraph<T, L> {
     nodes: OrderMap<Variable, Rc<QueryNode<L>>>,
     relationships: OrderMap<Variable, Rc<QueryRelationship<T, L>>>,
     paths: OrderMap<Variable, Rc<QueryPath>>,
 }
 
+impl<T, L> Default for QueryGraph<T, L> {
+    fn default() -> Self {
+        Self {
+            nodes: OrderMap::default(),
+            relationships: OrderMap::default(),
+            paths: OrderMap::default(),
+        }
+    }
+}
+
 #[cfg_attr(tarpaulin, skip)]
-impl<T: Display, L: Display> Display for QueryGraph<T, L> {
+impl<T: Display + PartialEq, L: Display + PartialEq> Display for QueryGraph<T, L> {
     fn fmt(
         &self,
         f: &mut std::fmt::Formatter<'_>,

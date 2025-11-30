@@ -156,7 +156,7 @@ impl MaskedElementWiseAdd for Matrix {
                 GxB_ANY_PAIR_BOOL,
                 a.map_or(*self.m, |a| *a.m),
                 b.map_or(*self.m, |b| *b.m),
-                descriptor.map_or(null_mut(), |d| d.into()),
+                descriptor.map_or(null_mut(), std::convert::Into::into),
             );
             debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
         }
@@ -263,7 +263,7 @@ impl MaskedElementWiseMultiply for Matrix {
                 GxB_ANY_PAIR_BOOL,
                 a.map_or(*self.m, |a| *a.m),
                 b.map_or(*self.m, |b| *b.m),
-                descriptor.map_or(null_mut(), |d| d.into()),
+                descriptor.map_or(null_mut(), std::convert::Into::into),
             );
             debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
         }
