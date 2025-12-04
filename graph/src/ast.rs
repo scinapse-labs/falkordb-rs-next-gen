@@ -1,4 +1,4 @@
-use std::{collections::HashSet, fmt::Display, hash::Hash, rc::Rc, sync::Arc};
+use std::{collections::HashSet, fmt::Display, hash::Hash, sync::Arc};
 
 use itertools::Itertools;
 use orx_tree::{Bfs, Collection, Dfs, DynTree, NodeRef};
@@ -306,6 +306,9 @@ pub struct QueryNode<L> {
     pub attrs: QueryExpr,
 }
 
+unsafe impl<L: Send> Send for QueryNode<L> {}
+unsafe impl<L: Sync> Sync for QueryNode<L> {}
+
 #[cfg_attr(tarpaulin, skip)]
 impl<L: Display + PartialEq> Display for QueryNode<L> {
     fn fmt(
@@ -344,10 +347,13 @@ pub struct QueryRelationship<T, L> {
     pub alias: Variable,
     pub types: Vec<T>,
     pub attrs: QueryExpr,
-    pub from: Rc<QueryNode<L>>,
-    pub to: Rc<QueryNode<L>>,
+    pub from: Arc<QueryNode<L>>,
+    pub to: Arc<QueryNode<L>>,
     pub bidirectional: bool,
 }
+
+unsafe impl<T: Send, L: Send> Send for QueryRelationship<T, L> {}
+unsafe impl<T: Sync, L: Sync> Sync for QueryRelationship<T, L> {}
 
 #[cfg_attr(tarpaulin, skip)]
 impl<T: Display, L: Display> Display for QueryRelationship<T, L> {
@@ -384,8 +390,8 @@ impl<T, L> QueryRelationship<T, L> {
         alias: Variable,
         types: Vec<T>,
         attrs: QueryExpr,
-        from: Rc<QueryNode<L>>,
-        to: Rc<QueryNode<L>>,
+        from: Arc<QueryNode<L>>,
+        to: Arc<QueryNode<L>>,
         bidirectional: bool,
     ) -> Self {
         Self {
@@ -417,9 +423,9 @@ impl QueryPath {
 
 #[derive(Clone, Debug)]
 pub struct QueryGraph<T, L> {
-    nodes: OrderMap<Variable, Rc<QueryNode<L>>>,
-    relationships: OrderMap<Variable, Rc<QueryRelationship<T, L>>>,
-    paths: OrderMap<Variable, Rc<QueryPath>>,
+    nodes: OrderMap<Variable, Arc<QueryNode<L>>>,
+    relationships: OrderMap<Variable, Arc<QueryRelationship<T, L>>>,
+    paths: OrderMap<Variable, Arc<QueryPath>>,
 }
 
 impl<T, L> Default for QueryGraph<T, L> {
@@ -454,14 +460,14 @@ impl<T: Display + PartialEq, L: Display + PartialEq> Display for QueryGraph<T, L
 impl<T, L> QueryGraph<T, L> {
     pub fn add_node(
         &mut self,
-        node: Rc<QueryNode<L>>,
+        node: Arc<QueryNode<L>>,
     ) -> bool {
         self.nodes.insert(node.alias.clone(), node).is_none()
     }
 
     pub fn add_relationship(
         &mut self,
-        relationship: Rc<QueryRelationship<T, L>>,
+        relationship: Arc<QueryRelationship<T, L>>,
     ) -> bool {
         self.relationships
             .insert(relationship.alias.clone(), relationship)
@@ -470,7 +476,7 @@ impl<T, L> QueryGraph<T, L> {
 
     pub fn add_path(
         &mut self,
-        path: Rc<QueryPath>,
+        path: Arc<QueryPath>,
     ) -> bool {
         self.paths.insert(path.var.clone(), path).is_none()
     }
@@ -486,17 +492,17 @@ impl<T, L> QueryGraph<T, L> {
     }
 
     #[must_use]
-    pub fn nodes(&self) -> Vec<Rc<QueryNode<L>>> {
+    pub fn nodes(&self) -> Vec<Arc<QueryNode<L>>> {
         self.nodes.values().cloned().collect()
     }
 
     #[must_use]
-    pub fn relationships(&self) -> Vec<Rc<QueryRelationship<T, L>>> {
+    pub fn relationships(&self) -> Vec<Arc<QueryRelationship<T, L>>> {
         self.relationships.values().cloned().collect()
     }
 
     #[must_use]
-    pub fn paths(&self) -> Vec<Rc<QueryPath>> {
+    pub fn paths(&self) -> Vec<Arc<QueryPath>> {
         self.paths.values().cloned().collect()
     }
 
@@ -552,7 +558,7 @@ impl<T, L> QueryGraph<T, L> {
 
     fn dfs(
         &self,
-        node: &Rc<QueryNode<L>>,
+        node: &Arc<QueryNode<L>>,
         visited: &mut HashSet<u32>,
         component: &mut Self,
     ) {
@@ -585,7 +591,7 @@ impl<T, L> QueryGraph<T, L> {
     }
 }
 
-pub type QueryExpr = Rc<DynTree<ExprIR>>;
+pub type QueryExpr = Arc<DynTree<ExprIR>>;
 
 #[derive(Debug)]
 pub enum QueryIR {

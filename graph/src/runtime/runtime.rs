@@ -1434,7 +1434,7 @@ impl<'a> Runtime {
     ) -> QueryGraph<Arc<String>, LabelId> {
         let mut resolved_pattern = QueryGraph::default();
         for node in pattern.nodes() {
-            resolved_pattern.add_node(Rc::new(QueryNode::new(
+            resolved_pattern.add_node(Arc::new(QueryNode::new(
                 node.alias.clone(),
                 node.labels
                     .iter()
@@ -1444,11 +1444,11 @@ impl<'a> Runtime {
             )));
         }
         for rel in pattern.relationships() {
-            resolved_pattern.add_relationship(Rc::new(QueryRelationship::new(
+            resolved_pattern.add_relationship(Arc::new(QueryRelationship::new(
                 rel.alias.clone(),
                 rel.types.clone(),
                 rel.attrs.clone(),
-                Rc::new(QueryNode::new(
+                Arc::new(QueryNode::new(
                     rel.from.alias.clone(),
                     rel.from
                         .labels
@@ -1457,7 +1457,7 @@ impl<'a> Runtime {
                         .collect(),
                     rel.from.attrs.clone(),
                 )),
-                Rc::new(QueryNode::new(
+                Arc::new(QueryNode::new(
                     rel.to.alias.clone(),
                     rel.to
                         .labels

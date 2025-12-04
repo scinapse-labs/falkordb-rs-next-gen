@@ -8,13 +8,14 @@ use crate::graph::GraphBLAS::{
     GrB_DESC_RSCT0T1, GrB_DESC_RSCT1, GrB_DESC_RST0, GrB_DESC_RST0T1, GrB_DESC_RST1, GrB_DESC_RT0,
     GrB_DESC_RT0T1, GrB_DESC_RT1, GrB_DESC_S, GrB_DESC_SC, GrB_DESC_SCT0, GrB_DESC_SCT0T1,
     GrB_DESC_SCT1, GrB_DESC_ST0, GrB_DESC_ST0T1, GrB_DESC_ST1, GrB_DESC_T0, GrB_DESC_T0T1,
-    GrB_DESC_T1, GrB_Descriptor, GrB_Info, GrB_Matrix, GrB_Matrix_clear, GrB_Matrix_dup,
-    GrB_Matrix_eWiseAdd_Semiring, GrB_Matrix_eWiseMult_Semiring, GrB_Matrix_extractElement_BOOL,
-    GrB_Matrix_free, GrB_Matrix_get_INT32, GrB_Matrix_ncols, GrB_Matrix_new, GrB_Matrix_nrows,
-    GrB_Matrix_nvals, GrB_Matrix_removeElement, GrB_Matrix_resize, GrB_Matrix_setElement_BOOL,
-    GrB_Matrix_wait, GrB_Mode, GrB_WaitMode, GrB_finalize, GrB_mxm, GrB_transpose, GxB_ANY_BOOL,
-    GxB_ANY_PAIR_BOOL, GxB_Iterator, GxB_Iterator_free, GxB_Iterator_new, GxB_Matrix_fprint,
-    GxB_Matrix_memoryUsage, GxB_Option_Field, GxB_Print_Level, GxB_init, GxB_rowIterator_attach,
+    GrB_DESC_T1, GrB_Descriptor, GrB_GLOBAL, GrB_Global_set_INT32, GrB_Info, GrB_Matrix,
+    GrB_Matrix_clear, GrB_Matrix_dup, GrB_Matrix_eWiseAdd_Semiring, GrB_Matrix_eWiseMult_Semiring,
+    GrB_Matrix_extractElement_BOOL, GrB_Matrix_free, GrB_Matrix_get_INT32, GrB_Matrix_ncols,
+    GrB_Matrix_new, GrB_Matrix_nrows, GrB_Matrix_nvals, GrB_Matrix_removeElement,
+    GrB_Matrix_resize, GrB_Matrix_setElement_BOOL, GrB_Matrix_wait, GrB_Mode, GrB_WaitMode,
+    GrB_finalize, GrB_mxm, GrB_transpose, GxB_ANY_BOOL, GxB_ANY_PAIR_BOOL, GxB_Iterator,
+    GxB_Iterator_free, GxB_Iterator_new, GxB_Matrix_fprint, GxB_Matrix_memoryUsage,
+    GxB_Option_Field, GxB_Print_Level, GxB_init, GxB_rowIterator_attach,
     GxB_rowIterator_getColIndex, GxB_rowIterator_getRowIndex, GxB_rowIterator_nextCol,
     GxB_rowIterator_nextRow, GxB_rowIterator_seekRow,
 };
@@ -37,6 +38,12 @@ pub fn init(
             user_realloc_function,
             user_free_function,
         );
+    }
+}
+
+pub fn burble() {
+    unsafe {
+        GrB_Global_set_INT32(GrB_GLOBAL, 1, GxB_Option_Field::GxB_BURBLE as _);
     }
 }
 
@@ -626,11 +633,8 @@ impl Iter {
                     || info == GrB_Info::GrB_NO_VALUE
                     || info == GrB_Info::GxB_EXHAUSTED
             );
-            if info == GrB_Info::GrB_NO_VALUE {
-                while info == GrB_Info::GrB_NO_VALUE && GxB_rowIterator_getRowIndex(iter) < max_row
-                {
-                    info = GxB_rowIterator_nextRow(iter);
-                }
+            while info == GrB_Info::GrB_NO_VALUE && GxB_rowIterator_getRowIndex(iter) < max_row {
+                info = GxB_rowIterator_nextRow(iter);
             }
             Self {
                 m: m.m.clone(),
