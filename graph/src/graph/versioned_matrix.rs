@@ -64,6 +64,7 @@ impl Size for VersionedMatrix {
         nrows: u64,
         ncols: u64,
     ) {
+        self.wait();
         self.m.resize(nrows, ncols);
         self.dp.resize(nrows, ncols);
         self.dm.resize(nrows, ncols);
@@ -115,6 +116,7 @@ impl VersionedMatrix {
     #[must_use]
     pub fn to_matrix(&self) -> Matrix {
         // TODO: remove
+        self.wait();
         let mut m = self.m.dup();
         m.remove_all(&self.dm);
         m.element_wise_add(None, None, Some(&self.dp), None);
@@ -146,6 +148,7 @@ impl Remove for VersionedMatrix {
         &mut self,
         b: &Matrix,
     ) {
+        self.wait();
         self.dp.remove_all(b);
         self.dm.element_wise_add(Some(&self.m), None, Some(b), None);
     }
@@ -260,6 +263,7 @@ impl SetAll for VersionedMatrix {
         &mut self,
         b: &Matrix,
     ) {
+        self.wait();
         self.dp
             .element_wise_add(Some(&self.m), None, Some(b), Some(Descriptor::C));
         self.dm.remove_all(b);

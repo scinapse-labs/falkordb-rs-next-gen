@@ -13,10 +13,10 @@ use crate::graph::GraphBLAS::{
     GrB_Matrix_free, GrB_Matrix_get_INT32, GrB_Matrix_ncols, GrB_Matrix_new, GrB_Matrix_nrows,
     GrB_Matrix_nvals, GrB_Matrix_removeElement, GrB_Matrix_resize, GrB_Matrix_setElement_BOOL,
     GrB_Matrix_wait, GrB_Mode, GrB_WaitMode, GrB_finalize, GrB_mxm, GrB_transpose, GxB_ANY_BOOL,
-    GxB_ANY_PAIR_BOOL, GxB_Iterator, GxB_Iterator_free, GxB_Iterator_new,
-    GxB_Matrix_Iterator_attach, GxB_Matrix_Iterator_getIndex, GxB_Matrix_Iterator_next,
-    GxB_Matrix_fprint, GxB_Matrix_memoryUsage, GxB_Option_Field, GxB_Print_Level, GxB_init,
-    GxB_rowIterator_getRowIndex, GxB_rowIterator_nextRow, GxB_rowIterator_seekRow,
+    GxB_ANY_PAIR_BOOL, GxB_Iterator, GxB_Iterator_free, GxB_Iterator_new, GxB_Matrix_fprint,
+    GxB_Matrix_memoryUsage, GxB_Option_Field, GxB_Print_Level, GxB_init, GxB_rowIterator_attach,
+    GxB_rowIterator_getColIndex, GxB_rowIterator_getRowIndex, GxB_rowIterator_nextCol,
+    GxB_rowIterator_nextRow, GxB_rowIterator_seekRow,
 };
 
 /// Initializes the GraphBLAS library in non-blocking mode.
@@ -618,7 +618,7 @@ impl Iter {
             let info = GxB_Iterator_new(iter.as_mut_ptr());
             debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
             let iter = iter.assume_init();
-            let info = GxB_Matrix_Iterator_attach(iter, *m.m, null_mut());
+            let info = GxB_rowIterator_attach(iter, *m.m, null_mut());
             debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
             let mut info = GxB_rowIterator_seekRow(iter, min_row);
             debug_assert!(
@@ -656,11 +656,25 @@ impl Iterator for Iter {
             return None;
         }
         unsafe {
-            let mut row = 0u64;
-            let mut col = 0u64;
-            GxB_Matrix_Iterator_getIndex(self.inner, &raw mut row, &raw mut col);
-            self.depleted = GxB_Matrix_Iterator_next(self.inner) != GrB_Info::GrB_SUCCESS
-                || GxB_rowIterator_getRowIndex(self.inner) > self.max_row;
+            let row = GxB_rowIterator_getRowIndex(self.inner);
+            let col = GxB_rowIterator_getColIndex(self.inner);
+            if GxB_rowIterator_nextCol(self.inner) != GrB_Info::GrB_SUCCESS {
+                let mut info = GxB_rowIterator_nextRow(self.inner);
+                debug_assert!(
+                    info == GrB_Info::GrB_SUCCESS
+                        || info == GrB_Info::GrB_NO_VALUE
+                        || info == GrB_Info::GxB_EXHAUSTED
+                );
+                if info == GrB_Info::GrB_NO_VALUE {
+                    while info == GrB_Info::GrB_NO_VALUE
+                        && GxB_rowIterator_getRowIndex(self.inner) < self.max_row
+                    {
+                        info = GxB_rowIterator_nextRow(self.inner);
+                    }
+                }
+                self.depleted = info != GrB_Info::GrB_SUCCESS
+                    || GxB_rowIterator_getRowIndex(self.inner) > self.max_row;
+            }
             Some((row, col))
         }
     }

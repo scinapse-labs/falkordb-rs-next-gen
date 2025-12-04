@@ -861,11 +861,11 @@ impl Graph {
             Some(mut dest_labels_matrices),
         ) = (matrices, src_labels_matrices, dest_labels_matrices)
         {
-            let mut iter = matrices.iter();
-            let mut m = iter
-                .next()
-                .map_or_else(|| &self.adjacancy_matrix, |t| Tensor::matrix(t))
-                .to_matrix();
+            let mut iter = matrices.into_iter();
+            let mut m = iter.next().map_or_else(
+                || self.adjacancy_matrix.to_matrix(),
+                |t| t.matrix().to_matrix(),
+            );
             for relationship_matrix in iter {
                 m.element_wise_add(
                     None,
