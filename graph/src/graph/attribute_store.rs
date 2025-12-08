@@ -83,14 +83,11 @@ impl AttributeStore {
         value: Value,
     ) -> bool {
         let mut attributes = self.attributes.borrow_mut();
-        let idx = self.attrs_name.get_index_of(attr).map_or_else(
-            || {
-                attributes.push(BlockVec::new(1024));
-                self.attrs_name.insert(attr.clone());
-                attributes.len() - 1
-            },
-            |idx| idx,
-        );
+        let idx = self.attrs_name.get_index_of(attr).unwrap_or_else(|| {
+            attributes.push(BlockVec::new(1024));
+            self.attrs_name.insert(attr.clone());
+            attributes.len() - 1
+        });
         attributes[idx].insert(key, value)
     }
 

@@ -2,7 +2,6 @@ use std::{
     collections::HashMap,
     hash::Hash,
     num::NonZeroUsize,
-    rc::Rc,
     sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
@@ -32,7 +31,7 @@ use crate::{
 };
 
 pub struct Plan {
-    pub plan: Rc<DynTree<IR>>,
+    pub plan: Arc<DynTree<IR>>,
     pub cached: bool,
     pub parameters: HashMap<String, DynTree<ExprIR>>,
     pub parse_duration: Duration,
@@ -81,7 +80,7 @@ impl From<RelationshipId> for u64 {
 impl Plan {
     #[must_use]
     pub const fn new(
-        plan: Rc<DynTree<IR>>,
+        plan: Arc<DynTree<IR>>,
         cached: bool,
         parameters: HashMap<String, DynTree<ExprIR>>,
         parse_duration: Duration,
@@ -357,7 +356,7 @@ impl Graph {
                 if let Some(plan) = cache.get(query) {
                     let optimize_plan = optimize(&plan.0, self);
                     Ok(Plan::new(
-                        Rc::new(optimize_plan),
+                        Arc::new(optimize_plan),
                         true,
                         parameters,
                         parse_duration,
@@ -380,7 +379,7 @@ impl Graph {
                         .unwrap()
                         .push(query.to_string(), PlanTree(plan));
                     Ok(Plan::new(
-                        Rc::new(optimize_plan),
+                        Arc::new(optimize_plan),
                         false,
                         parameters,
                         parse_duration,

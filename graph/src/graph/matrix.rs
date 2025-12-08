@@ -669,12 +669,10 @@ impl Iterator for Iter {
                         || info == GrB_Info::GrB_NO_VALUE
                         || info == GrB_Info::GxB_EXHAUSTED
                 );
-                if info == GrB_Info::GrB_NO_VALUE {
-                    while info == GrB_Info::GrB_NO_VALUE
-                        && GxB_rowIterator_getRowIndex(self.inner) < self.max_row
-                    {
-                        info = GxB_rowIterator_nextRow(self.inner);
-                    }
+                while info == GrB_Info::GrB_NO_VALUE
+                    && GxB_rowIterator_getRowIndex(self.inner) < self.max_row
+                {
+                    info = GxB_rowIterator_nextRow(self.inner);
                 }
                 self.depleted = info != GrB_Info::GrB_SUCCESS
                     || GxB_rowIterator_getRowIndex(self.inner) > self.max_row;
