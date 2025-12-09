@@ -1,6 +1,5 @@
-use std::sync::Mutex;
-
 use crate::graph::{
+    GraphBLAS::GxB_Print_Level,
     cow::Cow,
     matrix::{
         self, Descriptor, Dup, Get, MaskedElementWiseAdd, MaskedElementWiseMultiply, Matrix, New,
@@ -12,7 +11,6 @@ pub struct VersionedMatrix {
     m: Cow<Matrix>,
     dp: Cow<Matrix>,
     dm: Cow<Matrix>,
-    wait_lock: Mutex<()>,
 }
 
 unsafe impl Send for VersionedMatrix {}
@@ -33,15 +31,8 @@ impl VersionedMatrix {
 
     pub fn wait(&self) {
         debug_assert!(!self.m.pending());
-        let lock = self.wait_lock.lock().unwrap();
-        debug_assert!(!self.m.pending());
-        if self.dp.pending() {
-            self.dp.wait();
-        }
-        if self.dm.pending() {
-            self.dm.wait();
-        }
-        drop(lock);
+        self.dp.wait();
+        self.dm.wait();
     }
 
     #[must_use]
@@ -85,7 +76,6 @@ impl New for VersionedMatrix {
             m: Cow::new(Matrix::new(nrows, ncols)),
             dp: Cow::new(Matrix::new(nrows, ncols)),
             dm: Cow::new(Matrix::new(nrows, ncols)),
-            wait_lock: Mutex::new(()),
         }
     }
 }
@@ -96,7 +86,6 @@ impl Dup<Self> for VersionedMatrix {
             m: self.m.new_version(),
             dp: self.dp.new_version(),
             dm: self.dm.new_version(),
-            wait_lock: Mutex::new(()),
         }
     }
 }
@@ -123,10 +112,13 @@ impl VersionedMatrix {
         m
     }
 
-    pub fn print(&self) {
-        self.m.print();
-        self.dp.print();
-        self.dm.print();
+    pub fn print(
+        &self,
+        level: GxB_Print_Level,
+    ) {
+        self.m.print(level);
+        self.dp.print(level);
+        self.dm.print(level);
     }
 }
 
@@ -167,6 +159,7 @@ impl ElementWiseAdd for VersionedMatrix {
         b: &Self,
     ) {
         // TODO: fix
+        self.wait();
         self.dp.element_wise_add(None, None, Some(&b.m), None);
         self.dp.element_wise_add(None, None, Some(&b.dp), None);
         self.dm.element_wise_add(None, None, Some(&b.dm), None);
@@ -188,6 +181,7 @@ impl ElementWiseMultiply for VersionedMatrix {
         // TODO: fix
         debug_assert_eq!(self.dp.nvals(), 0);
         debug_assert_eq!(self.dm.nvals(), 0);
+        self.wait();
         self.dp.element_wise_multiply(
             Some(&self.dm),
             Some(&self.m),
@@ -241,6 +235,7 @@ impl Set for VersionedMatrix {
         j: u64,
         value: bool,
     ) {
+        debug_assert!(!self.m.pending());
         if self.m.get(i, j).is_some() {
             debug_assert!(self.dp.get(i, j).is_none());
             self.dm.remove(i, j);
@@ -283,7 +278,6 @@ where
             m: Cow::new(self.m.transpose()),
             dp: Cow::new(self.dp.transpose()),
             dm: Cow::new(self.dm.transpose()),
-            wait_lock: Mutex::new(()),
         }
     }
 }

@@ -126,8 +126,8 @@ impl Document {
 pub enum IndexQuery<T> {
     Equal(Arc<String>, T),
     Range(Arc<String>, Option<T>, Option<T>),
-    And(Vec<IndexQuery<T>>),
-    Or(Vec<IndexQuery<T>>),
+    And(Vec<Self>),
+    Or(Vec<Self>),
 }
 
 pub struct Field {

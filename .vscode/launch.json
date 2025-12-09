@@ -15,6 +15,13 @@
             }
         },
         {
+            "name": "MVCC Test",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "pytest",
+            "args": ["${workspaceFolder}/tests/test_mvcc.py", "-s", "-vv"],
+        },
+        {
             "type": "antlr-debug",
             "request": "launch",
             "name": "Debug Cypher Grammar",
@@ -25,11 +32,25 @@
         {
             "type": "lldb",
             "request": "launch",
-            "name": "Launch Mac",
+            "name": "Launch Debug Mac",
             "program": "/usr/local/bin/redis-server",
             "args": [
                 "--loadmodule",
                 "${workspaceFolder}/target/debug/libfalkordb.dylib"
+            ],
+            "cwd": "${workspaceFolder}",
+            "sourceLanguages": [
+                "rust"
+            ],
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Launch Release Mac",
+            "program": "/usr/local/bin/redis-server",
+            "args": [
+                "--loadmodule",
+                "${workspaceFolder}/target/release/libfalkordb.dylib"
             ],
             "cwd": "${workspaceFolder}",
             "sourceLanguages": [

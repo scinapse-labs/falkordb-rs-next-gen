@@ -828,7 +828,7 @@ impl Graph {
             types
         } {
             if let Some(relationship_matrix) = self.get_relationship_matrix(relationship_type) {
-                for id in relationship_matrix.get(src.0, dest.0) {
+                for (_, id) in relationship_matrix.get(src.0, dest.0) {
                     vec.push(RelationshipId(id));
                 }
             }

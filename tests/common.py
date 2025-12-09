@@ -6,7 +6,7 @@ import time
 from falkordb import FalkorDB
 from redis import Redis
 
-redis_server = None
+redis_server: subprocess.Popen = None
 client = None
 g = None
 shutdown = False

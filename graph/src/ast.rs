@@ -306,9 +306,6 @@ pub struct QueryNode<L> {
     pub attrs: QueryExpr,
 }
 
-unsafe impl<L: Send> Send for QueryNode<L> {}
-unsafe impl<L: Sync> Sync for QueryNode<L> {}
-
 #[cfg_attr(tarpaulin, skip)]
 impl<L: Display + PartialEq> Display for QueryNode<L> {
     fn fmt(
@@ -351,9 +348,6 @@ pub struct QueryRelationship<T, L> {
     pub to: Arc<QueryNode<L>>,
     pub bidirectional: bool,
 }
-
-unsafe impl<T: Send, L: Send> Send for QueryRelationship<T, L> {}
-unsafe impl<T: Sync, L: Sync> Sync for QueryRelationship<T, L> {}
 
 #[cfg_attr(tarpaulin, skip)]
 impl<T: Display, L: Display> Display for QueryRelationship<T, L> {
@@ -652,7 +646,7 @@ pub enum QueryIR {
         index_type: IndexType,
         entity_type: EntityType,
     },
-    Query(Vec<QueryIR>, bool),
+    Query(Vec<Self>, bool),
 }
 
 #[cfg_attr(tarpaulin, skip)]

@@ -66,15 +66,15 @@ pub enum Type {
     Int,
     Float,
     String,
-    List(Box<Type>),
+    List(Box<Self>),
     Map,
     Node,
     Relationship,
     Path,
     VecF32,
     Any,
-    Union(Vec<Type>),
-    Optional(Box<Type>),
+    Union(Vec<Self>),
+    Optional(Box<Self>),
 }
 
 #[cfg_attr(tarpaulin, skip)]

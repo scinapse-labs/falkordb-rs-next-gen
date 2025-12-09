@@ -1,5 +1,5 @@
 use crate::graph::{
-    matrix::{Dup, Get, New, Remove, Set, Size},
+    matrix::{Dup, New, Remove, Set, Size},
     versioned_matrix::{self, VersionedMatrix},
 };
 
@@ -31,14 +31,10 @@ impl Tensor {
         &self,
         src: u64,
         dest: u64,
-    ) -> Vec<u64> {
+    ) -> versioned_matrix::Iter {
         debug_assert!(u32::try_from(src).is_ok() && u32::try_from(dest).is_ok());
-        if self.m.get(src, dest).is_some() {
-            let row = src << 32 | dest;
-            self.me.iter(row, row).map(|(_, j)| j).collect()
-        } else {
-            vec![]
-        }
+        let row = src << 32 | dest;
+        self.me.iter(row, row)
     }
 
     pub fn set(

@@ -1,6 +1,11 @@
 #![allow(clippy::doc_markdown)]
 
-use std::{mem::MaybeUninit, os::raw::c_void, ptr::null_mut, sync::Arc};
+use std::{
+    mem::MaybeUninit,
+    os::raw::c_void,
+    ptr::null_mut,
+    sync::{Arc, RwLock},
+};
 
 use crate::graph::GraphBLAS::{
     GrB_BOOL, GrB_DESC_C, GrB_DESC_CT0, GrB_DESC_CT0T1, GrB_DESC_CT1, GrB_DESC_R, GrB_DESC_RC,
@@ -41,9 +46,13 @@ pub fn init(
     }
 }
 
-pub fn burble() {
+pub fn burble(burble: bool) {
     unsafe {
-        GrB_Global_set_INT32(GrB_GLOBAL, 1, GxB_Option_Field::GxB_BURBLE as _);
+        GrB_Global_set_INT32(
+            GrB_GLOBAL,
+            i32::from(burble),
+            GxB_Option_Field::GxB_BURBLE as _,
+        );
     }
 }
 
@@ -336,6 +345,7 @@ impl MxM for Matrix {
 pub struct Matrix {
     /// The underlying GraphBLAS matrix.
     m: Arc<GrB_Matrix>,
+    lock: Arc<RwLock<()>>,
 }
 
 unsafe impl Send for Matrix {}
@@ -368,10 +378,12 @@ impl Matrix {
     }
 
     pub fn wait(&self) {
+        let lock = self.lock.write().unwrap();
         unsafe {
             let info = GrB_Matrix_wait(*self.m, GrB_WaitMode::GrB_MATERIALIZE as _);
             debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
         }
+        drop(lock);
     }
 
     #[must_use]
@@ -450,6 +462,7 @@ impl New for Matrix {
             debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
             Self {
                 m: Arc::new(m.assume_init()),
+                lock: Arc::new(RwLock::new(())),
             }
         }
     }
@@ -468,6 +481,7 @@ impl Dup<Self> for Matrix {
                 debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
                 m.assume_init()
             }),
+            lock: Arc::new(RwLock::new(())),
         }
     }
 }
@@ -483,16 +497,12 @@ impl Matrix {
         Iter::new(self, min_row, max_row)
     }
 
-    pub fn print(&self) {
+    pub fn print(
+        &self,
+        level: GxB_Print_Level,
+    ) {
         unsafe {
-            let info = GrB_Matrix_wait(*self.m, GrB_WaitMode::GrB_MATERIALIZE as _);
-            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
-            let info = GxB_Matrix_fprint(
-                *self.m,
-                null_mut(),
-                GxB_Print_Level::GxB_COMPLETE as _,
-                null_mut(),
-            );
+            let info = GxB_Matrix_fprint(*self.m, null_mut(), level as _, null_mut());
             debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
         }
     }
