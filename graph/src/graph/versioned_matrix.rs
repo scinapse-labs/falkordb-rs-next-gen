@@ -1,9 +1,7 @@
 use crate::graph::{
     GraphBLAS::GxB_Print_Level,
     cow::Cow,
-    matrix::{
-        self, Descriptor, Dup, Get, MaskedElementWiseAdd, Matrix, New, Remove, Set, Size, Transpose,
-    },
+    matrix::{self, Dup, Get, MaskedElementWiseAdd, Matrix, New, Remove, Set, Size, Transpose},
 };
 
 pub struct VersionedMatrix {
@@ -131,15 +129,6 @@ impl Remove for VersionedMatrix {
         } else {
             self.dp.remove(i, j);
         }
-    }
-
-    fn remove_all(
-        &mut self,
-        b: &Matrix,
-    ) {
-        self.wait();
-        self.dp.remove_all(b);
-        self.dm.element_wise_add(Some(&self.m), None, Some(b), None);
     }
 }
 

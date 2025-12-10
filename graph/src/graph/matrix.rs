@@ -133,11 +133,6 @@ pub trait Remove {
         i: u64,
         j: u64,
     );
-
-    fn remove_all(
-        &mut self,
-        b: &Matrix,
-    );
 }
 
 pub trait Transpose {
@@ -402,6 +397,16 @@ impl Matrix {
             debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
         }
     }
+
+    pub fn remove_all(
+        &mut self,
+        b: &Self,
+    ) {
+        unsafe {
+            let info = GrB_transpose(*self.m, *b.m, null_mut(), *self.m, GrB_DESC_RCT0);
+            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+        }
+    }
 }
 
 impl Size for Matrix {
@@ -516,16 +521,6 @@ impl Remove for Matrix {
     ) {
         unsafe {
             let info = GrB_Matrix_removeElement(*self.m, i, j);
-            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
-        }
-    }
-
-    fn remove_all(
-        &mut self,
-        b: &Self,
-    ) {
-        unsafe {
-            let info = GrB_transpose(*self.m, *b.m, null_mut(), *self.m, GrB_DESC_RCT0);
             debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
         }
     }

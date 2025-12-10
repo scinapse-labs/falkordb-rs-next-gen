@@ -555,11 +555,10 @@ impl Graph {
         nodes_labels: &mut Matrix,
         remove_docs: &mut HashMap<Arc<String>, RoaringTreemap>,
     ) {
-        nodes_labels.resize(self.node_cap, self.node_labels.len() as u64);
         self.resize();
-        self.node_labels_matrix.remove_all(nodes_labels);
 
         for (id, label_id) in nodes_labels.iter(0, u64::MAX) {
+            self.node_labels_matrix.remove(id, label_id);
             self.labels_matices[label_id as usize].remove(id, id);
             let label = self.node_labels[label_id as usize].clone();
             if self.node_indexer.is_label_indexed(label.clone()) {
