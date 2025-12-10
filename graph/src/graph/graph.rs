@@ -512,17 +512,19 @@ impl Graph {
             }
         }
 
-        for (_, label_id) in self.node_labels_matrix.iter(id.into(), id.into()) {
-            for key in &keys {
-                let label = self.node_labels[label_id as usize].clone();
-                if self
-                    .node_indexer
-                    .is_attr_indexed(label.clone(), key.clone())
-                {
-                    index_add_docs
-                        .entry(label)
-                        .or_default()
-                        .insert(u64::from(id));
+        if self.node_indexer.has_indices() {
+            for (_, label_id) in self.node_labels_matrix.iter(id.into(), id.into()) {
+                for key in &keys {
+                    let label = self.node_labels[label_id as usize].clone();
+                    if self
+                        .node_indexer
+                        .is_attr_indexed(label.clone(), key.clone())
+                    {
+                        index_add_docs
+                            .entry(label)
+                            .or_default()
+                            .insert(u64::from(id));
+                    }
                 }
             }
         }

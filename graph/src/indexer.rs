@@ -191,6 +191,11 @@ unsafe impl Send for Indexer {}
 unsafe impl Sync for Indexer {}
 
 impl Indexer {
+    #[must_use]
+    pub fn has_indices(&self) -> bool {
+        !self.index.read().unwrap().is_empty()
+    }
+
     pub fn create_index(
         &mut self,
         index_type: &IndexType,
