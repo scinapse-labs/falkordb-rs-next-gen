@@ -21,7 +21,7 @@ use crate::{
             Size,
         },
         tensor::Tensor,
-        versioned_matrix::{self, SetAll, VersionedMatrix},
+        versioned_matrix::{self, VersionedMatrix},
     },
     indexer::{Document, EntityType, IndexInfo, IndexQuery, IndexType, Indexer},
     optimizer::optimize,
@@ -534,11 +534,10 @@ impl Graph {
         nodes_labels: &mut Matrix,
         index_add_docs: &mut HashMap<Arc<String>, RoaringTreemap>,
     ) {
-        nodes_labels.resize(self.node_cap, self.node_labels.len() as u64);
         self.resize();
-        self.node_labels_matrix.set_all(nodes_labels);
 
         for (id, label_id) in nodes_labels.iter(0, u64::MAX) {
+            self.node_labels_matrix.set(id, label_id, true);
             self.labels_matices[label_id as usize].set(id, id, true);
             let label = self.node_labels[label_id as usize].clone();
             if self.node_indexer.is_label_indexed(label.clone())

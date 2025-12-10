@@ -2,8 +2,7 @@ use crate::graph::{
     GraphBLAS::GxB_Print_Level,
     cow::Cow,
     matrix::{
-        self, Descriptor, Dup, Get, MaskedElementWiseAdd, MaskedElementWiseMultiply, Matrix, New,
-        Remove, Set, Size, Transpose,
+        self, Descriptor, Dup, Get, MaskedElementWiseAdd, Matrix, New, Remove, Set, Size, Transpose,
     },
 };
 
@@ -15,31 +14,6 @@ pub struct VersionedMatrix {
 
 unsafe impl Send for VersionedMatrix {}
 unsafe impl Sync for VersionedMatrix {}
-
-impl VersionedMatrix {
-    pub fn flush(&mut self) {
-        self.wait();
-        if self.dp.nvals() >= 10000 {
-            self.m.element_wise_add(None, None, Some(&self.dp), None);
-            self.dp.clear();
-        }
-        if self.dm.nvals() >= 10000 {
-            self.m.remove_all(&self.dm);
-            self.dm.clear();
-        }
-    }
-
-    pub fn wait(&self) {
-        debug_assert!(!self.m.pending());
-        self.dp.wait();
-        self.dm.wait();
-    }
-
-    #[must_use]
-    pub fn memory_usage(&self) -> usize {
-        self.m.memory_usage() + self.dp.memory_usage() + self.dm.memory_usage()
-    }
-}
 
 impl Size for VersionedMatrix {
     fn nrows(&self) -> u64 {
@@ -91,6 +65,29 @@ impl Dup<Self> for VersionedMatrix {
 }
 
 impl VersionedMatrix {
+    pub fn flush(&mut self) {
+        self.wait();
+        if self.dp.nvals() >= 10000 {
+            self.m.element_wise_add(None, None, Some(&self.dp), None);
+            self.dp.clear();
+        }
+        if self.dm.nvals() >= 10000 {
+            self.m.remove_all(&self.dm);
+            self.dm.clear();
+        }
+    }
+
+    pub fn wait(&self) {
+        debug_assert!(!self.m.pending());
+        self.dp.wait();
+        self.dm.wait();
+    }
+
+    #[must_use]
+    pub fn memory_usage(&self) -> usize {
+        self.m.memory_usage() + self.dp.memory_usage() + self.dm.memory_usage()
+    }
+
     #[must_use]
     #[allow(clippy::iter_without_into_iter)]
     pub fn iter(
@@ -146,52 +143,6 @@ impl Remove for VersionedMatrix {
     }
 }
 
-pub trait ElementWiseAdd {
-    fn element_wise_add(
-        &mut self,
-        b: &Self,
-    );
-}
-
-impl ElementWiseAdd for VersionedMatrix {
-    fn element_wise_add(
-        &mut self,
-        b: &Self,
-    ) {
-        // TODO: fix
-        self.wait();
-        self.dp.element_wise_add(None, None, Some(&b.m), None);
-        self.dp.element_wise_add(None, None, Some(&b.dp), None);
-        self.dm.element_wise_add(None, None, Some(&b.dm), None);
-    }
-}
-
-pub trait ElementWiseMultiply {
-    fn element_wise_multiply(
-        &mut self,
-        b: &Self,
-    );
-}
-
-impl ElementWiseMultiply for VersionedMatrix {
-    fn element_wise_multiply(
-        &mut self,
-        b: &Self,
-    ) {
-        // TODO: fix
-        debug_assert_eq!(self.dp.nvals(), 0);
-        debug_assert_eq!(self.dm.nvals(), 0);
-        self.wait();
-        self.dp.element_wise_multiply(
-            Some(&self.dm),
-            Some(&self.m),
-            Some(&b.dp),
-            Some(Descriptor::C),
-        );
-        // self.dm.element_wise_multiply(None, &self.dm, &b.dp, None);
-    }
-}
-
 // impl MxM<bool> for VersionedMatrix<bool> {
 //     fn lmxm(
 //         &mut self,
@@ -243,25 +194,6 @@ impl Set for VersionedMatrix {
             debug_assert!(self.dm.get(i, j).is_none());
             self.dp.set(i, j, value);
         }
-    }
-}
-
-pub trait SetAll {
-    fn set_all(
-        &mut self,
-        b: &Matrix,
-    );
-}
-
-impl SetAll for VersionedMatrix {
-    fn set_all(
-        &mut self,
-        b: &Matrix,
-    ) {
-        self.wait();
-        self.dp
-            .element_wise_add(Some(&self.m), None, Some(b), Some(Descriptor::C));
-        self.dm.remove_all(b);
     }
 }
 

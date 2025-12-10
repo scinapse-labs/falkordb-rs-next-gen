@@ -4,7 +4,7 @@ use std::{
     mem::MaybeUninit,
     os::raw::c_void,
     ptr::null_mut,
-    sync::{Arc, RwLock},
+    sync::{Arc, Mutex},
 };
 
 use crate::graph::GraphBLAS::{
@@ -345,7 +345,7 @@ impl MxM for Matrix {
 pub struct Matrix {
     /// The underlying GraphBLAS matrix.
     m: Arc<GrB_Matrix>,
-    lock: Arc<RwLock<()>>,
+    lock: Arc<Mutex<()>>,
 }
 
 unsafe impl Send for Matrix {}
@@ -378,7 +378,7 @@ impl Matrix {
     }
 
     pub fn wait(&self) {
-        let lock = self.lock.write().unwrap();
+        let lock = self.lock.lock().unwrap();
         unsafe {
             let info = GrB_Matrix_wait(*self.m, GrB_WaitMode::GrB_MATERIALIZE as _);
             debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
@@ -462,7 +462,7 @@ impl New for Matrix {
             debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
             Self {
                 m: Arc::new(m.assume_init()),
-                lock: Arc::new(RwLock::new(())),
+                lock: Arc::new(Mutex::new(())),
             }
         }
     }
@@ -481,7 +481,7 @@ impl Dup<Self> for Matrix {
                 debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
                 m.assume_init()
             }),
-            lock: Arc::new(RwLock::new(())),
+            lock: Arc::new(Mutex::new(())),
         }
     }
 }
