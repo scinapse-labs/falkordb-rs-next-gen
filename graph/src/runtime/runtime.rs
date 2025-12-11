@@ -1051,14 +1051,20 @@ impl<'a> Runtime {
                         self.record.borrow_mut().push((idx, res.clone()));
                     }))
             }
-            IR::Remove(items) => Ok(iter
-                .try_map(move |vars| {
-                    self.remove(items, &vars)?;
-                    Ok(vars)
-                })
-                .cond_inspect(self.inspect, move |res| {
-                    self.record.borrow_mut().push((idx, res.clone()));
-                })),
+            IR::Remove(items) => {
+                self.pending.borrow_mut().resize(
+                    self.g.borrow().get_node_cap(),
+                    self.g.borrow().get_labels_count(),
+                );
+                Ok(iter
+                    .try_map(move |vars| {
+                        self.remove(items, &vars)?;
+                        Ok(vars)
+                    })
+                    .cond_inspect(self.inspect, move |res| {
+                        self.record.borrow_mut().push((idx, res.clone()));
+                    }))
+            }
             IR::NodeByLabelScan(node) => Ok(iter
                 .try_flat_map(move |vars| self.node_by_label_scan(node, vars))
                 .cond_inspect(self.inspect, move |res| {

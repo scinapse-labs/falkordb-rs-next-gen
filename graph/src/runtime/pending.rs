@@ -200,17 +200,6 @@ impl Pending {
         id: NodeId,
         labels: Vec<LabelId>,
     ) {
-        self.remove_node_labels.resize(
-            self.remove_node_labels.nrows().max(u64::from(id) + 1),
-            self.remove_node_labels.ncols().max(
-                labels
-                    .iter()
-                    .map(|l| usize::from(*l) as u64)
-                    .max()
-                    .unwrap_or(0)
-                    + 1,
-            ),
-        );
         for label in &labels {
             self.remove_node_labels
                 .set(id.into(), usize::from(*label) as u64, true);
