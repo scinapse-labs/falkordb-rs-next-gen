@@ -83,6 +83,14 @@ impl Pending {
         id: NodeId,
     ) {
         self.created_nodes.insert(id.into());
+        let mut cap = self.set_node_labels.nrows();
+        if cap <= u64::from(id) {
+            while cap <= u64::from(id) {
+                cap *= 2;
+            }
+            self.set_node_labels
+                .resize(cap, self.set_node_labels.ncols());
+        }
     }
 
     pub fn set_node_attributes(
@@ -181,22 +189,6 @@ impl Pending {
         id: NodeId,
         labels: &OrderSet<LabelId>,
     ) {
-        let max_label = labels
-            .iter()
-            .map(|l| usize::from(*l) as u64)
-            .max()
-            .unwrap_or(0);
-        let mut cap = self.set_node_labels.nrows();
-        if cap <= u64::from(id) {
-            while cap <= u64::from(id) {
-                cap *= 2;
-            }
-            self.set_node_labels
-                .resize(cap, self.set_node_labels.ncols().max(max_label + 1));
-        }
-        if self.set_node_labels.ncols() <= max_label {
-            self.set_node_labels.resize(cap, max_label + 1);
-        }
         for label in labels.iter() {
             self.set_node_labels
                 .set(id.into(), usize::from(*label) as u64, true);

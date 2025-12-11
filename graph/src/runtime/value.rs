@@ -56,13 +56,13 @@ pub enum Value {
     Int(i64),
     Float(f64),
     String(Arc<String>),
-    List(Vec<Value>),
-    Map(OrderMap<Arc<String>, Value>),
+    List(Vec<Self>),
+    Map(OrderMap<Arc<String>, Self>),
     Node(NodeId),
     Relationship(RelationshipId, NodeId, NodeId),
-    Path(Vec<Value>),
+    Path(Vec<Self>),
     VecF32(Vec<f32>),
-    Arc(Arc<Value>),
+    Arc(Arc<Self>),
 }
 
 impl Value {

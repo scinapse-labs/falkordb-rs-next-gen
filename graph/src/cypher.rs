@@ -1,6 +1,6 @@
 use crate::ast::{
     ExprIR, QuantifierType, QueryExpr, QueryGraph, QueryIR, QueryNode, QueryPath,
-    QueryRelationship, Variable,
+    QueryRelationship, SetItem, Variable,
 };
 use crate::indexer::{EntityType, IndexType};
 use crate::runtime::orderset::OrderSet;
@@ -2244,7 +2244,7 @@ impl<'a> Parser<'a> {
 
     fn parse_set_items(
         &mut self,
-        set_items: &mut Vec<(QueryExpr, QueryExpr, bool)>,
+        set_items: &mut Vec<SetItem<Arc<String>>>,
     ) -> Result<(), String> {
         loop {
             let (mut expr, recurse) = self.parse_primary_expr()?;
@@ -2259,27 +2259,19 @@ impl<'a> Parser<'a> {
                 }
                 match_token!(self.lexer, Equal);
                 let value = Arc::new(self.parse_expr()?);
-                set_items.push((Arc::new(expr), value, false));
+                set_items.push(SetItem::Property(Arc::new(expr), value, false));
             } else if self.lexer.current() == Token::Colon {
-                if let ExprIR::Variable(id) = expr.root().data() {
-                    if id.ty != Type::Node {
-                        return Err(self
-                            .lexer
-                            .format_error("Cannot set labels on non-node variables"));
-                    }
-                } else {
+                let ExprIR::Variable(id) = expr.root().data() else {
                     return Err(self
                         .lexer
                         .format_error("Cannot set labels on non-node expressions"));
+                };
+                if id.ty != Type::Node {
+                    return Err(self
+                        .lexer
+                        .format_error("Cannot set labels on non-node variables"));
                 }
-                expr = tree!(
-                    ExprIR::FuncInvocation(
-                        get_functions().get("node_set_labels", &FnType::Internal)?
-                    ),
-                    expr,
-                    tree!(ExprIR::List; self.parse_labels()?.into_iter().map(|l| tree!(ExprIR::String(l))))
-                );
-                set_items.push((Arc::new(expr), Arc::new(tree!(ExprIR::Null)), false));
+                set_items.push(SetItem::Label(id.clone(), self.parse_labels()?));
             } else {
                 if let ExprIR::Variable(id) = expr.root().data() {
                     if id.ty != Type::Node && id.ty != Type::Relationship {
@@ -2300,7 +2292,7 @@ impl<'a> Parser<'a> {
                     true
                 };
                 let value = Arc::new(self.parse_expr()?);
-                set_items.push((Arc::new(expr), value, !plus_equals));
+                set_items.push(SetItem::Property(Arc::new(expr), value, !plus_equals));
             }
 
             if !optional_match_token!(self.lexer, Comma) {
@@ -2326,7 +2318,7 @@ impl<'a> Parser<'a> {
             } else if self.lexer.current() == Token::Colon {
                 expr = tree!(
                     ExprIR::FuncInvocation(
-                        get_functions().get("node_set_labels", &FnType::Internal)?
+                        get_functions().get("node_has_labels", &FnType::Internal)?
                     ),
                     expr,
                     tree!(ExprIR::List; self.parse_labels()?.into_iter().map(|l| tree!(ExprIR::String(l))))

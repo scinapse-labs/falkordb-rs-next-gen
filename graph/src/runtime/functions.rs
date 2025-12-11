@@ -849,13 +849,6 @@ pub fn init_functions() -> Result<(), Functions> {
         FnType::Internal,
     );
     funcs.add(
-        "node_set_labels",
-        internal_node_has_labels,
-        false,
-        vec![Type::Node, Type::List(Box::new(Type::Any))],
-        FnType::Internal,
-    );
-    funcs.add(
         "regex_matches",
         internal_regex_matches,
         false,
@@ -2324,6 +2317,8 @@ fn db_labels(
 ) -> Result<Value, String> {
     Ok(Value::List(
         runtime
+            .g
+            .borrow()
             .get_labels()
             .into_iter()
             .map(|l| {
@@ -2341,6 +2336,8 @@ fn db_types(
 ) -> Result<Value, String> {
     Ok(Value::List(
         runtime
+            .g
+            .borrow()
             .get_types()
             .into_iter()
             .map(|t| {
@@ -2358,6 +2355,8 @@ fn db_properties(
 ) -> Result<Value, String> {
     Ok(Value::List(
         runtime
+            .g
+            .borrow()
             .get_attrs()
             .into_iter()
             .map(|p| {

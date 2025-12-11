@@ -587,6 +587,12 @@ impl<T, L> QueryGraph<T, L> {
 
 pub type QueryExpr = Arc<DynTree<ExprIR>>;
 
+#[derive(Clone, Debug)]
+pub enum SetItem<L> {
+    Property(QueryExpr, QueryExpr, bool),
+    Label(Variable, OrderSet<L>),
+}
+
 #[derive(Debug)]
 pub enum QueryIR {
     Call(
@@ -603,12 +609,12 @@ pub enum QueryIR {
     Unwind(QueryExpr, Variable),
     Merge(
         QueryGraph<Arc<String>, Arc<String>>,
-        Vec<(QueryExpr, QueryExpr, bool)>,
-        Vec<(QueryExpr, QueryExpr, bool)>,
+        Vec<SetItem<Arc<String>>>,
+        Vec<SetItem<Arc<String>>>,
     ),
     Create(QueryGraph<Arc<String>, Arc<String>>),
     Delete(Vec<QueryExpr>, bool),
-    Set(Vec<(QueryExpr, QueryExpr, bool)>),
+    Set(Vec<SetItem<Arc<String>>>),
     Remove(Vec<QueryExpr>),
     LoadCsv {
         file_path: QueryExpr,
@@ -679,8 +685,8 @@ impl Display for QueryIR {
             }
             Self::Set(items) => {
                 writeln!(f, "SET:")?;
-                for (target, value, _) in items {
-                    write!(f, "{target} = {value}")?;
+                for item in items {
+                    write!(f, "{item:?}")?;
                 }
                 Ok(())
             }
@@ -845,12 +851,20 @@ impl QueryIR {
                     env.insert(relationship.alias.id);
                 }
                 for set_item in on_match_set_items {
-                    set_item.0.validate(false, env)?;
-                    set_item.1.validate(false, env)?;
+                    let (target, value) = match set_item {
+                        SetItem::Property(t, v, _) => (t, v),
+                        SetItem::Label(_, _) => continue,
+                    };
+                    target.validate(false, env)?;
+                    value.validate(false, env)?;
                 }
                 for set_item in on_create_set_items {
-                    set_item.0.validate(false, env)?;
-                    set_item.1.validate(false, env)?;
+                    let (target, value) = match set_item {
+                        SetItem::Property(t, v, _) => (t, v),
+                        SetItem::Label(_, _) => continue,
+                    };
+                    target.validate(false, env)?;
+                    value.validate(false, env)?;
                 }
                 iter.next()
                     .map_or(Ok(()), |first| first.inner_validate(iter, env))
@@ -907,7 +921,11 @@ impl QueryIR {
                     .map_or(Ok(()), |first| first.inner_validate(iter, env))
             }
             Self::Set(items) => {
-                for (target, value, _) in items {
+                for item in items {
+                    let (target, value) = match item {
+                        SetItem::Property(t, v, _) => (t, v),
+                        SetItem::Label(_, _) => continue,
+                    };
                     target.validate(false, env)?;
                     value.validate(false, env)?;
                 }

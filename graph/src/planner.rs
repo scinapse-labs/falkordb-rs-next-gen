@@ -4,7 +4,7 @@ use orx_tree::{DynTree, NodeRef, Side};
 
 use crate::{
     ast::{
-        ExprIR, QueryExpr, QueryGraph, QueryIR, QueryNode, QueryPath, QueryRelationship,
+        ExprIR, QueryExpr, QueryGraph, QueryIR, QueryNode, QueryPath, QueryRelationship, SetItem,
         SupportAggregation, Variable,
     },
     indexer::{EntityType, IndexQuery, IndexType},
@@ -21,11 +21,11 @@ pub enum IR {
     Create(QueryGraph<Arc<String>, Arc<String>>),
     Merge(
         QueryGraph<Arc<String>, Arc<String>>,
-        Vec<(QueryExpr, QueryExpr, bool)>,
-        Vec<(QueryExpr, QueryExpr, bool)>,
+        Vec<SetItem<Arc<String>>>,
+        Vec<SetItem<Arc<String>>>,
     ),
     Delete(Vec<QueryExpr>, bool),
-    Set(Vec<(QueryExpr, QueryExpr, bool)>),
+    Set(Vec<SetItem<Arc<String>>>),
     Remove(Vec<QueryExpr>),
     NodeByLabelScan(Arc<QueryNode<Arc<String>>>),
     NodeByIndexScan {
