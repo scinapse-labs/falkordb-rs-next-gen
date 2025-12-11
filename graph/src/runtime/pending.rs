@@ -312,7 +312,7 @@ impl Pending {
     ) -> Option<&Value> {
         self.set_relationships_attrs
             .get(&id)
-            .and_then(|attrs| attrs.iter().find(|(k, _)| *k == key).map(|(_, v)| v))
+            .and_then(|attrs| attrs.get(key))
     }
 
     pub fn update_relationship_attrs(
