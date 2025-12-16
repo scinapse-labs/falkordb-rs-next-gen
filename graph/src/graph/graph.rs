@@ -583,12 +583,10 @@ impl Graph {
             let label = self.node_labels[label_id].clone();
             self.node_labels_matrix.remove(id.0, label_id as _);
             let mut indexed = false;
-            if let Some(attrs) = self.node_attrs.get_attrs(id.0) {
-                for attr in attrs {
-                    if self.node_indexer.is_attr_indexed(label.clone(), attr) {
-                        indexed = true;
-                        break;
-                    }
+            for attr in self.node_attrs.get_attrs(id.0) {
+                if self.node_indexer.is_attr_indexed(label.clone(), attr) {
+                    indexed = true;
+                    break;
                 }
             }
             if indexed {
@@ -971,7 +969,7 @@ impl Graph {
         &self,
         id: NodeId,
     ) -> Vec<Arc<String>> {
-        self.node_attrs.get_attrs(id.0).unwrap_or_default()
+        self.node_attrs.get_attrs(id.0)
     }
 
     #[must_use]
@@ -979,7 +977,7 @@ impl Graph {
         &self,
         id: RelationshipId,
     ) -> Vec<Arc<String>> {
-        self.relationship_attrs.get_attrs(id.0).unwrap_or_default()
+        self.relationship_attrs.get_attrs(id.0)
     }
 
     pub fn create_index(
@@ -1129,7 +1127,7 @@ impl Graph {
         for relationship_matrix in &self.relationship_matrices {
             size += relationship_matrix.memory_usage();
         }
-        // size += self.node_attrs.memory_usage();
+        size += self.node_attrs.memory_usage();
         // size += self.relationship_attrs.memory_usage();
         // size += self.node_indexer.memory_usage();
         size

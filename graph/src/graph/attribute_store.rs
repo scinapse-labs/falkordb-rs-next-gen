@@ -52,14 +52,14 @@ impl AttributeStore {
     pub fn get_attrs(
         &self,
         key: u64,
-    ) -> Option<Vec<Arc<String>>> {
+    ) -> Vec<Arc<String>> {
         let mut ids = vec![];
         for (i, attr) in self.attributes.borrow().iter().enumerate() {
             if attr.exists(key) {
                 ids.push(self.attrs_name[i].clone());
             }
         }
-        if ids.is_empty() { None } else { Some(ids) }
+        ids
     }
 
     pub fn remove_attr(
@@ -111,6 +111,15 @@ impl AttributeStore {
             )),
             attrs_name: self.attrs_name.clone(),
         }
+    }
+
+    #[must_use]
+    pub fn memory_usage(&self) -> usize {
+        self.attributes
+            .borrow()
+            .iter()
+            .map(BlockVec::memory_usage)
+            .sum()
     }
 }
 

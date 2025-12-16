@@ -1,6 +1,8 @@
 #![allow(clippy::cast_possible_wrap)]
 #![allow(clippy::non_std_lazy_statics)]
 
+mod allocator;
+use allocator::ThreadCountingAllocator;
 use atomic_refcell::AtomicRefCell;
 use graph::{
     graph::{
@@ -45,6 +47,8 @@ use std::{
 };
 #[cfg(feature = "fuzz")]
 use std::{fs::File, io::Write};
+
+use crate::allocator::{current_thread_usage, disable_tracking, enable_tracking, reset_counter};
 
 const EMPTY_KEY_ERR: RedisResult = Err(RedisError::Str("ERR Invalid graph operation on empty key"));
 
@@ -281,15 +285,15 @@ fn reply_compact_value(
                 }
             }
         }
-        Value::Relationship(id, from, to) => {
+        Value::Relationship(rel) => {
             raw::reply_with_long_long(ctx.ctx, 7);
             raw::reply_with_array(ctx.ctx, 5);
-            raw::reply_with_long_long(ctx.ctx, u64::from(id) as _);
+            raw::reply_with_long_long(ctx.ctx, u64::from(rel.0) as _);
             let dr = runtime.deleted_relationships.borrow();
-            if let Some(x) = dr.get(&id) {
+            if let Some(x) = dr.get(&rel.0) {
                 raw::reply_with_long_long(ctx.ctx, usize::from(x.type_id) as _);
-                raw::reply_with_long_long(ctx.ctx, u64::from(from) as _);
-                raw::reply_with_long_long(ctx.ctx, u64::from(to) as _);
+                raw::reply_with_long_long(ctx.ctx, u64::from(rel.1) as _);
+                raw::reply_with_long_long(ctx.ctx, u64::from(rel.2) as _);
                 raw::reply_with_array(ctx.ctx, x.attrs.len() as _);
                 let bg = runtime.g.borrow();
                 for (key, value) in x.attrs.iter() {
@@ -302,11 +306,11 @@ fn reply_compact_value(
                 let bg = runtime.g.borrow();
                 raw::reply_with_long_long(
                     ctx.ctx,
-                    usize::from(bg.get_relationship_type_id(id)) as _,
+                    usize::from(bg.get_relationship_type_id(rel.0)) as _,
                 );
-                raw::reply_with_long_long(ctx.ctx, u64::from(from) as _);
-                raw::reply_with_long_long(ctx.ctx, u64::from(to) as _);
-                let attrs = bg.get_relationship_attrs(id);
+                raw::reply_with_long_long(ctx.ctx, u64::from(rel.1) as _);
+                raw::reply_with_long_long(ctx.ctx, u64::from(rel.2) as _);
+                let attrs = bg.get_relationship_attrs(rel.0);
                 raw::reply_with_array(ctx.ctx, attrs.len() as _);
                 for key in attrs {
                     raw::reply_with_array(ctx.ctx, 3);
@@ -315,7 +319,7 @@ fn reply_compact_value(
                     reply_compact_value(
                         ctx,
                         runtime,
-                        bg.get_relationship_attribute(id, &key).unwrap(),
+                        bg.get_relationship_attribute(rel.0, &key).unwrap(),
                     );
                 }
             }
@@ -329,7 +333,7 @@ fn reply_compact_value(
             for node in &path {
                 match node {
                     Value::Node(_) => nodes += 1,
-                    Value::Relationship(_, _, _) => rels += 1,
+                    Value::Relationship(_) => rels += 1,
                     _ => unreachable!("Path should only contain nodes and relationships"),
                 }
             }
@@ -343,7 +347,7 @@ fn reply_compact_value(
                         raw::reply_with_array(ctx.ctx, 2);
                         reply_compact_value(ctx, runtime, node.clone());
                     }
-                    Value::Relationship(_, _, _) => {}
+                    Value::Relationship(_) => {}
                     _ => unreachable!("Path should only contain nodes and relationships"),
                 }
             }
@@ -354,7 +358,7 @@ fn reply_compact_value(
             for node in path {
                 match node {
                     Value::Node(_) => {}
-                    Value::Relationship(_, _, _) => {
+                    Value::Relationship(_) => {
                         raw::reply_with_array(ctx.ctx, 2);
                         reply_compact_value(ctx, runtime, node.clone());
                     }
@@ -465,14 +469,14 @@ fn reply_verbose_value(
                 }
             }
         }
-        Value::Relationship(id, from, to) => {
+        Value::Relationship(rel) => {
             raw::reply_with_array(ctx.ctx, 5);
-            raw::reply_with_long_long(ctx.ctx, u64::from(id) as _);
+            raw::reply_with_long_long(ctx.ctx, u64::from(rel.0) as _);
             let dr = runtime.deleted_relationships.borrow();
-            if let Some(x) = dr.get(&id) {
+            if let Some(x) = dr.get(&rel.0) {
                 raw::reply_with_long_long(ctx.ctx, usize::from(x.type_id) as _);
-                raw::reply_with_long_long(ctx.ctx, u64::from(from) as _);
-                raw::reply_with_long_long(ctx.ctx, u64::from(to) as _);
+                raw::reply_with_long_long(ctx.ctx, u64::from(rel.1) as _);
+                raw::reply_with_long_long(ctx.ctx, u64::from(rel.2) as _);
                 raw::reply_with_array(ctx.ctx, x.attrs.len() as _);
                 for (key, value) in x.attrs.iter() {
                     raw::reply_with_array(ctx.ctx, 3);
@@ -485,15 +489,15 @@ fn reply_verbose_value(
                 }
             } else {
                 let bg = runtime.g.borrow();
-                let rel_type = bg.get_type(bg.get_relationship_type_id(id)).unwrap();
+                let rel_type = bg.get_type(bg.get_relationship_type_id(rel.0)).unwrap();
                 raw::reply_with_string_buffer(
                     ctx.ctx,
                     rel_type.as_ptr().cast::<c_char>(),
                     rel_type.len(),
                 );
-                raw::reply_with_long_long(ctx.ctx, u64::from(from) as _);
-                raw::reply_with_long_long(ctx.ctx, u64::from(to) as _);
-                let props = bg.get_relationship_attrs(id);
+                raw::reply_with_long_long(ctx.ctx, u64::from(rel.1) as _);
+                raw::reply_with_long_long(ctx.ctx, u64::from(rel.2) as _);
+                let props = bg.get_relationship_attrs(rel.0);
                 raw::reply_with_array(ctx.ctx, props.len() as _);
                 for key in props {
                     raw::reply_with_array(ctx.ctx, 2);
@@ -505,7 +509,7 @@ fn reply_verbose_value(
                     reply_verbose_value(
                         ctx,
                         runtime,
-                        bg.get_relationship_attribute(id, &key).unwrap(),
+                        bg.get_relationship_attribute(rel.0, &key).unwrap(),
                     );
                 }
             }
@@ -515,7 +519,7 @@ fn reply_verbose_value(
 
             for node in path {
                 match node {
-                    Value::Relationship(_, _, _) | Value::Node(_) => {
+                    Value::Relationship(_) | Value::Node(_) => {
                         reply_verbose_value(ctx, runtime, node.clone());
                     }
                     _ => unreachable!("Path should only contain nodes and relationships"),
@@ -585,6 +589,7 @@ fn query_mut(
     query: &str,
     compact: bool,
     write: bool,
+    track_mem: bool,
 ) {
     let bc = BlockedClient {
         inner: unsafe { raw::RedisModule_BlockClient.unwrap()(ctx.ctx, None, None, None, 0) },
@@ -593,6 +598,10 @@ fn query_mut(
     let query = Arc::new(query.to_string());
     spawn(
         move || {
+            if track_mem {
+                reset_counter();
+                enable_tracking();
+            }
             let graph = graph.clone();
             let bc = bc;
             let ctx = unsafe { raw::RedisModule_GetThreadSafeContext.unwrap()(bc.inner) };
@@ -623,6 +632,17 @@ fn query_mut(
                     drop(bc);
                     unsafe { raw::RedisModule_FreeThreadSafeContext.unwrap()(ctx.ctx) };
                 }
+            };
+            if track_mem {
+                let (allocated, deallocated) = current_thread_usage();
+                disable_tracking();
+                ctx.log(
+                    redis_module::logging::RedisLogLevel::Notice,
+                    &format!(
+                        "Allocated: {allocated} bytes, Deallocated: {deallocated} bytes, Net: {}",
+                        allocated as isize - deallocated as isize
+                    ),
+                );
             }
         },
         None,
@@ -771,15 +791,24 @@ fn graph_query(
         file_id += 1;
     }
 
-    let compact = args.next_str().is_ok_and(|arg| arg == "--compact");
+    let mut compact = false;
+    let mut track_memory = false;
+    while let Ok(arg) = args.next_str() {
+        if arg == "--compact" {
+            compact = true;
+        } else if arg == "--track-memory" {
+            track_memory = true;
+        }
+    }
+
     let key = ctx.open_key_writable(&key);
 
     if let Some(graph) = key.get_value::<Arc<RwLock<ThreadedGraph>>>(&GRAPH_TYPE)? {
-        query_mut(ctx, graph, query, compact, true);
+        query_mut(ctx, graph, query, compact, true, track_memory);
     } else {
         let _scope = CONFIGURATION_CACHE_SIZE.lock(ctx);
         let graph = Arc::new(RwLock::new(ThreadedGraph::new()));
-        query_mut(ctx, &graph, query, compact, true);
+        query_mut(ctx, &graph, query, compact, true, track_memory);
         key.set_value(&GRAPH_TYPE, graph)?;
     }
 
@@ -968,7 +997,15 @@ fn graph_ro_query(
     let mut args = args.into_iter().skip(1);
     let key = args.next_arg()?;
     let query = args.next_str()?;
-    let compact = args.next_str().is_ok_and(|arg| arg == "--compact");
+    let mut compact = false;
+    let mut track_memory = false;
+    while let Ok(arg) = args.next_str() {
+        if arg == "--compact" {
+            compact = true;
+        } else if arg == "--track-memory" {
+            track_memory = true;
+        }
+    }
 
     let key = ctx.open_key(&key);
 
@@ -977,7 +1014,7 @@ fn graph_ro_query(
         // If the key does not exist, we return an error
         EMPTY_KEY_ERR,
         |graph| {
-            query_mut(ctx, graph, query, compact, false);
+            query_mut(ctx, graph, query, compact, false, track_memory);
             RedisResult::Ok(RedisValue::NoReply)
         },
     )
@@ -1149,7 +1186,7 @@ const unsafe extern "C" fn on_flush(
 redis_module! {
     name: "falkordb",
     version: 1,
-    allocator: (redis_module::alloc::RedisAlloc, redis_module::alloc::RedisAlloc),
+    allocator: (ThreadCountingAllocator, ThreadCountingAllocator),
     data_types: [GRAPH_TYPE],
     init: graph_init,
     commands: [

@@ -19,8 +19,9 @@ use std::{
     fmt::{Debug, Display},
     sync::{Arc, OnceLock},
 };
+use thin_vec::{ThinVec, thin_vec};
 
-type RuntimeFn = fn(&Runtime, Vec<Value>) -> Result<Value, String>;
+type RuntimeFn = fn(&Runtime, ThinVec<Value>) -> Result<Value, String>;
 
 pub enum FnType {
     Function,
@@ -716,7 +717,7 @@ pub fn init_functions() -> Result<(), Functions> {
         collect,
         false,
         vec![Type::Any],
-        FnType::Aggregation(Value::List(vec![]), None),
+        FnType::Aggregation(Value::List(thin_vec![]), None),
     );
     funcs.add(
         "count",
@@ -752,7 +753,11 @@ pub fn init_functions() -> Result<(), Functions> {
         false,
         vec![Type::Union(vec![Type::Int, Type::Float, Type::Null])],
         FnType::Aggregation(
-            Value::List(vec![Value::Float(0.0), Value::Int(0), Value::Bool(false)]),
+            Value::List(thin_vec![
+                Value::Float(0.0),
+                Value::Int(0),
+                Value::Bool(false)
+            ]),
             Some(Box::new(finalize_avg)),
         ),
     );
@@ -765,7 +770,7 @@ pub fn init_functions() -> Result<(), Functions> {
             Type::Union(vec![Type::Int, Type::Float]),
         ],
         FnType::Aggregation(
-            Value::List(vec![Value::Float(0.0), Value::List(vec![])]),
+            Value::List(thin_vec![Value::Float(0.0), Value::List(thin_vec![])]),
             Some(Box::new(finalize_percentile_disc)),
         ),
     );
@@ -778,7 +783,7 @@ pub fn init_functions() -> Result<(), Functions> {
             Type::Union(vec![Type::Int, Type::Float]),
         ],
         FnType::Aggregation(
-            Value::List(vec![Value::Float(0.0), Value::List(vec![])]),
+            Value::List(thin_vec![Value::Float(0.0), Value::List(thin_vec![])]),
             Some(Box::new(finalize_percentile_cont)),
         ),
     );
@@ -788,7 +793,7 @@ pub fn init_functions() -> Result<(), Functions> {
         false,
         vec![Type::Union(vec![Type::Int, Type::Float, Type::Null])],
         FnType::Aggregation(
-            Value::List(vec![Value::Float(0.0), Value::List(vec![])]),
+            Value::List(thin_vec![Value::Float(0.0), Value::List(thin_vec![])]),
             Some(Box::new(finalize_stdev)),
         ),
     );
@@ -798,7 +803,7 @@ pub fn init_functions() -> Result<(), Functions> {
         false,
         vec![Type::Union(vec![Type::Int, Type::Float, Type::Null])],
         FnType::Aggregation(
-            Value::List(vec![Value::Float(0.0), Value::List(vec![])]),
+            Value::List(thin_vec![Value::Float(0.0), Value::List(thin_vec![])]),
             Some(Box::new(finalize_stdevp)),
         ),
     );
@@ -946,15 +951,15 @@ pub fn get_functions() -> &'static Functions {
 
 fn property(
     runtime: &Runtime,
-    args: Vec<Value>,
+    args: ThinVec<Value>,
 ) -> Result<Value, String> {
     let mut iter = args.into_iter();
     match (iter.next(), iter.next()) {
         (Some(Value::Node(id)), Some(Value::String(attr))) => runtime
             .get_node_attribute(id, &attr)
             .map_or(Ok(Value::Null), Ok),
-        (Some(Value::Relationship(id, _, _)), Some(Value::String(attr))) => runtime
-            .get_relationship_attribute(id, &attr)
+        (Some(Value::Relationship(rel)), Some(Value::String(attr))) => runtime
+            .get_relationship_attribute(rel.0, &attr)
             .map_or(Ok(Value::Null), Ok),
         (Some(Value::Map(map)), Some(Value::String(attr))) => {
             Ok(map.get(&attr).cloned().unwrap_or(Value::Null))
@@ -966,7 +971,7 @@ fn property(
 
 fn labels(
     runtime: &Runtime,
-    args: Vec<Value>,
+    args: ThinVec<Value>,
 ) -> Result<Value, String> {
     match args.into_iter().next() {
         Some(Value::Node(id)) => {
@@ -981,12 +986,12 @@ fn labels(
 
 fn id(
     _runtime: &Runtime,
-    args: Vec<Value>,
+    args: ThinVec<Value>,
 ) -> Result<Value, String> {
     let mut iter = args.into_iter();
     match iter.next() {
         Some(Value::Node(id)) => Ok(Value::Int(u64::from(id) as i64)),
-        Some(Value::Relationship(id, _, _)) => Ok(Value::Int(u64::from(id) as i64)),
+        Some(Value::Relationship(rel)) => Ok(Value::Int(u64::from(rel.0) as i64)),
         Some(Value::Null) => Ok(Value::Null),
 
         _ => unreachable!(),
@@ -995,13 +1000,13 @@ fn id(
 
 fn properties(
     runtime: &Runtime,
-    args: Vec<Value>,
+    args: ThinVec<Value>,
 ) -> Result<Value, String> {
     let mut iter = args.into_iter();
     match iter.next() {
         Some(Value::Map(map)) => Ok(Value::Map(map)),
         Some(Value::Node(id)) => Ok(Value::Map(runtime.get_node_attrs(id))),
-        Some(Value::Relationship(id, _, _)) => Ok(Value::Map(runtime.get_relationship_attrs(id))),
+        Some(Value::Relationship(rel)) => Ok(Value::Map(runtime.get_relationship_attrs(rel.0))),
         Some(Value::Null) => Ok(Value::Null),
 
         _ => unreachable!(),
@@ -1010,11 +1015,11 @@ fn properties(
 
 fn start_node(
     _runtime: &Runtime,
-    args: Vec<Value>,
+    args: ThinVec<Value>,
 ) -> Result<Value, String> {
     let mut iter = args.into_iter();
     match iter.next() {
-        Some(Value::Relationship(_, src, _)) => Ok(Value::Node(src)),
+        Some(Value::Relationship(rel)) => Ok(Value::Node(rel.1)),
 
         _ => unreachable!(),
     }
@@ -1022,11 +1027,11 @@ fn start_node(
 
 fn end_node(
     _runtime: &Runtime,
-    args: Vec<Value>,
+    args: ThinVec<Value>,
 ) -> Result<Value, String> {
     let mut iter = args.into_iter();
     match iter.next() {
-        Some(Value::Relationship(_, _, dest)) => Ok(Value::Node(dest)),
+        Some(Value::Relationship(rel)) => Ok(Value::Node(rel.2)),
 
         _ => unreachable!(),
     }
@@ -1034,7 +1039,7 @@ fn end_node(
 
 fn length(
     _runtime: &Runtime,
-    args: Vec<Value>,
+    args: ThinVec<Value>,
 ) -> Result<Value, String> {
     let mut iter = args.into_iter();
     match iter.next() {
@@ -1047,11 +1052,11 @@ fn length(
 
 fn collect(
     _: &Runtime,
-    args: Vec<Value>,
+    args: ThinVec<Value>,
 ) -> Result<Value, String> {
     let mut iter = args.into_iter();
     match (iter.next(), iter.next()) {
-        (Some(a), Some(Value::Null)) => Ok(Value::List(vec![a])),
+        (Some(a), Some(Value::Null)) => Ok(Value::List(thin_vec![a])),
         (Some(a), Some(Value::List(mut l))) => {
             if a == Value::Null {
                 return Ok(Value::List(l));
@@ -1066,7 +1071,7 @@ fn collect(
 
 fn count(
     _: &Runtime,
-    args: Vec<Value>,
+    args: ThinVec<Value>,
 ) -> Result<Value, String> {
     let mut iter = args.into_iter();
     let first = iter.next();
@@ -1081,7 +1086,7 @@ fn count(
 
 fn sum(
     _: &Runtime,
-    args: Vec<Value>,
+    args: ThinVec<Value>,
 ) -> Result<Value, String> {
     let mut iter = args.into_iter();
     match (iter.next(), iter.next()) {
@@ -1098,7 +1103,7 @@ fn sum(
 
 fn max(
     _: &Runtime,
-    args: Vec<Value>,
+    args: ThinVec<Value>,
 ) -> Result<Value, String> {
     let mut iter = args.into_iter();
     match (iter.next(), iter.next()) {
@@ -1118,7 +1123,7 @@ fn max(
 
 fn min(
     _: &Runtime,
-    args: Vec<Value>,
+    args: ThinVec<Value>,
 ) -> Result<Value, String> {
     let mut iter = args.into_iter();
     match (iter.next(), iter.next()) {
@@ -1138,7 +1143,7 @@ fn min(
 
 fn avg(
     _: &Runtime,
-    args: Vec<Value>,
+    args: ThinVec<Value>,
 ) -> Result<Value, String> {
     let mut iter = args.into_iter();
     let val = iter.next().unwrap();
@@ -1179,7 +1184,7 @@ fn avg(
                 }
             };
 
-            Ok(Value::List(vec![
+            Ok(Value::List(thin_vec![
                 Value::Float(sum),
                 Value::Int(count),
                 Value::Bool(overflow),
@@ -1216,7 +1221,7 @@ fn finalize_avg(value: Value) -> Value {
 
 fn percentile(
     _: &Runtime,
-    mut args: Vec<Value>,
+    mut args: ThinVec<Value>,
 ) -> Result<Value, String> {
     let val = args.remove(0);
     let percentile = args.remove(0).get_numeric();
@@ -1242,7 +1247,7 @@ fn percentile(
 
     collected_values.push(Value::Float(val.get_numeric()));
 
-    Ok(Value::List(vec![
+    Ok(Value::List(thin_vec![
         Value::Float(percentile),
         Value::List(collected_values),
     ]))
@@ -1323,7 +1328,7 @@ fn modf(x: f64) -> (f64, f64) {
 
 fn stdev(
     _: &Runtime,
-    args: Vec<Value>,
+    args: ThinVec<Value>,
 ) -> Result<Value, String> {
     let mut iter = args.into_iter();
     let val = iter.next().unwrap();
@@ -1339,7 +1344,10 @@ fn stdev(
             let mut vec = vec.clone();
             vec.push(Value::Float(val));
 
-            Ok(Value::List(vec![Value::Float(sum + val), Value::List(vec)]))
+            Ok(Value::List(thin_vec![
+                Value::Float(sum + val),
+                Value::List(vec)
+            ]))
         }
 
         _ => unreachable!(),
@@ -1392,7 +1400,7 @@ fn finalize_stdevp(ctx: Value) -> Value {
 
 fn value_to_integer(
     _runtime: &Runtime,
-    args: Vec<Value>,
+    args: ThinVec<Value>,
 ) -> Result<Value, String> {
     match args.into_iter().next() {
         Some(Value::String(s)) => s.parse::<i64>().map(Value::Int).or_else(|_| {
@@ -1411,7 +1419,7 @@ fn value_to_integer(
 
 fn value_to_float(
     _runtime: &Runtime,
-    args: Vec<Value>,
+    args: ThinVec<Value>,
 ) -> Result<Value, String> {
     match args.into_iter().next() {
         Some(Value::String(s)) => s.parse::<f64>().map(Value::Float).or(Ok(Value::Null)),
@@ -1436,7 +1444,7 @@ fn value_string(value: &Value) -> Result<Arc<String>, String> {
 
 fn value_to_string(
     _runtime: &Runtime,
-    args: Vec<Value>,
+    args: ThinVec<Value>,
 ) -> Result<Value, String> {
     match args.into_iter().next() {
         Some(Value::Null) => Ok(Value::Null),
@@ -1448,7 +1456,7 @@ fn value_to_string(
 
 fn size(
     _: &Runtime,
-    args: Vec<Value>,
+    args: ThinVec<Value>,
 ) -> Result<Value, String> {
     match args.into_iter().next() {
         Some(Value::String(s)) => Ok(Value::Int(s.len() as i64)),
@@ -1468,7 +1476,7 @@ fn size(
 
 fn head(
     _: &Runtime,
-    args: Vec<Value>,
+    args: ThinVec<Value>,
 ) -> Result<Value, String> {
     match args.into_iter().next() {
         Some(Value::List(v)) => {
@@ -1486,7 +1494,7 @@ fn head(
 
 fn last(
     _: &Runtime,
-    args: Vec<Value>,
+    args: ThinVec<Value>,
 ) -> Result<Value, String> {
     match args.into_iter().next() {
         Some(Value::List(v)) => Ok(v.last().cloned().unwrap_or(Value::Null)),
@@ -1498,14 +1506,14 @@ fn last(
 
 fn tail(
     _: &Runtime,
-    args: Vec<Value>,
+    args: ThinVec<Value>,
 ) -> Result<Value, String> {
     match args.into_iter().next() {
         Some(Value::List(v)) => {
             if v.is_empty() {
-                Ok(Value::List(vec![]))
+                Ok(Value::List(thin_vec![]))
             } else {
-                Ok(Value::List(v[1..].to_vec()))
+                Ok(Value::List(v[1..].iter().cloned().collect::<ThinVec<_>>()))
             }
         }
         Some(Value::Null) => Ok(Value::Null),
@@ -1516,7 +1524,7 @@ fn tail(
 
 fn reverse(
     _: &Runtime,
-    args: Vec<Value>,
+    args: ThinVec<Value>,
 ) -> Result<Value, String> {
     match args.into_iter().next() {
         Some(Value::List(mut v)) => {
@@ -1532,7 +1540,7 @@ fn reverse(
 
 fn substring(
     _: &Runtime,
-    args: Vec<Value>,
+    args: ThinVec<Value>,
 ) -> Result<Value, String> {
     let mut iter = args.into_iter();
     match (iter.next(), iter.next(), iter.next()) {
@@ -1579,13 +1587,15 @@ fn substring(
 
 fn split(
     _: &Runtime,
-    args: Vec<Value>,
+    args: ThinVec<Value>,
 ) -> Result<Value, String> {
     let mut iter = args.into_iter();
     match (iter.next(), iter.next()) {
         (Some(Value::String(string)), Some(Value::String(delimiter))) => {
             if string.is_empty() {
-                Ok(Value::List(vec![Value::String(Arc::new(String::new()))]))
+                Ok(Value::List(thin_vec![Value::String(Arc::new(
+                    String::new()
+                ))]))
             } else if delimiter.is_empty() {
                 // split string to characters
                 let parts = string
@@ -1609,7 +1619,7 @@ fn split(
 
 fn string_to_lower(
     _: &Runtime,
-    args: Vec<Value>,
+    args: ThinVec<Value>,
 ) -> Result<Value, String> {
     match args.into_iter().next() {
         Some(Value::String(s)) => Ok(Value::String(Arc::new(s.to_lowercase()))),
@@ -1621,7 +1631,7 @@ fn string_to_lower(
 
 fn string_to_upper(
     _: &Runtime,
-    args: Vec<Value>,
+    args: ThinVec<Value>,
 ) -> Result<Value, String> {
     match args.into_iter().next() {
         Some(Value::String(s)) => Ok(Value::String(Arc::new(s.to_uppercase()))),
@@ -1633,7 +1643,7 @@ fn string_to_upper(
 
 fn string_replace(
     _: &Runtime,
-    args: Vec<Value>,
+    args: ThinVec<Value>,
 ) -> Result<Value, String> {
     let mut iter = args.into_iter();
     match (iter.next(), iter.next(), iter.next()) {
@@ -1652,7 +1662,7 @@ fn string_replace(
 
 fn string_left(
     _: &Runtime,
-    args: Vec<Value>,
+    args: ThinVec<Value>,
 ) -> Result<Value, String> {
     let mut iter = args.into_iter();
     match (iter.next(), iter.next()) {
@@ -1674,7 +1684,7 @@ fn string_left(
 
 fn string_ltrim(
     _: &Runtime,
-    args: Vec<Value>,
+    args: ThinVec<Value>,
 ) -> Result<Value, String> {
     match args.into_iter().next() {
         Some(Value::String(s)) => Ok(Value::String(Arc::new(String::from(
@@ -1688,7 +1698,7 @@ fn string_ltrim(
 
 fn string_right(
     _: &Runtime,
-    args: Vec<Value>,
+    args: ThinVec<Value>,
 ) -> Result<Value, String> {
     let mut iter = args.into_iter();
     match (iter.next(), iter.next()) {
@@ -1709,7 +1719,7 @@ fn string_right(
 
 fn string_join(
     _: &Runtime,
-    args: Vec<Value>,
+    args: ThinVec<Value>,
 ) -> Result<Value, String> {
     fn to_string_vec(vec: &[Value]) -> Result<Vec<Arc<String>>, String> {
         vec.iter()
@@ -1752,14 +1762,14 @@ fn string_join(
 
 fn string_match_reg_ex(
     _: &Runtime,
-    args: Vec<Value>,
+    args: ThinVec<Value>,
 ) -> Result<Value, String> {
     let mut iter = args.into_iter();
     match (iter.next(), iter.next()) {
         (Some(Value::String(text)), Some(Value::String(pattern))) => {
             match regex::Regex::new(pattern.as_str()) {
                 Ok(re) => {
-                    let mut all_matches = Vec::new();
+                    let mut all_matches = thin_vec![];
                     for caps in re.captures_iter(text.as_str()) {
                         for i in 0..caps.len() {
                             if let Some(m) = caps.get(i) {
@@ -1772,7 +1782,7 @@ fn string_match_reg_ex(
                 Err(e) => Err(format!("Invalid regex, {e}")),
             }
         }
-        (Some(Value::Null), Some(_)) | (Some(_), Some(Value::Null)) => Ok(Value::List(vec![])),
+        (Some(Value::Null), Some(_)) | (Some(_), Some(Value::Null)) => Ok(Value::List(thin_vec![])),
 
         _ => unreachable!(),
     }
@@ -1780,7 +1790,7 @@ fn string_match_reg_ex(
 
 fn string_replace_reg_ex(
     _: &Runtime,
-    args: Vec<Value>,
+    args: ThinVec<Value>,
 ) -> Result<Value, String> {
     let mut iter = args.into_iter();
     match (iter.next(), iter.next(), iter.next()) {
@@ -1807,7 +1817,7 @@ fn string_replace_reg_ex(
 
 fn abs(
     _: &Runtime,
-    args: Vec<Value>,
+    args: ThinVec<Value>,
 ) -> Result<Value, String> {
     match args.into_iter().next() {
         Some(Value::Int(n)) => Ok(Value::Int(n.abs())),
@@ -1820,7 +1830,7 @@ fn abs(
 
 fn ceil(
     _: &Runtime,
-    args: Vec<Value>,
+    args: ThinVec<Value>,
 ) -> Result<Value, String> {
     match args.into_iter().next() {
         Some(Value::Int(n)) => Ok(Value::Int(n)),
@@ -1833,7 +1843,7 @@ fn ceil(
 
 fn e(
     _: &Runtime,
-    args: Vec<Value>,
+    args: ThinVec<Value>,
 ) -> Result<Value, String> {
     match args.into_iter().next() {
         None => Ok(Value::Float(std::f64::consts::E)),
@@ -1844,7 +1854,7 @@ fn e(
 
 fn exp(
     _: &Runtime,
-    args: Vec<Value>,
+    args: ThinVec<Value>,
 ) -> Result<Value, String> {
     match args.into_iter().next() {
         Some(Value::Int(n)) => Ok(Value::Float((n as f64).exp())),
@@ -1857,7 +1867,7 @@ fn exp(
 
 fn floor(
     _: &Runtime,
-    args: Vec<Value>,
+    args: ThinVec<Value>,
 ) -> Result<Value, String> {
     match args.into_iter().next() {
         Some(Value::Int(n)) => Ok(Value::Int(n)),
@@ -1870,7 +1880,7 @@ fn floor(
 
 fn log(
     _: &Runtime,
-    args: Vec<Value>,
+    args: ThinVec<Value>,
 ) -> Result<Value, String> {
     match args.into_iter().next() {
         Some(Value::Int(n)) => Ok(Value::Float((n as f64).ln())),
@@ -1883,7 +1893,7 @@ fn log(
 
 fn log10(
     _: &Runtime,
-    args: Vec<Value>,
+    args: ThinVec<Value>,
 ) -> Result<Value, String> {
     match args.into_iter().next() {
         Some(Value::Int(n)) => Ok(Value::Float((n as f64).log10())),
@@ -1896,7 +1906,7 @@ fn log10(
 
 fn pow(
     _: &Runtime,
-    args: Vec<Value>,
+    args: ThinVec<Value>,
 ) -> Result<Value, String> {
     let mut iter = args.into_iter();
     match (iter.next(), iter.next()) {
@@ -1915,7 +1925,7 @@ fn pow(
 #[allow(clippy::needless_pass_by_value)]
 fn rand(
     _: &Runtime,
-    args: Vec<Value>,
+    args: ThinVec<Value>,
 ) -> Result<Value, String> {
     debug_assert!(args.is_empty());
     let mut rng = rand::rng();
@@ -1924,7 +1934,7 @@ fn rand(
 
 fn round(
     _: &Runtime,
-    args: Vec<Value>,
+    args: ThinVec<Value>,
 ) -> Result<Value, String> {
     match args.into_iter().next() {
         Some(Value::Int(n)) => Ok(Value::Int(n)),
@@ -1937,7 +1947,7 @@ fn round(
 
 fn sign(
     _: &Runtime,
-    args: Vec<Value>,
+    args: ThinVec<Value>,
 ) -> Result<Value, String> {
     match args.into_iter().next() {
         Some(Value::Int(n)) => Ok(Value::Int(n.signum())),
@@ -1954,7 +1964,7 @@ fn sign(
 
 fn sqrt(
     _: &Runtime,
-    args: Vec<Value>,
+    args: ThinVec<Value>,
 ) -> Result<Value, String> {
     match args.into_iter().next() {
         Some(Value::Int(n)) => {
@@ -1979,7 +1989,7 @@ fn sqrt(
 
 fn range(
     _: &Runtime,
-    args: Vec<Value>,
+    args: ThinVec<Value>,
 ) -> Result<Value, String> {
     let mut iter = args.into_iter();
     let start = iter.next().ok_or("Missing start value")?;
@@ -1993,7 +2003,7 @@ fn range(
                 ));
             }
             if (start > end && step > 0) || (start < end && step < 0) {
-                return Ok(Value::List(vec![]));
+                return Ok(Value::List(thin_vec![]));
             }
 
             let length = (end - start) / step + 1;
@@ -2024,7 +2034,7 @@ fn range(
 
 fn coalesce(
     _: &Runtime,
-    args: Vec<Value>,
+    args: ThinVec<Value>,
 ) -> Result<Value, String> {
     let iter = args.into_iter();
     for arg in iter {
@@ -2038,7 +2048,7 @@ fn coalesce(
 
 fn keys(
     runtime: &Runtime,
-    args: Vec<Value>,
+    args: ThinVec<Value>,
 ) -> Result<Value, String> {
     match args.into_iter().next() {
         Some(Value::Map(map)) => Ok(Value::List(
@@ -2050,15 +2060,15 @@ fn keys(
                 .keys()
                 .cloned()
                 .map(Value::String)
-                .collect::<Vec<_>>(),
+                .collect::<ThinVec<_>>(),
         )),
-        Some(Value::Relationship(id, _, _)) => Ok(Value::List(
+        Some(Value::Relationship(rel)) => Ok(Value::List(
             runtime
-                .get_relationship_attrs(id)
+                .get_relationship_attrs(rel.0)
                 .keys()
                 .cloned()
                 .map(Value::String)
-                .collect::<Vec<_>>(),
+                .collect::<ThinVec<_>>(),
         )),
         Some(Value::Null) => Ok(Value::Null),
 
@@ -2068,7 +2078,7 @@ fn keys(
 
 fn to_boolean(
     _: &Runtime,
-    args: Vec<Value>,
+    args: ThinVec<Value>,
 ) -> Result<Value, String> {
     match args.into_iter().next() {
         Some(Value::Bool(b)) => Ok(Value::Bool(b)),
@@ -2090,12 +2100,12 @@ fn to_boolean(
 
 fn relationship_type(
     runtime: &Runtime,
-    args: Vec<Value>,
+    args: ThinVec<Value>,
 ) -> Result<Value, String> {
     let mut iter = args.into_iter();
     match iter.next() {
-        Some(Value::Relationship(id, _from, _to)) => runtime
-            .get_relationship_type(id)
+        Some(Value::Relationship(rel)) => runtime
+            .get_relationship_type(rel.0)
             .map_or_else(|| Ok(Value::Null), |type_name| Ok(Value::String(type_name))),
         Some(Value::Null) => Ok(Value::Null),
         _ => unreachable!(),
@@ -2104,7 +2114,7 @@ fn relationship_type(
 
 fn nodes(
     _: &Runtime,
-    args: Vec<Value>,
+    args: ThinVec<Value>,
 ) -> Result<Value, String> {
     let mut iter = args.into_iter();
     match iter.next() {
@@ -2127,7 +2137,7 @@ fn nodes(
 
 fn relationships(
     _: &Runtime,
-    args: Vec<Value>,
+    args: ThinVec<Value>,
 ) -> Result<Value, String> {
     let mut iter = args.into_iter();
     match iter.next() {
@@ -2135,7 +2145,7 @@ fn relationships(
             values
                 .iter()
                 .filter_map(|v| {
-                    if let Value::Relationship(_, _, _) = v {
+                    if let Value::Relationship(_) = v {
                         Some(v.clone())
                     } else {
                         None
@@ -2150,7 +2160,7 @@ fn relationships(
 
 fn vecf32(
     _: &Runtime,
-    args: Vec<Value>,
+    args: ThinVec<Value>,
 ) -> Result<Value, String> {
     let mut iter = args.into_iter();
     match iter.next() {
@@ -2165,7 +2175,7 @@ fn vecf32(
 
 fn exists(
     _: &Runtime,
-    args: Vec<Value>,
+    args: ThinVec<Value>,
 ) -> Result<Value, String> {
     let mut iter = args.into_iter();
     match iter.next() {
@@ -2180,7 +2190,7 @@ fn exists(
 
 fn internal_starts_with(
     _: &Runtime,
-    args: Vec<Value>,
+    args: ThinVec<Value>,
 ) -> Result<Value, String> {
     let mut iter = args.into_iter();
     match (iter.next(), iter.next()) {
@@ -2195,7 +2205,7 @@ fn internal_starts_with(
 
 fn internal_ends_with(
     _: &Runtime,
-    args: Vec<Value>,
+    args: ThinVec<Value>,
 ) -> Result<Value, String> {
     let mut iter = args.into_iter();
     match (iter.next(), iter.next()) {
@@ -2210,7 +2220,7 @@ fn internal_ends_with(
 
 fn internal_contains(
     _: &Runtime,
-    args: Vec<Value>,
+    args: ThinVec<Value>,
 ) -> Result<Value, String> {
     let mut iter = args.into_iter();
     match (iter.next(), iter.next()) {
@@ -2225,7 +2235,7 @@ fn internal_contains(
 
 fn internal_is_null(
     _: &Runtime,
-    args: Vec<Value>,
+    args: ThinVec<Value>,
 ) -> Result<Value, String> {
     let mut iter = args.into_iter();
     match (iter.next(), iter.next()) {
@@ -2238,7 +2248,7 @@ fn internal_is_null(
 
 fn internal_node_has_labels(
     runtime: &Runtime,
-    args: Vec<Value>,
+    args: ThinVec<Value>,
 ) -> Result<Value, String> {
     let mut iter = args.into_iter();
     match (iter.next(), iter.next()) {
@@ -2261,7 +2271,7 @@ fn internal_node_has_labels(
 
 fn internal_regex_matches(
     _: &Runtime,
-    args: Vec<Value>,
+    args: ThinVec<Value>,
 ) -> Result<Value, String> {
     let mut iter = args.into_iter();
     match (iter.next(), iter.next()) {
@@ -2280,7 +2290,7 @@ fn internal_regex_matches(
 
 fn internal_case(
     _: &Runtime,
-    args: Vec<Value>,
+    args: ThinVec<Value>,
 ) -> Result<Value, String> {
     let mut iter = args.into_iter();
     match (iter.next(), iter.next(), iter.next()) {
@@ -2313,7 +2323,7 @@ fn internal_case(
 
 fn db_labels(
     runtime: &Runtime,
-    _args: Vec<Value>,
+    _args: ThinVec<Value>,
 ) -> Result<Value, String> {
     Ok(Value::List(
         runtime
@@ -2332,7 +2342,7 @@ fn db_labels(
 
 fn db_types(
     runtime: &Runtime,
-    _args: Vec<Value>,
+    _args: ThinVec<Value>,
 ) -> Result<Value, String> {
     Ok(Value::List(
         runtime
@@ -2351,7 +2361,7 @@ fn db_types(
 
 fn db_properties(
     runtime: &Runtime,
-    _args: Vec<Value>,
+    _args: ThinVec<Value>,
 ) -> Result<Value, String> {
     Ok(Value::List(
         runtime
@@ -2370,7 +2380,7 @@ fn db_properties(
 
 fn db_indexes(
     runtime: &Runtime,
-    _args: Vec<Value>,
+    _args: ThinVec<Value>,
 ) -> Result<Value, String> {
     Ok(Value::List(
         runtime
@@ -2392,7 +2402,7 @@ fn db_indexes(
                     );
                     let mut types_map = OrderMap::default();
                     for (attr, fields) in fields {
-                        let mut types = vec![];
+                        let mut types = thin_vec![];
                         for field in fields {
                             match field.ty {
                                 IndexType::Range => {
@@ -2437,21 +2447,21 @@ fn db_indexes(
 
 fn db_fulltext_create_node_index(
     _runtime: &Runtime,
-    _args: Vec<Value>,
+    _args: ThinVec<Value>,
 ) -> Result<Value, String> {
-    Ok(Value::List(vec![]))
+    Ok(Value::List(thin_vec![]))
 }
 
 fn db_fulltext_drop_node_index(
     _runtime: &Runtime,
-    _args: Vec<Value>,
+    _args: ThinVec<Value>,
 ) -> Result<Value, String> {
-    Ok(Value::List(vec![]))
+    Ok(Value::List(thin_vec![]))
 }
 
 fn db_fulltext_query_nodes(
     _runtime: &Runtime,
-    _args: Vec<Value>,
+    _args: ThinVec<Value>,
 ) -> Result<Value, String> {
-    Ok(Value::List(vec![]))
+    Ok(Value::List(thin_vec![]))
 }

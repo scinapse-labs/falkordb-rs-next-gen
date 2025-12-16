@@ -10,6 +10,8 @@ use std::{
     sync::Arc,
 };
 
+use thin_vec::{ThinVec, thin_vec};
+
 use crate::{
     ast::Variable,
     graph::graph::{LabelId, NodeId, RelationshipId, TypeId},
@@ -56,12 +58,12 @@ pub enum Value {
     Int(i64),
     Float(f64),
     String(Arc<String>),
-    List(Vec<Self>),
+    List(ThinVec<Self>),
     Map(OrderMap<Arc<String>, Self>),
     Node(NodeId),
-    Relationship(RelationshipId, NodeId, NodeId),
-    Path(Vec<Self>),
-    VecF32(Vec<f32>),
+    Relationship(Box<(RelationshipId, NodeId, NodeId)>),
+    Path(ThinVec<Self>),
+    VecF32(ThinVec<f32>),
     Arc(Arc<Self>),
 }
 
@@ -120,9 +122,9 @@ impl Hash for Value {
                 6.hash(state);
                 x.hash(state);
             }
-            Self::Relationship(x, _, _) => {
+            Self::Relationship(rel) => {
                 7.hash(state);
-                x.hash(state);
+                rel.0.hash(state);
             }
             Self::Path(x) => {
                 8.hash(state);
@@ -226,7 +228,7 @@ impl Add for Value {
                 Ok(Self::List(l))
             }
             (lhs, Self::List(l)) => {
-                let mut new_list = vec![lhs];
+                let mut new_list = thin_vec![lhs];
                 new_list.extend(l);
                 Ok(Self::List(new_list))
             }
@@ -372,7 +374,7 @@ impl OrderedEnum for Value {
             Self::List(_) => 1 << 3,
             Self::Map(_) => 1 << 0,
             Self::Node(_) => 1 << 1,
-            Self::Relationship(_, _, _) => 1 << 2,
+            Self::Relationship(_) => 1 << 2,
             Self::Path(_) => 1 << 4,
             Self::VecF32(_) => 1 << 18,
             Self::Arc(inner) => inner.order(),
@@ -410,8 +412,8 @@ impl CompareValue for Value {
             }
             (Self::Map(a), Self::Map(b)) => Self::compare_map(a, b),
             (Self::Node(a), Self::Node(b)) => (a.cmp(b), DisjointOrNull::None),
-            (Self::Relationship(a, _, _), Self::Relationship(b, _, _)) => {
-                (a.cmp(b), DisjointOrNull::None)
+            (Self::Relationship(rela), Self::Relationship(relb)) => {
+                (rela.0.cmp(&relb.0), DisjointOrNull::None)
             }
             // the inputs have different type - compare them if they
             // are both numerics of differing types
@@ -453,7 +455,7 @@ impl ValueTypeOf for Value {
             | (Self::String(_), Type::String)
             | (Self::Map(_), Type::Map)
             | (Self::Node(_), Type::Node)
-            | (Self::Relationship(_, _, _), Type::Relationship)
+            | (Self::Relationship(_), Type::Relationship)
             | (Self::Path(_), Type::Path)
             | (_, Type::Any) => None,
             (Self::Arc(inner), ty) => {
@@ -487,7 +489,7 @@ impl ValueGetType for Value {
             Self::List(_) => Type::List(Box::new(Type::Any)),
             Self::Map(_) => Type::Map,
             Self::Node(_) => Type::Node,
-            Self::Relationship(_, _, _) => Type::Relationship,
+            Self::Relationship(_) => Type::Relationship,
             Self::Path(_) => Type::Path,
             Self::VecF32(_) => Type::VecF32,
             Self::Arc(inner) => inner.get_type(),
@@ -506,7 +508,7 @@ impl Value {
             Self::List(_) => String::from("List"),
             Self::Map(_) => String::from("Map"),
             Self::Node(_) => String::from("Node"),
-            Self::Relationship(_, _, _) => String::from("Relationship"),
+            Self::Relationship(_) => String::from("Relationship"),
             Self::Path(_) => String::from("Path"),
             Self::VecF32(_) => String::from("VecF32"),
             Self::Arc(inner) => inner.name(),
@@ -611,7 +613,7 @@ pub trait Contains {
     ) -> Value;
 }
 
-impl Contains for Vec<Value> {
+impl Contains for ThinVec<Value> {
     fn contains(
         &self,
         value: Value,

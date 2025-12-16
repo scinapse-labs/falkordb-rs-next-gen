@@ -2,7 +2,6 @@
 #![allow(clippy::cast_possible_wrap)]
 #![allow(clippy::cast_possible_truncation)]
 #![allow(clippy::cast_precision_loss)]
-
 use crate::{
     ast::{
         ExprIR, QuantifierType, QueryExpr, QueryGraph, QueryNode, QueryRelationship, SetItem,
@@ -38,6 +37,7 @@ use std::{
     sync::Arc,
     time::Instant,
 };
+use thin_vec::{ThinVec, thin_vec};
 
 pub struct ResultSummary {
     pub stats: QueryStatistics,
@@ -319,8 +319,8 @@ impl<'a> Runtime {
             }
             _ => {}
         }
-        let mut res = vec![];
-        let mut stack = vec![(idx, false)];
+        let mut res: Vec<Value> = vec![];
+        let mut stack = thin_vec![(idx, false)];
         while let Some((idx, reenter)) = stack.pop() {
             let node = ir.node(idx);
             match node.data() {
@@ -339,7 +339,7 @@ impl<'a> Runtime {
                 )?),
                 ExprIR::List => {
                     if reenter {
-                        let mut list = vec![];
+                        let mut list = thin_vec![];
                         for _ in 0..node.num_children() {
                             list.push(res.pop().unwrap());
                         }
@@ -350,7 +350,7 @@ impl<'a> Runtime {
                             stack.push((idx, false));
                         }
                     } else {
-                        res.push(Value::List(vec![]));
+                        res.push(Value::List(thin_vec![]));
                     }
                 }
                 ExprIR::Length => {
@@ -380,8 +380,8 @@ impl<'a> Runtime {
                                 res.push(Value::Null);
                             }
                         }
-                        (Value::Relationship(id, _, _), Value::String(key)) => {
-                            if let Some(value) = self.get_relationship_attribute(id, &key) {
+                        (Value::Relationship(rel), Value::String(key)) => {
+                            if let Some(value) = self.get_relationship_attribute(rel.0, &key) {
                                 res.push(value.clone());
                             } else {
                                 res.push(Value::Null);
@@ -408,7 +408,7 @@ impl<'a> Runtime {
                 }
                 ExprIR::IsRelationship => {
                     match self.run_expr(ir, node.child(0).idx(), env, agg_group_key)? {
-                        Value::Relationship(_, _, _) => res.push(Value::Bool(true)),
+                        Value::Relationship(_) => res.push(Value::Bool(true)),
                         _ => res.push(Value::Bool(false)),
                     }
                 }
@@ -618,13 +618,13 @@ impl<'a> Runtime {
                     let values = node
                         .children()
                         .map(|child| self.run_expr(ir, child.idx(), env, agg_group_key))
-                        .collect::<Result<Vec<_>, _>>()?;
+                        .collect::<Result<ThinVec<_>, _>>()?;
                     let mut value_dedupers = self.value_dedupers.borrow_mut();
                     let value_deduper = value_dedupers
                         .entry(format!("{idx:?}_{group_id}"))
                         .or_default();
                     if value_deduper.is_seen(&values) {
-                        res.push(Value::List(vec![Value::Null]));
+                        res.push(Value::List(thin_vec![Value::Null]));
                     } else {
                         res.push(Value::List(values));
                     }
@@ -644,7 +644,7 @@ impl<'a> Runtime {
                     let mut args = node
                         .children()
                         .map(|child| self.run_expr(ir, child.idx(), env, agg_group_key))
-                        .collect::<Result<Vec<_>, _>>()?;
+                        .collect::<Result<ThinVec<_>, _>>()?;
                     if node.num_children() == 2 && matches!(node.child(0).data(), ExprIR::Distinct)
                     {
                         let arg = &args[0];
@@ -719,7 +719,7 @@ impl<'a> Runtime {
                 ExprIR::ListComprehension(var) => {
                     let iter = self.run_iter_expr(ir, node.child(0).idx(), env)?;
                     let mut env = env.clone();
-                    let mut acc = vec![];
+                    let mut acc = thin_vec![];
                     for value in iter {
                         env.insert(var, value);
                         match self.run_expr(ir, node.child(1).idx(), &env, agg_group_key)? {
@@ -911,7 +911,7 @@ impl<'a> Runtime {
                 let args = trees
                     .iter()
                     .map(|ir| self.run_expr(ir, ir.root().idx(), &Env::default(), None))
-                    .collect::<Result<Vec<_>, _>>()?;
+                    .collect::<Result<ThinVec<_>, _>>()?;
                 if !self.write && func.write {
                     return Err(String::from(
                         "graph.RO_QUERY is to be executed only on read-only queries",
@@ -1682,10 +1682,10 @@ impl<'a> Runtime {
                         self.pending.borrow_mut().remove_node_labels(node, labels);
                     }
                 }
-                Value::Relationship(relationship, _, _) => {
+                Value::Relationship(rel) => {
                     if let Some(property) = property {
                         self.pending.borrow_mut().set_relationship_attribute(
-                            relationship,
+                            rel.0,
                             property.clone(),
                             Value::Null,
                         )?;
@@ -1785,32 +1785,35 @@ impl<'a> Runtime {
                                 }
                             }
                         }
-                        Value::Relationship(id, src, dest) => {
-                            if self.g.borrow().is_relationship_deleted(id)
-                                || self.pending.borrow().is_relationship_deleted(id, src, dest)
+                        Value::Relationship(rel) => {
+                            if self.g.borrow().is_relationship_deleted(rel.0)
+                                || self
+                                    .pending
+                                    .borrow()
+                                    .is_relationship_deleted(rel.0, rel.1, rel.2)
                             {
                                 continue;
                             }
                             if let Some(attr) = attr {
                                 if let Some(v) =
-                                    self.g.borrow().get_relationship_attribute(id, attr)
+                                    self.g.borrow().get_relationship_attribute(rel.0, attr)
                                     && v == run_expr
                                 {
                                     continue;
                                 }
 
                                 self.pending.borrow_mut().set_relationship_attribute(
-                                    id,
+                                    rel.0,
                                     attr.clone(),
                                     run_expr,
                                 )?;
-                            } else if let Value::Relationship(sid, _, _) = run_expr {
+                            } else if let Value::Relationship(rel) = run_expr {
                                 let g = self.g.borrow();
-                                let attrs = self.get_relationship_attrs(sid);
+                                let attrs = self.get_relationship_attrs(rel.0);
                                 if *replace {
-                                    for key in g.get_relationship_attrs(id) {
+                                    for key in g.get_relationship_attrs(rel.0) {
                                         self.pending.borrow_mut().set_relationship_attribute(
-                                            id,
+                                            rel.0,
                                             key,
                                             Value::Null,
                                         )?;
@@ -1818,7 +1821,7 @@ impl<'a> Runtime {
                                 }
                                 for (key, value) in attrs.iter() {
                                     self.pending.borrow_mut().set_relationship_attribute(
-                                        id,
+                                        rel.0,
                                         key.clone(),
                                         value.clone(),
                                     )?;
@@ -1922,7 +1925,7 @@ impl<'a> Runtime {
                         let mut vars = vars.clone();
                         vars.insert(
                             &relationship_pattern.alias,
-                            Value::Relationship(id, src, dst),
+                            Value::Relationship(Box::new((id, src, dst))),
                         );
                         vars.insert(&relationship_pattern.from.alias, Value::Node(src));
                         vars.insert(&relationship_pattern.to.alias, Value::Node(dst));
@@ -1930,7 +1933,7 @@ impl<'a> Runtime {
                             let mut vars2 = vars.clone();
                             vars2.insert(
                                 &relationship_pattern.alias,
-                                Value::Relationship(id, src, dst),
+                                Value::Relationship(Box::new((id, dst, src))),
                             );
                             vars2.insert(&relationship_pattern.from.alias, Value::Node(dst));
                             vars2.insert(&relationship_pattern.to.alias, Value::Node(src));
@@ -1974,7 +1977,7 @@ impl<'a> Runtime {
                     let mut vars = vars.clone();
                     vars.insert(
                         &relationship_pattern.alias,
-                        Value::Relationship(id, src, dst),
+                        Value::Relationship(Box::new((id, src, dst))),
                     );
                     vars.insert(&relationship_pattern.from.alias, Value::Node(src));
                     vars.insert(&relationship_pattern.to.alias, Value::Node(dst));
@@ -2151,16 +2154,16 @@ impl<'a> Runtime {
                         .insert(id, DeletedNode::new(labels, attrs));
                 }
             }
-            Value::Relationship(id, src, dest) => {
-                if !self.g.borrow().is_relationship_deleted(id) {
+            Value::Relationship(rel) => {
+                if !self.g.borrow().is_relationship_deleted(rel.0) {
                     self.pending
                         .borrow_mut()
-                        .deleted_relationship(id, src, dest);
-                    let type_id = self.g.borrow().get_relationship_type_id(id);
-                    let attrs = self.get_relationship_attrs(id);
+                        .deleted_relationship(rel.0, rel.1, rel.2);
+                    let type_id = self.g.borrow().get_relationship_type_id(rel.0);
+                    let attrs = self.get_relationship_attrs(rel.0);
                     self.deleted_relationships
                         .borrow_mut()
-                        .insert(id, DeletedRelationship::new(type_id, attrs));
+                        .insert(rel.0, DeletedRelationship::new(type_id, attrs));
                 }
             }
             Value::Path(values) => {
@@ -2238,7 +2241,10 @@ impl<'a> Runtime {
                     return Err(String::from("Invalid relationship properties"));
                 }
             }
-            vars.insert(&rel.alias, Value::Relationship(id, from_id, to_id));
+            vars.insert(
+                &rel.alias,
+                Value::Relationship(Box::new((id, from_id, to_id))),
+            );
         }
         Ok(())
     }
@@ -2343,7 +2349,7 @@ pub fn evaluate_param(expr: &DynNode<ExprIR>) -> Result<Value, String> {
         ExprIR::List => Ok(Value::List(
             expr.children()
                 .map(|c| evaluate_param(&c))
-                .collect::<Result<Vec<_>, _>>()?,
+                .collect::<Result<ThinVec<_>, _>>()?,
         )),
         ExprIR::Map => Ok(Value::Map(
             expr.children()
@@ -2385,9 +2391,14 @@ fn get_elements(
                 end = end.min(values.len() as i64);
             }
             if start > end {
-                return Ok(Value::List(vec![]));
+                return Ok(Value::List(thin_vec![]));
             }
-            Ok(Value::List(values[start as usize..end as usize].to_vec()))
+            Ok(Value::List(
+                values[start as usize..end as usize]
+                    .iter()
+                    .cloned()
+                    .collect::<ThinVec<_>>(),
+            ))
         }
         (_, Value::Null, _) | (_, _, Value::Null) => Ok(Value::Null),
         _ => Err(String::from("Invalid array range parameters.")),

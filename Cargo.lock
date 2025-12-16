@@ -479,6 +479,7 @@ dependencies = [
  "regex",
  "reqwest",
  "roaring",
+ "thin-vec",
  "unescaper",
 ]
 
@@ -1998,6 +1999,12 @@ dependencies = [
  "rustix",
  "windows-sys 0.61.2",
 ]
+
+[[package]]
+name = "thin-vec"
+version = "0.2.14"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "144f754d318415ac792f9d69fc87abbbfc043ce2ef041c60f16ad828f638717d"
 
 [[package]]
 name = "thiserror"

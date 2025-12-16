@@ -129,4 +129,13 @@ impl<T: Default + Clone> BlockVec<T> {
             .get_mut((key as usize) / self.block_cap)?
             .remove((key as usize) % self.block_cap)
     }
+
+    #[must_use]
+    pub fn memory_usage(&self) -> usize {
+        let mut size = std::mem::size_of_val(self);
+        for segment in &self.segments {
+            size += segment.vec.borrow().capacity() * std::mem::size_of::<Option<T>>();
+        }
+        size
+    }
 }
