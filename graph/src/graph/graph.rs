@@ -278,6 +278,27 @@ impl Graph {
             .map(LabelId)
     }
 
+    pub fn get_label_id_mut(
+        &mut self,
+        label: &str,
+    ) -> LabelId {
+        if let Some(pos) = self
+            .node_labels
+            .iter()
+            .position(|l| l.as_str() == label)
+            .map(LabelId)
+        {
+            return pos;
+        }
+
+        self.node_labels.push(Arc::new(label.to_string()));
+        self.labels_matices.insert(
+            self.node_labels.len() - 1,
+            Arc::new(Mutex::new(Matrix::new(self.node_cap, self.node_cap))),
+        );
+        LabelId(self.node_labels.len() - 1)
+    }
+
     pub fn get_type_id(
         &self,
         relationship_type: &str,

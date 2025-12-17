@@ -1,4 +1,4 @@
-use std::{rc::Rc, sync::Arc};
+use std::sync::Arc;
 
 use orx_tree::{Bfs, DynTree, NodeRef};
 
@@ -31,18 +31,18 @@ fn utilize_index(
                 Some((
                     node.clone(),
                     node.labels[0].clone(),
-                    Rc::new(IndexQuery::Equal(
+                    Arc::new(IndexQuery::Equal(
                         attr.clone(),
-                        Rc::new(filter.root().child(1).clone_as_tree()),
+                        Arc::new(filter.root().child(1).clone_as_tree()),
                     )),
                 ))
             } else if matches!(filter.root().data(), ExprIR::Gt) {
                 Some((
                     node.clone(),
                     node.labels[0].clone(),
-                    Rc::new(IndexQuery::Range(
+                    Arc::new(IndexQuery::Range(
                         attr.clone(),
-                        Some(Rc::new(filter.root().child(1).clone_as_tree())),
+                        Some(Arc::new(filter.root().child(1).clone_as_tree())),
                         None,
                     )),
                 ))
@@ -50,10 +50,10 @@ fn utilize_index(
                 Some((
                     node.clone(),
                     node.labels[0].clone(),
-                    Rc::new(IndexQuery::Range(
+                    Arc::new(IndexQuery::Range(
                         attr.clone(),
                         None,
-                        Some(Rc::new(filter.root().child(1).clone_as_tree())),
+                        Some(Arc::new(filter.root().child(1).clone_as_tree())),
                     )),
                 ))
             } else {
@@ -81,9 +81,9 @@ fn utilize_index(
             *op.data_mut() = IR::NodeByIndexScan {
                 node: node.clone(),
                 index: node.labels[0].clone(),
-                query: Rc::new(IndexQuery::Equal(
+                query: Arc::new(IndexQuery::Equal(
                     attr.clone(),
-                    Rc::new(filter.root().child(1).clone_as_tree()),
+                    Arc::new(filter.root().child(1).clone_as_tree()),
                 )),
             };
         }
@@ -104,7 +104,7 @@ fn utilize_node_by_id(optimized_plan: &mut DynTree<IR>) {
         {
             Some((
                 node.clone(),
-                Rc::new(filter.root().child(1).clone_as_tree()),
+                Arc::new(filter.root().child(1).clone_as_tree()),
             ))
         } else {
             None
@@ -132,8 +132,8 @@ pub fn optimize(
 
 fn get_index(
     graph: &Graph,
-    node: &Rc<QueryNode<Arc<String>>>,
-) -> Option<(Rc<QueryNode<Arc<String>>>, Arc<String>, DynTree<ExprIR>)> {
+    node: &Arc<QueryNode<Arc<String>>>,
+) -> Option<(Arc<QueryNode<Arc<String>>>, Arc<String>, DynTree<ExprIR>)> {
     for label in node.labels.iter() {
         for attr in node.attrs.root().children() {
             if let ExprIR::String(attr_str) = attr.data()
