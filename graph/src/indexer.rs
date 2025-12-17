@@ -114,7 +114,7 @@ impl Document {
                 Value::Null
                 | Value::Map(_)
                 | Value::Node(_)
-                | Value::Relationship(_, _, _)
+                | Value::Relationship(_)
                 | Value::Path(_)
                 | Value::Arc(_) => unreachable!(),
             }
