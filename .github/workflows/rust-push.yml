@@ -71,7 +71,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - run: rustup default stable
-      - uses: actions/cache@v4
+      - uses: actions/cache@v5
         with:
           path: ${{ runner.tool_cache }}/cargo-fuzz
           key: cargo-fuzz-bin-${{ env.CARGO_FUZZ_VERSION }}
@@ -120,7 +120,7 @@ jobs:
           llvm-cov-20 export --format=lcov --instr-profile cov.profdata target/debug/libfalkordb.so > codecov.txt.all
           lcov --ignore-errors unused -r codecov.txt.all -o codecov.txt
       - name: Upload coverage reports to Codecov
-        uses: codecov/codecov-action@5a1091511ad55cbe89839c7260b706298ca349f7
+        uses: codecov/codecov-action@671740ac38dd9b0130fbe1cec585b89eea48d3de
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
   fuzz:
@@ -134,13 +134,13 @@ jobs:
       - uses: actions/checkout@v6
       - run: rustup default nightly
       - run: rustup component add llvm-tools-preview
-      - uses: actions/cache@v4
+      - uses: actions/cache@v5
         with:
           path: ${{ runner.tool_cache }}/cargo-fuzz
           key: cargo-fuzz-bin-${{ env.CARGO_FUZZ_VERSION }}
       - run: echo "${{ runner.tool_cache }}/cargo-fuzz/bin" >> $GITHUB_PATH
       - run: cargo install --root "${{ runner.tool_cache }}/cargo-fuzz" --version ${{ env.CARGO_FUZZ_VERSION }} cargo-fuzz --locked
-      - uses: actions/download-artifact@v6
+      - uses: actions/download-artifact@v7
         with:
           name: fuzzing-corpus
           path: fuzz/corpus
@@ -158,16 +158,16 @@ jobs:
           llvm-cov-20 export --format=lcov --instr-profile fuzz/coverage/fuzz_target_runtime/coverage.profdata target/x86_64-unknown-linux-gnu/coverage/x86_64-unknown-linux-gnu/release/fuzz_target_runtime > codecov.txt.all
           lcov --ignore-errors unused -r codecov.txt.all -o codecov.txt
       - name: Upload coverage reports to Codecov
-        uses: codecov/codecov-action@5a1091511ad55cbe89839c7260b706298ca349f7
+        uses: codecov/codecov-action@671740ac38dd9b0130fbe1cec585b89eea48d3de
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           flags: fuzz
-      - uses: actions/upload-artifact@v5
+      - uses: actions/upload-artifact@v6
         if: ${{ !cancelled() }}
         with:
           name: fuzzing-corpus
           path: fuzz/corpus
-      - uses: actions/upload-artifact@v5
+      - uses: actions/upload-artifact@v6
         if: failure()
         with:
           name: fuzzing-artifacts-fuzz_target_runtime-${{ github.sha }}
