@@ -193,15 +193,15 @@ fn reply_compact_value(
                 }
             }
         }
-        Value::Relationship(id, from, to) => {
+        Value::Relationship(rel) => {
             raw::reply_with_long_long(ctx.ctx, 7);
             raw::reply_with_array(ctx.ctx, 5);
-            raw::reply_with_long_long(ctx.ctx, u64::from(id) as _);
+            raw::reply_with_long_long(ctx.ctx, u64::from(rel.0) as _);
             let dr = runtime.deleted_relationships.borrow();
-            if let Some(x) = dr.get(&id) {
+            if let Some(x) = dr.get(&rel.0) {
                 raw::reply_with_long_long(ctx.ctx, usize::from(x.type_id) as _);
-                raw::reply_with_long_long(ctx.ctx, u64::from(from) as _);
-                raw::reply_with_long_long(ctx.ctx, u64::from(to) as _);
+                raw::reply_with_long_long(ctx.ctx, u64::from(rel.1) as _);
+                raw::reply_with_long_long(ctx.ctx, u64::from(rel.2) as _);
                 raw::reply_with_array(ctx.ctx, x.attrs.len() as _);
                 let bg = runtime.g.borrow();
                 for (key, value) in x.attrs.iter() {
@@ -214,11 +214,11 @@ fn reply_compact_value(
                 let bg = runtime.g.borrow();
                 raw::reply_with_long_long(
                     ctx.ctx,
-                    usize::from(bg.get_relationship_type_id(id)) as _,
+                    usize::from(bg.get_relationship_type_id(rel.0)) as _,
                 );
-                raw::reply_with_long_long(ctx.ctx, u64::from(from) as _);
-                raw::reply_with_long_long(ctx.ctx, u64::from(to) as _);
-                let attrs = bg.get_relationship_attrs(id);
+                raw::reply_with_long_long(ctx.ctx, u64::from(rel.1) as _);
+                raw::reply_with_long_long(ctx.ctx, u64::from(rel.2) as _);
+                let attrs = bg.get_relationship_attrs(rel.0);
                 raw::reply_with_array(ctx.ctx, attrs.len() as _);
                 for (key, value) in attrs.iter() {
                     raw::reply_with_array(ctx.ctx, 3);
@@ -236,7 +236,7 @@ fn reply_compact_value(
             for node in &path {
                 match node {
                     Value::Node(_) => nodes += 1,
-                    Value::Relationship(_, _, _) => rels += 1,
+                    Value::Relationship(_) => rels += 1,
                     _ => unreachable!("Path should only contain nodes and relationships"),
                 }
             }
@@ -250,7 +250,7 @@ fn reply_compact_value(
                         raw::reply_with_array(ctx.ctx, 2);
                         reply_compact_value(ctx, runtime, node.clone());
                     }
-                    Value::Relationship(_, _, _) => {}
+                    Value::Relationship(_) => {}
                     _ => unreachable!("Path should only contain nodes and relationships"),
                 }
             }
@@ -261,7 +261,7 @@ fn reply_compact_value(
             for node in path {
                 match node {
                     Value::Node(_) => {}
-                    Value::Relationship(_, _, _) => {
+                    Value::Relationship(_) => {
                         raw::reply_with_array(ctx.ctx, 2);
                         reply_compact_value(ctx, runtime, node.clone());
                     }
@@ -373,14 +373,14 @@ fn reply_verbose_value(
                 }
             }
         }
-        Value::Relationship(id, from, to) => {
+        Value::Relationship(rel) => {
             raw::reply_with_array(ctx.ctx, 5);
-            raw::reply_with_long_long(ctx.ctx, u64::from(id) as _);
+            raw::reply_with_long_long(ctx.ctx, u64::from(rel.0) as _);
             let dr = runtime.deleted_relationships.borrow();
-            if let Some(x) = dr.get(&id) {
+            if let Some(x) = dr.get(&rel.0) {
                 raw::reply_with_long_long(ctx.ctx, usize::from(x.type_id) as _);
-                raw::reply_with_long_long(ctx.ctx, u64::from(from) as _);
-                raw::reply_with_long_long(ctx.ctx, u64::from(to) as _);
+                raw::reply_with_long_long(ctx.ctx, u64::from(rel.1) as _);
+                raw::reply_with_long_long(ctx.ctx, u64::from(rel.2) as _);
                 raw::reply_with_array(ctx.ctx, x.attrs.len() as _);
                 for (key, value) in x.attrs.iter() {
                     raw::reply_with_array(ctx.ctx, 3);
@@ -393,15 +393,15 @@ fn reply_verbose_value(
                 }
             } else {
                 let bg = runtime.g.borrow();
-                let rel_type = bg.get_type(bg.get_relationship_type_id(id)).unwrap();
+                let rel_type = bg.get_type(bg.get_relationship_type_id(rel.0)).unwrap();
                 raw::reply_with_string_buffer(
                     ctx.ctx,
                     rel_type.as_ptr().cast::<c_char>(),
                     rel_type.len(),
                 );
-                raw::reply_with_long_long(ctx.ctx, u64::from(from) as _);
-                raw::reply_with_long_long(ctx.ctx, u64::from(to) as _);
-                let props = bg.get_relationship_attrs(id);
+                raw::reply_with_long_long(ctx.ctx, u64::from(rel.1) as _);
+                raw::reply_with_long_long(ctx.ctx, u64::from(rel.2) as _);
+                let props = bg.get_relationship_attrs(rel.0);
                 raw::reply_with_array(ctx.ctx, props.len() as _);
                 for (key, value) in props.iter() {
                     raw::reply_with_array(ctx.ctx, 2);
@@ -420,7 +420,7 @@ fn reply_verbose_value(
 
             for node in path {
                 match node {
-                    Value::Relationship(_, _, _) | Value::Node(_) => {
+                    Value::Relationship(_) | Value::Node(_) => {
                         reply_verbose_value(ctx, runtime, node.clone());
                     }
                     _ => unreachable!("Path should only contain nodes and relationships"),

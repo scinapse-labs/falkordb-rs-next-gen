@@ -1,20 +1,31 @@
 use std::{hash::Hash, ops::Index};
 
+use thin_vec::ThinVec;
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct OrderMap<K, V> {
-    vec: Vec<(K, V)>,
+    vec: ThinVec<(K, V)>,
 }
 
 impl<K, V> Default for OrderMap<K, V> {
     fn default() -> Self {
-        Self { vec: Vec::new() }
+        Self {
+            vec: ThinVec::new(),
+        }
     }
 }
 
 impl<K: PartialEq, V> OrderMap<K, V> {
     #[must_use]
-    pub const fn from_vec(vec: Vec<(K, V)>) -> Self {
+    pub const fn from_vec(vec: ThinVec<(K, V)>) -> Self {
         Self { vec }
+    }
+
+    pub fn reserve_exact(
+        &mut self,
+        additional: usize,
+    ) {
+        self.vec.reserve_exact(additional);
     }
 
     pub fn insert(
@@ -64,12 +75,12 @@ impl<K: PartialEq, V> OrderMap<K, V> {
     }
 
     #[must_use]
-    pub const fn len(&self) -> usize {
+    pub fn len(&self) -> usize {
         self.vec.len()
     }
 
     #[must_use]
-    pub const fn is_empty(&self) -> bool {
+    pub fn is_empty(&self) -> bool {
         self.vec.is_empty()
     }
 

@@ -4,7 +4,10 @@
 #![allow(clippy::cast_precision_loss)]
 
 use crate::{
-    ast::{ExprIR, QuantifierType, QueryExpr, QueryGraph, QueryNode, QueryRelationship, Variable},
+    ast::{
+        ExprIR, QuantifierType, QueryExpr, QueryGraph, QueryNode, QueryRelationship, SetItem,
+        Variable,
+    },
     graph::graph::{Graph, NodeId, RelationshipId},
     indexer::IndexQuery,
     planner::IR,
@@ -35,6 +38,7 @@ use std::{
     sync::Arc,
     time::Instant,
 };
+use thin_vec::{ThinVec, thin_vec};
 use tracing::instrument;
 
 pub struct ResultSummary {
@@ -302,7 +306,7 @@ impl<'a> Runtime<'a> {
                 )?),
                 ExprIR::List => {
                     if reenter {
-                        let mut list = vec![];
+                        let mut list = thin_vec![];
                         for _ in 0..node.num_children() {
                             list.push(res.pop().unwrap());
                         }
@@ -313,7 +317,7 @@ impl<'a> Runtime<'a> {
                             stack.push((idx, false));
                         }
                     } else {
-                        res.push(Value::List(vec![]));
+                        res.push(Value::List(thin_vec![]));
                     }
                 }
                 ExprIR::Length => {
@@ -343,8 +347,8 @@ impl<'a> Runtime<'a> {
                                 res.push(Value::Null);
                             }
                         }
-                        (Value::Relationship(id, _, _), Value::String(key)) => {
-                            if let Some(value) = self.get_relationship_attribute(id, &key) {
+                        (Value::Relationship(rel), Value::String(key)) => {
+                            if let Some(value) = self.get_relationship_attribute(rel.0, &key) {
                                 res.push(value.clone());
                             } else {
                                 res.push(Value::Null);
@@ -371,7 +375,7 @@ impl<'a> Runtime<'a> {
                 }
                 ExprIR::IsRelationship => {
                     match self.run_expr(ir, node.child(0).idx(), env, agg_group_key)? {
-                        Value::Relationship(_, _, _) => res.push(Value::Bool(true)),
+                        Value::Relationship(_) => res.push(Value::Bool(true)),
                         _ => res.push(Value::Bool(false)),
                     }
                 }
@@ -581,13 +585,13 @@ impl<'a> Runtime<'a> {
                     let values = node
                         .children()
                         .map(|child| self.run_expr(ir, child.idx(), env, agg_group_key))
-                        .collect::<Result<Vec<_>, _>>()?;
+                        .collect::<Result<ThinVec<_>, _>>()?;
                     let mut value_dedupers = self.value_dedupers.borrow_mut();
                     let value_deduper = value_dedupers
                         .entry(format!("{idx:?}_{group_id}"))
                         .or_default();
                     if value_deduper.is_seen(&values) {
-                        res.push(Value::List(vec![Value::Null]));
+                        res.push(Value::List(thin_vec![Value::Null]));
                     } else {
                         res.push(Value::List(values));
                     }
@@ -607,7 +611,7 @@ impl<'a> Runtime<'a> {
                     let mut args = node
                         .children()
                         .map(|child| self.run_expr(ir, child.idx(), env, agg_group_key))
-                        .collect::<Result<Vec<_>, _>>()?;
+                        .collect::<Result<ThinVec<_>, _>>()?;
                     if node.num_children() == 2 && matches!(node.child(0).data(), ExprIR::Distinct)
                     {
                         let arg = &args[0];
@@ -682,7 +686,7 @@ impl<'a> Runtime<'a> {
                 ExprIR::ListComprehension(var) => {
                     let iter = self.run_iter_expr(ir, node.child(0).idx(), env)?;
                     let mut env = env.clone();
-                    let mut acc = vec![];
+                    let mut acc = thin_vec![];
                     for value in iter {
                         env.insert(var, value);
                         match self.run_expr(ir, node.child(1).idx(), &env, agg_group_key)? {
@@ -877,7 +881,7 @@ impl<'a> Runtime<'a> {
                 let args = trees
                     .iter()
                     .map(|ir| self.run_expr(ir, ir.root().idx(), &Env::default(), None))
-                    .collect::<Result<Vec<_>, _>>()?;
+                    .collect::<Result<ThinVec<_>, _>>()?;
                 if !self.write && func.write {
                     return Err(String::from(
                         "graph.RO_QUERY is to be executed only on read-only queries",
@@ -956,6 +960,7 @@ impl<'a> Runtime<'a> {
                 } else {
                     self.plan.node(idx).child(1).idx()
                 };
+
                 Ok(iter
                     .try_flat_map(move |vars| {
                         let cvars = vars.clone();
@@ -1562,7 +1567,7 @@ impl<'a> Runtime<'a> {
                         None,
                     )
                 }
-                ExprIR::FuncInvocation(func) if func.name == "node_set_labels" => {
+                ExprIR::FuncInvocation(func) if func.name == "node_has_labels" => {
                     let labels = item
                         .root()
                         .child(1)
@@ -1596,10 +1601,10 @@ impl<'a> Runtime<'a> {
                         self.pending.borrow_mut().remove_node_labels(node, labels);
                     }
                 }
-                Value::Relationship(relationship, _, _) => {
+                Value::Relationship(rel) => {
                     if let Some(property) = property {
                         self.pending.borrow_mut().set_relationship_attribute(
-                            relationship,
+                            rel.0,
                             property.clone(),
                             Value::Null,
                         )?;
@@ -1620,156 +1625,179 @@ impl<'a> Runtime<'a> {
     #[allow(clippy::too_many_lines)]
     fn set(
         &self,
-        items: &Vec<(QueryExpr, QueryExpr, bool)>,
+        items: &Vec<SetItem<Arc<String>>>,
         vars: &Env,
     ) -> Result<(), String> {
-        for (entity, value, replace) in items {
-            let run_expr = self.run_expr(value, value.root().idx(), vars, None)?;
-            let value = run_expr;
-            let (entity, property, labels) = match entity.root().data() {
-                ExprIR::Variable(name) => (vars.get(name).unwrap(), None, None),
-                ExprIR::FuncInvocation(func) if func.name == "property" => {
-                    let ExprIR::String(property) = entity.root().child(1).data() else {
-                        unreachable!();
-                    };
-                    (
-                        self.run_expr(entity, entity.root().child(0).idx(), vars, None)?,
-                        Some(property),
-                        None,
-                    )
-                }
-                ExprIR::FuncInvocation(func) if func.name == "node_set_labels" => {
-                    let labels = entity
-                        .root()
-                        .child(1)
-                        .children()
-                        .filter_map(|c| match c.data() {
-                            ExprIR::String(label) => Some(label.clone()),
-                            _ => None,
-                        })
-                        .collect::<OrderSet<_>>();
-
-                    (
-                        self.run_expr(entity, entity.root().child(0).idx(), vars, None)?,
-                        None,
-                        Some(labels),
-                    )
-                }
-                _ => {
-                    unreachable!();
-                }
-            };
-            match entity {
-                Value::Node(id) => {
-                    if self.g.borrow().is_node_deleted(id)
-                        || self.pending.borrow().is_node_deleted(id)
-                    {
-                        continue;
-                    }
-                    if let Some(property) = property {
-                        if let Some(attr_id) = self.g.borrow().get_node_attribute_id(property)
-                            && let Some(v) = self.g.borrow().get_node_attribute(id, attr_id)
-                            && v == value
-                        {
-                            continue;
-                        }
-
-                        self.pending.borrow_mut().set_node_attribute(
-                            id,
-                            property.clone(),
-                            value,
-                        )?;
-                    } else if let Value::Map(map) = value {
-                        if *replace {
-                            for key in self.g.borrow().get_node_attrs(id).keys() {
-                                self.pending.borrow_mut().set_node_attribute(
-                                    id,
-                                    self.g.borrow().get_node_attribute_string(*key).unwrap(),
-                                    Value::Null,
-                                )?;
-                            }
-                        }
-                        for (key, value) in map.iter() {
-                            self.pending.borrow_mut().set_node_attribute(
-                                id,
-                                key.clone(),
-                                value.clone(),
-                            )?;
-                        }
-                    } else if let Value::Node(id) = value {
-                        let g = self.g.borrow();
-                        let attrs = self.get_node_attrs(id);
-                        if *replace {
-                            for key in g.get_node_attrs(id).keys() {
-                                self.pending.borrow_mut().set_node_attribute(
-                                    id,
-                                    g.get_node_attribute_string(*key).unwrap(),
-                                    Value::Null,
-                                )?;
-                            }
-                        }
-                        for (key, value) in attrs.iter() {
-                            self.pending.borrow_mut().set_node_attribute(
-                                id,
-                                key.clone(),
-                                value.clone(),
-                            )?;
-                        }
-                    }
-                    if let Some(labels) = labels {
-                        self.pending.borrow_mut().set_node_labels(id, labels);
-                    }
-                }
-                Value::Relationship(id, src, dest) => {
-                    if self.g.borrow().is_relationship_deleted(id)
-                        || self.pending.borrow().is_relationship_deleted(id, src, dest)
-                    {
-                        continue;
-                    }
-                    if let Some(property) = property {
-                        if let Some(attr_id) =
-                            self.g.borrow().get_relationship_attribute_id(property)
-                            && let Some(v) = self.g.borrow().get_relationship_attribute(id, attr_id)
-                            && v == value
-                        {
-                            continue;
-                        }
-
-                        self.pending.borrow_mut().set_relationship_attribute(
-                            id,
-                            property.clone(),
-                            value,
-                        )?;
-                    } else if let Value::Relationship(sid, _, _) = value {
-                        let g = self.g.borrow();
-                        let attrs = g.get_relationship_attrs(sid);
-                        if *replace {
-                            for key in g.get_relationship_attrs(id).keys() {
-                                self.pending.borrow_mut().set_relationship_attribute(
-                                    id,
-                                    g.get_relationship_attribute_string(*key).unwrap(),
-                                    Value::Null,
-                                )?;
-                            }
-                        }
-                        for (key, value) in attrs.iter() {
-                            let Some(key) = g.get_relationship_attribute_string(*key) else {
-                                continue;
+        for item in items {
+            match item {
+                SetItem::Property(entity, value, replace) => {
+                    let run_expr = self.run_expr(value, value.root().idx(), vars, None)?;
+                    let (entity, attr) = match entity.root().data() {
+                        ExprIR::Variable(name) => (vars.get(name).unwrap(), None),
+                        ExprIR::FuncInvocation(func) if func.name == "property" => {
+                            let ExprIR::String(property) = entity.root().child(1).data() else {
+                                unreachable!();
                             };
-                            self.pending.borrow_mut().set_relationship_attribute(
-                                id,
-                                key,
-                                value.clone(),
-                            )?;
+                            (
+                                self.run_expr(entity, entity.root().child(0).idx(), vars, None)?,
+                                Some(property),
+                            )
+                        }
+                        _ => {
+                            unreachable!();
+                        }
+                    };
+                    match entity {
+                        Value::Node(id) => {
+                            if self.g.borrow().is_node_deleted(id)
+                                || self.pending.borrow().is_node_deleted(id)
+                            {
+                                continue;
+                            }
+                            if let Some(attr) = attr {
+                                let attr_id =
+                                    self.g.borrow_mut().get_or_add_node_attribute_id(attr);
+                                if let Some(v) = self.g.borrow().get_node_attribute(id, attr_id)
+                                    && v == run_expr
+                                {
+                                    continue;
+                                }
+
+                                self.pending.borrow_mut().set_node_attribute(
+                                    id,
+                                    attr.clone(),
+                                    run_expr,
+                                )?;
+                            } else if let Value::Map(map) = run_expr {
+                                if *replace {
+                                    for key in self.g.borrow().get_node_attrs(id).keys() {
+                                        let key = self
+                                            .g
+                                            .borrow()
+                                            .get_node_attribute_string(*key)
+                                            .unwrap();
+                                        self.pending.borrow_mut().set_node_attribute(
+                                            id,
+                                            key,
+                                            Value::Null,
+                                        )?;
+                                    }
+                                }
+                                for (key, value) in map.iter() {
+                                    self.pending.borrow_mut().set_node_attribute(
+                                        id,
+                                        key.clone(),
+                                        value.clone(),
+                                    )?;
+                                }
+                            } else if let Value::Node(tid) = run_expr {
+                                let g = self.g.borrow();
+                                let attrs = self.get_node_attrs(tid);
+                                if *replace {
+                                    for key in g.get_node_attrs(id).keys() {
+                                        let key = self
+                                            .g
+                                            .borrow()
+                                            .get_node_attribute_string(*key)
+                                            .unwrap();
+                                        self.pending.borrow_mut().set_node_attribute(
+                                            id,
+                                            key,
+                                            Value::Null,
+                                        )?;
+                                    }
+                                }
+                                for (key, value) in attrs.iter() {
+                                    self.pending.borrow_mut().set_node_attribute(
+                                        id,
+                                        key.clone(),
+                                        value.clone(),
+                                    )?;
+                                }
+                            }
+                        }
+                        Value::Relationship(rel) => {
+                            if self.g.borrow().is_relationship_deleted(rel.0)
+                                || self
+                                    .pending
+                                    .borrow()
+                                    .is_relationship_deleted(rel.0, rel.1, rel.2)
+                            {
+                                continue;
+                            }
+                            if let Some(attr) = attr {
+                                let attr_id = self
+                                    .g
+                                    .borrow_mut()
+                                    .get_or_add_relationship_attribute_id(attr);
+                                if let Some(v) =
+                                    self.g.borrow().get_relationship_attribute(rel.0, attr_id)
+                                    && v == run_expr
+                                {
+                                    continue;
+                                }
+
+                                self.pending.borrow_mut().set_relationship_attribute(
+                                    rel.0,
+                                    attr.clone(),
+                                    run_expr,
+                                )?;
+                            } else if let Value::Relationship(rel) = run_expr {
+                                let g = self.g.borrow();
+                                let attrs = self.get_relationship_attrs(rel.0);
+                                if *replace {
+                                    for key in g.get_relationship_attrs(rel.0).keys() {
+                                        let key = self
+                                            .g
+                                            .borrow()
+                                            .get_relationship_attribute_string(*key)
+                                            .unwrap();
+                                        self.pending.borrow_mut().set_relationship_attribute(
+                                            rel.0,
+                                            key,
+                                            Value::Null,
+                                        )?;
+                                    }
+                                }
+                                for (key, value) in attrs.iter() {
+                                    self.pending.borrow_mut().set_relationship_attribute(
+                                        rel.0,
+                                        key.clone(),
+                                        value.clone(),
+                                    )?;
+                                }
+                            }
+                        }
+                        Value::Null => {}
+                        _ => {
+                            return Err(format!(
+                                "Type mismatch: expected Node or Relationship but was {}",
+                                entity.name()
+                            ));
                         }
                     }
                 }
-                Value::Null => {}
-                _ => {
-                    return Err(format!(
-                        "Type mismatch: expected Node or Relationship but was {}",
-                        entity.name()
-                    ));
+                SetItem::Label(entity, labels) => {
+                    let run_expr = vars.get(entity);
+                    match run_expr {
+                        Some(Value::Node(id)) => {
+                            if self.g.borrow().is_node_deleted(id)
+                                || self.pending.borrow().is_node_deleted(id)
+                            {
+                                continue;
+                            }
+                            self.pending
+                                .borrow_mut()
+                                .set_node_labels(id, labels.clone());
+                        }
+                        Some(Value::Null) => {}
+                        _ => {
+                            return Err(format!(
+                                "Type mismatch: expected Node but was {}",
+                                run_expr.map_or_else(|| "undefined".to_string(), |v| v.name())
+                            ));
+                        }
+                    }
                 }
             }
         }
@@ -1842,20 +1870,10 @@ impl<'a> Runtime<'a> {
                         let mut vars = vars.clone();
                         vars.insert(
                             &relationship_pattern.alias,
-                            Value::Relationship(id, src, dst),
+                            Value::Relationship(Box::new((id, src, dst))),
                         );
                         vars.insert(&relationship_pattern.from.alias, Value::Node(src));
                         vars.insert(&relationship_pattern.to.alias, Value::Node(dst));
-                        if relationship_pattern.bidirectional && src != dst {
-                            let mut vars2 = vars.clone();
-                            vars2.insert(
-                                &relationship_pattern.alias,
-                                Value::Relationship(id, src, dst),
-                            );
-                            vars2.insert(&relationship_pattern.from.alias, Value::Node(dst));
-                            vars2.insert(&relationship_pattern.to.alias, Value::Node(src));
-                            return vec![Ok(vars), Ok(vars2)];
-                        }
                         vec![Ok(vars)]
                     }),
             ) as Box<dyn Iterator<Item = Result<Env, String>>>
@@ -1894,7 +1912,7 @@ impl<'a> Runtime<'a> {
                     let mut vars = vars.clone();
                     vars.insert(
                         &relationship_pattern.alias,
-                        Value::Relationship(id, src, dst),
+                        Value::Relationship(Box::new((id, src, dst))),
                     );
                     vars.insert(&relationship_pattern.from.alias, Value::Node(src));
                     vars.insert(&relationship_pattern.to.alias, Value::Node(dst));
@@ -2077,16 +2095,16 @@ impl<'a> Runtime<'a> {
                         .insert(id, DeletedNode::new(labels, attrs));
                 }
             }
-            Value::Relationship(id, src, dest) => {
-                if !self.g.borrow().is_relationship_deleted(id) {
+            Value::Relationship(rel) => {
+                if !self.g.borrow().is_relationship_deleted(rel.0) {
                     self.pending
                         .borrow_mut()
-                        .deleted_relationship(id, src, dest);
-                    let type_id = self.g.borrow().get_relationship_type_id(id);
-                    let attrs = self.get_relationship_attrs(id);
+                        .deleted_relationship(rel.0, rel.1, rel.2);
+                    let type_id = self.g.borrow().get_relationship_type_id(rel.0);
+                    let attrs = self.get_relationship_attrs(rel.0);
                     self.deleted_relationships
                         .borrow_mut()
-                        .insert(id, DeletedRelationship::new(type_id, attrs));
+                        .insert(rel.0, DeletedRelationship::new(type_id, attrs));
                 }
             }
             Value::Path(values) => {
@@ -2166,7 +2184,10 @@ impl<'a> Runtime<'a> {
                     return Err(String::from("Invalid relationship properties"));
                 }
             }
-            vars.insert(&rel.alias, Value::Relationship(id, from_id, to_id));
+            vars.insert(
+                &rel.alias,
+                Value::Relationship(Box::new((id, from_id, to_id))),
+            );
         }
         Ok(())
     }
@@ -2280,7 +2301,7 @@ pub fn evaluate_param(expr: &DynNode<ExprIR>) -> Result<Value, String> {
         ExprIR::List => Ok(Value::List(
             expr.children()
                 .map(|c| evaluate_param(&c))
-                .collect::<Result<Vec<_>, _>>()?,
+                .collect::<Result<ThinVec<_>, _>>()?,
         )),
         ExprIR::Map => Ok(Value::Map(
             expr.children()
@@ -2322,9 +2343,14 @@ fn get_elements(
                 end = end.min(values.len() as i64);
             }
             if start > end {
-                return Ok(Value::List(vec![]));
+                return Ok(Value::List(thin_vec![]));
             }
-            Ok(Value::List(values[start as usize..end as usize].to_vec()))
+            Ok(Value::List(
+                values[start as usize..end as usize]
+                    .iter()
+                    .cloned()
+                    .collect(),
+            ))
         }
         (_, Value::Null, _) | (_, _, Value::Null) => Ok(Value::Null),
         _ => Err(String::from("Invalid array range parameters.")),

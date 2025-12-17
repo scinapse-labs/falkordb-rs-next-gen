@@ -1,10 +1,10 @@
-use std::{collections::HashSet, fmt::Display, rc::Rc, sync::Arc};
+use std::{collections::HashSet, fmt::Display, sync::Arc};
 
 use orx_tree::{DynTree, NodeRef, Side};
 
 use crate::{
     ast::{
-        ExprIR, QueryExpr, QueryGraph, QueryIR, QueryNode, QueryPath, QueryRelationship,
+        ExprIR, QueryExpr, QueryGraph, QueryIR, QueryNode, QueryPath, QueryRelationship, SetItem,
         SupportAggregation, Variable,
     },
     indexer::{EntityType, IndexQuery, IndexType},
@@ -21,25 +21,25 @@ pub enum IR {
     Create(QueryGraph<Arc<String>, Arc<String>>),
     Merge(
         QueryGraph<Arc<String>, Arc<String>>,
-        Vec<(QueryExpr, QueryExpr, bool)>,
-        Vec<(QueryExpr, QueryExpr, bool)>,
+        Vec<SetItem<Arc<String>>>,
+        Vec<SetItem<Arc<String>>>,
     ),
     Delete(Vec<QueryExpr>, bool),
-    Set(Vec<(QueryExpr, QueryExpr, bool)>),
+    Set(Vec<SetItem<Arc<String>>>),
     Remove(Vec<QueryExpr>),
-    NodeByLabelScan(Rc<QueryNode<Arc<String>>>),
+    NodeByLabelScan(Arc<QueryNode<Arc<String>>>),
     NodeByIndexScan {
-        node: Rc<QueryNode<Arc<String>>>,
+        node: Arc<QueryNode<Arc<String>>>,
         index: Arc<String>,
-        query: Rc<IndexQuery<QueryExpr>>,
+        query: Arc<IndexQuery<QueryExpr>>,
     },
     NodeByIdScan {
-        node: Rc<QueryNode<Arc<String>>>,
+        node: Arc<QueryNode<Arc<String>>>,
         id: QueryExpr,
     },
-    RelationshipScan(Rc<QueryRelationship<Arc<String>, Arc<String>>>),
-    ExpandInto(Rc<QueryRelationship<Arc<String>, Arc<String>>>),
-    PathBuilder(Vec<Rc<QueryPath>>),
+    RelationshipScan(Arc<QueryRelationship<Arc<String>, Arc<String>>>),
+    ExpandInto(Arc<QueryRelationship<Arc<String>, Arc<String>>>),
+    PathBuilder(Vec<Arc<QueryPath>>),
     Filter(QueryExpr),
     CartesianProduct,
     LoadCsv {

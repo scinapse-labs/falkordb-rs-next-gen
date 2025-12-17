@@ -1,4 +1,4 @@
-use std::{collections::HashSet, fmt::Display, hash::Hash, rc::Rc, sync::Arc};
+use std::{collections::HashSet, fmt::Display, hash::Hash, sync::Arc};
 
 use itertools::Itertools;
 use orx_tree::{Bfs, Collection, Dfs, DynTree, NodeRef};
@@ -344,8 +344,8 @@ pub struct QueryRelationship<T, L> {
     pub alias: Variable,
     pub types: Vec<T>,
     pub attrs: QueryExpr,
-    pub from: Rc<QueryNode<L>>,
-    pub to: Rc<QueryNode<L>>,
+    pub from: Arc<QueryNode<L>>,
+    pub to: Arc<QueryNode<L>>,
     pub bidirectional: bool,
 }
 
@@ -384,8 +384,8 @@ impl<T, L> QueryRelationship<T, L> {
         alias: Variable,
         types: Vec<T>,
         attrs: QueryExpr,
-        from: Rc<QueryNode<L>>,
-        to: Rc<QueryNode<L>>,
+        from: Arc<QueryNode<L>>,
+        to: Arc<QueryNode<L>>,
         bidirectional: bool,
     ) -> Self {
         Self {
@@ -417,9 +417,9 @@ impl QueryPath {
 
 #[derive(Clone, Debug)]
 pub struct QueryGraph<T, L> {
-    nodes: OrderMap<Variable, Rc<QueryNode<L>>>,
-    relationships: OrderMap<Variable, Rc<QueryRelationship<T, L>>>,
-    paths: OrderMap<Variable, Rc<QueryPath>>,
+    nodes: OrderMap<Variable, Arc<QueryNode<L>>>,
+    relationships: OrderMap<Variable, Arc<QueryRelationship<T, L>>>,
+    paths: OrderMap<Variable, Arc<QueryPath>>,
 }
 
 impl<T, L> Default for QueryGraph<T, L> {
@@ -454,14 +454,14 @@ impl<T: Display + PartialEq, L: Display + PartialEq> Display for QueryGraph<T, L
 impl<T, L> QueryGraph<T, L> {
     pub fn add_node(
         &mut self,
-        node: Rc<QueryNode<L>>,
+        node: Arc<QueryNode<L>>,
     ) -> bool {
         self.nodes.insert(node.alias.clone(), node).is_none()
     }
 
     pub fn add_relationship(
         &mut self,
-        relationship: Rc<QueryRelationship<T, L>>,
+        relationship: Arc<QueryRelationship<T, L>>,
     ) -> bool {
         self.relationships
             .insert(relationship.alias.clone(), relationship)
@@ -470,7 +470,7 @@ impl<T, L> QueryGraph<T, L> {
 
     pub fn add_path(
         &mut self,
-        path: Rc<QueryPath>,
+        path: Arc<QueryPath>,
     ) -> bool {
         self.paths.insert(path.var.clone(), path).is_none()
     }
@@ -486,17 +486,17 @@ impl<T, L> QueryGraph<T, L> {
     }
 
     #[must_use]
-    pub fn nodes(&self) -> Vec<Rc<QueryNode<L>>> {
+    pub fn nodes(&self) -> Vec<Arc<QueryNode<L>>> {
         self.nodes.values().cloned().collect()
     }
 
     #[must_use]
-    pub fn relationships(&self) -> Vec<Rc<QueryRelationship<T, L>>> {
+    pub fn relationships(&self) -> Vec<Arc<QueryRelationship<T, L>>> {
         self.relationships.values().cloned().collect()
     }
 
     #[must_use]
-    pub fn paths(&self) -> Vec<Rc<QueryPath>> {
+    pub fn paths(&self) -> Vec<Arc<QueryPath>> {
         self.paths.values().cloned().collect()
     }
 
@@ -552,7 +552,7 @@ impl<T, L> QueryGraph<T, L> {
 
     fn dfs(
         &self,
-        node: &Rc<QueryNode<L>>,
+        node: &Arc<QueryNode<L>>,
         visited: &mut HashSet<u32>,
         component: &mut Self,
     ) {
@@ -585,7 +585,13 @@ impl<T, L> QueryGraph<T, L> {
     }
 }
 
-pub type QueryExpr = Rc<DynTree<ExprIR>>;
+pub type QueryExpr = Arc<DynTree<ExprIR>>;
+
+#[derive(Clone, Debug)]
+pub enum SetItem<L> {
+    Property(QueryExpr, QueryExpr, bool),
+    Label(Variable, OrderSet<L>),
+}
 
 #[derive(Debug)]
 pub enum QueryIR {
@@ -603,12 +609,12 @@ pub enum QueryIR {
     Unwind(QueryExpr, Variable),
     Merge(
         QueryGraph<Arc<String>, Arc<String>>,
-        Vec<(QueryExpr, QueryExpr, bool)>,
-        Vec<(QueryExpr, QueryExpr, bool)>,
+        Vec<SetItem<Arc<String>>>,
+        Vec<SetItem<Arc<String>>>,
     ),
     Create(QueryGraph<Arc<String>, Arc<String>>),
     Delete(Vec<QueryExpr>, bool),
-    Set(Vec<(QueryExpr, QueryExpr, bool)>),
+    Set(Vec<SetItem<Arc<String>>>),
     Remove(Vec<QueryExpr>),
     LoadCsv {
         file_path: QueryExpr,
@@ -646,7 +652,7 @@ pub enum QueryIR {
         index_type: IndexType,
         entity_type: EntityType,
     },
-    Query(Vec<QueryIR>, bool),
+    Query(Vec<Self>, bool),
 }
 
 #[cfg_attr(tarpaulin, skip)]
@@ -679,8 +685,8 @@ impl Display for QueryIR {
             }
             Self::Set(items) => {
                 writeln!(f, "SET:")?;
-                for (target, value, _) in items {
-                    write!(f, "{target} = {value}")?;
+                for item in items {
+                    write!(f, "{item:?}")?;
                 }
                 Ok(())
             }
@@ -845,12 +851,20 @@ impl QueryIR {
                     env.insert(relationship.alias.id);
                 }
                 for set_item in on_match_set_items {
-                    set_item.0.validate(false, env)?;
-                    set_item.1.validate(false, env)?;
+                    let (target, value) = match set_item {
+                        SetItem::Property(t, v, _) => (t, v),
+                        SetItem::Label(_, _) => continue,
+                    };
+                    target.validate(false, env)?;
+                    value.validate(false, env)?;
                 }
                 for set_item in on_create_set_items {
-                    set_item.0.validate(false, env)?;
-                    set_item.1.validate(false, env)?;
+                    let (target, value) = match set_item {
+                        SetItem::Property(t, v, _) => (t, v),
+                        SetItem::Label(_, _) => continue,
+                    };
+                    target.validate(false, env)?;
+                    value.validate(false, env)?;
                 }
                 iter.next()
                     .map_or(Ok(()), |first| first.inner_validate(iter, env))
@@ -907,7 +921,11 @@ impl QueryIR {
                     .map_or(Ok(()), |first| first.inner_validate(iter, env))
             }
             Self::Set(items) => {
-                for (target, value, _) in items {
+                for item in items {
+                    let (target, value) = match item {
+                        SetItem::Property(t, v, _) => (t, v),
+                        SetItem::Label(_, _) => continue,
+                    };
                     target.validate(false, env)?;
                     value.validate(false, env)?;
                 }
