@@ -1027,9 +1027,10 @@ impl Graph {
             for id in ids {
                 let mut doc = Document::new(id);
                 for (key, fields) in &fields {
-                    let value = self.node_attrs.get_attr(id, key).unwrap();
-                    for field in fields {
-                        doc.set(field.clone(), value.clone());
+                    if let Some(value) = self.node_attrs.get_attr(id, key) {
+                        for field in fields {
+                            doc.set(field.clone(), value.clone());
+                        }
                     }
                 }
                 docs.push(doc);
