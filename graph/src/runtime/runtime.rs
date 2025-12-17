@@ -989,6 +989,7 @@ impl<'a> Runtime {
                 } else {
                     self.plan.node(idx).child(1).idx()
                 };
+
                 Ok(iter
                     .try_flat_map(move |vars| {
                         let cvars = vars.clone();
