@@ -1655,7 +1655,8 @@ impl<'a> Runtime<'a> {
                                 continue;
                             }
                             if let Some(attr) = attr {
-                                let attr_id = self.g.borrow().get_node_attribute_id(attr).unwrap();
+                                let attr_id =
+                                    self.g.borrow_mut().get_or_add_node_attribute_id(attr);
                                 if let Some(v) = self.g.borrow().get_node_attribute(id, attr_id)
                                     && v == run_expr
                                 {
@@ -1725,8 +1726,10 @@ impl<'a> Runtime<'a> {
                                 continue;
                             }
                             if let Some(attr) = attr {
-                                let attr_id =
-                                    self.g.borrow().get_relationship_attribute_id(attr).unwrap();
+                                let attr_id = self
+                                    .g
+                                    .borrow_mut()
+                                    .get_or_add_relationship_attribute_id(attr);
                                 if let Some(v) =
                                     self.g.borrow().get_relationship_attribute(rel.0, attr_id)
                                     && v == run_expr
@@ -1871,16 +1874,6 @@ impl<'a> Runtime<'a> {
                         );
                         vars.insert(&relationship_pattern.from.alias, Value::Node(src));
                         vars.insert(&relationship_pattern.to.alias, Value::Node(dst));
-                        if relationship_pattern.bidirectional && src != dst {
-                            let mut vars2 = vars.clone();
-                            vars2.insert(
-                                &relationship_pattern.alias,
-                                Value::Relationship(Box::new((id, dst, src))),
-                            );
-                            vars2.insert(&relationship_pattern.from.alias, Value::Node(dst));
-                            vars2.insert(&relationship_pattern.to.alias, Value::Node(src));
-                            return vec![Ok(vars), Ok(vars2)];
-                        }
                         vec![Ok(vars)]
                     }),
             ) as Box<dyn Iterator<Item = Result<Env, String>>>
