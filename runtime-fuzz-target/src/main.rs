@@ -1,9 +1,10 @@
-use std::{cell::RefCell, collections::HashMap};
+use std::collections::HashMap;
 
 use graph::{
     graph::{
         GraphBLAS::{GrB_Mode, GrB_init},
-        graph::{Graph, Plan},
+        graph::Plan,
+        mvcc_graph::MvccGraph,
     },
     runtime::{
         functions::init_functions,
@@ -21,10 +22,10 @@ fn main() {
     init_functions().expect("Failed to init functions");
     fuzz!(|data: &[u8]| {
         if let Ok(query) = std::str::from_utf8(data) {
-            let g = RefCell::new(Graph::new(1024, 1024, 25));
+            let g = MvccGraph::new(1024, 1024, 25);
             let Ok(Plan {
                 plan, parameters, ..
-            }) = g.borrow().get_plan(query)
+            }) = g.read().borrow().get_plan(query)
             else {
                 return;
             };
@@ -35,7 +36,7 @@ fn main() {
             else {
                 return;
             };
-            let mut runtime = Runtime::new(&g, parameters, true, plan, false, String::new());
+            let mut runtime = Runtime::new(g.read(), parameters, true, plan, false, String::new());
             let _ = runtime.query();
         }
     });

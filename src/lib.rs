@@ -1,30 +1,30 @@
 #![allow(clippy::cast_possible_wrap)]
 #![allow(clippy::non_std_lazy_statics)]
 
+mod allocator;
+use allocator::ThreadCountingAllocator;
+use atomic_refcell::AtomicRefCell;
 use graph::{
     graph::{
         graph::{Graph, Plan},
         matrix::init,
+        mvcc_graph::MvccGraph,
     },
+    planner::IR,
     redisearch::{REDISEARCH_INIT_LIBRARY, RediSearch_Init},
     runtime::{
         functions::init_functions,
         runtime::{GetVariables, QueryStatistics, ResultSummary, Runtime, evaluate_param},
         value::Value,
     },
+    threadpool::spawn,
 };
 use lazy_static::lazy_static;
-#[cfg(feature = "zipkin")]
-use opentelemetry::global;
-#[cfg(feature = "zipkin")]
-use opentelemetry::trace::TracerProvider;
-#[cfg(feature = "zipkin")]
-use opentelemetry_sdk::trace::{BatchConfigBuilder, BatchSpanProcessor};
-#[cfg(feature = "zipkin")]
-use opentelemetry_sdk::{Resource, trace::SdkTracerProvider};
-#[cfg(feature = "zipkin")]
-use opentelemetry_zipkin::ZipkinExporter;
-use orx_tree::{Bfs, Dfs, NodeRef};
+use orx_tree::{Bfs, Collection, Dfs, NodeRef};
+#[cfg(feature = "pyro")]
+use pyroscope::PyroscopeAgent;
+#[cfg(feature = "pyro")]
+use pyroscope_pprofrs::{PprofConfig, pprof_backend};
 use redis_module::{
     Context, NextArg, REDISMODULE_OK, REDISMODULE_TYPE_METHOD_VERSION, RedisError, RedisGILGuard,
     RedisModule_Alloc, RedisModule_Calloc, RedisModule_Free, RedisModule_Realloc,
@@ -32,20 +32,23 @@ use redis_module::{
     RedisModuleTypeMethods, RedisResult, RedisString, RedisValue, Status,
     configuration::ConfigurationFlags, native_types::RedisType, raw, redis_module,
 };
+#[cfg(feature = "pyro")]
+use std::mem;
 use std::{
-    cell::RefCell,
     collections::HashMap,
+    ffi::CString,
     os::raw::{c_char, c_int, c_void},
     ptr::null_mut,
+    sync::{
+        Arc, RwLock,
+        atomic::{AtomicBool, Ordering},
+        mpsc::{Receiver, Sender, channel},
+    },
 };
 #[cfg(feature = "fuzz")]
 use std::{fs::File, io::Write};
-#[cfg(feature = "zipkin")]
-use tracing_opentelemetry::OpenTelemetryLayer;
-#[cfg(feature = "zipkin")]
-use tracing_subscriber::layer::SubscriberExt;
-#[cfg(feature = "zipkin")]
-use tracing_subscriber::util::SubscriberInitExt;
+
+use crate::allocator::{current_thread_usage, disable_tracking, enable_tracking, reset_counter};
 
 const EMPTY_KEY_ERR: RedisResult = Err(RedisError::Str("ERR Invalid graph operation on empty key"));
 
@@ -57,7 +60,7 @@ static GRAPH_TYPE: RedisType = RedisType::new(
         rdb_load: Some(graph_rdb_load),
         rdb_save: Some(graph_rdb_save),
         aof_rewrite: None,
-        free: Some(my_free),
+        free: Some(graph_free),
 
         // Currently unused by Redis
         mem_usage: None,
@@ -81,6 +84,98 @@ static GRAPH_TYPE: RedisType = RedisType::new(
     },
 );
 
+struct ThreadedGraph {
+    graph: MvccGraph,
+    sender: Sender<(BlockedClient, Arc<String>, bool)>,
+    receiver: Receiver<(BlockedClient, Arc<String>, bool)>,
+    write_loop: AtomicBool,
+}
+
+unsafe impl Send for ThreadedGraph {}
+unsafe impl Sync for ThreadedGraph {}
+
+impl ThreadedGraph {
+    pub fn new() -> Self {
+        let (sender, receiver) = channel();
+        Self {
+            graph: MvccGraph::new(16384, 16384, 1024),
+            sender,
+            receiver,
+            write_loop: AtomicBool::new(false),
+        }
+    }
+
+    fn execute_query(
+        &self,
+        ctx: &Context,
+        query: &str,
+        compact: bool,
+        write: bool,
+    ) -> Result<bool, String> {
+        let Plan {
+            plan,
+            cached,
+            parameters,
+            ..
+        } = self.graph.read().borrow().get_plan(query)?;
+        let parameters = parameters
+            .into_iter()
+            .map(|(k, v)| Ok((k, evaluate_param(&v.root())?)))
+            .collect::<Result<HashMap<_, _>, String>>()?;
+        let scope = CONFIGURATION_IMPORT_FOLDER.lock(ctx);
+        let is_write = plan.iter().any(|n| matches!(n, IR::Commit));
+        let g = if is_write {
+            if !write {
+                return Err(String::from(
+                    "graph.RO_QUERY is to be executed only on read-only queries",
+                ));
+            }
+            return Ok(is_write);
+        } else {
+            self.graph.read()
+        };
+        let mut runtime = Runtime::new(g, parameters, write, plan, false, (*scope).clone());
+        let mut result = runtime.query()?;
+        result.stats.cached = cached;
+        if compact {
+            reply_compact(ctx, &runtime, result);
+        } else {
+            reply_verbose(ctx, &runtime, result);
+        }
+        Ok(is_write)
+    }
+
+    fn execute_query_write(
+        &self,
+        ctx: &Context,
+        query: &str,
+        compact: bool,
+    ) -> Result<Arc<AtomicRefCell<Graph>>, String> {
+        let Plan {
+            plan,
+            cached,
+            parameters,
+            ..
+        } = self.graph.read().borrow().get_plan(query)?;
+        let parameters = parameters
+            .into_iter()
+            .map(|(k, v)| Ok((k, evaluate_param(&v.root())?)))
+            .collect::<Result<HashMap<_, _>, String>>()?;
+        let scope = CONFIGURATION_IMPORT_FOLDER.lock(ctx);
+        debug_assert!(plan.iter().any(|n| matches!(n, IR::Commit)));
+        let g = self.graph.write().unwrap();
+        let mut runtime = Runtime::new(g.clone(), parameters, true, plan, false, (*scope).clone());
+        let mut result = runtime.query()?;
+        result.stats.cached = cached;
+        if compact {
+            reply_compact(ctx, &runtime, result);
+        } else {
+            reply_verbose(ctx, &runtime, result);
+        }
+        Ok(g)
+    }
+}
+
 #[unsafe(no_mangle)]
 #[allow(clippy::missing_const_for_fn)]
 unsafe extern "C" fn graph_rdb_load(
@@ -99,9 +194,9 @@ unsafe extern "C" fn graph_rdb_save(
 }
 
 #[unsafe(no_mangle)]
-unsafe extern "C" fn my_free(value: *mut c_void) {
+unsafe extern "C" fn graph_free(value: *mut c_void) {
     unsafe {
-        drop(Box::from_raw(value.cast::<RefCell<Graph>>()));
+        drop(Box::from_raw(value.cast::<Arc<RwLock<ThreadedGraph>>>()));
     }
 }
 
@@ -169,12 +264,8 @@ fn reply_compact_value(
                 raw::reply_with_array(ctx.ctx, x.attrs.len() as _);
                 for (key, value) in x.attrs.iter() {
                     raw::reply_with_array(ctx.ctx, 3);
-                    let key = runtime
-                        .g
-                        .borrow()
-                        .get_node_attribute_id(key.as_str())
-                        .unwrap();
-                    raw::reply_with_long_long(ctx.ctx, usize::from(key) as _);
+                    let key = runtime.g.borrow().get_node_attribute_id(key).unwrap();
+                    raw::reply_with_long_long(ctx.ctx, key as _);
                     reply_compact_value(ctx, runtime, value.clone());
                 }
             } else {
@@ -186,10 +277,11 @@ fn reply_compact_value(
                 }
                 let attrs = bg.get_node_attrs(id);
                 raw::reply_with_array(ctx.ctx, attrs.len() as _);
-                for (key, value) in attrs.iter() {
+                for key in attrs {
                     raw::reply_with_array(ctx.ctx, 3);
-                    raw::reply_with_long_long(ctx.ctx, usize::from(*key) as _);
-                    reply_compact_value(ctx, runtime, value.clone());
+                    let attr_id = bg.get_node_attribute_id(&key);
+                    raw::reply_with_long_long(ctx.ctx, attr_id.unwrap() as _);
+                    reply_compact_value(ctx, runtime, bg.get_node_attribute(id, &key).unwrap());
                 }
             }
         }
@@ -207,7 +299,7 @@ fn reply_compact_value(
                 for (key, value) in x.attrs.iter() {
                     raw::reply_with_array(ctx.ctx, 3);
                     let key = bg.get_relationship_attribute_id(key).unwrap();
-                    raw::reply_with_long_long(ctx.ctx, usize::from(key) as _);
+                    raw::reply_with_long_long(ctx.ctx, key as _);
                     reply_compact_value(ctx, runtime, value.clone());
                 }
             } else {
@@ -220,10 +312,15 @@ fn reply_compact_value(
                 raw::reply_with_long_long(ctx.ctx, u64::from(rel.2) as _);
                 let attrs = bg.get_relationship_attrs(rel.0);
                 raw::reply_with_array(ctx.ctx, attrs.len() as _);
-                for (key, value) in attrs.iter() {
+                for key in attrs {
                     raw::reply_with_array(ctx.ctx, 3);
-                    raw::reply_with_long_long(ctx.ctx, usize::from(*key) as _);
-                    reply_compact_value(ctx, runtime, value.clone());
+                    let attr_id = bg.get_relationship_attribute_id(&key);
+                    raw::reply_with_long_long(ctx.ctx, attr_id.unwrap() as _);
+                    reply_compact_value(
+                        ctx,
+                        runtime,
+                        bg.get_relationship_attribute(rel.0, &key).unwrap(),
+                    );
                 }
             }
         }
@@ -361,15 +458,14 @@ fn reply_verbose_value(
                 }
                 let attrs = bg.get_node_attrs(id);
                 raw::reply_with_array(ctx.ctx, attrs.len() as _);
-                for (key, value) in attrs.iter() {
+                for key in attrs {
                     raw::reply_with_array(ctx.ctx, 2);
-                    let key_name = bg.get_node_attribute_string(*key).unwrap();
                     raw::reply_with_string_buffer(
                         ctx.ctx,
-                        key_name.as_ptr().cast::<c_char>(),
-                        key_name.len(),
+                        key.as_ptr().cast::<c_char>(),
+                        key.len(),
                     );
-                    reply_verbose_value(ctx, runtime, value.clone());
+                    reply_verbose_value(ctx, runtime, bg.get_node_attribute(id, &key).unwrap());
                 }
             }
         }
@@ -403,15 +499,18 @@ fn reply_verbose_value(
                 raw::reply_with_long_long(ctx.ctx, u64::from(rel.2) as _);
                 let props = bg.get_relationship_attrs(rel.0);
                 raw::reply_with_array(ctx.ctx, props.len() as _);
-                for (key, value) in props.iter() {
+                for key in props {
                     raw::reply_with_array(ctx.ctx, 2);
-                    let key_name = bg.get_relationship_attribute_string(*key).unwrap();
                     raw::reply_with_string_buffer(
                         ctx.ctx,
-                        key_name.as_ptr().cast::<c_char>(),
-                        key_name.len(),
+                        key.as_ptr().cast::<c_char>(),
+                        key.len(),
                     );
-                    reply_verbose_value(ctx, runtime, value.clone());
+                    reply_verbose_value(
+                        ctx,
+                        runtime,
+                        bg.get_relationship_attribute(rel.0, &key).unwrap(),
+                    );
                 }
             }
         }
@@ -460,52 +559,127 @@ fn graph_delete(
     let mut args = args.into_iter().skip(1);
     let key = args.next_arg()?;
     let key = ctx.open_key_writable(&key);
-    if key.get_value::<RefCell<Graph>>(&GRAPH_TYPE)?.is_some() {
+    if key
+        .get_value::<Arc<RwLock<ThreadedGraph>>>(&GRAPH_TYPE)?
+        .is_some()
+    {
         key.delete()
     } else {
         EMPTY_KEY_ERR
     }
 }
 
+pub struct BlockedClient {
+    pub inner: *mut raw::RedisModuleBlockedClient,
+}
+
+unsafe impl Send for BlockedClient {}
+unsafe impl Sync for BlockedClient {}
+
+impl Drop for BlockedClient {
+    fn drop(&mut self) {
+        unsafe { raw::RedisModule_UnblockClient.unwrap()(self.inner, null_mut()) };
+    }
+}
+
 #[inline]
 fn query_mut(
     ctx: &Context,
-    graph: &RefCell<Graph>,
+    graph: &Arc<RwLock<ThreadedGraph>>,
     query: &str,
     compact: bool,
     write: bool,
-) -> Result<(), RedisError> {
-    // Create a child span for parsing and execution
-    tracing::debug_span!("query_execution", query = %query).in_scope(|| {
-        let Plan {
-            plan,
-            cached,
-            parameters,
-            ..
-        } = graph.borrow().get_plan(query).map_err(RedisError::String)?;
-        let parameters = parameters
-            .into_iter()
-            .map(|(k, v)| Ok((k, evaluate_param(&v.root())?)))
-            .collect::<Result<HashMap<_, _>, String>>()
-            .map_err(RedisError::String)?;
-        let scope = CONFIGURATION_IMPORT_FOLDER.lock(ctx);
-        let mut runtime = Runtime::new(graph, parameters, write, plan, false, (*scope).clone());
-        let mut result = runtime.query().map_err(RedisError::String)?;
-        result.stats.cached = cached;
-        if compact {
-            reply_compact(ctx, &runtime, result);
-        } else {
-            reply_verbose(ctx, &runtime, result);
+    track_mem: bool,
+) {
+    let bc = BlockedClient {
+        inner: unsafe { raw::RedisModule_BlockClient.unwrap()(ctx.ctx, None, None, None, 0) },
+    };
+    let graph = graph.clone();
+    let query = Arc::new(query.to_string());
+    spawn(
+        move || {
+            if track_mem {
+                reset_counter();
+                enable_tracking();
+            }
+            let g = graph.clone();
+            let graph = graph.clone();
+            let graph = graph.read().unwrap();
+            let bc = bc;
+            let ctx = unsafe { raw::RedisModule_GetThreadSafeContext.unwrap()(bc.inner) };
+            let ctx = Context::new(ctx);
+
+            let res = graph.execute_query(&ctx, &query, compact, write);
+            match res {
+                Ok(is_write) => {
+                    if is_write {
+                        graph.sender.send((bc, query, compact)).unwrap();
+                        drop(graph);
+                        process_write_queued_query(g);
+                    } else {
+                        drop(bc);
+                        unsafe { raw::RedisModule_FreeThreadSafeContext.unwrap()(ctx.ctx) };
+                    }
+                }
+                Err(err) => {
+                    let cerr = CString::new(err).unwrap();
+                    raw::reply_with_error(ctx.ctx, cerr.as_ptr().cast::<c_char>());
+                    drop(bc);
+                    unsafe { raw::RedisModule_FreeThreadSafeContext.unwrap()(ctx.ctx) };
+                }
+            };
+            if track_mem {
+                let (allocated, deallocated) = current_thread_usage();
+                disable_tracking();
+                ctx.log(
+                    redis_module::logging::RedisLogLevel::Notice,
+                    &format!(
+                        "Allocated: {allocated} bytes, Deallocated: {deallocated} bytes, Net: {}",
+                        allocated as isize - deallocated as isize
+                    ),
+                );
+            }
+        },
+        None,
+    );
+}
+
+fn process_write_queued_query(graph: Arc<RwLock<ThreadedGraph>>) {
+    let mut graph = graph.write().unwrap();
+    if graph
+        .write_loop
+        .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
+        .is_ok()
+    {
+        while let Ok((bc, query, compact)) = { graph.receiver.try_recv() } {
+            let ctx = unsafe { raw::RedisModule_GetThreadSafeContext.unwrap()(bc.inner) };
+            let ctx = Context::new(ctx);
+            let res = graph.execute_query_write(&ctx, &query, compact);
+            match res {
+                Ok(g) => {
+                    drop(bc);
+                    unsafe { raw::RedisModule_FreeThreadSafeContext.unwrap()(ctx.ctx) };
+                    graph.graph.commit(g);
+                }
+                Err(err) => {
+                    let cerr = CString::new(err).unwrap();
+                    raw::reply_with_error(ctx.ctx, cerr.as_ptr().cast::<c_char>());
+                    drop(bc);
+                    unsafe { raw::RedisModule_FreeThreadSafeContext.unwrap()(ctx.ctx) };
+                    graph.graph.rollback();
+                }
+            }
         }
-        Ok(())
-    })
+        graph.write_loop.store(false, Ordering::Release);
+    }
 }
 
 fn reply_stats(
     ctx: &Context,
     stats: &QueryStatistics,
+    version: u64,
 ) {
-    let mut stats_len = 2;
+    let mut stats_len = 3;
     if stats.labels_added > 0 {
         stats_len += 1;
     }
@@ -573,10 +747,11 @@ fn reply_stats(
     }
     let str = format!("Cached execution: {}", i32::from(stats.cached));
     raw::reply_with_string_buffer(ctx.ctx, str.as_ptr().cast::<c_char>(), str.len());
-    let str = format!(
-        "Query internal execution time: {} milliseconds",
-        stats.execution_time
-    );
+    let mut buffer = ryu::Buffer::new();
+    let str = buffer.format(stats.execution_time);
+    let str = format!("Query internal execution time: {str} milliseconds");
+    raw::reply_with_string_buffer(ctx.ctx, str.as_ptr().cast::<c_char>(), str.len());
+    let str = format!("Graph version: {version}");
     raw::reply_with_string_buffer(ctx.ctx, str.as_ptr().cast::<c_char>(), str.len());
 }
 
@@ -603,15 +778,24 @@ fn graph_query(
         file_id += 1;
     }
 
-    let compact = args.next_str().is_ok_and(|arg| arg == "--compact");
+    let mut compact = false;
+    let mut track_memory = false;
+    while let Ok(arg) = args.next_str() {
+        if arg == "--compact" {
+            compact = true;
+        } else if arg == "--track-memory" {
+            track_memory = true;
+        }
+    }
+
     let key = ctx.open_key_writable(&key);
 
-    if let Some(graph) = key.get_value::<RefCell<Graph>>(&GRAPH_TYPE)? {
-        query_mut(ctx, graph, query, compact, true)?;
+    if let Some(graph) = key.get_value::<Arc<RwLock<ThreadedGraph>>>(&GRAPH_TYPE)? {
+        query_mut(ctx, graph, query, compact, true, track_memory);
     } else {
-        let scope = CONFIGURATION_CACHE_SIZE.lock(ctx);
-        let graph = RefCell::new(Graph::new(16384, 16384, *scope as usize));
-        query_mut(ctx, &graph, query, compact, true)?;
+        let _scope = CONFIGURATION_CACHE_SIZE.lock(ctx);
+        let graph = Arc::new(RwLock::new(ThreadedGraph::new()));
+        query_mut(ctx, &graph, query, compact, true, track_memory);
         key.set_value(&GRAPH_TYPE, graph)?;
     }
 
@@ -621,13 +805,20 @@ fn graph_query(
 #[inline]
 fn record_mut(
     ctx: &Context,
-    graph: &RefCell<Graph>,
+    graph: &Arc<RwLock<ThreadedGraph>>,
     query: &str,
 ) -> Result<(), RedisError> {
     // Create a child span for parsing and execution
     let Plan {
         plan, parameters, ..
-    } = graph.borrow().get_plan(query).map_err(RedisError::String)?;
+    } = graph
+        .read()
+        .unwrap()
+        .graph
+        .read()
+        .borrow()
+        .get_plan(query)
+        .map_err(RedisError::String)?;
     let parameters = parameters
         .into_iter()
         .map(|(k, v)| Ok((k, evaluate_param(&v.root())?)))
@@ -635,7 +826,7 @@ fn record_mut(
         .map_err(RedisError::String)?;
     let scope = CONFIGURATION_IMPORT_FOLDER.lock(ctx);
     let mut runtime = Runtime::new(
-        graph,
+        graph.read().unwrap().graph.read(),
         parameters,
         true,
         plan.clone(),
@@ -712,11 +903,11 @@ fn graph_record(
 
     let key = ctx.open_key_writable(&key);
 
-    if let Some(graph) = key.get_value::<RefCell<Graph>>(&GRAPH_TYPE)? {
+    if let Some(graph) = key.get_value::<Arc<RwLock<ThreadedGraph>>>(&GRAPH_TYPE)? {
         record_mut(ctx, graph, query)?;
     } else {
-        let scope = CONFIGURATION_CACHE_SIZE.lock(ctx);
-        let graph = RefCell::new(Graph::new(16384, 16384, *scope as usize));
+        let _scope = CONFIGURATION_CACHE_SIZE.lock(ctx);
+        let graph = Arc::new(RwLock::new(ThreadedGraph::new()));
         record_mut(ctx, &graph, query)?;
         key.set_value(&GRAPH_TYPE, graph)?;
     }
@@ -747,7 +938,7 @@ fn reply_verbose(
             reply_verbose_value(ctx, runtime, row.get(name).unwrap());
         }
     }
-    reply_stats(ctx, &result.stats);
+    reply_stats(ctx, &result.stats, runtime.g.borrow().version);
 }
 
 fn reply_compact(
@@ -774,7 +965,7 @@ fn reply_compact(
             reply_compact_value(ctx, runtime, row.get(name).unwrap());
         }
     }
-    reply_stats(ctx, &result.stats);
+    reply_stats(ctx, &result.stats, runtime.g.borrow().version);
 }
 
 /// This function is used to execute a read only query on a graph
@@ -793,16 +984,24 @@ fn graph_ro_query(
     let mut args = args.into_iter().skip(1);
     let key = args.next_arg()?;
     let query = args.next_str()?;
-    let compact = args.next_str().is_ok_and(|arg| arg == "--compact");
+    let mut compact = false;
+    let mut track_memory = false;
+    while let Ok(arg) = args.next_str() {
+        if arg == "--compact" {
+            compact = true;
+        } else if arg == "--track-memory" {
+            track_memory = true;
+        }
+    }
 
     let key = ctx.open_key(&key);
 
     // We check if the key exists and is of type Graph if wrong type `get_value` return an error
-    (key.get_value::<RefCell<Graph>>(&GRAPH_TYPE)?).map_or(
+    (key.get_value::<Arc<RwLock<ThreadedGraph>>>(&GRAPH_TYPE)?).map_or(
         // If the key does not exist, we return an error
         EMPTY_KEY_ERR,
         |graph| {
-            query_mut(ctx, graph, query, compact, false)?;
+            query_mut(ctx, graph, query, compact, false, track_memory);
             RedisResult::Ok(RedisValue::NoReply)
         },
     )
@@ -866,11 +1065,18 @@ fn graph_explain(
 
     let key = ctx.open_key(&key);
 
-    (key.get_value::<RefCell<Graph>>(&GRAPH_TYPE)?).map_or(
+    (key.get_value::<Arc<RwLock<ThreadedGraph>>>(&GRAPH_TYPE)?).map_or(
         // If the key does not exist, we return an error
         EMPTY_KEY_ERR,
         |graph| {
-            let Plan { plan, .. } = graph.borrow().get_plan(query).map_err(RedisError::String)?;
+            let Plan { plan, .. } = graph
+                .read()
+                .unwrap()
+                .graph
+                .read()
+                .borrow()
+                .get_plan(query)
+                .map_err(RedisError::String)?;
             let ops = plan.root().indices::<Dfs>().collect::<Vec<_>>();
             raw::reply_with_array(ctx.ctx, ops.len() as _);
             for idx in ops {
@@ -884,42 +1090,40 @@ fn graph_explain(
     )
 }
 
-#[cfg(feature = "zipkin")]
-fn init_zipkin() {
-    global::set_text_map_propagator(opentelemetry_zipkin::Propagator::new());
+fn graph_memory(
+    ctx: &Context,
+    args: Vec<RedisString>,
+) -> RedisResult {
+    let mut args = args.into_iter().skip(1);
+    if args.len() != 1 {
+        return Err(RedisError::WrongArity);
+    }
 
-    let exporter = ZipkinExporter::builder().build().unwrap();
+    let key = args.next_arg()?;
+    let key = ctx.open_key(&key);
 
-    let batch = BatchSpanProcessor::builder(exporter)
-        .with_batch_config(
-            BatchConfigBuilder::default()
-                .with_max_queue_size(4096)
-                .build(),
-        )
-        .build();
+    let g = key
+        .get_value::<Arc<RwLock<ThreadedGraph>>>(&GRAPH_TYPE)?
+        .expect("Graph does not exist");
 
-    let provider = SdkTracerProvider::builder()
-        .with_span_processor(batch)
-        .with_sampler(opentelemetry_sdk::trace::Sampler::AlwaysOn)
-        .with_resource(
-            Resource::builder_empty()
-                .with_service_name("falkordb-graph-engine")
-                .build(),
-        )
-        .build();
-    let tracer = provider.tracer("falkordb-graph-engine");
-    let layer = OpenTelemetryLayer::new(tracer);
-    tracing_subscriber::registry().with(layer).init();
-
-    global::set_tracer_provider(provider);
+    Ok(RedisValue::Integer(
+        g.read().unwrap().graph.read().borrow().memory_usage() as i64,
+    ))
 }
 
 fn graph_init(
     ctx: &Context,
     _: &Vec<RedisString>,
 ) -> Status {
-    #[cfg(feature = "zipkin")]
-    init_zipkin();
+    #[cfg(feature = "pyro")]
+    {
+        let agent = PyroscopeAgent::builder("http://localhost:4040", "falkordb")
+            .backend(pprof_backend(PprofConfig::new().sample_rate(100)))
+            .build()
+            .unwrap();
+        let agent_running = agent.start().unwrap();
+        mem::forget(agent_running);
+    }
     unsafe {
         let result = RediSearch_Init(ctx.ctx as _, REDISEARCH_INIT_LIBRARY as c_int);
         if result == REDISMODULE_OK as c_int {
@@ -969,7 +1173,7 @@ const unsafe extern "C" fn on_flush(
 redis_module! {
     name: "falkordb",
     version: 1,
-    allocator: (redis_module::alloc::RedisAlloc, redis_module::alloc::RedisAlloc),
+    allocator: (ThreadCountingAllocator, ThreadCountingAllocator),
     data_types: [GRAPH_TYPE],
     init: graph_init,
     commands: [
@@ -979,6 +1183,7 @@ redis_module! {
         ["graph.EXPLAIN", graph_explain, "readonly", 1, 1, 1, ""],
         ["graph.LIST", graph_list, "readonly", 0, 0, 0, ""],
         ["graph.RECORD", graph_record, "write deny-oom", 1, 1, 1, ""],
+        ["graph.MEMORY", graph_memory, "readonly", 1, 1, 1, ""],
     ],
     configurations: [
         i64: [

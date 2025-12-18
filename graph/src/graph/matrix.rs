@@ -1,6 +1,11 @@
 #![allow(clippy::doc_markdown)]
 
-use std::{mem::MaybeUninit, os::raw::c_void, ptr::null_mut, sync::Arc};
+use std::{
+    mem::MaybeUninit,
+    os::raw::c_void,
+    ptr::null_mut,
+    sync::{Arc, Mutex},
+};
 
 use crate::graph::GraphBLAS::{
     GrB_BOOL, GrB_DESC_C, GrB_DESC_CT0, GrB_DESC_CT0T1, GrB_DESC_CT1, GrB_DESC_R, GrB_DESC_RC,
@@ -8,15 +13,16 @@ use crate::graph::GraphBLAS::{
     GrB_DESC_RSCT0T1, GrB_DESC_RSCT1, GrB_DESC_RST0, GrB_DESC_RST0T1, GrB_DESC_RST1, GrB_DESC_RT0,
     GrB_DESC_RT0T1, GrB_DESC_RT1, GrB_DESC_S, GrB_DESC_SC, GrB_DESC_SCT0, GrB_DESC_SCT0T1,
     GrB_DESC_SCT1, GrB_DESC_ST0, GrB_DESC_ST0T1, GrB_DESC_ST1, GrB_DESC_T0, GrB_DESC_T0T1,
-    GrB_DESC_T1, GrB_Descriptor, GrB_Info, GrB_Matrix, GrB_Matrix_clear, GrB_Matrix_dup,
-    GrB_Matrix_eWiseAdd_Semiring, GrB_Matrix_eWiseMult_Semiring, GrB_Matrix_extractElement_BOOL,
-    GrB_Matrix_free, GrB_Matrix_get_INT32, GrB_Matrix_ncols, GrB_Matrix_new, GrB_Matrix_nrows,
-    GrB_Matrix_nvals, GrB_Matrix_removeElement, GrB_Matrix_resize, GrB_Matrix_setElement_BOOL,
-    GrB_Matrix_wait, GrB_Mode, GrB_WaitMode, GrB_finalize, GrB_mxm, GrB_transpose, GxB_ANY_BOOL,
-    GxB_ANY_PAIR_BOOL, GxB_Iterator, GxB_Iterator_free, GxB_Iterator_new,
-    GxB_Matrix_Iterator_attach, GxB_Matrix_Iterator_getIndex, GxB_Matrix_Iterator_next,
-    GxB_Matrix_fprint, GxB_Matrix_memoryUsage, GxB_Option_Field, GxB_Print_Level, GxB_init,
-    GxB_rowIterator_getRowIndex, GxB_rowIterator_nextRow, GxB_rowIterator_seekRow,
+    GrB_DESC_T1, GrB_Descriptor, GrB_GLOBAL, GrB_Global_set_INT32, GrB_Info, GrB_Matrix,
+    GrB_Matrix_clear, GrB_Matrix_dup, GrB_Matrix_eWiseAdd_Semiring, GrB_Matrix_eWiseMult_Semiring,
+    GrB_Matrix_extractElement_BOOL, GrB_Matrix_free, GrB_Matrix_get_INT32, GrB_Matrix_ncols,
+    GrB_Matrix_new, GrB_Matrix_nrows, GrB_Matrix_nvals, GrB_Matrix_removeElement,
+    GrB_Matrix_resize, GrB_Matrix_setElement_BOOL, GrB_Matrix_wait, GrB_Mode, GrB_WaitMode,
+    GrB_finalize, GrB_mxm, GrB_transpose, GxB_ANY_BOOL, GxB_ANY_PAIR_BOOL, GxB_Iterator,
+    GxB_Iterator_free, GxB_Iterator_new, GxB_Matrix_fprint, GxB_Matrix_memoryUsage,
+    GxB_Option_Field, GxB_Print_Level, GxB_init, GxB_rowIterator_attach,
+    GxB_rowIterator_getColIndex, GxB_rowIterator_getRowIndex, GxB_rowIterator_nextCol,
+    GxB_rowIterator_nextRow, GxB_rowIterator_seekRow,
 };
 
 /// Initializes the GraphBLAS library in non-blocking mode.
@@ -36,6 +42,16 @@ pub fn init(
             user_calloc_function,
             user_realloc_function,
             user_free_function,
+        );
+    }
+}
+
+pub fn burble(burble: bool) {
+    unsafe {
+        GrB_Global_set_INT32(
+            GrB_GLOBAL,
+            i32::from(burble),
+            GxB_Option_Field::GxB_BURBLE as _,
         );
     }
 }
@@ -116,11 +132,6 @@ pub trait Remove {
         &mut self,
         i: u64,
         j: u64,
-    );
-
-    fn remove_all(
-        &mut self,
-        b: &Matrix,
     );
 }
 
@@ -329,6 +340,7 @@ impl MxM for Matrix {
 pub struct Matrix {
     /// The underlying GraphBLAS matrix.
     m: Arc<GrB_Matrix>,
+    lock: Arc<Mutex<()>>,
 }
 
 unsafe impl Send for Matrix {}
@@ -361,10 +373,12 @@ impl Matrix {
     }
 
     pub fn wait(&self) {
+        let lock = self.lock.lock().unwrap();
         unsafe {
             let info = GrB_Matrix_wait(*self.m, GrB_WaitMode::GrB_MATERIALIZE as _);
             debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
         }
+        drop(lock);
     }
 
     #[must_use]
@@ -380,6 +394,16 @@ impl Matrix {
     pub fn clear(&mut self) {
         unsafe {
             let info = GrB_Matrix_clear(*self.m);
+            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+        }
+    }
+
+    pub fn remove_all(
+        &mut self,
+        b: &Self,
+    ) {
+        unsafe {
+            let info = GrB_transpose(*self.m, *b.m, null_mut(), *self.m, GrB_DESC_RCT0);
             debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
         }
     }
@@ -443,6 +467,7 @@ impl New for Matrix {
             debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
             Self {
                 m: Arc::new(m.assume_init()),
+                lock: Arc::new(Mutex::new(())),
             }
         }
     }
@@ -461,6 +486,7 @@ impl Dup<Self> for Matrix {
                 debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
                 m.assume_init()
             }),
+            lock: Arc::new(Mutex::new(())),
         }
     }
 }
@@ -476,16 +502,12 @@ impl Matrix {
         Iter::new(self, min_row, max_row)
     }
 
-    pub fn print(&self) {
+    pub fn print(
+        &self,
+        level: GxB_Print_Level,
+    ) {
         unsafe {
-            let info = GrB_Matrix_wait(*self.m, GrB_WaitMode::GrB_MATERIALIZE as _);
-            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
-            let info = GxB_Matrix_fprint(
-                *self.m,
-                null_mut(),
-                GxB_Print_Level::GxB_COMPLETE as _,
-                null_mut(),
-            );
+            let info = GxB_Matrix_fprint(*self.m, null_mut(), level as _, null_mut());
             debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
         }
     }
@@ -499,16 +521,6 @@ impl Remove for Matrix {
     ) {
         unsafe {
             let info = GrB_Matrix_removeElement(*self.m, i, j);
-            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
-        }
-    }
-
-    fn remove_all(
-        &mut self,
-        b: &Self,
-    ) {
-        unsafe {
-            let info = GrB_transpose(*self.m, *b.m, null_mut(), *self.m, GrB_DESC_RCT0);
             debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
         }
     }
@@ -618,7 +630,7 @@ impl Iter {
             let info = GxB_Iterator_new(iter.as_mut_ptr());
             debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
             let iter = iter.assume_init();
-            let info = GxB_Matrix_Iterator_attach(iter, *m.m, null_mut());
+            let info = GxB_rowIterator_attach(iter, *m.m, null_mut());
             debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
             let mut info = GxB_rowIterator_seekRow(iter, min_row);
             debug_assert!(
@@ -626,11 +638,8 @@ impl Iter {
                     || info == GrB_Info::GrB_NO_VALUE
                     || info == GrB_Info::GxB_EXHAUSTED
             );
-            if info == GrB_Info::GrB_NO_VALUE {
-                while info == GrB_Info::GrB_NO_VALUE && GxB_rowIterator_getRowIndex(iter) < max_row
-                {
-                    info = GxB_rowIterator_nextRow(iter);
-                }
+            while info == GrB_Info::GrB_NO_VALUE && GxB_rowIterator_getRowIndex(iter) < max_row {
+                info = GxB_rowIterator_nextRow(iter);
             }
             Self {
                 m: m.m.clone(),
@@ -656,11 +665,23 @@ impl Iterator for Iter {
             return None;
         }
         unsafe {
-            let mut row = 0u64;
-            let mut col = 0u64;
-            GxB_Matrix_Iterator_getIndex(self.inner, &raw mut row, &raw mut col);
-            self.depleted = GxB_Matrix_Iterator_next(self.inner) != GrB_Info::GrB_SUCCESS
-                || GxB_rowIterator_getRowIndex(self.inner) > self.max_row;
+            let row = GxB_rowIterator_getRowIndex(self.inner);
+            let col = GxB_rowIterator_getColIndex(self.inner);
+            if GxB_rowIterator_nextCol(self.inner) != GrB_Info::GrB_SUCCESS {
+                let mut info = GxB_rowIterator_nextRow(self.inner);
+                debug_assert!(
+                    info == GrB_Info::GrB_SUCCESS
+                        || info == GrB_Info::GrB_NO_VALUE
+                        || info == GrB_Info::GxB_EXHAUSTED
+                );
+                while info == GrB_Info::GrB_NO_VALUE
+                    && GxB_rowIterator_getRowIndex(self.inner) < self.max_row
+                {
+                    info = GxB_rowIterator_nextRow(self.inner);
+                }
+                self.depleted = info != GrB_Info::GrB_SUCCESS
+                    || GxB_rowIterator_getRowIndex(self.inner) > self.max_row;
+            }
             Some((row, col))
         }
     }

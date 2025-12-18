@@ -1,18 +1,37 @@
 use std::fs;
 
 fn main() {
-    println!("cargo:rustc-link-search=/opt/homebrew/opt/llvm/lib");
-    println!("cargo:rustc-link-search=/opt/homebrew/opt/llvm/lib/c++");
-    println!("cargo:rustc-link-search=/usr/lib/llvm-20/lib");
-    println!("cargo:rustc-link-search=/usr/lib/llvm-20/lib/c++");
+    #[cfg(target_os = "macos")]
+    {
+        println!("cargo:rustc-link-search=/opt/homebrew/opt/llvm/lib");
+        println!("cargo:rustc-link-search=/opt/homebrew/opt/llvm/lib/c++");
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        // Common libomp install locations when building RediSearch/VecSim with LLVM.
+        println!("cargo:rustc-link-search=/usr/lib/llvm-20/lib");
+        println!("cargo:rustc-link-search=/usr/lib/llvm-18/lib");
+    }
 
     println!("cargo:rustc-link-lib=omp");
 
     println!("cargo:rustc-link-search=/usr/local/lib");
     println!("cargo:rustc-link-lib=static=graphblas");
 
-    println!("cargo:rustc-link-lib=static=c++");
-    println!("cargo:rustc-link-lib=static=c++abi");
+    // VecSim/RediSearch are built with a C++ toolchain.
+    // - macOS uses libc++ / libc++abi
+    // - Linux generally uses libstdc++ (and does not need explicit c++abi)
+    #[cfg(target_os = "macos")]
+    {
+        println!("cargo:rustc-link-lib=static=c++");
+        println!("cargo:rustc-link-lib=static=c++abi");
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        println!("cargo:rustc-link-lib=stdc++");
+    }
 
     #[cfg(target_os = "macos")]
     {
@@ -27,7 +46,7 @@ fn main() {
         );
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
     {
         println!(
             "cargo:rustc-link-search=native=redisearch/RediSearch/bin/linux-x64-release/search-static"
@@ -49,9 +68,36 @@ fn main() {
         );
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(all(target_os = "linux", target_arch = "aarch64"))]
+    {
+        println!(
+            "cargo:rustc-link-search=native=redisearch/RediSearch/bin/linux-arm64v8-release/search-static"
+        );
+        println!(
+            "cargo:rustc-link-search=native=redisearch/RediSearch/bin/linux-arm64v8-release/search-static/deps/VectorSimilarity/src/VecSim"
+        );
+        println!(
+            "cargo:rustc-link-search=native=redisearch/RediSearch/bin/linux-arm64v8-release/search-static/deps/VectorSimilarity/src/VecSim/spaces"
+        );
+        println!(
+            "cargo:rustc-link-search=native=/data/redisearch/bin/linux-arm64v8-release/search-static"
+        );
+        println!(
+            "cargo:rustc-link-search=native=/data/redisearch/bin/linux-arm64v8-release/search-static/deps/VectorSimilarity/src/VecSim"
+        );
+        println!(
+            "cargo:rustc-link-search=native=/data/redisearch/bin/linux-arm64v8-release/search-static/deps/VectorSimilarity/src/VecSim/spaces"
+        );
+    }
+
+    #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
     let paths = fs::read_dir("../redisearch/RediSearch/bin/linux-x64-release/search-static/deps/VectorSimilarity/src/VecSim/spaces").unwrap_or_else(|_| {
         fs::read_dir("/data/redisearch/bin/linux-x64-release/search-static/deps/VectorSimilarity/src/VecSim/spaces").unwrap()
+    });
+
+    #[cfg(all(target_os = "linux", target_arch = "aarch64"))]
+    let paths = fs::read_dir("../redisearch/RediSearch/bin/linux-arm64v8-release/search-static/deps/VectorSimilarity/src/VecSim/spaces").unwrap_or_else(|_| {
+        fs::read_dir("/data/redisearch/bin/linux-arm64v8-release/search-static/deps/VectorSimilarity/src/VecSim/spaces").unwrap()
     });
 
     #[cfg(target_os = "macos")]

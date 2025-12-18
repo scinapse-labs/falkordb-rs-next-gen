@@ -1,9 +1,13 @@
 use std::{cell::RefCell, collections::HashMap, sync::Arc};
 
+use atomic_refcell::AtomicRefCell;
 use roaring::RoaringTreemap;
 
 use crate::{
-    graph::graph::{Graph, NodeId, RelationshipId},
+    graph::{
+        graph::{Graph, LabelId, NodeId, RelationshipId},
+        matrix::{Matrix, New, Set, Size},
+    },
     runtime::{
         functions::Type,
         ordermap::OrderMap,
@@ -34,7 +38,6 @@ impl PendingRelationship {
     }
 }
 
-#[derive(Default)]
 pub struct Pending {
     created_nodes: RoaringTreemap,
     created_relationships: HashMap<RelationshipId, PendingRelationship>,
@@ -42,18 +45,52 @@ pub struct Pending {
     deleted_relationships: OrderSet<(RelationshipId, NodeId, NodeId)>,
     set_nodes_attrs: HashMap<NodeId, OrderMap<Arc<String>, Value>>,
     set_relationships_attrs: HashMap<RelationshipId, OrderMap<Arc<String>, Value>>,
-    set_node_labels: HashMap<NodeId, OrderSet<Arc<String>>>,
-    remove_node_labels: HashMap<NodeId, OrderSet<Arc<String>>>,
+    set_node_labels: Matrix,
+    remove_node_labels: Matrix,
     index_add_docs: HashMap<Arc<String>, RoaringTreemap>,
     index_remove_docs: HashMap<Arc<String>, RoaringTreemap>,
 }
 
 impl Pending {
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            created_nodes: RoaringTreemap::new(),
+            created_relationships: HashMap::new(),
+            deleted_nodes: RoaringTreemap::new(),
+            deleted_relationships: OrderSet::default(),
+            set_nodes_attrs: HashMap::new(),
+            set_relationships_attrs: HashMap::new(),
+            set_node_labels: Matrix::new(0, 0),
+            remove_node_labels: Matrix::new(0, 0),
+            index_add_docs: HashMap::new(),
+            index_remove_docs: HashMap::new(),
+        }
+    }
+
+    pub fn resize(
+        &mut self,
+        node_cap: u64,
+        labels_count: usize,
+    ) {
+        self.set_node_labels.resize(node_cap, labels_count as u64);
+        self.remove_node_labels
+            .resize(node_cap, labels_count as u64);
+    }
+
     pub fn created_node(
         &mut self,
         id: NodeId,
     ) {
         self.created_nodes.insert(id.into());
+        let mut cap = self.set_node_labels.nrows();
+        if cap <= u64::from(id) {
+            while cap <= u64::from(id) {
+                cap *= 2;
+            }
+            self.set_node_labels
+                .resize(cap, self.set_node_labels.ncols());
+        }
     }
 
     pub fn set_node_attributes(
@@ -150,31 +187,38 @@ impl Pending {
     pub fn set_node_labels(
         &mut self,
         id: NodeId,
-        labels: OrderSet<Arc<String>>,
+        labels: &OrderSet<LabelId>,
     ) {
-        self.set_node_labels.insert(id, labels);
+        for label in labels.iter() {
+            self.set_node_labels
+                .set(id.into(), usize::from(*label) as u64, true);
+        }
     }
 
     pub fn remove_node_labels(
         &mut self,
         id: NodeId,
-        labels: OrderSet<Arc<String>>,
+        labels: Vec<LabelId>,
     ) {
-        self.remove_node_labels.insert(id, labels);
+        for label in &labels {
+            self.remove_node_labels
+                .set(id.into(), usize::from(*label) as u64, true);
+        }
     }
 
     pub fn update_node_labels(
         &self,
         id: NodeId,
-        labels: &mut OrderSet<Arc<String>>,
+        labels: &mut OrderSet<LabelId>,
     ) {
-        if let Some(added) = self.set_node_labels.get(&id) {
-            labels.extend(added.iter().cloned());
-        }
-        if let Some(removed) = self.remove_node_labels.get(&id) {
-            for label in removed.iter() {
-                labels.remove(label);
-            }
+        labels.extend(
+            self.set_node_labels
+                .iter(id.into(), id.into())
+                .map(|(_, label_id)| LabelId(label_id as usize)),
+        );
+
+        for (_, label) in self.remove_node_labels.iter(id.into(), id.into()) {
+            labels.remove(&LabelId(label as usize));
         }
     }
 
@@ -326,7 +370,7 @@ impl Pending {
 
     pub fn commit(
         &mut self,
-        g: &RefCell<Graph>,
+        g: &AtomicRefCell<Graph>,
         stats: &RefCell<QueryStatistics>,
     ) {
         if !self.created_nodes.is_empty() {
@@ -354,18 +398,16 @@ impl Pending {
             }
             self.deleted_nodes.clear();
         }
-        if !self.set_node_labels.is_empty() {
-            for (id, labels) in &self.set_node_labels {
-                g.borrow_mut()
-                    .set_node_labels(*id, labels, &mut self.index_add_docs);
-            }
+        if self.set_node_labels.nvals() > 0 {
+            g.borrow_mut()
+                .set_nodes_labels(&mut self.set_node_labels, &mut self.index_add_docs);
+
             self.set_node_labels.clear();
         }
-        if !self.remove_node_labels.is_empty() {
-            for (id, labels) in &self.remove_node_labels {
-                g.borrow_mut()
-                    .remove_node_labels(*id, labels, &mut self.index_remove_docs);
-            }
+        if self.remove_node_labels.nvals() > 0 {
+            g.borrow_mut()
+                .remove_nodes_labels(&mut self.remove_node_labels, &mut self.index_remove_docs);
+
             self.remove_node_labels.clear();
         }
         if !self.set_nodes_attrs.is_empty() {
@@ -378,21 +420,11 @@ impl Pending {
                     _ => 1,
                 })
                 .sum::<usize>();
-            for (id, attrs) in &self.set_nodes_attrs {
-                for (key, value) in attrs.iter() {
-                    let attr_id = g.borrow_mut().get_or_add_node_attribute_id(key);
-                    if g.borrow_mut().set_node_attribute(
-                        *id,
-                        attr_id,
-                        value.clone(),
-                        &mut self.index_add_docs,
-                        &mut self.index_remove_docs,
-                    ) {
-                        stats.borrow_mut().properties_removed += 1;
-                    }
-                }
+            for (id, attrs) in self.set_nodes_attrs.drain() {
+                stats.borrow_mut().properties_removed +=
+                    g.borrow_mut()
+                        .set_node_attributes(id, attrs, &mut self.index_add_docs);
             }
-            self.set_nodes_attrs.clear();
         }
         if !self.set_relationships_attrs.is_empty() {
             stats.borrow_mut().properties_set += self
@@ -404,15 +436,9 @@ impl Pending {
                     _ => 1,
                 })
                 .sum::<usize>();
-            for (id, attrs) in &self.set_relationships_attrs {
-                for (key, value) in attrs.iter() {
-                    let attr_id = g.borrow_mut().get_or_add_relationship_attribute_id(key);
-                    if g.borrow_mut()
-                        .set_relationship_attribute(*id, attr_id, value.clone())
-                    {
-                        stats.borrow_mut().properties_removed += 1;
-                    }
-                }
+            for (id, attrs) in self.set_relationships_attrs.drain() {
+                stats.borrow_mut().properties_removed +=
+                    g.borrow_mut().set_relationship_attributes(id, attrs);
             }
             self.set_relationships_attrs.clear();
         }

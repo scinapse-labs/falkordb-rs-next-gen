@@ -1,12 +1,15 @@
-use crate::graph::matrix::{self, Dup, Get, Matrix, New, Remove, Set, Size};
+use crate::graph::{
+    matrix::{Dup, New, Remove, Set, Size},
+    versioned_matrix::{self, VersionedMatrix},
+};
 
 #[allow(non_upper_case_globals)]
 pub const GrB_INDEX_MAX: u64 = (1u64 << 60) - 1;
 
 pub struct Tensor {
-    m: Matrix,
-    mt: Matrix,
-    me: Matrix,
+    m: VersionedMatrix,
+    mt: VersionedMatrix,
+    me: VersionedMatrix,
 }
 
 impl New for Tensor {
@@ -15,9 +18,9 @@ impl New for Tensor {
         ncols: u64,
     ) -> Self {
         Self {
-            m: Matrix::new(nrows, ncols),
-            mt: Matrix::new(ncols, nrows),
-            me: Matrix::new(GrB_INDEX_MAX, GrB_INDEX_MAX),
+            m: VersionedMatrix::new(nrows, ncols),
+            mt: VersionedMatrix::new(ncols, nrows),
+            me: VersionedMatrix::new(GrB_INDEX_MAX, GrB_INDEX_MAX),
         }
     }
 }
@@ -28,14 +31,10 @@ impl Tensor {
         &self,
         src: u64,
         dest: u64,
-    ) -> Vec<u64> {
+    ) -> versioned_matrix::Iter {
         debug_assert!(u32::try_from(src).is_ok() && u32::try_from(dest).is_ok());
-        if self.m.get(src, dest).is_some() {
-            let row = src << 32 | dest;
-            self.me.iter(row, row).map(|(_, j)| j).collect()
-        } else {
-            vec![]
-        }
+        let row = src << 32 | dest;
+        self.me.iter(row, row)
     }
 
     pub fn set(
@@ -88,8 +87,8 @@ impl Tensor {
     }
 
     #[must_use]
-    pub fn dup_bool(&self) -> Matrix {
-        self.m.dup()
+    pub const fn matrix(&self) -> &VersionedMatrix {
+        &self.m
     }
 
     #[must_use]
@@ -102,17 +101,22 @@ impl Tensor {
         Iter::new(self, min_row, max_row, transpose)
     }
 
-    pub fn wait(&self) {
+    pub fn wait(&mut self) {
         self.m.wait();
         self.mt.wait();
         self.me.wait();
+    }
+
+    #[must_use]
+    pub fn memory_usage(&self) -> usize {
+        self.m.memory_usage() + self.mt.memory_usage() + self.me.memory_usage()
     }
 }
 
 pub struct Iter<'a> {
     t: &'a Tensor,
-    mit: matrix::Iter,
-    vit: Option<matrix::Iter>,
+    mit: versioned_matrix::Iter,
+    vit: Option<versioned_matrix::Iter>,
     transpose: bool,
     src: u64,
     dest: u64,

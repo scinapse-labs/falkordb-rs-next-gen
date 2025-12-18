@@ -22,18 +22,15 @@ name = "falkordb"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+atomic_refcell = "0.1.13"
 graph = { path = "graph", version = "0.1.0" }
 lazy_static = "1.5.0"
-rayon = "1.11.0"
 redis-module = { git = "https://github.com/AviAvni/redismodule-rs", branch = "patches-redisearch" }
 redis-module-macros = { git = "https://github.com/RedisLabsModules/redismodule-rs", tag = "v2.1.2" }
-tracing = "0.1"
-tracing-subscriber = "0.3"
-opentelemetry = { version = "0", optional = true }
-opentelemetry-zipkin = { version = "0", default-features = false, features = ["reqwest-blocking-client", "reqwest-rustls"], optional = true }
-opentelemetry_sdk = { version = "0", optional = true }
+ryu = "1.0.20"
 orx-tree = "2.1.0"
-tracing-opentelemetry = { git = 'https://github.com/BSteffaniak/tracing-opentelemetry.git', branch = 'upgrade-otel-to-0.30', optional = true }
+pyroscope = { version = "0.5.8", optional = true }
+pyroscope_pprofrs = { version = "0.2.10", optional = true }
 
 [profile.release]
 codegen-units = 1
@@ -42,5 +39,5 @@ lto = true
 # strip = false
 
 [features]
-zipkin = ["opentelemetry", "opentelemetry-zipkin", "opentelemetry_sdk", "tracing-opentelemetry"]
+pyro = ["pyroscope", "pyroscope_pprofrs"]
 fuzz = []

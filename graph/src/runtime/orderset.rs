@@ -82,6 +82,18 @@ impl<T: PartialEq> OrderSet<T> {
     pub fn clear(&mut self) {
         self.vec.clear();
     }
+
+    pub fn get_index_of(
+        &self,
+        value: &T,
+    ) -> Option<usize> {
+        for (i, v) in self.vec.iter().enumerate() {
+            if v == value {
+                return Some(i);
+            }
+        }
+        None
+    }
 }
 
 impl<T: PartialEq> FromIterator<T> for OrderSet<T> {

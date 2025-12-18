@@ -5,7 +5,7 @@ use std::{
     os::raw::{c_char, c_int, c_void},
     ptr::null_mut,
     sync::{
-        Arc,
+        Arc, RwLock,
         atomic::{AtomicI32, Ordering},
     },
 };
@@ -100,7 +100,7 @@ impl Document {
                     RediSearch_DocumentAddFieldString(
                         self.rs_doc,
                         field.name.as_ptr(),
-                        s.as_ptr().cast::<i8>(),
+                        s.as_ptr().cast::<c_char>(),
                         s.len(),
                         if field.ty == IndexType::Fulltext {
                             RSFLDTYPE_FULLTEXT
@@ -126,8 +126,8 @@ impl Document {
 pub enum IndexQuery<T> {
     Equal(Arc<String>, T),
     Range(Arc<String>, Option<T>, Option<T>),
-    And(Vec<IndexQuery<T>>),
-    Or(Vec<IndexQuery<T>>),
+    And(Vec<Self>),
+    Or(Vec<Self>),
 }
 
 pub struct Field {
@@ -182,15 +182,20 @@ impl Drop for Index {
     }
 }
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct Indexer {
-    index: HashMap<Arc<String>, Index>,
+    index: Arc<RwLock<HashMap<Arc<String>, Index>>>,
 }
 
 unsafe impl Send for Indexer {}
 unsafe impl Sync for Indexer {}
 
 impl Indexer {
+    #[must_use]
+    pub fn has_indices(&self) -> bool {
+        !self.index.read().unwrap().is_empty()
+    }
+
     pub fn create_index(
         &mut self,
         index_type: &IndexType,
@@ -199,7 +204,8 @@ impl Indexer {
         total: u64,
     ) -> Result<(), String> {
         let mut fields = HashMap::new();
-        let a = self.index.entry(label.clone()).or_insert_with(|| Index {
+        let mut index = self.index.write().unwrap();
+        let a = index.entry(label.clone()).or_insert_with(|| Index {
             rs_idx: std::ptr::null_mut(),
             fields: HashMap::new(),
             status: IndexStatus::Operational,
@@ -243,7 +249,7 @@ impl Indexer {
             RediSearch_IndexOptionsSetStopwords(options, null_mut(), 0);
 
             let clabel = CString::new(label.as_str()).unwrap();
-            let index = RediSearch_CreateIndex(clabel.as_ptr().cast::<i8>(), options);
+            let index = RediSearch_CreateIndex(clabel.as_ptr().cast::<c_char>(), options);
             RediSearch_FreeIndexOptions(options);
 
             for field in fields.values().flat_map(|f| f.iter()) {
@@ -297,7 +303,8 @@ impl Indexer {
         index_type: &IndexType,
         total: u64,
     ) -> Option<Vec<Arc<String>>> {
-        if let Some(index) = self.index.get_mut(&label) {
+        let mut index = self.index.write().unwrap();
+        if let Some(index) = index.get_mut(&label) {
             let mut removed = false;
             for attr in attrs {
                 if let Some(field) = index.fields.get(attr)
@@ -332,7 +339,7 @@ impl Indexer {
         &mut self,
         label: Arc<String>,
     ) {
-        self.index.remove(&label);
+        self.index.write().unwrap().remove(&label);
     }
 
     #[must_use]
@@ -340,7 +347,7 @@ impl Indexer {
         &self,
         label: Arc<String>,
     ) -> bool {
-        if let Some(index) = self.index.get(&label)
+        if let Some(index) = self.index.read().unwrap().get(&label)
             && matches!(index.status, IndexStatus::Operational)
         {
             return true;
@@ -354,7 +361,7 @@ impl Indexer {
         label: Arc<String>,
         field: Arc<String>,
     ) -> bool {
-        if let Some(index) = self.index.get(&label)
+        if let Some(index) = self.index.read().unwrap().get(&label)
             && matches!(index.status, IndexStatus::Operational)
         {
             return index.fields.contains_key(&field);
@@ -368,7 +375,7 @@ impl Indexer {
         label: Arc<String>,
         query: IndexQuery<Value>,
     ) -> Vec<u64> {
-        if let Some(index) = self.index.get(&label) {
+        if let Some(index) = self.index.read().unwrap().get(&label) {
             let query = match query {
                 IndexQuery::Equal(key, Value::Int(value)) => unsafe {
                     let field = &index.fields.get(&key).unwrap()[0];
@@ -440,7 +447,8 @@ impl Indexer {
         &mut self,
         label: Arc<String>,
     ) -> bool {
-        if let Some(index) = self.index.get_mut(&label) {
+        let mut index = self.index.write().unwrap();
+        if let Some(index) = index.get_mut(&label) {
             let res = index.pending_changes.fetch_sub(1, Ordering::SeqCst);
             debug_assert!(res > 0);
             return res == 1;
@@ -452,7 +460,8 @@ impl Indexer {
         &mut self,
         label: Arc<String>,
     ) {
-        if let Some(index) = self.index.get_mut(&label) {
+        let mut index = self.index.write().unwrap();
+        if let Some(index) = index.get_mut(&label) {
             index.pending_changes.fetch_add(1, Ordering::SeqCst);
         }
     }
@@ -462,7 +471,7 @@ impl Indexer {
         &self,
         label: Arc<String>,
     ) -> bool {
-        if let Some(index) = self.index.get(&label) {
+        if let Some(index) = self.index.read().unwrap().get(&label) {
             return index.pending_changes.load(Ordering::SeqCst) == 0;
         }
         false
@@ -473,7 +482,7 @@ impl Indexer {
         &self,
         label: Arc<String>,
     ) -> i32 {
-        if let Some(index) = self.index.get(&label) {
+        if let Some(index) = self.index.read().unwrap().get(&label) {
             return index.pending_changes.load(Ordering::SeqCst);
         }
         0
@@ -484,8 +493,9 @@ impl Indexer {
         add_docs: &mut HashMap<Arc<String>, Vec<Document>>,
         remove_docs: &mut HashMap<Arc<String>, RoaringTreemap>,
     ) {
+        let mut index = self.index.write().unwrap();
         for (label, add_docs) in add_docs {
-            let Some(index) = self.index.get_mut(label) else {
+            let Some(index) = index.get_mut(label) else {
                 continue;
             };
             for doc in add_docs.drain(..) {
@@ -502,7 +512,7 @@ impl Indexer {
             index.status = IndexStatus::Operational;
         }
         for (label, remove_docs) in remove_docs {
-            let Some(index) = self.index.get_mut(label) else {
+            let Some(index) = index.get_mut(label) else {
                 continue;
             };
             for id in remove_docs.iter() {
@@ -519,6 +529,8 @@ impl Indexer {
         label: Arc<String>,
     ) -> HashMap<Arc<String>, Vec<Arc<Field>>> {
         self.index
+            .read()
+            .unwrap()
             .get(&label)
             .map(|index| index.fields.clone())
             .unwrap_or_default()
@@ -527,6 +539,8 @@ impl Indexer {
     #[must_use]
     pub fn index_info(&self) -> Vec<IndexInfo> {
         self.index
+            .read()
+            .unwrap()
             .iter()
             .map(|(label, index)| {
                 let attrs = index
