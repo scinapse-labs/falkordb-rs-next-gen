@@ -602,25 +602,20 @@ fn query_mut(
                 reset_counter();
                 enable_tracking();
             }
+            let g = graph.clone();
             let graph = graph.clone();
+            let graph = graph.read().unwrap();
             let bc = bc;
             let ctx = unsafe { raw::RedisModule_GetThreadSafeContext.unwrap()(bc.inner) };
             let ctx = Context::new(ctx);
 
-            let res = graph
-                .read()
-                .unwrap()
-                .execute_query(&ctx, &query, compact, write);
+            let res = graph.execute_query(&ctx, &query, compact, write);
             match res {
                 Ok(is_write) => {
                     if is_write {
-                        graph
-                            .read()
-                            .unwrap()
-                            .sender
-                            .send((bc, query, compact))
-                            .unwrap();
-                        process_write_queued_query(graph);
+                        graph.sender.send((bc, query, compact)).unwrap();
+                        drop(graph);
+                        process_write_queued_query(g);
                     } else {
                         drop(bc);
                         unsafe { raw::RedisModule_FreeThreadSafeContext.unwrap()(ctx.ctx) };
@@ -650,40 +645,32 @@ fn query_mut(
 }
 
 fn process_write_queued_query(graph: Arc<RwLock<ThreadedGraph>>) {
+    let mut graph = graph.write().unwrap();
     if graph
-        .read()
-        .unwrap()
         .write_loop
         .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
         .is_ok()
     {
-        while let Ok((bc, query, compact)) = { graph.read().unwrap().receiver.try_recv() } {
+        while let Ok((bc, query, compact)) = { graph.receiver.try_recv() } {
             let ctx = unsafe { raw::RedisModule_GetThreadSafeContext.unwrap()(bc.inner) };
             let ctx = Context::new(ctx);
-            let res = graph
-                .read()
-                .unwrap()
-                .execute_query_write(&ctx, &query, compact);
+            let res = graph.execute_query_write(&ctx, &query, compact);
             match res {
                 Ok(g) => {
                     drop(bc);
                     unsafe { raw::RedisModule_FreeThreadSafeContext.unwrap()(ctx.ctx) };
-                    graph.write().unwrap().graph.commit(g);
+                    graph.graph.commit(g);
                 }
                 Err(err) => {
                     let cerr = CString::new(err).unwrap();
                     raw::reply_with_error(ctx.ctx, cerr.as_ptr().cast::<c_char>());
                     drop(bc);
                     unsafe { raw::RedisModule_FreeThreadSafeContext.unwrap()(ctx.ctx) };
-                    graph.read().unwrap().graph.rollback();
+                    graph.graph.rollback();
                 }
             }
         }
-        graph
-            .read()
-            .unwrap()
-            .write_loop
-            .store(false, Ordering::Release);
+        graph.write_loop.store(false, Ordering::Release);
     }
 }
 

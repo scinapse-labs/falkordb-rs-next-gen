@@ -38,6 +38,13 @@ def run_read_attribute(id):
     version = int(res._raw_stats[2][15:])
     return (id, res.result_set, version)
 
+def run_read_indexed_attribute(id):
+    db = FalkorDB()
+    g = db.select_graph("test")
+    res = g.query("MATCH (n:Node) WHERE n.id >= 0 RETURN n.id")
+    version = int(res._raw_stats[2][15:])
+    return (id, res.result_set, version)
+
 
 def run_write_label(id):
     db = FalkorDB()
@@ -210,3 +217,34 @@ def test_mvcc_relationship():
             for i in range(1, 1001)
             if version % 2 == 1 or i != version - 1
         ]
+
+# def test_mvcc_index():
+#     common.g.query("CREATE INDEX ON :Node(id)")
+
+#     res_write, res_read = mvcc(
+#         "UNWIND range(1, 1000) AS x CREATE (:Node {id: x})",
+#         run_write_attribute,
+#         run_read_indexed_attribute,
+#     )
+
+#     res = common.g.query("MATCH (n) RETURN n.id ORDER BY n.id")
+#     assert res.result_set == [
+#         [0 if i < 101 and i % 2 == 0 else None if i < 101 and i % 2 == 1 else i]
+#         for i in range(1, 1001)
+#     ]
+
+#     assert res_write == [(x, x + 1) for x in range(1, 101)]
+
+#     for r in res_read:
+#         version = r[2]
+#         res = r[1]
+#         assert res == [
+#             [
+#                 (
+#                     0
+#                     if i < version and i % 2 == 0
+#                     else None if i < version and i % 2 == 1 else i
+#                 )
+#             ]
+#             for i in range(1, 1001)
+#         ]
