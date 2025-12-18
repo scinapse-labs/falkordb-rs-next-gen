@@ -1,20 +1,37 @@
 use std::fs;
 
 fn main() {
-    println!("cargo:rustc-link-search=/opt/homebrew/opt/llvm/lib");
-    println!("cargo:rustc-link-search=/opt/homebrew/opt/llvm/lib/c++");
-    println!("cargo:rustc-link-search=/usr/lib/llvm-20/lib");
-    println!("cargo:rustc-link-search=/usr/lib/llvm-20/lib/c++");
-    println!("cargo:rustc-link-search=/usr/lib/llvm-18/lib");
-    println!("cargo:rustc-link-search=/usr/lib/llvm-18/lib/c++");
+    #[cfg(target_os = "macos")]
+    {
+        println!("cargo:rustc-link-search=/opt/homebrew/opt/llvm/lib");
+        println!("cargo:rustc-link-search=/opt/homebrew/opt/llvm/lib/c++");
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        // Common libomp install locations when building RediSearch/VecSim with LLVM.
+        println!("cargo:rustc-link-search=/usr/lib/llvm-20/lib");
+        println!("cargo:rustc-link-search=/usr/lib/llvm-18/lib");
+    }
 
     println!("cargo:rustc-link-lib=omp");
 
     println!("cargo:rustc-link-search=/usr/local/lib");
     println!("cargo:rustc-link-lib=static=graphblas");
 
-    println!("cargo:rustc-link-lib=static=c++");
-    println!("cargo:rustc-link-lib=static=c++abi");
+    // VecSim/RediSearch are built with a C++ toolchain.
+    // - macOS uses libc++ / libc++abi
+    // - Linux generally uses libstdc++ (and does not need explicit c++abi)
+    #[cfg(target_os = "macos")]
+    {
+        println!("cargo:rustc-link-lib=static=c++");
+        println!("cargo:rustc-link-lib=static=c++abi");
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        println!("cargo:rustc-link-lib=stdc++");
+    }
 
     #[cfg(target_os = "macos")]
     {
