@@ -242,11 +242,10 @@ impl Validate for DynTree<ExprIR> {
                                 func.name
                             ));
                         }
-                        let ExprIR::Variable(var) = child.child(child.num_children() - 1).data()
-                        else {
-                            unreachable!();
-                        };
-                        env.insert(var.id);
+                        if let ExprIR::Variable(var) = child.child(child.num_children() - 1).data()
+                        {
+                            env.insert(var.id);
+                        }
                     }
                 }
                 ExprIR::Map => {

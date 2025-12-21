@@ -54,8 +54,8 @@ class testMultiLabel():
             "MATCH (a:L0:L1)-[]->(b) RETURN LABELS(a), LABELS(b)",
             "MATCH (a:L0:L1)-[:E]->(b) RETURN LABELS(a), LABELS(b)",
             "MATCH (a:L0:L1)-[:E]->(b:L1) RETURN LABELS(a), LABELS(b)",
-            "MATCH (b:L1) WITH (b) MATCH (a:L0:L1)-[:E]->(b) RETURN LABELS(a), LABELS(b)",
-            "MATCH (b:L1) WITH (b) MATCH (a:L0)-[:E]->(b) RETURN LABELS(a), LABELS(b)",
+            "MATCH (b:L1) WITH b MATCH (a:L0:L1)-[:E]->(b) RETURN LABELS(a), LABELS(b)",
+            "MATCH (b:L1) WITH b MATCH (a:L0)-[:E]->(b) RETURN LABELS(a), LABELS(b)",
         ]
 
         expected_result = [[['L0','L1'], ['L1']]]

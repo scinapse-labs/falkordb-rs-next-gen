@@ -119,7 +119,7 @@ impl GetVariables for DynNode<'_, IR> {
                 | IR::NodeByIdScan { node, .. } => {
                     vars.push(node.alias.clone());
                 }
-                IR::RelationshipScan(query_relationship) => {
+                IR::CondTraverse(query_relationship) => {
                     vars.push(query_relationship.alias.clone());
                 }
                 IR::ExpandInto(query_relationship) => vars.push(query_relationship.alias.clone()),
@@ -252,17 +252,16 @@ impl<'a> Runtime {
     ) -> Result<(), String> {
         match ir.node(idx).data() {
             ExprIR::FuncInvocation(func) if func.is_aggregate() => {
-                let key = match ir.node(idx).child(ir.node(idx).num_children() - 1).data() {
-                    ExprIR::Variable(key) => key.clone(),
-                    _ => {
-                        return Err(String::from(
-                            "Aggregation function must end with a variable",
-                        ));
-                    }
+                let ExprIR::Variable(key) =
+                    ir.node(idx).child(ir.node(idx).num_children() - 1).data()
+                else {
+                    return Err(String::from(
+                        "Aggregation function must end with a variable",
+                    ));
                 };
 
-                curr.insert(&key, acc.get(&key).unwrap_or(Value::Null));
-                acc.insert(&key, self.run_expr(ir, idx, curr, Some(agg_group_key))?);
+                curr.insert(key, acc.get(key).unwrap_or(Value::Null));
+                acc.insert(key, self.run_expr(ir, idx, curr, Some(agg_group_key))?);
             }
             _ => {
                 for child in ir.node(idx).children() {
@@ -374,18 +373,13 @@ impl<'a> Runtime {
                             return Err(format!("Type mismatch: expected Bool but was {v:?}"));
                         }
                         (Value::Node(id), Value::String(key)) => {
-                            if let Some(value) = self.get_node_attribute(id, &key) {
-                                res.push(value.clone());
-                            } else {
-                                res.push(Value::Null);
-                            }
+                            res.push(self.get_node_attribute(id, &key).unwrap_or(Value::Null));
                         }
                         (Value::Relationship(rel), Value::String(key)) => {
-                            if let Some(value) = self.get_relationship_attribute(rel.0, &key) {
-                                res.push(value.clone());
-                            } else {
-                                res.push(Value::Null);
-                            }
+                            res.push(
+                                self.get_relationship_attribute(rel.0, &key)
+                                    .unwrap_or(Value::Null),
+                            );
                         }
                         (Value::Map(map), Value::String(key)) => {
                             res.push(map.get(&key).map_or(Value::Null, std::clone::Clone::clone));
@@ -1076,12 +1070,12 @@ impl<'a> Runtime {
                 .cond_inspect(self.inspect, move |res| {
                     self.record.borrow_mut().push((idx, res.clone()));
                 })),
-            IR::NodeByIdScan { node, id } => Ok(iter
-                .try_flat_map(move |vars| self.node_by_id_scan(node, id, vars))
+            IR::NodeByIdScan { node, id, op } => Ok(iter
+                .try_flat_map(move |vars| self.node_by_id_scan(node, id, op, vars))
                 .cond_inspect(self.inspect, move |res| {
                     self.record.borrow_mut().push((idx, res.clone()));
                 })),
-            IR::RelationshipScan(relationship_pattern) => Ok(iter
+            IR::CondTraverse(relationship_pattern) => Ok(iter
                 .try_flat_map(move |vars| self.relationship_scan(relationship_pattern, vars))
                 .cond_inspect(self.inspect, move |res| {
                     self.record.borrow_mut().push((idx, res.clone()));
@@ -1922,7 +1916,7 @@ impl<'a> Runtime {
                         }
                         true
                     })
-                    .flat_map(move |id| {
+                    .map(move |id| {
                         let mut vars = vars.clone();
                         vars.insert(
                             &relationship_pattern.alias,
@@ -1930,7 +1924,7 @@ impl<'a> Runtime {
                         );
                         vars.insert(&relationship_pattern.from.alias, Value::Node(src));
                         vars.insert(&relationship_pattern.to.alias, Value::Node(dst));
-                        vec![Ok(vars)]
+                        Ok(vars)
                     }),
             ) as Box<dyn Iterator<Item = Result<Env, String>>>
         })))
@@ -2090,6 +2084,7 @@ impl<'a> Runtime {
         &'a self,
         node_pattern: &'a QueryNode<Arc<String>>,
         id: &QueryExpr,
+        op: &ExprIR,
         mut vars: Env,
     ) -> Result<Box<dyn Iterator<Item = Result<Env, String>> + 'a>, String> {
         let id = self.run_expr(id, id.root().idx(), &vars, None)?;
@@ -2100,16 +2095,45 @@ impl<'a> Runtime {
             }
         };
         let g = self.g.borrow();
-        let node_labels = g.get_node_labels(id).collect::<OrderSet<Arc<String>>>();
-        if node_pattern
-            .labels
-            .iter()
-            .all(|label| node_labels.contains(label))
-        {
-            vars.insert(&node_pattern.alias, Value::Node(id));
-            Ok(Box::new(std::iter::once(Ok(vars))))
-        } else {
-            Ok(Box::new(empty()))
+        match op {
+            ExprIR::Eq => {
+                let node_labels = g.get_node_labels(id).collect::<OrderSet<Arc<String>>>();
+                if node_pattern
+                    .labels
+                    .iter()
+                    .all(|label| node_labels.contains(label))
+                {
+                    vars.insert(&node_pattern.alias, Value::Node(id));
+                    Ok(Box::new(std::iter::once(Ok(vars))))
+                } else {
+                    Ok(Box::new(empty()))
+                }
+            }
+            ExprIR::Gt => Ok(Box::new(g.get_nodes(&node_pattern.labels).filter_map(
+                move |nid| {
+                    if nid > id {
+                        let mut vars = vars.clone();
+                        vars.insert(&node_pattern.alias, Value::Node(nid));
+                        Some(Ok(vars))
+                    } else {
+                        None
+                    }
+                },
+            ))),
+            ExprIR::Lt => Ok(Box::new(g.get_nodes(&node_pattern.labels).filter_map(
+                move |nid| {
+                    if nid < id {
+                        let mut vars = vars.clone();
+                        vars.insert(&node_pattern.alias, Value::Node(nid));
+                        Some(Ok(vars))
+                    } else {
+                        None
+                    }
+                },
+            ))),
+            _ => {
+                unreachable!()
+            }
         }
     }
 
@@ -2164,7 +2188,9 @@ impl<'a> Runtime {
             }
             Value::Null => {}
             _ => {
-                return Err(String::from("Delete operator requires a node"));
+                return Err(String::from(
+                    "Delete type mismatch, expecting either Node or Relationship.",
+                ));
             }
         }
         Ok(())
@@ -2205,9 +2231,11 @@ impl<'a> Runtime {
                 (from_id, to_id)
             };
 
-            if self.g.borrow().is_node_deleted(from_id)
+            if (self.g.borrow().is_node_deleted(from_id)
+                && !self.pending.borrow().is_node_created(from_id))
                 || self.pending.borrow().is_node_deleted(from_id)
-                || self.g.borrow().is_node_deleted(to_id)
+                || (self.g.borrow().is_node_deleted(to_id)
+                    && !self.pending.borrow().is_node_created(to_id))
                 || self.pending.borrow().is_node_deleted(to_id)
             {
                 return Err(String::from(

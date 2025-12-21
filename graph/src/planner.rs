@@ -36,8 +36,9 @@ pub enum IR {
     NodeByIdScan {
         node: Arc<QueryNode<Arc<String>>>,
         id: QueryExpr,
+        op: ExprIR,
     },
-    RelationshipScan(Arc<QueryRelationship<Arc<String>, Arc<String>>>),
+    CondTraverse(Arc<QueryRelationship<Arc<String>, Arc<String>>>),
     ExpandInto(Arc<QueryRelationship<Arc<String>, Arc<String>>>),
     PathBuilder(Vec<Arc<QueryPath>>),
     Filter(QueryExpr),
@@ -97,9 +98,9 @@ impl Display for IR {
                 write!(f, "Node By Index Scan | {node}")
             }
             Self::NodeByIdScan { node, .. } => {
-                write!(f, "Node By ID Scan | {node}")
+                write!(f, "Node By Label and ID Scan | {node}")
             }
-            Self::RelationshipScan(rel) => write!(f, "RelationshipScan | {rel}"),
+            Self::CondTraverse(rel) => write!(f, "Conditional Traverse | {rel}"),
             Self::ExpandInto(rel) => write!(f, "Expand Into | {rel}"),
             Self::PathBuilder(_) => write!(f, "PathBuilder"),
             Self::Filter(_) => write!(f, "Filter"),
@@ -157,7 +158,7 @@ impl Planner {
                     tree!(IR::NodeByLabelScan(relationship.from.clone()))
                 )
             } else {
-                tree!(IR::RelationshipScan(relationship.clone()))
+                tree!(IR::CondTraverse(relationship.clone()))
             };
             self.visited.insert(relationship.from.alias.id);
             self.visited.insert(relationship.to.alias.id);
@@ -169,7 +170,7 @@ impl Planner {
                         tree!(IR::NodeByLabelScan(relationship.from.clone()), res)
                     )
                 } else {
-                    tree!(IR::RelationshipScan(relationship.clone()), res)
+                    tree!(IR::CondTraverse(relationship.clone()), res)
                 };
                 self.visited.insert(relationship.from.alias.id);
                 self.visited.insert(relationship.to.alias.id);

@@ -1111,6 +1111,13 @@ fn graph_memory(
     ))
 }
 
+fn graph_config(
+    ctx: &Context,
+    args: Vec<RedisString>,
+) -> RedisResult {
+    Ok(RedisValue::Integer(0))
+}
+
 fn graph_init(
     ctx: &Context,
     _: &Vec<RedisString>,
@@ -1177,13 +1184,14 @@ redis_module! {
     data_types: [GRAPH_TYPE],
     init: graph_init,
     commands: [
-        ["graph.DELETE", graph_delete, "write", 1, 1, 1, ""],
-        ["graph.QUERY", graph_query, "write deny-oom", 1, 1, 1, ""],
-        ["graph.RO_QUERY", graph_ro_query, "readonly", 1, 1, 1, ""],
-        ["graph.EXPLAIN", graph_explain, "readonly", 1, 1, 1, ""],
-        ["graph.LIST", graph_list, "readonly", 0, 0, 0, ""],
-        ["graph.RECORD", graph_record, "write deny-oom", 1, 1, 1, ""],
-        ["graph.MEMORY", graph_memory, "readonly", 1, 1, 1, ""],
+        ["graph.DELETE", graph_delete, "write deny-script", 1, 1, 1, ""],
+        ["graph.QUERY", graph_query, "write deny-oom deny-script blocking", 1, 1, 1, ""],
+        ["graph.RO_QUERY", graph_ro_query, "readonly deny-script blocking", 1, 1, 1, ""],
+        ["graph.EXPLAIN", graph_explain, "write deny-oom deny-script", 1, 1, 1, ""],
+        ["graph.LIST", graph_list, "readonly deny-script allow-busy", 0, 0, 0, ""],
+        ["graph.RECORD", graph_record, "write deny-oom deny-script blocking", 1, 1, 1, ""],
+        ["graph.MEMORY", graph_memory, "readonly deny-script", 1, 1, 1, ""],
+        ["graph.CONFIG", graph_config, "readonly deny-script allow-busy", 0, 0, 0, ""],
     ],
     configurations: [
         i64: [
