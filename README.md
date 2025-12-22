@@ -4,19 +4,35 @@
 [![codecov](https://codecov.io/gh/FalkorDB/falkordb-rs-next-gen/branch/main/graph/badge.svg)](https://codecov.io/gh/FalkorDB/falkordb-rs-next-gen)
 [![license](https://img.shields.io/badge/license-Server_Side_Public_License-green)](https://github.com/FalkorDB/falkordb-rs-next-gen/blob/main/LICENSE)
 
-#### Developer Guide
+## Developer Guide
 
-##### Build
+### Build
 
-dependencies:
+```
+cargo build
+```
+
+### Dependencies:
+
+GraphBLAS & RediSearch must be built and installed before building this project.
 
 - building [GraphBLAS](https://github.com/DrTimothyAldenDavis/GraphBLAS.git)
 
-GraphBLAS must be built and installed before building this project.
+```bash
+  ./graphblas.sh
+``
+
+or
 
 ```bash
   make static CMAKE_OPTIONS='-DGRAPHBLAS_COMPACT=1 -DCMAKE_POSITION_INDEPENDENT_CODE=on'
   sudo make install
+```
+
+- building [RediSearch](https://github.com/RediSearch/RediSearch.git)
+
+```bash
+  ./redisearch.sh
 ```
 
 - pytest - create virtualenv and install tests/requirements.txt
@@ -29,7 +45,8 @@ The virtual environment should be activated before running tests.
   pip install -r  tests/requirements.txt
 ```
 
-- build with `cargo build`
+### Testing
+
 - run e2e tests with `pytest tests/test_e2e.py tests/test_functions.py -vv`
 - run tck tests with `pytest tests/tck/test_tck.py -s`
 
