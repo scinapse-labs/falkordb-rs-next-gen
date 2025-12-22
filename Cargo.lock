@@ -204,6 +204,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "common"
+version = "0.1.0"
+source = "git+https://github.com/RedisLabsModules/redismodule-rs?tag=v2.1.3#3ff28c8c2987ae07106025bcc8cb4c489094d10b"
+dependencies = [
+ "serde",
+]
+
+[[package]]
 name = "cpp_demangle"
 version = "0.4.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -801,9 +809,9 @@ checksum = "830d08ce1d1d941e6b30645f1a0eb5643013d835ce3779a5fc208261dbe10f55"
 
 [[package]]
 name = "libc"
-version = "0.2.177"
+version = "0.2.178"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2874a2af47a2325c2001a6e6fad9b16a53b802102b528163885171cf92b15976"
+checksum = "37c93d8daa9d8a012fd8ab92f088405fb202ea0b6ab73ee2482ae66af4f42091"
 
 [[package]]
 name = "libflate"
@@ -1547,8 +1555,9 @@ dependencies = [
 [[package]]
 name = "redis-module-macros"
 version = "99.99.99"
-source = "git+https://github.com/RedisLabsModules/redismodule-rs?tag=v2.1.2#556f420685b0b9662cdb816e22b1c55bc696a6dc"
+source = "git+https://github.com/RedisLabsModules/redismodule-rs?tag=v2.1.3#3ff28c8c2987ae07106025bcc8cb4c489094d10b"
 dependencies = [
+ "common",
  "proc-macro2",
  "quote 1.0.42",
  "serde",
@@ -1667,9 +1676,9 @@ checksum = "3582f63211428f83597b51b2ddb88e2a91a9d52d12831f9d08f5e624e8977422"
 
 [[package]]
 name = "roaring"
-version = "0.11.2"
+version = "0.11.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f08d6a905edb32d74a5d5737a0c9d7e950c312f3c46cb0ca0a2ca09ea11878a0"
+checksum = "8ba9ce64a8f45d7fc86358410bb1a82e8c987504c0d4900e9141d69a9f26c885"
 dependencies = [
  "bytemuck",
  "byteorder",
@@ -1766,9 +1775,9 @@ checksum = "b39cdef0fa800fc44525c84ccb54a029961a8215f9619753635a9c0d2538d46d"
 
 [[package]]
 name = "ryu"
-version = "1.0.20"
+version = "1.0.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "28d3b2b1366ec20994f1fd18c3c594f05c5dd4bc44d8bb0c1c632c8d6829481f"
+checksum = "62049b2877bf12821e8f9ad256ee38fdc31db7387ec2d3b3f403024de2034aea"
 
 [[package]]
 name = "scopeguard"
