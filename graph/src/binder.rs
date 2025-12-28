@@ -484,7 +484,10 @@ impl Binder {
             if !defined_in_create.contains(&node.alias) {
                 // Check if it shadows an existing variable from a previous clause
                 if self.current_env().contains_key(&node.alias) {
-                    return Err(format!("{} can't be redeclared", node.alias));
+                    return Err(format!(
+                        "The bound variable '{}' can't be redeclared in a CREATE clause",
+                        node.alias
+                    ));
                 }
                 // Mark it as defined in this clause
                 defined_in_create.insert(node.alias.clone());
