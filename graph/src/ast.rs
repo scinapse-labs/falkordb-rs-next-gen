@@ -243,7 +243,7 @@ impl Validate for DynTree<ExprIR> {
                             ));
                         }
 
-						// Check if any child expression contains an aggregation function
+                        // Check if any child expression contains an aggregation function
                         for arg_node in child.children() {
                             for sub_idx in arg_node.indices::<Dfs>() {
                                 let sub_node = self.node(sub_idx);
