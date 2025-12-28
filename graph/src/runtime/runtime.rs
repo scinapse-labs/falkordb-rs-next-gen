@@ -134,7 +134,7 @@ impl GetVariables for DynNode<'_, IR> {
                 IR::Aggregate(variables, _, _) => {
                     vars.extend(variables.iter().cloned());
                 }
-                IR::Project(items) => {
+                IR::Project(items, _) => {
                     vars.extend(items.iter().map(|v| v.0.clone()));
                     break;
                 }
@@ -151,7 +151,7 @@ trait ReturnNames {
 impl ReturnNames for DynNode<'_, IR> {
     fn get_return_names(&self) -> Vec<Variable> {
         match self.data() {
-            IR::Project(trees) => trees.iter().map(|v| v.0.clone()).collect(),
+            IR::Project(trees, _) => trees.iter().map(|v| v.0.clone()).collect(),
             IR::Commit => self
                 .get_child(0)
                 .map_or(vec![], |child| child.get_return_names()),
@@ -222,7 +222,7 @@ impl<'a> Runtime {
     }
 
     fn set_agg_expr_zero(
-        ir: &DynNode<ExprIR>,
+        ir: &DynNode<ExprIR<Variable>>,
         env: &mut Env,
     ) {
         match ir.data() {
@@ -244,8 +244,8 @@ impl<'a> Runtime {
 
     fn run_agg_expr(
         &self,
-        ir: &DynTree<ExprIR>,
-        idx: NodeIdx<Dyn<ExprIR>>,
+        ir: &DynTree<ExprIR<Variable>>,
+        idx: NodeIdx<Dyn<ExprIR<Variable>>>,
         curr: &mut Env,
         acc: &mut Env,
         agg_group_key: u64,
@@ -276,8 +276,8 @@ impl<'a> Runtime {
     #[allow(clippy::cognitive_complexity)]
     fn run_expr(
         &self,
-        ir: &DynTree<ExprIR>,
-        idx: NodeIdx<Dyn<ExprIR>>,
+        ir: &DynTree<ExprIR<Variable>>,
+        idx: NodeIdx<Dyn<ExprIR<Variable>>>,
         env: &Env,
         agg_group_key: Option<u64>,
     ) -> Result<Value, String> {
@@ -736,8 +736,8 @@ impl<'a> Runtime {
 
     fn run_iter_expr(
         &self,
-        ir: &DynTree<ExprIR>,
-        idx: NodeIdx<Dyn<ExprIR>>,
+        ir: &DynTree<ExprIR<Variable>>,
+        idx: NodeIdx<Dyn<ExprIR<Variable>>>,
         env: &Env,
     ) -> Result<Box<dyn Iterator<Item = Value>>, String> {
         match ir.node(idx).data() {
@@ -1301,9 +1301,14 @@ impl<'a> Runtime {
                         self.record.borrow_mut().push((idx, res.clone()));
                     }))
             }
-            IR::Project(trees) => Ok(iter
+            IR::Project(trees, copy_from_parent) => Ok(iter
                 .try_map(move |vars| {
                     let mut return_vars = Env::default();
+                    for (old_var, new_var) in copy_from_parent {
+                        if let Some(value) = vars.get(old_var) {
+                            return_vars.insert(new_var, value.clone());
+                        }
+                    }
                     for (name, tree) in trees {
                         let value = self.run_expr(tree, tree.root().idx(), &vars, None)?;
                         return_vars.insert(name, value);
@@ -1398,8 +1403,8 @@ impl<'a> Runtime {
 
     fn resolve_pattern(
         &self,
-        pattern: &QueryGraph<Arc<String>, Arc<String>>,
-    ) -> QueryGraph<Arc<String>, LabelId> {
+        pattern: &QueryGraph<Arc<String>, Arc<String>, Variable>,
+    ) -> QueryGraph<Arc<String>, LabelId, Variable> {
         let mut resolved_pattern = QueryGraph::default();
         for node in pattern.nodes() {
             resolved_pattern.add_node(Arc::new(QueryNode::new(
@@ -1445,8 +1450,8 @@ impl<'a> Runtime {
 
     fn resolve_set_items(
         &self,
-        items: &Vec<SetItem<Arc<String>>>,
-    ) -> Vec<SetItem<LabelId>> {
+        items: &Vec<SetItem<Arc<String>, Variable>>,
+    ) -> Vec<SetItem<LabelId, Variable>> {
         items
             .iter()
             .map(|item| match item {
@@ -1624,7 +1629,7 @@ impl<'a> Runtime {
 
     fn remove(
         &self,
-        items: &Vec<QueryExpr>,
+        items: &Vec<QueryExpr<Variable>>,
         vars: &Env,
     ) -> Result<(), String> {
         for item in items {
@@ -1701,7 +1706,7 @@ impl<'a> Runtime {
     #[allow(clippy::too_many_lines)]
     fn set(
         &self,
-        items: &Vec<SetItem<LabelId>>,
+        items: &Vec<SetItem<LabelId, Variable>>,
         vars: &Env,
     ) -> Result<(), String> {
         for item in items {
@@ -1859,7 +1864,7 @@ impl<'a> Runtime {
 
     fn relationship_scan(
         &'a self,
-        relationship_pattern: &'a QueryRelationship<Arc<String>, Arc<String>>,
+        relationship_pattern: &'a QueryRelationship<Arc<String>, Arc<String>, Variable>,
         vars: Env,
     ) -> Result<Box<dyn Iterator<Item = Result<Env, String>> + 'a>, String> {
         let filter_attrs = self.run_expr(
@@ -1932,7 +1937,7 @@ impl<'a> Runtime {
 
     fn expand_into(
         &'a self,
-        relationship_pattern: &'a QueryRelationship<Arc<String>, Arc<String>>,
+        relationship_pattern: &'a QueryRelationship<Arc<String>, Arc<String>, Variable>,
         vars: Env,
     ) -> Result<Box<dyn Iterator<Item = Result<Env, String>> + 'a>, String> {
         let src = vars.get(&relationship_pattern.from.alias).map_or_else(
@@ -1973,7 +1978,7 @@ impl<'a> Runtime {
 
     fn node_by_label_scan(
         &'a self,
-        node_pattern: &'a QueryNode<Arc<String>>,
+        node_pattern: &'a QueryNode<Arc<String>, Variable>,
         vars: Env,
     ) -> Result<Box<dyn Iterator<Item = Result<Env, String>> + 'a>, String> {
         let attrs = self.run_expr(
@@ -2006,7 +2011,7 @@ impl<'a> Runtime {
 
     fn evaluate_index_query(
         &self,
-        query: &IndexQuery<QueryExpr>,
+        query: &IndexQuery<QueryExpr<Variable>>,
         vars: &Env,
     ) -> Result<IndexQuery<Value>, String> {
         match query {
@@ -2039,9 +2044,9 @@ impl<'a> Runtime {
 
     fn node_by_index_scan(
         &'a self,
-        node_pattern: &'a QueryNode<Arc<String>>,
+        node_pattern: &'a QueryNode<Arc<String>, Variable>,
         index: &Arc<String>,
-        query: &IndexQuery<QueryExpr>,
+        query: &IndexQuery<QueryExpr<Variable>>,
         vars: Env,
     ) -> Result<Box<dyn Iterator<Item = Result<Env, String>> + 'a>, String> {
         let attrs = self.run_expr(
@@ -2082,9 +2087,9 @@ impl<'a> Runtime {
 
     fn node_by_id_scan(
         &'a self,
-        node_pattern: &'a QueryNode<Arc<String>>,
-        id: &QueryExpr,
-        op: &ExprIR,
+        node_pattern: &'a QueryNode<Arc<String>, Variable>,
+        id: &QueryExpr<Variable>,
+        op: &ExprIR<Variable>,
         mut vars: Env,
     ) -> Result<Box<dyn Iterator<Item = Result<Env, String>> + 'a>, String> {
         let id = self.run_expr(id, id.root().idx(), &vars, None)?;
@@ -2139,7 +2144,7 @@ impl<'a> Runtime {
 
     fn delete(
         &self,
-        trees: &Vec<QueryExpr>,
+        trees: &Vec<QueryExpr<Variable>>,
         vars: &Env,
     ) -> Result<(), String> {
         for tree in trees {
@@ -2198,7 +2203,7 @@ impl<'a> Runtime {
 
     fn create(
         &self,
-        pattern: &QueryGraph<Arc<String>, LabelId>,
+        pattern: &QueryGraph<Arc<String>, LabelId, Variable>,
         vars: &mut Env,
     ) -> Result<(), String> {
         for node in pattern.nodes() {
@@ -2358,7 +2363,7 @@ impl<'a> Runtime {
     }
 }
 
-pub fn evaluate_param(expr: &DynNode<ExprIR>) -> Result<Value, String> {
+pub fn evaluate_param(expr: &DynNode<ExprIR<Arc<String>>>) -> Result<Value, String> {
     match expr.data() {
         ExprIR::Null => Ok(Value::Null),
         ExprIR::Bool(x) => Ok(Value::Bool(*x)),

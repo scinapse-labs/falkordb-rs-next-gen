@@ -8,4 +8,4 @@ if [[ "$(uname -s)" == "Darwin" ]]; then
 else
   sed -i 's/-Werror//g' deps/VectorSimilarity/src/VecSim/CMakeLists.txt
 fi
-make build STATIC=1 CLANG=1 CC=clang-20 CXX=clang-20 OSX_MIN_SDK_VER=15.0
+make build STATIC=1 CLANG=1 CC=clang-21 CXX=clang-21 OSX_MIN_SDK_VER=15.0

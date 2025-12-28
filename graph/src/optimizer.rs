@@ -3,7 +3,7 @@ use std::sync::Arc;
 use orx_tree::{Bfs, DynTree, NodeRef};
 
 use crate::{
-    ast::{ExprIR, QueryNode},
+    ast::{ExprIR, QueryNode, Variable},
     graph::graph::Graph,
     indexer::IndexQuery,
     planner::IR,
@@ -133,8 +133,12 @@ pub fn optimize(
 
 fn get_index(
     graph: &Graph,
-    node: &Arc<QueryNode<Arc<String>>>,
-) -> Option<(Arc<QueryNode<Arc<String>>>, Arc<String>, DynTree<ExprIR>)> {
+    node: &Arc<QueryNode<Arc<String>, Variable>>,
+) -> Option<(
+    Arc<QueryNode<Arc<String>, Variable>>,
+    Arc<String>,
+    DynTree<ExprIR<Variable>>,
+)> {
     for label in node.labels.iter() {
         for attr in node.attrs.root().children() {
             if let ExprIR::String(attr_str) = attr.data()
