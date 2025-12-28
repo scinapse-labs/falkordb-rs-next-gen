@@ -167,7 +167,7 @@ class testGraphDeletionFlow(FlowTestsBase):
 
     def test10_bulk_edge_deletion_timing(self):
         # Create large amount of relationships (50000).
-        self.graph.query("""UNWIND(range(1, 50000)) as x CREATE ()-[:R]->()""")
+        self.graph.query("""UNWIND range(1, 50000) as x CREATE ()-[:R]->()""")
         # Delete and benchmark for 300ms.
         query = """MATCH (a)-[e:R]->(b) DELETE e"""
         result = self.graph.query(query)
@@ -188,7 +188,7 @@ class testGraphDeletionFlow(FlowTestsBase):
         self.graph.delete()
 
         # Create 10 nodes.
-        self.graph.query("UNWIND(range(1, 10)) as x CREATE ()")
+        self.graph.query("UNWIND range(1, 10) as x CREATE ()")
 
         # Unwind path nodes.
         query = """MATCH p = () UNWIND nodes(p) AS node DELETE node"""
@@ -196,7 +196,7 @@ class testGraphDeletionFlow(FlowTestsBase):
         self.env.assertEquals(actual_result.nodes_deleted, 10)
         self.env.assertEquals(actual_result.relationships_deleted, 0)
 
-        self.graph.query("UNWIND(range(1, 10)) as x CREATE ()")
+        self.graph.query("UNWIND range(1, 10) as x CREATE ()")
 
         # Unwind collected nodes.
         query = """MATCH (n) WITH collect(n) AS nodes UNWIND nodes AS node DELETE node"""

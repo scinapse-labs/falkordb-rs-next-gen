@@ -16,47 +16,51 @@ use crate::{
 pub enum IR {
     Empty,
     Optional(Vec<Variable>),
-    Call(Arc<GraphFn>, Vec<QueryExpr>, Vec<Variable>),
-    Unwind(QueryExpr, Variable),
-    Create(QueryGraph<Arc<String>, Arc<String>>),
+    Call(Arc<GraphFn>, Vec<QueryExpr<Variable>>, Vec<Variable>),
+    Unwind(QueryExpr<Variable>, Variable),
+    Create(QueryGraph<Arc<String>, Arc<String>, Variable>),
     Merge(
-        QueryGraph<Arc<String>, Arc<String>>,
-        Vec<SetItem<Arc<String>>>,
-        Vec<SetItem<Arc<String>>>,
+        QueryGraph<Arc<String>, Arc<String>, Variable>,
+        Vec<SetItem<Arc<String>, Variable>>,
+        Vec<SetItem<Arc<String>, Variable>>,
     ),
-    Delete(Vec<QueryExpr>, bool),
-    Set(Vec<SetItem<Arc<String>>>),
-    Remove(Vec<QueryExpr>),
-    NodeByLabelScan(Arc<QueryNode<Arc<String>>>),
+    Delete(Vec<QueryExpr<Variable>>, bool),
+    Set(Vec<SetItem<Arc<String>, Variable>>),
+    Remove(Vec<QueryExpr<Variable>>),
+    NodeByLabelScan(Arc<QueryNode<Arc<String>, Variable>>),
     NodeByIndexScan {
-        node: Arc<QueryNode<Arc<String>>>,
+        node: Arc<QueryNode<Arc<String>, Variable>>,
         index: Arc<String>,
-        query: Arc<IndexQuery<QueryExpr>>,
+        query: Arc<IndexQuery<QueryExpr<Variable>>>,
     },
     NodeByIdScan {
-        node: Arc<QueryNode<Arc<String>>>,
-        id: QueryExpr,
+        node: Arc<QueryNode<Arc<String>, Variable>>,
+        id: QueryExpr<Variable>,
+        op: ExprIR<Variable>,
     },
-    RelationshipScan(Arc<QueryRelationship<Arc<String>, Arc<String>>>),
-    ExpandInto(Arc<QueryRelationship<Arc<String>, Arc<String>>>),
-    PathBuilder(Vec<Arc<QueryPath>>),
-    Filter(QueryExpr),
+    CondTraverse(Arc<QueryRelationship<Arc<String>, Arc<String>, Variable>>),
+    ExpandInto(Arc<QueryRelationship<Arc<String>, Arc<String>, Variable>>),
+    PathBuilder(Vec<Arc<QueryPath<Variable>>>),
+    Filter(QueryExpr<Variable>),
     CartesianProduct,
     LoadCsv {
-        file_path: QueryExpr,
+        file_path: QueryExpr<Variable>,
         headers: bool,
-        delimiter: QueryExpr,
+        delimiter: QueryExpr<Variable>,
         var: Variable,
     },
-    Sort(Vec<(QueryExpr, bool)>),
-    Skip(QueryExpr),
-    Limit(QueryExpr),
+    Sort(Vec<(QueryExpr<Variable>, bool)>),
+    Skip(QueryExpr<Variable>),
+    Limit(QueryExpr<Variable>),
     Aggregate(
         Vec<Variable>,
-        Vec<(Variable, QueryExpr)>,
-        Vec<(Variable, QueryExpr)>,
+        Vec<(Variable, QueryExpr<Variable>)>,
+        Vec<(Variable, QueryExpr<Variable>)>,
     ),
-    Project(Vec<(Variable, QueryExpr)>),
+    Project(
+        Vec<(Variable, QueryExpr<Variable>)>,
+        Vec<(Variable, Variable)>,
+    ),
     Distinct,
     Commit,
     CreateIndex {
@@ -64,7 +68,7 @@ pub enum IR {
         attrs: Vec<Arc<String>>,
         index_type: IndexType,
         entity_type: EntityType,
-        options: Option<QueryExpr>,
+        options: Option<QueryExpr<Variable>>,
     },
     DropIndex {
         label: Arc<String>,
@@ -97,9 +101,9 @@ impl Display for IR {
                 write!(f, "Node By Index Scan | {node}")
             }
             Self::NodeByIdScan { node, .. } => {
-                write!(f, "Node By ID Scan | {node}")
+                write!(f, "Node By Label and ID Scan | {node}")
             }
-            Self::RelationshipScan(rel) => write!(f, "RelationshipScan | {rel}"),
+            Self::CondTraverse(rel) => write!(f, "Conditional Traverse | {rel}"),
             Self::ExpandInto(rel) => write!(f, "Expand Into | {rel}"),
             Self::PathBuilder(_) => write!(f, "PathBuilder"),
             Self::Filter(_) => write!(f, "Filter"),
@@ -109,7 +113,7 @@ impl Display for IR {
             Self::Skip(_) => write!(f, "Skip"),
             Self::Limit(_) => write!(f, "Limit"),
             Self::Aggregate(_, _, _) => write!(f, "Aggregate"),
-            Self::Project(_) => write!(f, "Project"),
+            Self::Project(_, _) => write!(f, "Project"),
             Self::Commit => write!(f, "Commit"),
             Self::Distinct => write!(f, "Distinct"),
             Self::CreateIndex { label, attrs, .. } => {
@@ -130,8 +134,8 @@ pub struct Planner {
 impl Planner {
     fn plan_match(
         &mut self,
-        pattern: &QueryGraph<Arc<String>, Arc<String>>,
-        filter: Option<QueryExpr>,
+        pattern: &QueryGraph<Arc<String>, Arc<String>, Variable>,
+        filter: Option<QueryExpr<Variable>>,
     ) -> DynTree<IR> {
         let mut vec = vec![];
         for component in pattern.connected_components() {
@@ -157,7 +161,7 @@ impl Planner {
                     tree!(IR::NodeByLabelScan(relationship.from.clone()))
                 )
             } else {
-                tree!(IR::RelationshipScan(relationship.clone()))
+                tree!(IR::CondTraverse(relationship.clone()))
             };
             self.visited.insert(relationship.from.alias.id);
             self.visited.insert(relationship.to.alias.id);
@@ -169,7 +173,7 @@ impl Planner {
                         tree!(IR::NodeByLabelScan(relationship.from.clone()), res)
                     )
                 } else {
-                    tree!(IR::RelationshipScan(relationship.clone()), res)
+                    tree!(IR::CondTraverse(relationship.clone()), res)
                 };
                 self.visited.insert(relationship.from.alias.id);
                 self.visited.insert(relationship.to.alias.id);
@@ -195,11 +199,12 @@ impl Planner {
     #[allow(clippy::too_many_arguments)]
     fn plan_project(
         &mut self,
-        exprs: Vec<(Variable, QueryExpr)>,
-        orderby: Vec<(QueryExpr, bool)>,
-        skip: Option<QueryExpr>,
-        limit: Option<QueryExpr>,
-        filter: Option<QueryExpr>,
+        exprs: Vec<(Variable, QueryExpr<Variable>)>,
+        copy_from_parent: Vec<(Variable, Variable)>,
+        orderby: Vec<(QueryExpr<Variable>, bool)>,
+        skip: Option<QueryExpr<Variable>>,
+        limit: Option<QueryExpr<Variable>>,
+        filter: Option<QueryExpr<Variable>>,
         distinct: bool,
         write: bool,
     ) -> DynTree<IR> {
@@ -220,7 +225,7 @@ impl Planner {
             }
             tree!(IR::Aggregate(names, group_by_keys, aggregations))
         } else {
-            tree!(IR::Project(exprs))
+            tree!(IR::Project(exprs, copy_from_parent))
         };
         if distinct {
             res = tree!(IR::Distinct, res);
@@ -245,7 +250,7 @@ impl Planner {
 
     fn plan_query(
         &mut self,
-        q: Vec<QueryIR>,
+        q: Vec<QueryIR<Variable>>,
         write: bool,
     ) -> DynTree<IR> {
         let mut plans = Vec::with_capacity(q.len());
@@ -292,7 +297,7 @@ impl Planner {
     #[must_use]
     pub fn plan(
         &mut self,
-        ir: QueryIR,
+        ir: QueryIR<Variable>,
     ) -> DynTree<IR> {
         match ir {
             QueryIR::Call(proc, exprs, named_outputs, filter) => {
@@ -394,22 +399,42 @@ impl Planner {
             QueryIR::With {
                 distinct,
                 exprs,
+                copy_from_parent,
                 orderby,
                 skip,
                 limit,
                 filter,
                 write,
                 ..
-            } => self.plan_project(exprs, orderby, skip, limit, filter, distinct, write),
+            } => self.plan_project(
+                exprs,
+                copy_from_parent,
+                orderby,
+                skip,
+                limit,
+                filter,
+                distinct,
+                write,
+            ),
             QueryIR::Return {
                 distinct,
                 exprs,
+                copy_from_parent,
                 orderby,
                 skip,
                 limit,
                 write,
                 ..
-            } => self.plan_project(exprs, orderby, skip, limit, None, distinct, write),
+            } => self.plan_project(
+                exprs,
+                copy_from_parent,
+                orderby,
+                skip,
+                limit,
+                None,
+                distinct,
+                write,
+            ),
             QueryIR::CreateIndex {
                 label,
                 attrs,

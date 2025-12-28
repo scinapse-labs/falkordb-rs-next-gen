@@ -1,4 +1,5 @@
 tests/flow/test_aggregation
+tests/flow/test_create_clause
 tests/flow/test_empty_query
 tests/flow/test_filters
 tests/flow/test_mix_labels

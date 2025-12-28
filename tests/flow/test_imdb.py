@@ -3,11 +3,10 @@ from common import *
 from index_utils import *
 from reversepattern import ReversePattern
 
-sys.path.append(os.path.dirname(os.path.abspath(__file__)) + '/../../demo/imdb')
-import imdb_queries
-import imdb_utils
+import imdb.imdb_queries
+import imdb.imdb_utils
 
-GRAPH_ID = imdb_utils.graph_name
+GRAPH_ID = imdb.imdb_utils.graph_name
 
 class testImdbFlow(FlowTestsBase):
     def __init__(self):
@@ -15,8 +14,8 @@ class testImdbFlow(FlowTestsBase):
 
     def setUp(self):
         self.graph     = self.db.select_graph(GRAPH_ID)
-        actors, movies = imdb_utils.populate_graph(self.db, self.graph)
-        self.imdb      = imdb_queries.IMDBQueries(actors, movies)
+        actors, movies = imdb.imdb_utils.populate_graph(self.db, self.graph)
+        self.imdb      = imdb.imdb_queries.IMDBQueries(actors, movies)
         self.queries   = self.imdb.queries()
 
     def tearDown(self):

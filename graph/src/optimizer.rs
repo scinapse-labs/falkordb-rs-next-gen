@@ -3,7 +3,7 @@ use std::sync::Arc;
 use orx_tree::{Bfs, DynTree, NodeRef};
 
 use crate::{
-    ast::{ExprIR, QueryNode},
+    ast::{ExprIR, QueryNode, Variable},
     graph::graph::Graph,
     indexer::IndexQuery,
     planner::IR,
@@ -96,7 +96,7 @@ fn utilize_node_by_id(optimized_plan: &mut DynTree<IR>) {
     for idx in indices {
         let node = if let IR::NodeByLabelScan(node) = optimized_plan.node(idx).data()
             && let IR::Filter(filter) = optimized_plan.node(idx).parent().unwrap().data()
-            && matches!(filter.root().data(), ExprIR::Eq)
+            && matches!(filter.root().data(), ExprIR::Eq | ExprIR::Gt | ExprIR::Lt)
             && let ExprIR::FuncInvocation(inner_func) = filter.root().child(0).data()
             && inner_func.name == "id"
             && let ExprIR::Variable(var) = filter.root().child(0).child(0).data()
@@ -105,14 +105,15 @@ fn utilize_node_by_id(optimized_plan: &mut DynTree<IR>) {
             Some((
                 node.clone(),
                 Arc::new(filter.root().child(1).clone_as_tree()),
+                filter.root().data().clone(),
             ))
         } else {
             None
         };
-        if let Some((node, id)) = node {
-            let mut op = optimized_plan.node_mut(idx);
-            *op.data_mut() = IR::NodeByIdScan { node, id };
-            op.parent_mut().unwrap().take_out();
+        if let Some((node, id, op)) = node {
+            let mut new_op = optimized_plan.node_mut(idx);
+            *new_op.data_mut() = IR::NodeByIdScan { node, id, op };
+            new_op.parent_mut().unwrap().take_out();
         }
     }
 }
@@ -132,8 +133,12 @@ pub fn optimize(
 
 fn get_index(
     graph: &Graph,
-    node: &Arc<QueryNode<Arc<String>>>,
-) -> Option<(Arc<QueryNode<Arc<String>>>, Arc<String>, DynTree<ExprIR>)> {
+    node: &Arc<QueryNode<Arc<String>, Variable>>,
+) -> Option<(
+    Arc<QueryNode<Arc<String>, Variable>>,
+    Arc<String>,
+    DynTree<ExprIR<Variable>>,
+)> {
     for label in node.labels.iter() {
         for attr in node.attrs.root().children() {
             if let ExprIR::String(attr_str) = attr.data()

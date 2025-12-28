@@ -13,6 +13,7 @@ use roaring::RoaringTreemap;
 
 use crate::{
     ast::ExprIR,
+    binder::Binder,
     cypher::Parser,
     graph::{
         attribute_store::AttributeStore,
@@ -33,7 +34,7 @@ use crate::{
 pub struct Plan {
     pub plan: Arc<DynTree<IR>>,
     pub cached: bool,
-    pub parameters: HashMap<String, DynTree<ExprIR>>,
+    pub parameters: HashMap<String, DynTree<ExprIR<Arc<String>>>>,
     pub parse_duration: Duration,
     pub plan_duration: Duration,
 }
@@ -82,7 +83,7 @@ impl Plan {
     pub const fn new(
         plan: Arc<DynTree<IR>>,
         cached: bool,
-        parameters: HashMap<String, DynTree<ExprIR>>,
+        parameters: HashMap<String, DynTree<ExprIR<Arc<String>>>>,
         parse_duration: Duration,
         plan_duration: Duration,
     ) -> Self {
@@ -365,7 +366,9 @@ impl Graph {
                 } else {
                     drop(cache);
                     let start = Instant::now();
-                    let ir = parser.parse()?;
+                    let raw_ir = parser.parse()?;
+                    let ir = Binder::default().bind(raw_ir)?;
+                    ir.validate()?;
                     parse_duration = start.elapsed();
 
                     let mut planner = Planner::default();

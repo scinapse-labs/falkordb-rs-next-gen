@@ -2,7 +2,6 @@ test_access_del_entity
 test_bound_variables
 test_cache
 test_comprehension_functions
-test_create_clause
 test_distinct
 test_entity_update
 test_expand_into

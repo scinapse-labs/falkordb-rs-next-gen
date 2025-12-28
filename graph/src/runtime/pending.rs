@@ -351,6 +351,14 @@ impl Pending {
     }
 
     #[must_use]
+    pub fn is_node_created(
+        &self,
+        id: NodeId,
+    ) -> bool {
+        self.created_nodes.contains(id.into())
+    }
+
+    #[must_use]
     pub fn is_node_deleted(
         &self,
         id: NodeId,
