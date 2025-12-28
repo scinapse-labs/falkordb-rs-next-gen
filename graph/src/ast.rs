@@ -242,6 +242,20 @@ impl Validate for DynTree<ExprIR> {
                                 func.name
                             ));
                         }
+
+						// Check if any child expression contains an aggregation function
+                        for arg_node in child.children() {
+                            for sub_idx in arg_node.indices::<Dfs>() {
+                                let sub_node = self.node(sub_idx);
+                                if let ExprIR::FuncInvocation(sub_func) = sub_node.data()
+                                    && sub_func.is_aggregate() {
+                                        return Err(String::from(
+                                            "Can't use aggregate functions inside of aggregate functions"
+                                        ));
+                                    }
+                            }
+                        }
+ 
                         let ExprIR::Variable(var) = child.child(child.num_children() - 1).data()
                         else {
                             unreachable!();
