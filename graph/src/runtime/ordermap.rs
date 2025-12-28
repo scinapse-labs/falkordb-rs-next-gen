@@ -1,6 +1,6 @@
 use std::{hash::Hash, ops::Index};
 
-use thin_vec::ThinVec;
+use thin_vec::{ThinVec, thin_vec};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct OrderMap<K, V> {
@@ -17,8 +17,12 @@ impl<K, V> Default for OrderMap<K, V> {
 
 impl<K: PartialEq, V> OrderMap<K, V> {
     #[must_use]
-    pub const fn from_vec(vec: ThinVec<(K, V)>) -> Self {
-        Self { vec }
+    pub fn from_vec(vec: ThinVec<(K, V)>) -> Self {
+        let mut res = Self { vec: thin_vec![] };
+        for (k, v) in vec {
+            res.insert(k, v);
+        }
+        res
     }
 
     pub fn reserve_exact(

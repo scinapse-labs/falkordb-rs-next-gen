@@ -135,20 +135,14 @@ class testGraphCreationFlow(FlowTestsBase):
 
         queries = ["CREATE (n1)-[r:Rel1]->(n2) CREATE (n2)-[r:Rel1]->(n1)",
                    "CREATE (n1)-[r:Rel1]->(n2) CREATE (n2)-[r2:Rel1]->(n3), (n3)-[r:Rel1]->(n2)",
-                   "MATCH (r) CREATE (r)"]
+                   "MATCH (r) CREATE (r)",
+                   "CREATE (n1)-[r:Rel1]->(n2), (n2)-[r:Rel1]->(n1)"]
         for query in queries:
             try:
                 self.graph.query(query)
                 self.env.assertTrue(False)
             except redis.exceptions.ResponseError as e:
                 self.env.assertContains("The bound variable 'r' can't be redeclared in a CREATE clause", str(e))
-
-        query = "CREATE (n1)-[r:Rel1]->(n2), (n2)-[r:Rel1]->(n1)"
-        try:
-            self.graph.query(query)
-            self.env.assertTrue(False)
-        except redis.exceptions.ResponseError as e:
-            self.env.assertContains("Variable `r` already declared", str(e))
 
     # test creating queries with matching relationship type :R|R
     # the results can't report duplicates
