@@ -367,9 +367,13 @@ impl<T, L, TVar: Clone + Hash + Eq> QueryGraph<T, L, TVar> {
     pub fn add_path(
         &mut self,
         path: Arc<QueryPath<TVar>>,
-    ) {
-        debug_assert!(!self.paths.iter().any(|p| p.var == path.var));
-        self.paths.push(path);
+    ) -> bool {
+        if self.paths.iter().any(|p| p.var == path.var) {
+            false
+        } else {
+            self.paths.push(path);
+            true
+        }
     }
 
     #[must_use]
