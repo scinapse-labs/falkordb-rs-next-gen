@@ -1785,35 +1785,38 @@ impl<'a> Runtime {
                                 }
                             }
                         }
-                        Value::Relationship(rel) => {
-                            if self.g.borrow().is_relationship_deleted(rel.0)
-                                || self
-                                    .pending
-                                    .borrow()
-                                    .is_relationship_deleted(rel.0, rel.1, rel.2)
+                        Value::Relationship(target_rel) => {
+                            if self.g.borrow().is_relationship_deleted(target_rel.0)
+                                || self.pending.borrow().is_relationship_deleted(
+                                    target_rel.0,
+                                    target_rel.1,
+                                    target_rel.2,
+                                )
                             {
                                 continue;
                             }
                             if let Some(attr) = attr {
-                                if let Some(v) =
-                                    self.g.borrow().get_relationship_attribute(rel.0, attr)
+                                if let Some(v) = self
+                                    .g
+                                    .borrow()
+                                    .get_relationship_attribute(target_rel.0, attr)
                                     && v == run_expr
                                 {
                                     continue;
                                 }
 
                                 self.pending.borrow_mut().set_relationship_attribute(
-                                    rel.0,
+                                    target_rel.0,
                                     attr.clone(),
                                     run_expr,
                                 )?;
-                            } else if let Value::Relationship(rel) = run_expr {
+                            } else if let Value::Relationship(source_rel) = run_expr {
                                 let g = self.g.borrow();
-                                let attrs = self.get_relationship_attrs(rel.0);
+                                let attrs = self.get_relationship_attrs(source_rel.0);
                                 if *replace {
-                                    for key in g.get_relationship_attrs(rel.0) {
+                                    for key in g.get_relationship_attrs(target_rel.0) {
                                         self.pending.borrow_mut().set_relationship_attribute(
-                                            rel.0,
+                                            target_rel.0,
                                             key,
                                             Value::Null,
                                         )?;
@@ -1821,10 +1824,11 @@ impl<'a> Runtime {
                                 }
                                 for (key, value) in attrs.iter() {
                                     self.pending.borrow_mut().set_relationship_attribute(
-                                        rel.0,
+                                        target_rel.0,
                                         key.clone(),
                                         value.clone(),
                                     )?;
+                                    println!("SET REL ATTR {} = {:?}", key, value.clone());
                                 }
                             }
                         }

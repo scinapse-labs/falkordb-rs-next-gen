@@ -479,7 +479,7 @@ fn reply_verbose_value(
                 raw::reply_with_long_long(ctx.ctx, u64::from(rel.2) as _);
                 raw::reply_with_array(ctx.ctx, x.attrs.len() as _);
                 for (key, value) in x.attrs.iter() {
-                    raw::reply_with_array(ctx.ctx, 3);
+                    raw::reply_with_array(ctx.ctx, 2);
                     raw::reply_with_string_buffer(
                         ctx.ctx,
                         key.as_ptr().cast::<c_char>(),
@@ -807,7 +807,7 @@ fn record_mut(
     ctx: &Context,
     graph: &Arc<RwLock<ThreadedGraph>>,
     query: &str,
-) -> Result<(), RedisError> {
+) -> RedisResult {
     // Create a child span for parsing and execution
     let Plan {
         plan, parameters, ..
@@ -890,7 +890,7 @@ fn record_mut(
             );
         }
     }
-    Ok(())
+    Ok(RedisValue::NoReply)
 }
 
 fn graph_record(
