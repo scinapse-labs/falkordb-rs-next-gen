@@ -602,7 +602,16 @@ impl Value {
             }
             Self::VecF32(vec) => {
                 // Treat VecF32 as a JSON array of numbers
-                let items: Vec<String> = vec.iter().map(ToString::to_string).collect();
+                let items: Vec<String> = vec
+                    .iter()
+                    .map(|f| {
+                        if f.is_nan() || f.is_infinite() {
+                            String::from("null")
+                        } else {
+                            f.to_string()
+                        }
+                    })
+                    .collect();
                 format!("[{}]", items.join(","))
             }
             Self::Arc(inner) => inner.to_json_string(runtime),
