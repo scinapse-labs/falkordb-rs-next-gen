@@ -797,6 +797,26 @@ impl<'a> Parser<'a> {
         }
     }
 
+    /// Recursively checks if a node or its descendants contain an aggregate function
+    fn contains_nested_aggregate(
+        node: &orx_tree::Node<orx_tree::Dyn<ExprIR<Arc<String>>>>,
+    ) -> bool {
+        // Check current node
+        if let ExprIR::FuncInvocation(func) = node.data()
+            && func.is_aggregate() {
+                return true;
+            }
+        
+        // Check all children recursively
+        for child in node.children() {
+            if Self::contains_nested_aggregate(&child) {
+                return true;
+            }
+        }
+        
+        false
+    }
+
     pub fn parse_parameters(
         &mut self
     ) -> Result<(HashMap<String, DynTree<ExprIR<Arc<String>>>>, &'a str), String> {
@@ -1553,6 +1573,16 @@ impl<'a> Parser<'a> {
                             ExpressionListType::ZeroOrMoreClosedBy(RParen),
                         )?;
                         func.validate(args.len())?;
+                        
+                        // Check for nested aggregate functions
+                        for arg in &args {
+                            if Self::contains_nested_aggregate(&arg.root()) {
+                                return Err(self.lexer.format_error(
+                                    "Can't use aggregate functions inside of aggregate functions",
+                                ));
+                            }
+                        }
+                        
                         if distinct {
                             args = vec![tree!(ExprIR::Distinct; args)];
                         }
