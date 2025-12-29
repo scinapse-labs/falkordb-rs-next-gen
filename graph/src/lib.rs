@@ -1,4 +1,5 @@
 pub mod ast;
+pub mod binder;
 pub mod cypher;
 pub mod graph;
 pub mod indexer;

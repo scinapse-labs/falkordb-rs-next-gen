@@ -13,6 +13,7 @@ use roaring::RoaringTreemap;
 
 use crate::{
     ast::ExprIR,
+    binder::Binder,
     cypher::Parser,
     graph::{
         attribute_store::AttributeStore,
@@ -33,7 +34,7 @@ use crate::{
 pub struct Plan {
     pub plan: Arc<DynTree<IR>>,
     pub cached: bool,
-    pub parameters: HashMap<String, DynTree<ExprIR>>,
+    pub parameters: HashMap<String, DynTree<ExprIR<Arc<String>>>>,
     pub parse_duration: Duration,
     pub plan_duration: Duration,
 }
@@ -82,7 +83,7 @@ impl Plan {
     pub const fn new(
         plan: Arc<DynTree<IR>>,
         cached: bool,
-        parameters: HashMap<String, DynTree<ExprIR>>,
+        parameters: HashMap<String, DynTree<ExprIR<Arc<String>>>>,
         parse_duration: Duration,
         plan_duration: Duration,
     ) -> Self {
@@ -365,7 +366,9 @@ impl Graph {
                 } else {
                     drop(cache);
                     let start = Instant::now();
-                    let ir = parser.parse()?;
+                    let raw_ir = parser.parse()?;
+                    let ir = Binder::default().bind(raw_ir)?;
+                    ir.validate()?;
                     parse_duration = start.elapsed();
 
                     let mut planner = Planner::default();
@@ -842,68 +845,54 @@ impl Graph {
     ) -> impl Iterator<Item = (NodeId, NodeId)> + use<> {
         let matrices = types
             .iter()
-            .map(|relationship_type| self.get_relationship_matrix(relationship_type))
-            .collect::<Option<Vec<_>>>();
+            .filter_map(|relationship_type| self.get_relationship_matrix(relationship_type))
+            .collect::<Vec<_>>();
         let src_labels_matrices = src_lables
             .iter()
-            .map(|label| self.get_label_matrix(label))
-            .collect::<Option<Vec<_>>>();
+            .filter_map(|label| self.get_label_matrix(label))
+            .collect::<Vec<_>>();
         let dest_labels_matrices = dest_labels
             .iter()
-            .map(|label| self.get_label_matrix(label))
-            .collect::<Option<Vec<_>>>();
-        let iter = if let (
-            Some(matrices),
-            Some(mut src_labels_matrices),
-            Some(mut dest_labels_matrices),
-        ) = (matrices, src_labels_matrices, dest_labels_matrices)
-        {
-            let mut iter = matrices.into_iter();
-            let mut m = iter.next().map_or_else(
-                || self.adjacancy_matrix.to_matrix(),
-                |t| t.matrix().to_matrix(),
+            .filter_map(|label| self.get_label_matrix(label))
+            .collect::<Vec<_>>();
+
+        let mut iter = matrices.into_iter();
+        let mut m = iter.next().map_or_else(
+            || self.adjacancy_matrix.to_matrix(),
+            |t| t.matrix().to_matrix(),
+        );
+        for relationship_matrix in iter {
+            m.element_wise_add(
+                None,
+                None,
+                Some(&relationship_matrix.matrix().to_matrix()),
+                None,
             );
-            for relationship_matrix in iter {
-                m.element_wise_add(
+        }
+
+        if !src_labels_matrices.is_empty() {
+            let mut iter = src_labels_matrices.iter();
+            let mut src_matrix = iter.next().unwrap().to_matrix();
+            for label_matrix in iter {
+                src_matrix.element_wise_multiply(None, None, Some(&label_matrix.to_matrix()), None);
+            }
+            m.rmxm(&src_matrix);
+        }
+        if !dest_labels_matrices.is_empty() {
+            let mut iter = dest_labels_matrices.iter();
+            let mut dest_matrix = iter.next().unwrap().to_matrix();
+            for label_matrix in iter {
+                dest_matrix.element_wise_multiply(
                     None,
                     None,
-                    Some(&relationship_matrix.matrix().to_matrix()),
+                    Some(&label_matrix.to_matrix()),
                     None,
                 );
             }
-
-            if !src_labels_matrices.is_empty() {
-                let mut iter = src_labels_matrices.iter_mut();
-                let mut src_matrix = iter.next().unwrap().to_matrix();
-                for label_matrix in iter {
-                    src_matrix.element_wise_multiply(
-                        None,
-                        None,
-                        Some(&label_matrix.to_matrix()),
-                        None,
-                    );
-                }
-                m.rmxm(&src_matrix);
-            }
-            if !dest_labels_matrices.is_empty() {
-                let mut iter = dest_labels_matrices.iter_mut();
-                let mut dest_matrix = iter.next().unwrap().to_matrix();
-                for label_matrix in iter {
-                    dest_matrix.element_wise_multiply(
-                        None,
-                        None,
-                        Some(&label_matrix.to_matrix()),
-                        None,
-                    );
-                }
-                m.lmxm(&dest_matrix);
-            }
-            m.iter(0, u64::MAX)
-        } else {
-            self.zero_matrix.to_matrix().iter(0, u64::MAX)
-        };
-
-        iter.map(|(src, dest)| (NodeId(src), NodeId(dest)))
+            m.lmxm(&dest_matrix);
+        }
+        m.iter(0, u64::MAX)
+            .map(|(src, dest)| (NodeId(src), NodeId(dest)))
     }
 
     #[must_use]

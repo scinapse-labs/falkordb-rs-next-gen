@@ -1,13 +1,12 @@
 use std::{collections::HashSet, fmt::Display, hash::Hash, sync::Arc};
 
 use itertools::Itertools;
-use orx_tree::{Bfs, Collection, Dfs, DynTree, NodeRef};
+use orx_tree::{Dfs, DynTree, NodeRef};
 
 use crate::{
     indexer::{EntityType, IndexType},
     runtime::{
         functions::{GraphFn, Type},
-        ordermap::OrderMap,
         orderset::OrderSet,
     },
 };
@@ -16,7 +15,21 @@ use crate::{
 pub struct Variable {
     pub name: Option<Arc<String>>,
     pub id: u32,
+    pub scope_id: u32,
     pub ty: Type,
+}
+
+impl Display for Variable {
+    fn fmt(
+        &self,
+        f: &mut std::fmt::Formatter<'_>,
+    ) -> std::fmt::Result {
+        if let Some(name) = &self.name {
+            write!(f, "{name}")
+        } else {
+            write!(f, "?{}", self.id)
+        }
+    }
 }
 
 impl PartialEq for Variable {
@@ -47,7 +60,7 @@ impl Variable {
 }
 
 #[derive(Clone, Debug)]
-pub enum ExprIR {
+pub enum ExprIR<TVar> {
     Null,
     Bool(bool),
     Integer(i64),
@@ -55,7 +68,7 @@ pub enum ExprIR {
     String(Arc<String>),
     List,
     Map,
-    Variable(Variable),
+    Variable(TVar),
     Parameter(String),
     Length,
     GetElement,
@@ -82,13 +95,13 @@ pub enum ExprIR {
     Modulo,
     Distinct,
     FuncInvocation(Arc<GraphFn>),
-    Quantifier(QuantifierType, Variable),
-    ListComprehension(Variable),
+    Quantifier(QuantifierType, TVar),
+    ListComprehension(TVar),
     Paren,
 }
 
 #[cfg_attr(tarpaulin, skip)]
-impl Display for ExprIR {
+impl<TVar: Display> Display for ExprIR<TVar> {
     fn fmt(
         &self,
         f: &mut std::fmt::Formatter<'_>,
@@ -101,7 +114,7 @@ impl Display for ExprIR {
             Self::String(s) => write!(f, "{s}"),
             Self::List => write!(f, "[]"),
             Self::Map => write!(f, "{{}}"),
-            Self::Variable(id) => write!(f, "{}", id.as_str()),
+            Self::Variable(id) => write!(f, "{id}"),
             Self::Parameter(p) => write!(f, "@{p}"),
             Self::Length => write!(f, "length()"),
             Self::GetElement => write!(f, "get_element()"),
@@ -129,10 +142,10 @@ impl Display for ExprIR {
             Self::Distinct => write!(f, "distinct"),
             Self::FuncInvocation(func) => write!(f, "{}()", func.name),
             Self::Quantifier(quantifier_type, var) => {
-                write!(f, "{quantifier_type} {}", var.as_str())
+                write!(f, "{quantifier_type} {var}")
             }
             Self::ListComprehension(var) => {
-                write!(f, "list comp({})", var.as_str())
+                write!(f, "list comp({var})")
             }
             Self::Paren => write!(f, "()"),
         }
@@ -162,147 +175,11 @@ impl Display for QuantifierType {
     }
 }
 
-pub trait Validate {
-    fn validate(
-        &self,
-        allow_aggregation: bool,
-        env: &mut HashSet<u32>,
-    ) -> Result<(), String>;
-}
-
-impl Validate for DynTree<ExprIR> {
-    #[allow(clippy::too_many_lines)]
-    #[allow(clippy::cognitive_complexity)]
-    fn validate(
-        &self,
-        allow_aggregation: bool,
-        env: &mut HashSet<u32>,
-    ) -> Result<(), String> {
-        for child in self.root().indices::<Bfs>() {
-            let child = self.node(child);
-
-            match child.data() {
-                ExprIR::Null
-                | ExprIR::Bool(_)
-                | ExprIR::Integer(_)
-                | ExprIR::Float(_)
-                | ExprIR::Parameter(_) => {
-                    debug_assert_eq!(child.num_children(), 0);
-                }
-                ExprIR::String(_) => {
-                    debug_assert_eq!(
-                        child.num_children(),
-                        if let Some(parent) = child.parent()
-                            && matches!(parent.data(), ExprIR::Map)
-                        {
-                            1
-                        } else {
-                            0
-                        }
-                    );
-                }
-                ExprIR::Variable(var) => {
-                    debug_assert_eq!(child.num_children(), 0);
-                    if !env.contains(&var.id) {
-                        return Err(format!("'{}' not defined", var.as_str()));
-                    }
-                }
-                ExprIR::And | ExprIR::Or | ExprIR::Xor => {
-                    debug_assert!(child.num_children() >= 2);
-                    for expr in child.children() {
-                        if let _e @ (ExprIR::Integer(_)
-                        | ExprIR::Float(_)
-                        | ExprIR::String(_)
-                        | ExprIR::List
-                        | ExprIR::Map) = expr.data()
-                        {
-                            return Err(String::from("Type mismatch: expected bool"));
-                        }
-                    }
-                }
-                ExprIR::List
-                | ExprIR::Eq
-                | ExprIR::Neq
-                | ExprIR::Lt
-                | ExprIR::Gt
-                | ExprIR::Le
-                | ExprIR::Ge
-                | ExprIR::Add
-                | ExprIR::Sub
-                | ExprIR::Mul
-                | ExprIR::Div
-                | ExprIR::Pow
-                | ExprIR::Modulo
-                | ExprIR::GetElement => {}
-                ExprIR::FuncInvocation(func) => {
-                    if func.is_aggregate() {
-                        if !allow_aggregation {
-                            return Err(format!(
-                                "Invalid use of aggregating function '{}'",
-                                func.name
-                            ));
-                        }
-
-                        // Check if any child expression contains an aggregation function
-                        for arg_node in child.children() {
-                            for sub_idx in arg_node.indices::<Dfs>() {
-                                let sub_node = self.node(sub_idx);
-                                if let ExprIR::FuncInvocation(sub_func) = sub_node.data()
-                                    && sub_func.is_aggregate() {
-                                        return Err(String::from(
-                                            "Can't use aggregate functions inside of aggregate functions"
-                                        ));
-                                    }
-                            }
-                        }
- 
-                        let ExprIR::Variable(var) = child.child(child.num_children() - 1).data()
-                        else {
-                            unreachable!();
-                        };
-                        env.insert(var.id);
-                    }
-                }
-                ExprIR::Map => {
-                    for expr in child.children() {
-                        debug_assert!(matches!(expr.data(), ExprIR::String(_)));
-                        debug_assert_eq!(expr.num_children(), 1);
-                    }
-                }
-                ExprIR::In => {
-                    debug_assert_eq!(child.num_children(), 2);
-                }
-                ExprIR::Not
-                | ExprIR::Negate
-                | ExprIR::Length
-                | ExprIR::IsNode
-                | ExprIR::IsRelationship
-                | ExprIR::Distinct
-                | ExprIR::Paren => {
-                    debug_assert_eq!(child.num_children(), 1);
-                }
-                ExprIR::GetElements => {
-                    debug_assert_eq!(child.num_children(), 3);
-                }
-                ExprIR::Quantifier(_quantifier_type, var) => {
-                    debug_assert_eq!(child.num_children(), 2);
-                    env.insert(var.id);
-                }
-                ExprIR::ListComprehension(var) => {
-                    debug_assert!(0 < child.num_children() && child.num_children() <= 3);
-                    env.insert(var.id);
-                }
-            }
-        }
-        Ok(())
-    }
-}
-
 pub trait SupportAggregation {
     fn is_aggregation(&self) -> bool;
 }
 
-impl SupportAggregation for DynTree<ExprIR> {
+impl SupportAggregation for DynTree<ExprIR<Variable>> {
     fn is_aggregation(&self) -> bool {
         self.root().indices::<Dfs>().any(|idx| {
             matches!(
@@ -314,36 +191,31 @@ impl SupportAggregation for DynTree<ExprIR> {
 }
 
 #[derive(Debug)]
-pub struct QueryNode<L> {
-    pub alias: Variable,
+pub struct QueryNode<L, TVar> {
+    pub alias: TVar,
     pub labels: OrderSet<L>,
-    pub attrs: QueryExpr,
+    pub attrs: QueryExpr<TVar>,
 }
 
 #[cfg_attr(tarpaulin, skip)]
-impl<L: Display + PartialEq> Display for QueryNode<L> {
+impl<L: Display + PartialEq, TVar: Display + PartialEq> Display for QueryNode<L, TVar> {
     fn fmt(
         &self,
         f: &mut std::fmt::Formatter<'_>,
     ) -> std::fmt::Result {
         if self.labels.is_empty() {
-            return write!(f, "({})", self.alias.as_str());
+            return write!(f, "({})", self.alias);
         }
-        write!(
-            f,
-            "({}:{})",
-            self.alias.as_str(),
-            self.labels.iter().join(":")
-        )
+        write!(f, "({}:{})", self.alias, self.labels.iter().join(":"))
     }
 }
 
-impl<L> QueryNode<L> {
+impl<L, TVar> QueryNode<L, TVar> {
     #[must_use]
     pub const fn new(
-        alias: Variable,
+        alias: TVar,
         labels: OrderSet<L>,
-        attrs: QueryExpr,
+        attrs: QueryExpr<TVar>,
     ) -> Self {
         Self {
             alias,
@@ -354,17 +226,17 @@ impl<L> QueryNode<L> {
 }
 
 #[derive(Debug)]
-pub struct QueryRelationship<T, L> {
-    pub alias: Variable,
+pub struct QueryRelationship<T, L, TVar> {
+    pub alias: TVar,
     pub types: Vec<T>,
-    pub attrs: QueryExpr,
-    pub from: Arc<QueryNode<L>>,
-    pub to: Arc<QueryNode<L>>,
+    pub attrs: QueryExpr<TVar>,
+    pub from: Arc<QueryNode<L, TVar>>,
+    pub to: Arc<QueryNode<L, TVar>>,
     pub bidirectional: bool,
 }
 
 #[cfg_attr(tarpaulin, skip)]
-impl<T: Display, L: Display> Display for QueryRelationship<T, L> {
+impl<T: Display, L: Display, TVar: Display> Display for QueryRelationship<T, L, TVar> {
     fn fmt(
         &self,
         f: &mut std::fmt::Formatter<'_>,
@@ -374,32 +246,29 @@ impl<T: Display, L: Display> Display for QueryRelationship<T, L> {
             return write!(
                 f,
                 "({})-[{}]-{}({})",
-                self.from.alias.as_str(),
-                self.alias.as_str(),
-                direction,
-                self.to.alias.as_str()
+                self.from.alias, self.alias, direction, self.to.alias
             );
         }
         write!(
             f,
             "({})-[{}:{}]-{}({})",
-            self.from.alias.as_str(),
-            self.alias.as_str(),
+            self.from.alias,
+            self.alias,
             self.types.iter().join("|"),
             direction,
-            self.to.alias.as_str()
+            self.to.alias
         )
     }
 }
 
-impl<T, L> QueryRelationship<T, L> {
+impl<T, L, TVar> QueryRelationship<T, L, TVar> {
     #[must_use]
     pub const fn new(
-        alias: Variable,
+        alias: TVar,
         types: Vec<T>,
-        attrs: QueryExpr,
-        from: Arc<QueryNode<L>>,
-        to: Arc<QueryNode<L>>,
+        attrs: QueryExpr<TVar>,
+        from: Arc<QueryNode<L, TVar>>,
+        to: Arc<QueryNode<L, TVar>>,
         bidirectional: bool,
     ) -> Self {
         Self {
@@ -414,106 +283,126 @@ impl<T, L> QueryRelationship<T, L> {
 }
 
 #[derive(Debug)]
-pub struct QueryPath {
-    pub var: Variable,
-    pub vars: Vec<Variable>,
+pub struct QueryPath<TVar> {
+    pub var: TVar,
+    pub vars: Vec<TVar>,
 }
 
-impl QueryPath {
+impl<TVar> QueryPath<TVar> {
     #[must_use]
     pub const fn new(
-        var: Variable,
-        vars: Vec<Variable>,
+        var: TVar,
+        vars: Vec<TVar>,
     ) -> Self {
         Self { var, vars }
     }
 }
 
 #[derive(Clone, Debug)]
-pub struct QueryGraph<T, L> {
-    nodes: OrderMap<Variable, Arc<QueryNode<L>>>,
-    relationships: OrderMap<Variable, Arc<QueryRelationship<T, L>>>,
-    paths: OrderMap<Variable, Arc<QueryPath>>,
+pub struct QueryGraph<T, L, TVar> {
+    nodes: Vec<Arc<QueryNode<L, TVar>>>,
+    relationships: Vec<Arc<QueryRelationship<T, L, TVar>>>,
+    paths: Vec<Arc<QueryPath<TVar>>>,
 }
 
-impl<T, L> Default for QueryGraph<T, L> {
+impl<T, L, TVar> Default for QueryGraph<T, L, TVar> {
     fn default() -> Self {
         Self {
-            nodes: OrderMap::default(),
-            relationships: OrderMap::default(),
-            paths: OrderMap::default(),
+            nodes: Vec::default(),
+            relationships: Vec::default(),
+            paths: Vec::default(),
         }
     }
 }
 
 #[cfg_attr(tarpaulin, skip)]
-impl<T: Display + PartialEq, L: Display + PartialEq> Display for QueryGraph<T, L> {
+impl<T: Display + PartialEq, L: Display + PartialEq, TVar: Display + PartialEq + Eq + Hash> Display
+    for QueryGraph<T, L, TVar>
+{
     fn fmt(
         &self,
         f: &mut std::fmt::Formatter<'_>,
     ) -> std::fmt::Result {
-        for node in self.nodes.values() {
+        for node in &self.nodes {
             write!(f, "{node}, ")?;
         }
-        for relationship in self.relationships.values() {
+        for relationship in &self.relationships {
             write!(f, "{relationship}, ")?;
         }
-        for path in self.paths.values() {
-            write!(f, "{path:?}, ")?;
+        for path in &self.paths {
+            write!(f, "{}, ", path.var)?;
         }
         Ok(())
     }
 }
 
-impl<T, L> QueryGraph<T, L> {
+impl<T, L, TVar: Clone + Hash + Eq> QueryGraph<T, L, TVar> {
     pub fn add_node(
         &mut self,
-        node: Arc<QueryNode<L>>,
+        node: Arc<QueryNode<L, TVar>>,
     ) -> bool {
-        self.nodes.insert(node.alias.clone(), node).is_none()
+        if self.nodes.iter().any(|n| n.alias == node.alias) {
+            return false;
+        }
+        self.nodes.push(node);
+        true
     }
 
     pub fn add_relationship(
         &mut self,
-        relationship: Arc<QueryRelationship<T, L>>,
+        relationship: Arc<QueryRelationship<T, L, TVar>>,
     ) -> bool {
-        self.relationships
-            .insert(relationship.alias.clone(), relationship)
-            .is_none()
+        if self
+            .relationships
+            .iter()
+            .any(|r| r.alias == relationship.alias)
+        {
+            false
+        } else {
+            self.relationships.push(relationship);
+            true
+        }
     }
 
     pub fn add_path(
         &mut self,
-        path: Arc<QueryPath>,
+        path: Arc<QueryPath<TVar>>,
     ) -> bool {
-        self.paths.insert(path.var.clone(), path).is_none()
+        if self.paths.iter().any(|p| p.var == path.var) {
+            false
+        } else {
+            self.paths.push(path);
+            true
+        }
     }
 
     #[must_use]
-    pub fn variables(&self) -> Vec<Variable> {
+    pub fn variables(&self) -> Vec<TVar> {
         self.nodes
-            .keys()
-            .chain(self.relationships.keys())
-            .chain(self.paths.keys())
-            .cloned()
+            .iter()
+            .map(|n| n.alias.clone())
+            .chain(self.relationships.iter().map(|r| r.alias.clone()))
+            .chain(self.paths.iter().map(|p| p.var.clone()))
             .collect()
     }
 
     #[must_use]
-    pub fn nodes(&self) -> Vec<Arc<QueryNode<L>>> {
-        self.nodes.values().cloned().collect()
+    pub fn nodes(&self) -> Vec<Arc<QueryNode<L, TVar>>> {
+        self.nodes.clone()
     }
 
     #[must_use]
-    pub fn relationships(&self) -> Vec<Arc<QueryRelationship<T, L>>> {
-        self.relationships.values().cloned().collect()
+    pub fn relationships(&self) -> Vec<Arc<QueryRelationship<T, L, TVar>>> {
+        self.relationships.clone()
     }
 
     #[must_use]
-    pub fn paths(&self) -> Vec<Arc<QueryPath>> {
-        self.paths.values().cloned().collect()
+    pub fn paths(&self) -> Vec<Arc<QueryPath<TVar>>> {
+        self.paths.clone()
     }
+}
 
+impl<T, L> QueryGraph<T, L, Variable> {
     #[must_use]
     pub fn filter_visited(
         &self,
@@ -524,17 +413,17 @@ impl<T, L> QueryGraph<T, L> {
         L: Default,
     {
         let mut res = Self::default();
-        for node in self.nodes.values() {
+        for node in &self.nodes {
             if !visited.contains(&node.alias.id) {
                 res.add_node(node.clone());
             }
         }
-        for relationship in self.relationships.values() {
+        for relationship in &self.relationships {
             if !visited.contains(&relationship.alias.id) {
                 res.add_relationship(relationship.clone());
             }
         }
-        for path in self.paths.values() {
+        for path in &self.paths {
             if !visited.contains(&path.var.id) {
                 res.add_path(path.clone());
             }
@@ -551,7 +440,7 @@ impl<T, L> QueryGraph<T, L> {
         let mut visited = HashSet::new();
         let mut components = Vec::new();
 
-        for node in self.nodes.values() {
+        for node in &self.nodes {
             if !visited.contains(&node.alias.id) {
                 let mut component = Self::default();
 
@@ -566,14 +455,14 @@ impl<T, L> QueryGraph<T, L> {
 
     fn dfs(
         &self,
-        node: &Arc<QueryNode<L>>,
+        node: &Arc<QueryNode<L, Variable>>,
         visited: &mut HashSet<u32>,
         component: &mut Self,
     ) {
         visited.insert(node.alias.id);
         component.add_node(node.clone());
 
-        for relationship in self.relationships.values() {
+        for relationship in &self.relationships {
             if relationship.from.alias.id == node.alias.id {
                 if visited.insert(relationship.alias.id) {
                     component.add_relationship(relationship.clone());
@@ -591,7 +480,7 @@ impl<T, L> QueryGraph<T, L> {
             }
         }
 
-        for path in self.paths.values() {
+        for path in &self.paths {
             if path.vars.iter().all(|id| visited.contains(&id.id)) && visited.insert(path.var.id) {
                 component.add_path(path.clone());
             }
@@ -599,58 +488,89 @@ impl<T, L> QueryGraph<T, L> {
     }
 }
 
-pub type QueryExpr = Arc<DynTree<ExprIR>>;
+pub type QueryExpr<TVar> = Arc<DynTree<ExprIR<TVar>>>;
 
 #[derive(Clone, Debug)]
-pub enum SetItem<L> {
-    Property(QueryExpr, QueryExpr, bool),
-    Label(Variable, OrderSet<L>),
+pub enum SetItem<L, TVar> {
+    Property(QueryExpr<TVar>, QueryExpr<TVar>, bool),
+    Label(TVar, OrderSet<L>),
+}
+
+#[cfg_attr(tarpaulin, skip)]
+impl<L: Display + PartialEq, TVar: Display> Display for SetItem<L, TVar> {
+    fn fmt(
+        &self,
+        f: &mut std::fmt::Formatter<'_>,
+    ) -> std::fmt::Result {
+        match self {
+            Self::Property(target, value, strict) => {
+                let op = if *strict { "=" } else { "+=" };
+                write!(f, "{target} {op} {value}")
+            }
+            Self::Label(var, labels) => {
+                write!(f, "{var}:")?;
+                let mut first = true;
+                for i in 0..labels.len() {
+                    if !first {
+                        write!(f, ":")?;
+                    }
+                    first = false;
+                    write!(f, "{}", &labels[i])?;
+                }
+                Ok(())
+            }
+        }
+    }
 }
 
 #[derive(Debug)]
-pub enum QueryIR {
+pub enum QueryIR<TVar> {
     Call(
         Arc<GraphFn>,
-        Vec<QueryExpr>,
-        Vec<Variable>,
-        Option<QueryExpr>,
+        Vec<QueryExpr<TVar>>,
+        Vec<TVar>,
+        Option<QueryExpr<TVar>>,
     ),
     Match {
-        pattern: QueryGraph<Arc<String>, Arc<String>>,
-        filter: Option<QueryExpr>,
+        pattern: QueryGraph<Arc<String>, Arc<String>, TVar>,
+        filter: Option<QueryExpr<TVar>>,
         optional: bool,
     },
-    Unwind(QueryExpr, Variable),
+    Unwind(QueryExpr<TVar>, TVar),
     Merge(
-        QueryGraph<Arc<String>, Arc<String>>,
-        Vec<SetItem<Arc<String>>>,
-        Vec<SetItem<Arc<String>>>,
+        QueryGraph<Arc<String>, Arc<String>, TVar>,
+        Vec<SetItem<Arc<String>, TVar>>,
+        Vec<SetItem<Arc<String>, TVar>>,
     ),
-    Create(QueryGraph<Arc<String>, Arc<String>>),
-    Delete(Vec<QueryExpr>, bool),
-    Set(Vec<SetItem<Arc<String>>>),
-    Remove(Vec<QueryExpr>),
+    Create(QueryGraph<Arc<String>, Arc<String>, TVar>),
+    Delete(Vec<QueryExpr<TVar>>, bool),
+    Set(Vec<SetItem<Arc<String>, TVar>>),
+    Remove(Vec<QueryExpr<TVar>>),
     LoadCsv {
-        file_path: QueryExpr,
+        file_path: QueryExpr<TVar>,
         headers: bool,
-        delimiter: QueryExpr,
-        var: Variable,
+        delimiter: QueryExpr<TVar>,
+        var: TVar,
     },
     With {
         distinct: bool,
-        exprs: Vec<(Variable, QueryExpr)>,
-        orderby: Vec<(QueryExpr, bool)>,
-        skip: Option<QueryExpr>,
-        limit: Option<QueryExpr>,
-        filter: Option<QueryExpr>,
+        all: bool,
+        exprs: Vec<(TVar, QueryExpr<TVar>)>,
+        copy_from_parent: Vec<(Variable, Variable)>,
+        orderby: Vec<(QueryExpr<TVar>, bool)>,
+        skip: Option<QueryExpr<TVar>>,
+        limit: Option<QueryExpr<TVar>>,
+        filter: Option<QueryExpr<TVar>>,
         write: bool,
     },
     Return {
         distinct: bool,
-        exprs: Vec<(Variable, QueryExpr)>,
-        orderby: Vec<(QueryExpr, bool)>,
-        skip: Option<QueryExpr>,
-        limit: Option<QueryExpr>,
+        all: bool,
+        exprs: Vec<(TVar, QueryExpr<TVar>)>,
+        copy_from_parent: Vec<(Variable, Variable)>,
+        orderby: Vec<(QueryExpr<TVar>, bool)>,
+        skip: Option<QueryExpr<TVar>>,
+        limit: Option<QueryExpr<TVar>>,
         write: bool,
     },
     CreateIndex {
@@ -658,7 +578,7 @@ pub enum QueryIR {
         attrs: Vec<Arc<String>>,
         index_type: IndexType,
         entity_type: EntityType,
-        options: Option<QueryExpr>,
+        options: Option<QueryExpr<TVar>>,
     },
     DropIndex {
         label: Arc<String>,
@@ -670,7 +590,7 @@ pub enum QueryIR {
 }
 
 #[cfg_attr(tarpaulin, skip)]
-impl Display for QueryIR {
+impl<TVar: Display + Eq + Hash> Display for QueryIR<TVar> {
     fn fmt(
         &self,
         f: &mut std::fmt::Formatter<'_>,
@@ -685,7 +605,7 @@ impl Display for QueryIR {
             }
             Self::Match { pattern, .. } => writeln!(f, "MATCH {pattern}"),
             Self::Unwind(l, v) => {
-                writeln!(f, "UNWIND {}:", v.as_str())?;
+                writeln!(f, "UNWIND {v}:")?;
                 write!(f, "{l}")
             }
             Self::Merge(p, _, _) => writeln!(f, "MERGE {p}"),
@@ -700,7 +620,7 @@ impl Display for QueryIR {
             Self::Set(items) => {
                 writeln!(f, "SET:")?;
                 for item in items {
-                    write!(f, "{item:?}")?;
+                    write!(f, "{item}")?;
                 }
                 Ok(())
             }
@@ -712,19 +632,19 @@ impl Display for QueryIR {
                 Ok(())
             }
             Self::LoadCsv { file_path, var, .. } => {
-                writeln!(f, "LOAD CSV FROM {file_path} AS {var:?}:")
+                writeln!(f, "LOAD CSV FROM {file_path} AS {var:}:")
             }
             Self::With { exprs, .. } => {
                 writeln!(f, "WITH:")?;
                 for (name, _) in exprs {
-                    write!(f, "{}", name.as_str())?;
+                    write!(f, "{name}")?;
                 }
                 Ok(())
             }
             Self::Return { exprs, .. } => {
                 writeln!(f, "RETURN:")?;
                 for (name, _) in exprs {
-                    write!(f, "{}", name.as_str())?;
+                    write!(f, "{name}")?;
                 }
                 Ok(())
             }
@@ -761,10 +681,9 @@ impl Display for QueryIR {
     }
 }
 
-impl QueryIR {
+impl<TVar: Eq + Hash> QueryIR<TVar> {
     pub fn validate(&self) -> Result<(), String> {
-        let mut env = HashSet::new();
-        self.inner_validate(std::iter::empty(), &mut env)
+        self.inner_validate(std::iter::empty())
     }
 
     #[allow(clippy::too_many_lines)]
@@ -772,16 +691,13 @@ impl QueryIR {
     fn inner_validate<'a, T>(
         &self,
         mut iter: T,
-        env: &mut HashSet<u32>,
     ) -> Result<(), String>
     where
         T: Iterator<Item = &'a Self>,
+        TVar: 'a,
     {
         match self {
             Self::Call(proc, args, _, _) => {
-                for arg in args {
-                    arg.validate(false, env)?;
-                }
                 if proc.name == "db.idx.fulltext.createNodeIndex" {
                     match args[0].root().data() {
                         ExprIR::String(_) => {}
@@ -808,198 +724,72 @@ impl QueryIR {
                 }
                 Ok(())
             }
-            Self::Match {
-                pattern, filter, ..
-            } => {
-                for node in pattern.nodes.values() {
-                    node.attrs.validate(false, env)?;
-                    env.insert(node.alias.id);
-                }
-                for relationship in pattern.relationships.values() {
-                    relationship.attrs.validate(false, env)?;
-                    env.insert(relationship.alias.id);
-                }
-                for path in pattern.paths.values() {
-                    if env.contains(&path.var.id) {
-                        return Err(format!("Duplicate alias {}", path.var.as_str()));
-                    }
-                    env.insert(path.var.id);
-                }
-                if let Some(filter) = filter {
-                    filter.validate(false, env)?;
-                }
+            Self::Match { .. } => {
                 iter.next().map_or_else(|| Err(String::from(
                         "Query cannot conclude with MATCH (must be a RETURN clause, an update clause, a procedure call or a non-returning subquery)",
-                    )), |first| first.inner_validate(iter, env))
+                    )), |first| first.inner_validate(iter))
             }
-            Self::Unwind(l, v) => {
-                l.validate(false, env)?;
-                if env.contains(&v.id) {
-                    return Err(format!("Duplicate alias {}", v.as_str()));
-                }
-                env.insert(v.id);
+            Self::Unwind(_, _) => {
                 iter.next().map_or_else(|| Err(String::from(
                         "Query cannot conclude with UNWIND (must be a RETURN clause, an update clause, a procedure call or a non-returning subquery)",
-                    )), |first| first.inner_validate(iter, env))
+                    )), |first| first.inner_validate(iter))
             }
-            Self::Merge(p, on_create_set_items, on_match_set_items) => {
-                for node in p.nodes.values() {
-                    if env.contains(&node.alias.id) && p.relationships.is_empty() {
-                        return Err(format!(
-                            "The bound variable {} can't be redeclared in a create clause",
-                            node.alias.as_str()
-                        ));
-                    }
-                    node.attrs.validate(false, env)?;
-                }
-                for node in p.nodes.values() {
-                    env.insert(node.alias.id);
-                }
-                for relationship in p.relationships.values() {
+            Self::Merge(p, _on_create_set_items, _on_match_set_items) => {
+                for relationship in &p.relationships {
                     if relationship.types.len() != 1 {
                         return Err(String::from(
                             "Exactly one relationship type must be specified for each relation in a MERGE pattern.",
                         ));
                     }
-                    relationship.attrs.validate(false, env)?;
-                    env.insert(relationship.alias.id);
-                }
-                for set_item in on_match_set_items {
-                    let (target, value) = match set_item {
-                        SetItem::Property(t, v, _) => (t, v),
-                        SetItem::Label(_, _) => continue,
-                    };
-                    target.validate(false, env)?;
-                    value.validate(false, env)?;
-                }
-                for set_item in on_create_set_items {
-                    let (target, value) = match set_item {
-                        SetItem::Property(t, v, _) => (t, v),
-                        SetItem::Label(_, _) => continue,
-                    };
-                    target.validate(false, env)?;
-                    value.validate(false, env)?;
                 }
                 iter.next()
-                    .map_or(Ok(()), |first| first.inner_validate(iter, env))
+                    .map_or(Ok(()), |first| first.inner_validate(iter))
             }
             Self::Create(p) => {
-                for path in p.paths.values() {
-                    if env.contains(&path.var.id) {
-                        return Err(format!(
-                            "The bound variable {} can't be redeclared in a create clause",
-                            path.var.as_str()
-                        ));
-                    }
-                }
-                for node in p.nodes.values() {
-                    if env.contains(&node.alias.id) && p.relationships.is_empty() {
-                        return Err(format!(
-                            "The bound variable {} can't be redeclared in a create clause",
-                            node.alias.as_str()
-                        ));
-                    }
-                    node.attrs.validate(false, env)?;
-                }
-                for relationship in p.relationships.values() {
-                    if env.contains(&relationship.alias.id) {
-                        return Err(format!(
-                            "The bound variable '{}' can't be redeclared in a CREATE clause",
-                            relationship.alias.as_str()
-                        ));
-                    }
+                for relationship in &p.relationships {
                     if relationship.types.len() != 1 {
                         return Err(String::from(
                             "Exactly one relationship type must be specified for each relation in a CREATE pattern.",
                         ));
                     }
-                    relationship.attrs.validate(false, env)?;
-                }
-                for path in p.paths.values() {
-                    env.insert(path.var.id);
-                }
-                for node in p.nodes.values() {
-                    env.insert(node.alias.id);
-                }
-                for relationship in p.relationships.values() {
-                    env.insert(relationship.alias.id);
                 }
                 iter.next()
-                    .map_or(Ok(()), |first| first.inner_validate(iter, env))
+                    .map_or(Ok(()), |first| first.inner_validate(iter))
             }
-            Self::Delete(exprs, _) => {
-                for expr in exprs {
-                    expr.validate(false, env)?;
-                }
+            Self::Delete(_exprs, _) => {
                 iter.next()
-                    .map_or(Ok(()), |first| first.inner_validate(iter, env))
+                    .map_or(Ok(()), |first| first.inner_validate(iter))
             }
-            Self::Set(items) => {
-                for item in items {
-                    let (target, value) = match item {
-                        SetItem::Property(t, v, _) => (t, v),
-                        SetItem::Label(_, _) => continue,
-                    };
-                    target.validate(false, env)?;
-                    value.validate(false, env)?;
-                }
+            Self::Set(_items) => {
                 iter.next()
-                    .map_or(Ok(()), |first| first.inner_validate(iter, env))
+                    .map_or(Ok(()), |first| first.inner_validate(iter))
             }
-            Self::Remove(items) => {
-                for item in items {
-                    item.validate(false, env)?;
-                }
+            Self::Remove(_items) => {
                 iter.next()
-                    .map_or(Ok(()), |first| first.inner_validate(iter, env))
+                    .map_or(Ok(()), |first| first.inner_validate(iter))
             }
-            Self::LoadCsv {
-                file_path,
-                delimiter,
-                var,
-                ..
-            } => {
-                file_path.validate(false, env)?;
-                delimiter.validate(false, env)?;
-                env.insert(var.id);
+            Self::LoadCsv { .. } => {
                 iter.next()
-                    .map_or(Ok(()), |first| first.inner_validate(iter, env))
+                    .map_or(Ok(()), |first| first.inner_validate(iter))
             }
-            Self::With { exprs, orderby, .. } | Self::Return { exprs, orderby, .. } => {
-                for (_, expr) in exprs {
-                    expr.validate(true, env)?;
-                }
-                let mut seen_aliases = HashSet::new();
-                for (name, _) in exprs {
-                    let alias = name.as_str();
-                    if !seen_aliases.insert(alias) {
-                        return Err(String::from(
-                            "Error: Multiple result columns with the same name are not supported.",
-                        ));
-                    }
-                    env.insert(name.id);
-                }
-                for (expr, _) in orderby {
-                    expr.validate(false, env)?;
-                }
-                env.clear();
-                for (name, _) in exprs {
-                    env.insert(name.id);
-                }
+            Self::With { exprs, orderby: _orderby, .. } | Self::Return { exprs, orderby: _orderby, .. } => {
                 iter.next()
-                    .map_or(Ok(()), |first| first.inner_validate(iter, env))
+                    .map_or(Ok(()), |first| first.inner_validate(iter))
             }
             Self::CreateIndex { .. } => iter
                 .next()
-                .map_or(Ok(()), |first| first.inner_validate(iter, env)),
+                .map_or(Ok(()), |first| first.inner_validate(iter)),
             Self::DropIndex { .. } => iter
                 .next()
-                .map_or(Ok(()), |first| first.inner_validate(iter, env)),
+                .map_or(Ok(()), |first| first.inner_validate(iter)),
             Self::Query(q, _) => {
                 let mut iter = q.iter();
                 let first = iter.next().ok_or("Error: empty query.")?;
-                first.inner_validate(iter, env)
+                first.inner_validate(iter)
             }
         }
     }
 }
+
+pub type RawQueryIR = QueryIR<Arc<String>>;
+pub type BoundQueryIR = QueryIR<Variable>;
