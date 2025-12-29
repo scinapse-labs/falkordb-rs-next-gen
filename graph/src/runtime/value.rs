@@ -515,6 +515,100 @@ impl Value {
         }
     }
 
+    /// Convert Value to JSON string representation
+    pub fn to_json_string(
+        &self,
+        runtime: &crate::runtime::runtime::Runtime,
+    ) -> String {
+        match self {
+            Self::Null => String::from("null"),
+            Self::Bool(b) => b.to_string(),
+            Self::Int(i) => i.to_string(),
+            Self::Float(f) => {
+                // Handle special float values
+                if f.is_nan() || f.is_infinite() {
+                    String::from("null")
+                } else {
+                    // Use default float formatting
+                    f.to_string()
+                }
+            }
+            Self::String(s) => escape_json_string(s),
+            Self::List(list) => {
+                let items: Vec<String> = list.iter().map(|v| v.to_json_string(runtime)).collect();
+                format!("[{}]", items.join(","))
+            }
+            Self::Map(map) => {
+                let items: Vec<String> = map
+                    .iter()
+                    .map(|(k, v)| {
+                        format!("{}:{}", escape_json_string(k), v.to_json_string(runtime))
+                    })
+                    .collect();
+                format!("{{{}}}", items.join(","))
+            }
+            Self::Node(id) => {
+                let node_id = u64::from(*id);
+                let labels = runtime.get_node_labels(*id);
+                let properties = runtime.get_node_attrs(*id);
+
+                let labels_json: Vec<String> =
+                    labels.iter().map(|s| escape_json_string(s)).collect();
+                let props_json: Vec<String> = properties
+                    .iter()
+                    .map(|(k, v)| {
+                        format!("{}:{}", escape_json_string(k), v.to_json_string(runtime))
+                    })
+                    .collect();
+
+                format!(
+                    r#"{{"type":"node","id":{},"labels":[{}],"properties":{{{}}}}}"#,
+                    node_id,
+                    labels_json.join(","),
+                    props_json.join(",")
+                )
+            }
+            Self::Relationship(rel) => {
+                let (rel_id, start_id, end_id) = **rel;
+                let rel_id_u64 = u64::from(rel_id);
+                let properties = runtime.get_relationship_attrs(rel_id);
+                let type_name = runtime
+                    .get_relationship_type(rel_id)
+                    .unwrap_or_else(|| Arc::new(String::new()));
+
+                let props_json: Vec<String> = properties
+                    .iter()
+                    .map(|(k, v)| {
+                        format!("{}:{}", escape_json_string(k), v.to_json_string(runtime))
+                    })
+                    .collect();
+
+                // Create start and end node JSON
+                let start_node_json = Self::Node(start_id).to_json_string(runtime);
+                let end_node_json = Self::Node(end_id).to_json_string(runtime);
+
+                format!(
+                    r#"{{"type":"relationship","id":{},"relationship":{},"properties":{{{}}},"start":{},"end":{}}}"#,
+                    rel_id_u64,
+                    escape_json_string(&type_name),
+                    props_json.join(","),
+                    start_node_json,
+                    end_node_json
+                )
+            }
+            Self::Path(values) => {
+                let items: Vec<String> = values.iter().map(|v| v.to_json_string(runtime)).collect();
+                format!("[{}]", items.join(","))
+            }
+            Self::VecF32(vec) => {
+                // Treat VecF32 as a JSON array of numbers
+                let items: Vec<String> = vec.iter().map(ToString::to_string).collect();
+                format!("[{}]", items.join(","))
+            }
+            Self::Arc(inner) => inner.to_json_string(runtime),
+        }
+    }
+
     fn compare_list<T: CompareValue>(
         a: &[T],
         b: &[T],
@@ -700,4 +794,28 @@ impl ValuesDeduper {
             false
         }
     }
+}
+
+/// Escape a string for JSON format
+fn escape_json_string(s: &str) -> String {
+    let mut result = String::from("\"");
+    for ch in s.chars() {
+        match ch {
+            '"' => result.push_str("\\\""),
+            '\\' => result.push_str("\\\\"),
+            '\n' => result.push_str("\\n"),
+            '\r' => result.push_str("\\r"),
+            '\t' => result.push_str("\\t"),
+            '\x08' => result.push_str("\\b"),
+            '\x0C' => result.push_str("\\f"),
+            c if c.is_control() => {
+                // Escape other control characters as \uXXXX
+                use std::fmt::Write;
+                let _ = write!(&mut result, "\\u{:04x}", c as u32);
+            }
+            c => result.push(c),
+        }
+    }
+    result.push('"');
+    result
 }

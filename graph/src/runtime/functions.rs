@@ -415,6 +415,7 @@ pub fn init_functions() -> Result<(), Functions> {
         ])],
         FnType::Function,
     );
+    funcs.add("tojson", to_json, false, vec![Type::Any], FnType::Function);
     funcs.add(
         "size",
         size,
@@ -1452,6 +1453,19 @@ fn value_to_string(
 
         _ => unreachable!(),
     }
+}
+
+fn to_json(
+    runtime: &Runtime,
+    args: ThinVec<Value>,
+) -> Result<Value, String> {
+    args.into_iter().next().map_or_else(
+        || unreachable!(),
+        |v| {
+            let json_string = v.to_json_string(runtime);
+            Ok(Value::String(Arc::new(json_string)))
+        },
+    )
 }
 
 fn size(

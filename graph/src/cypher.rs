@@ -799,21 +799,22 @@ impl<'a> Parser<'a> {
 
     /// Recursively checks if a node or its descendants contain an aggregate function
     fn contains_nested_aggregate(
-        node: &orx_tree::Node<orx_tree::Dyn<ExprIR<Arc<String>>>>,
+        node: &orx_tree::Node<orx_tree::Dyn<ExprIR<Arc<String>>>>
     ) -> bool {
         // Check current node
         if let ExprIR::FuncInvocation(func) = node.data()
-            && func.is_aggregate() {
-                return true;
-            }
-        
+            && func.is_aggregate()
+        {
+            return true;
+        }
+
         // Check all children recursively
         for child in node.children() {
             if Self::contains_nested_aggregate(&child) {
                 return true;
             }
         }
-        
+
         false
     }
 
@@ -1573,7 +1574,7 @@ impl<'a> Parser<'a> {
                             ExpressionListType::ZeroOrMoreClosedBy(RParen),
                         )?;
                         func.validate(args.len())?;
-                        
+
                         // Check for nested aggregate functions
                         for arg in &args {
                             if Self::contains_nested_aggregate(&arg.root()) {
@@ -1582,7 +1583,7 @@ impl<'a> Parser<'a> {
                                 ));
                             }
                         }
-                        
+
                         if distinct {
                             args = vec![tree!(ExprIR::Distinct; args)];
                         }
