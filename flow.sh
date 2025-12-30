@@ -31,9 +31,9 @@ if [[ "$FAIL_FAST" == 1 ]]; then
 fi
 
 # Add test filter support
-TEST_FILTER=""
+TEST_FILTER=()
 if [[ "$TEST" != "" ]]; then
-    TEST_FILTER="--test-name $TEST"
+    TEST_FILTER=(--test-name "$TEST")
 fi
 
-RLTest -f $TESTS_FILE --module $TARGET_DIR/$TARGET --no-progress $PARALLELISM $STOP_ON_FAILURE $TEST_FILTER  --clear-logs --log-dir tests/flow/logs $V
+RLTest -f "$TESTS_FILE" --module "$TARGET_DIR/$TARGET" --no-progress $PARALLELISM $STOP_ON_FAILURE "${TEST_FILTER[@]}" --clear-logs --log-dir tests/flow/logs $V
