@@ -28,5 +28,4 @@ data
 tests/flow/logs
 tests/flow/csvs
 redisearch
-rebuild-redis-search.sh
 .venv/
