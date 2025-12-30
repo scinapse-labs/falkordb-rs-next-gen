@@ -1,3 +1,4 @@
+tests/flow/test_access_del_entity
 tests/flow/test_aggregation
 tests/flow/test_create_clause
 tests/flow/test_empty_query

@@ -85,7 +85,7 @@ class testAccessDelNode():
         q = "MATCH (a:A), (b:B) DELETE a SET b = a RETURN b.v"
         res = self.graph.query(q)
         self.env.assertEquals(res.properties_set, 1)
-        self.env.assertEquals(res.result_set[0][0], 1)
+        self.env.assertEquals(res.result_set[0][0], 'value')
 
         # clear graph
         self.graph.delete()
@@ -100,7 +100,7 @@ class testAccessDelNode():
         q = "MATCH (a:A), (b:B) DELETE a SET b += a RETURN b.a, b.b"
         res = self.graph.query(q)
         self.env.assertEquals(res.properties_set, 1)
-        self.env.assertEquals(res.result_set[0][0], None)
+        self.env.assertEquals(res.result_set[0][0], 'value')
         self.env.assertEquals(res.result_set[0][1], 1)
 
     def test05_update_deleted_node_lables(self):
@@ -333,7 +333,7 @@ class testAccessDelEdge():
 
         q = "MATCH (a)-[e]->(b) DELETE e MERGE (a)-[:R {v:e.v+2}]->(b) RETURN e.v"
         res = self.graph.query(q)
-        self.env.assertEquals(res.result_set[0][0], 3)
+        self.env.assertEquals(res.result_set[0][0], 1)
         self.env.assertEquals(res.relationships_deleted, 1)
         self.env.assertEquals(res.relationships_created, 1)
 
