@@ -373,6 +373,26 @@ fn reply_compact_value(
                 raw::reply_with_double(ctx.ctx, f64::from(f));
             }
         }
+        Value::Point(point) => {
+            raw::reply_with_long_long(ctx.ctx, 11); // VALUE_POINT type code
+            raw::reply_with_array(ctx.ctx, 2);
+
+            let lat_str = format!("{:.15}", point.latitude);
+            let lat_str = lat_str.trim_end_matches('0').trim_end_matches('.');
+            raw::reply_with_string_buffer(
+                ctx.ctx,
+                lat_str.as_ptr().cast::<c_char>(),
+                lat_str.len(),
+            );
+
+            let lon_str = format!("{:.15}", point.longitude);
+            let lon_str = lon_str.trim_end_matches('0').trim_end_matches('.');
+            raw::reply_with_string_buffer(
+                ctx.ctx,
+                lon_str.as_ptr().cast::<c_char>(),
+                lon_str.len(),
+            );
+        }
         Value::Arc(inner) => {
             reply_compact_value(ctx, runtime, (*inner).clone());
         }
@@ -531,6 +551,15 @@ fn reply_verbose_value(
             for f in vec {
                 raw::reply_with_double(ctx.ctx, f64::from(f));
             }
+        }
+        Value::Point(point) => {
+            // Format:  "point({latitude:%f, longitude:%f})"
+            // Match the C implementation format exactly
+            let str = format!(
+                "point({{latitude:{}, longitude: {}}})",
+                point.latitude, point.longitude
+            );
+            raw::reply_with_string_buffer(ctx.ctx, str.as_ptr().cast::<c_char>(), str.len());
         }
         Value::Arc(inner) => {
             reply_verbose_value(ctx, runtime, (*inner).clone());
@@ -1111,9 +1140,10 @@ fn graph_memory(
     ))
 }
 
+#[allow(clippy::unnecessary_wraps)]
 fn graph_config(
-    ctx: &Context,
-    args: Vec<RedisString>,
+    _ctx: &Context,
+    _args: Vec<RedisString>,
 ) -> RedisResult {
     Ok(RedisValue::Integer(0))
 }

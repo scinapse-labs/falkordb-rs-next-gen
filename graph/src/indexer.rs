@@ -109,8 +109,9 @@ impl Document {
                         },
                     );
                 }
-                Value::List(values) => todo!(),
-                Value::VecF32(items) => todo!(),
+                Value::List(_) => todo!(),
+                Value::VecF32(_) => todo!(),
+                Value::Point(_) => todo!(),
                 Value::Null
                 | Value::Map(_)
                 | Value::Node(_)
@@ -277,13 +278,13 @@ impl Indexer {
                         RediSearch_TextFieldSetWeight(index, field_id, 1.0);
                     }
                     IndexType::Vector => {
-                        let field_id = RediSearch_CreateField(
+                        let _field_id = RediSearch_CreateField(
                             index,
                             field.name.as_ptr(),
                             RSFLDTYPE_VECTOR,
                             RSFLDOPT_NONE,
                         );
-                        //    RediSearch_VectorFieldSetDim(index, field_id, field->hnsw_options.dimension);
+                        // RediSearch_VectorFieldSetDim(index, field_id, field->hnsw_options.dimension);
                         // RediSearch_VectorFieldSetHNSWParams(index, field_id, IndexField_OptionsGetM(field), IndexField_OptionsGetEfConstruction(field), IndexField_OptionsGetEfRuntime(field), IndexField_OptionsGetSimFunc(field));
                     }
                 }

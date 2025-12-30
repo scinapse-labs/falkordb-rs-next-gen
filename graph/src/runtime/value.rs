@@ -50,6 +50,45 @@ impl DeletedRelationship {
     }
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub struct Point {
+    pub latitude: f64,
+    pub longitude: f64,
+    pub height: Option<f64>,
+}
+
+impl Point {
+    #[must_use]
+    pub const fn new(
+        latitude: f64,
+        longitude: f64,
+        height: Option<f64>,
+    ) -> Self {
+        Self {
+            latitude,
+            longitude,
+            height,
+        }
+    }
+
+    /// Validates that the point coordinates are within valid ranges
+    pub fn validate(&self) -> Result<(), String> {
+        if self.latitude < -90.0 || self.latitude > 90.0 {
+            return Err(format!(
+                "latitude should be within the range -90.0 to 90.0, got {}",
+                self.latitude
+            ));
+        }
+        if self.longitude < -180.0 || self.longitude > 180.0 {
+            return Err(format!(
+                "longitude should be within the range -180.0 to 180.0, got {}",
+                self.longitude
+            ));
+        }
+        Ok(())
+    }
+}
+
 #[derive(Clone, Debug, Default, PartialEq)]
 pub enum Value {
     #[default]
@@ -64,6 +103,7 @@ pub enum Value {
     Relationship(Box<(RelationshipId, NodeId, NodeId)>),
     Path(ThinVec<Self>),
     VecF32(ThinVec<f32>),
+    Point(Point),
     Arc(Arc<Self>),
 }
 
@@ -134,6 +174,14 @@ impl Hash for Value {
                 9.hash(state);
                 for f in x {
                     f.to_bits().hash(state);
+                }
+            }
+            Self::Point(p) => {
+                10.hash(state);
+                p.latitude.to_bits().hash(state);
+                p.longitude.to_bits().hash(state);
+                if let Some(h) = p.height {
+                    h.to_bits().hash(state);
                 }
             }
             Self::Arc(x) => {
@@ -377,6 +425,7 @@ impl OrderedEnum for Value {
             Self::Relationship(_) => 1 << 2,
             Self::Path(_) => 1 << 4,
             Self::VecF32(_) => 1 << 18,
+            Self::Point(_) => 1 << 5,
             Self::Arc(inner) => inner.order(),
         }
     }
@@ -414,6 +463,23 @@ impl CompareValue for Value {
             (Self::Node(a), Self::Node(b)) => (a.cmp(b), DisjointOrNull::None),
             (Self::Relationship(rela), Self::Relationship(relb)) => {
                 (rela.0.cmp(&relb.0), DisjointOrNull::None)
+            }
+            (Self::Point(a), Self::Point(b)) => {
+                // Compare points lexicographically:  latitude, then longitude, then height
+                match a.latitude.partial_cmp(&b.latitude) {
+                    Some(Ordering::Equal) => match a.longitude.partial_cmp(&b.longitude) {
+                        Some(Ordering::Equal) => match (a.height, b.height) {
+                            (Some(h1), Some(h2)) => compare_floats(h1, h2),
+                            (None, None) => (Ordering::Equal, DisjointOrNull::None),
+                            (Some(_), None) => (Ordering::Greater, DisjointOrNull::None),
+                            (None, Some(_)) => (Ordering::Less, DisjointOrNull::None),
+                        },
+                        Some(ord) => (ord, DisjointOrNull::None),
+                        None => (Ordering::Less, DisjointOrNull::NaN),
+                    },
+                    Some(ord) => (ord, DisjointOrNull::None),
+                    None => (Ordering::Less, DisjointOrNull::NaN),
+                }
             }
             // the inputs have different type - compare them if they
             // are both numerics of differing types
@@ -457,6 +523,7 @@ impl ValueTypeOf for Value {
             | (Self::Node(_), Type::Node)
             | (Self::Relationship(_), Type::Relationship)
             | (Self::Path(_), Type::Path)
+            | (Self::Point(_), Type::Point)
             | (_, Type::Any) => None,
             (Self::Arc(inner), ty) => {
                 // If the inner value is a Rc, we need to check its type
@@ -492,6 +559,7 @@ impl ValueGetType for Value {
             Self::Relationship(_) => Type::Relationship,
             Self::Path(_) => Type::Path,
             Self::VecF32(_) => Type::VecF32,
+            Self::Point(_) => Type::Point,
             Self::Arc(inner) => inner.get_type(),
         }
     }
@@ -511,6 +579,7 @@ impl Value {
             Self::Relationship(_) => String::from("Relationship"),
             Self::Path(_) => String::from("Path"),
             Self::VecF32(_) => String::from("VecF32"),
+            Self::Point(_) => String::from("Point"),
             Self::Arc(inner) => inner.name(),
         }
     }

@@ -9,7 +9,7 @@ use crate::{
     runtime::{
         ordermap::OrderMap,
         runtime::Runtime,
-        value::{Value, ValueTypeOf},
+        value::{Point, Value, ValueTypeOf},
     },
 };
 use itertools::Itertools;
@@ -73,6 +73,7 @@ pub enum Type {
     Relationship,
     Path,
     VecF32,
+    Point,
     Any,
     Union(Vec<Self>),
     Optional(Box<Self>),
@@ -96,6 +97,7 @@ impl Display for Type {
             Self::Relationship => write!(f, "Relationship"),
             Self::Path => write!(f, "Path"),
             Self::VecF32 => write!(f, "VecF32"),
+            Self::Point => write!(f, "Point"),
             Self::Any => write!(f, "Any"),
             Self::Union(types) => {
                 let mut iter = types.iter();
@@ -709,6 +711,13 @@ pub fn init_functions() -> Result<(), Functions> {
         ])],
         FnType::Function,
     );
+    funcs.add(
+        "point",
+        point,
+        false,
+        vec![Type::Union(vec![Type::Map, Type::Null])],
+        FnType::Function,
+    );
     funcs.add("exists", exists, false, vec![Type::Any], FnType::Function);
 
     // aggregation functions
@@ -964,6 +973,13 @@ fn property(
         (Some(Value::Map(map)), Some(Value::String(attr))) => {
             Ok(map.get(&attr).cloned().unwrap_or(Value::Null))
         }
+        (Some(Value::Point(point)), Some(Value::String(attr))) => match attr.as_str() {
+            "latitude" => Ok(Value::Float(point.latitude)),
+            "longitude" => Ok(Value::Float(point.longitude)),
+            "height" => Ok(point.height.map_or(Value::Null, Value::Float)),
+            "crs" => Ok(Value::String(Arc::new(String::from("wgs-84")))),
+            _ => Ok(Value::Null),
+        },
         (Some(Value::Null), Some(Value::String(_))) => Ok(Value::Null),
         _ => unreachable!(),
     }
@@ -2169,6 +2185,64 @@ fn vecf32(
         )),
         Some(Value::Null) => Ok(Value::Null),
 
+        _ => unreachable!(),
+    }
+}
+
+fn point(
+    _: &Runtime,
+    args: ThinVec<Value>,
+) -> Result<Value, String> {
+    let mut iter = args.into_iter();
+    match iter.next() {
+        Some(Value::Map(map)) => {
+            // Extract latitude
+            let latitude = map
+                .get(&Arc::new(String::from("latitude")))
+                .ok_or_else(|| String::from("point() requires 'latitude' field"))?;
+
+            let latitude = match latitude {
+                Value::Float(f) => *f,
+                Value::Int(i) => *i as f64,
+                _ => {
+                    return Err(format!(
+                        "Type mismatch:  'latitude' must be a number, got {}",
+                        latitude.name()
+                    ));
+                }
+            };
+
+            // Extract longitude
+            let longitude = map
+                .get(&Arc::new(String::from("longitude")))
+                .ok_or_else(|| String::from("point() requires 'longitude' field"))?;
+
+            let longitude = match longitude {
+                Value::Float(f) => *f,
+                Value::Int(i) => *i as f64,
+                _ => {
+                    return Err(format!(
+                        "Type mismatch: 'longitude' must be a number, got {}",
+                        longitude.name()
+                    ));
+                }
+            };
+
+            // Extract optional height
+            let height = map
+                .get(&Arc::new(String::from("height")))
+                .and_then(|h| match h {
+                    Value::Float(f) => Some(*f),
+                    Value::Int(i) => Some(*i as f64),
+                    Value::Null => None,
+                    _ => None,
+                });
+
+            let point = Point::new(latitude, longitude, height);
+            point.validate()?;
+            Ok(Value::Point(point))
+        }
+        Some(Value::Null) => Ok(Value::Null),
         _ => unreachable!(),
     }
 }
