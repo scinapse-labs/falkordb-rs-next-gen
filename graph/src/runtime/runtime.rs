@@ -1396,7 +1396,7 @@ impl<'a> Runtime {
                 attrs,
                 index_type,
                 entity_type,
-                options,
+                options: _,
             } => {
                 if !self.write {
                     return Err(String::from(
