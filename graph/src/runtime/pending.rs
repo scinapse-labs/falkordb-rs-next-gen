@@ -392,20 +392,6 @@ impl Pending {
                 .create_relationships(&self.created_relationships);
             self.created_relationships.clear();
         }
-        if !self.deleted_relationships.is_empty() {
-            stats.borrow_mut().relationships_deleted += self.deleted_relationships.len();
-            g.borrow_mut()
-                .delete_relationships(self.deleted_relationships.clone());
-            self.deleted_relationships.clear();
-        }
-        if !self.deleted_nodes.is_empty() {
-            stats.borrow_mut().nodes_deleted += self.deleted_nodes.len();
-            for id in &self.deleted_nodes {
-                g.borrow_mut()
-                    .delete_node(NodeId::from(id), &mut self.index_remove_docs);
-            }
-            self.deleted_nodes.clear();
-        }
         if self.set_node_labels.nvals() > 0 {
             g.borrow_mut()
                 .set_nodes_labels(&mut self.set_node_labels, &mut self.index_add_docs);
@@ -449,6 +435,20 @@ impl Pending {
                     g.borrow_mut().set_relationship_attributes(id, attrs);
             }
             self.set_relationships_attrs.clear();
+        }
+        if !self.deleted_nodes.is_empty() {
+            stats.borrow_mut().nodes_deleted += self.deleted_nodes.len();
+            for id in &self.deleted_nodes {
+                g.borrow_mut()
+                    .delete_node(NodeId::from(id), &mut self.index_remove_docs);
+            }
+            self.deleted_nodes.clear();
+        }
+        if !self.deleted_relationships.is_empty() {
+            stats.borrow_mut().relationships_deleted += self.deleted_relationships.len();
+            g.borrow_mut()
+                .delete_relationships(self.deleted_relationships.clone());
+            self.deleted_relationships.clear();
         }
         g.borrow_mut()
             .commit_index(&mut self.index_add_docs, &mut self.index_remove_docs);

@@ -74,6 +74,7 @@ pub struct Runtime {
     import_folder: String,
     pub deleted_nodes: RefCell<HashMap<NodeId, DeletedNode>>,
     pub deleted_relationships: RefCell<HashMap<RelationshipId, DeletedRelationship>>,
+    argument_envs: RefCell<Vec<(NodeIdx<Dyn<IR>>, Env)>>,
 }
 
 pub trait GetVariables {
@@ -103,6 +104,7 @@ impl GetVariables for DynNode<'_, IR> {
                 }
                 IR::Delete(_, _)
                 | IR::Empty
+                | IR::Argument
                 | IR::Set(_)
                 | IR::Remove(_)
                 | IR::Filter(_)
@@ -199,6 +201,7 @@ impl<'a> Runtime {
             import_folder,
             deleted_nodes: RefCell::new(HashMap::new()),
             deleted_relationships: RefCell::new(HashMap::new()),
+            argument_envs: RefCell::new(Vec::new()),
         }
     }
 
@@ -884,6 +887,16 @@ impl<'a> Runtime {
         };
         match self.plan.node(idx).data() {
             IR::Empty => Ok(Box::new(empty())),
+            IR::Argument => {
+                let env = self
+                    .argument_envs
+                    .borrow()
+                    .iter()
+                    .find(|(i, _)| *i == idx)
+                    .map(|(_, e)| e.clone());
+
+                env.map_or_else(|| Ok(iter), |env| Ok(Box::new(once(Ok(env)))))
+            }
             IR::Optional(vars) => {
                 let child_idx = if self.plan.node(idx).num_children() == 1 {
                     self.plan.node(idx).child(0).idx()
@@ -984,9 +997,24 @@ impl<'a> Runtime {
                     self.plan.node(idx).child(1).idx()
                 };
 
+                // Find all Argument nodes in the child tree
+                let argument_indices: Vec<NodeIdx<Dyn<IR>>> = self
+                    .plan
+                    .node(child_idx)
+                    .indices::<Bfs>()
+                    .filter(|&i| matches!(self.plan.node(i).data(), IR::Argument))
+                    .collect();
+
                 Ok(iter
                     .try_flat_map(move |vars| {
                         let cvars = vars.clone();
+
+                        // Set the environment for all Argument nodes in this subtree
+                        for arg_idx in &argument_indices {
+                            self.argument_envs
+                                .borrow_mut()
+                                .push((*arg_idx, vars.clone()));
+                        }
 
                         let resolved_pattern = self.resolve_pattern(pattern);
                         let resolved_on_match_set_items =
@@ -1785,35 +1813,38 @@ impl<'a> Runtime {
                                 }
                             }
                         }
-                        Value::Relationship(rel) => {
-                            if self.g.borrow().is_relationship_deleted(rel.0)
-                                || self
-                                    .pending
-                                    .borrow()
-                                    .is_relationship_deleted(rel.0, rel.1, rel.2)
+                        Value::Relationship(target_rel) => {
+                            if self.g.borrow().is_relationship_deleted(target_rel.0)
+                                || self.pending.borrow().is_relationship_deleted(
+                                    target_rel.0,
+                                    target_rel.1,
+                                    target_rel.2,
+                                )
                             {
                                 continue;
                             }
                             if let Some(attr) = attr {
-                                if let Some(v) =
-                                    self.g.borrow().get_relationship_attribute(rel.0, attr)
+                                if let Some(v) = self
+                                    .g
+                                    .borrow()
+                                    .get_relationship_attribute(target_rel.0, attr)
                                     && v == run_expr
                                 {
                                     continue;
                                 }
 
                                 self.pending.borrow_mut().set_relationship_attribute(
-                                    rel.0,
+                                    target_rel.0,
                                     attr.clone(),
                                     run_expr,
                                 )?;
-                            } else if let Value::Relationship(rel) = run_expr {
+                            } else if let Value::Relationship(source_rel) = run_expr {
                                 let g = self.g.borrow();
-                                let attrs = self.get_relationship_attrs(rel.0);
+                                let attrs = self.get_relationship_attrs(source_rel.0);
                                 if *replace {
-                                    for key in g.get_relationship_attrs(rel.0) {
+                                    for key in g.get_relationship_attrs(target_rel.0) {
                                         self.pending.borrow_mut().set_relationship_attribute(
-                                            rel.0,
+                                            target_rel.0,
                                             key,
                                             Value::Null,
                                         )?;
@@ -1821,7 +1852,7 @@ impl<'a> Runtime {
                                 }
                                 for (key, value) in attrs.iter() {
                                     self.pending.borrow_mut().set_relationship_attribute(
-                                        rel.0,
+                                        target_rel.0,
                                         key.clone(),
                                         value.clone(),
                                     )?;
@@ -2316,11 +2347,8 @@ impl<'a> Runtime {
         &self,
         id: NodeId,
     ) -> OrderMap<Arc<String>, Value> {
-        if let Some(dn) = self.deleted_nodes.borrow().get(&id) {
-            return dn.attrs.clone();
-        }
         let g = self.g.borrow();
-        let mut actual: OrderMap<Arc<String>, Value> = g
+        let mut actual = g
             .get_node_attrs(id)
             .iter()
             .map(|attr| (attr.clone(), g.get_node_attribute(id, attr).unwrap()))
@@ -2333,8 +2361,11 @@ impl<'a> Runtime {
         &self,
         id: RelationshipId,
     ) -> OrderMap<Arc<String>, Value> {
+        if let Some(dr) = self.deleted_relationships.borrow().get(&id) {
+            return dr.attrs.clone();
+        }
         let g = self.g.borrow();
-        let mut actual: OrderMap<Arc<String>, Value> = g
+        let mut actual = g
             .get_relationship_attrs(id)
             .iter()
             .map(|attr| {

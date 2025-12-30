@@ -1,4 +1,3 @@
-test_access_del_entity
 test_bound_variables
 test_cache
 test_comprehension_functions
@@ -41,5 +40,3 @@ test_timeout
 test_traversal_construction
 test_union
 test_unwind_clause
-test_value_comparisons
-test_with_clause
