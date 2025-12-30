@@ -797,24 +797,20 @@ impl<'a> Parser<'a> {
         }
     }
 
-    /// Recursively checks if a node or its descendants contain an aggregate function
+    /// Checks if a tree or its descendants contain an aggregate function using DFS traversal
     fn contains_nested_aggregate(
-        node: &orx_tree::Node<orx_tree::Dyn<ExprIR<Arc<String>>>>
+        tree: &DynTree<ExprIR<Arc<String>>>
     ) -> bool {
-        // Check current node
-        if let ExprIR::FuncInvocation(func) = node.data()
-            && func.is_aggregate()
-        {
-            return true;
+        use orx_tree::Dfs;
+        
+        // Traverse all nodes in the tree using DFS
+        for idx in tree.root().indices::<Dfs>() {
+            if let ExprIR::FuncInvocation(func) = tree.node(idx).data()
+                && func.is_aggregate() {
+                    return true;
+                }
         }
-
-        // Check all children recursively
-        for child in node.children() {
-            if Self::contains_nested_aggregate(&child) {
-                return true;
-            }
-        }
-
+        
         false
     }
 
@@ -1577,7 +1573,7 @@ impl<'a> Parser<'a> {
 
                         // Check for nested aggregate functions
                         for arg in &args {
-                            if Self::contains_nested_aggregate(&arg.root()) {
+                            if Self::contains_nested_aggregate(arg) {
                                 return Err(self.lexer.format_error(
                                     "Can't use aggregate functions inside of aggregate functions",
                                 ));
