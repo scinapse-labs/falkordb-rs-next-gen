@@ -1,6 +1,6 @@
 use std::{collections::HashSet, fmt::Display, sync::Arc};
 
-use orx_tree::{DynTree, NodeRef, Side};
+use orx_tree::{Bfs, DynTree, NodeRef, Side, Traversal, Traverser};
 
 use crate::{
     ast::{
@@ -15,6 +15,7 @@ use crate::{
 #[derive(Clone, Debug)]
 pub enum IR {
     Empty,
+    Argument,
     Optional(Vec<Variable>),
     Call(Arc<GraphFn>, Vec<QueryExpr<Variable>>, Vec<Variable>),
     Unwind(QueryExpr<Variable>, Variable),
@@ -86,6 +87,7 @@ impl Display for IR {
     ) -> std::fmt::Result {
         match self {
             Self::Empty => write!(f, "Empty"),
+            Self::Argument => write!(f, "Argument"),
             Self::Optional(_) => write!(f, "Optional"),
             Self::Call(_, _, _) => write!(f, "Call"),
             Self::Unwind(_, _) => {
@@ -132,6 +134,25 @@ pub struct Planner {
 }
 
 impl Planner {
+    fn add_argument_to_leaves(
+        &self,
+        tree: &mut DynTree<IR>,
+    ) {
+        let mut tr = Traversal.bfs().over_nodes();
+
+        let leaves: Vec<_> = tree
+            .root()
+            .walk_with(&mut tr)
+            .filter(orx_tree::NodeRef::is_leaf)
+            .map(|x| x.idx())
+            .collect();
+
+        // Add Argument node as a child to each leaf
+        for leaf_idx in leaves {
+            tree.node_mut(leaf_idx).push_child(IR::Argument);
+        }
+    }
+
     fn plan_match(
         &mut self,
         pattern: &QueryGraph<Arc<String>, Arc<String>, Variable>,
@@ -369,14 +390,16 @@ impl Planner {
                 }
             }
             QueryIR::Unwind(expr, alias) => tree!(IR::Unwind(expr, alias)),
-            QueryIR::Merge(pattern, on_create_set_items, on_match_set_items) => tree!(
-                IR::Merge(
-                    pattern.filter_visited(&self.visited),
-                    on_create_set_items,
-                    on_match_set_items
-                ),
-                self.plan_match(&pattern, None)
-            ),
+            QueryIR::Merge(pattern, on_create_set_items, on_match_set_items) => {
+                let create_pattern = pattern.filter_visited(&self.visited);
+                let mut match_branch = self.plan_match(&pattern, None);
+                self.add_argument_to_leaves(&mut match_branch);
+
+                tree!(
+                    IR::Merge(create_pattern, on_create_set_items, on_match_set_items),
+                    match_branch
+                )
+            }
             QueryIR::Create(pattern) => {
                 tree!(IR::Create(pattern.filter_visited(&self.visited)))
             }
