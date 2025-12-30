@@ -4,7 +4,7 @@ use std::{
     cell::RefCell,
     cmp::Ordering,
     collections::HashSet,
-    fmt::Debug,
+    fmt::{self},
     hash::{DefaultHasher, Hash, Hasher},
     ops::{Add, Div, Mul, Rem, Sub},
     sync::Arc,
@@ -17,6 +17,15 @@ use crate::{
     graph::graph::{LabelId, NodeId, RelationshipId, TypeId},
     runtime::{functions::Type, ordermap::OrderMap},
 };
+
+/// A trait for formatting values as JSON, similar to Display but for JSON output
+pub trait DisplayJson {
+    fn fmt_json(
+        &self,
+        f: &mut fmt::Formatter<'_>,
+        runtime: &crate::runtime::runtime::Runtime,
+    ) -> fmt::Result;
+}
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct DeletedNode {
@@ -520,117 +529,25 @@ impl Value {
         &self,
         runtime: &crate::runtime::runtime::Runtime,
     ) -> String {
-        match self {
-            Self::Null => String::from("null"),
-            Self::Bool(b) => b.to_string(),
-            Self::Int(i) => i.to_string(),
-            Self::Float(f) => {
-                // Handle special float values
-                if f.is_nan() || f.is_infinite() {
-                    String::from("null")
-                } else {
-                    // Use default float formatting
-                    f.to_string()
-                }
-            }
-            Self::String(s) => escape_json_string(s),
-            Self::List(list) => {
-                let items: Vec<String> = list.iter().map(|v| v.to_json_string(runtime)).collect();
-                format!("[{}]", items.join(","))
-            }
-            Self::Map(map) => {
-                let items: Vec<String> = map
-                    .iter()
-                    .map(|(k, v)| {
-                        format!("{}:{}", escape_json_string(k), v.to_json_string(runtime))
-                    })
-                    .collect();
-                format!("{{{}}}", items.join(","))
-            }
-            Self::Node(id) => Self::node_to_json_string(runtime, *id, true),
-            Self::Relationship(rel) => {
-                let (rel_id, start_id, end_id) = **rel;
-                let rel_id_u64 = u64::from(rel_id);
-                let properties = runtime.get_relationship_attrs(rel_id);
-                let type_name = runtime
-                    .get_relationship_type(rel_id)
-                    .unwrap_or_else(|| Arc::new(String::new()));
-
-                let props_json: Vec<String> = properties
-                    .iter()
-                    .map(|(k, v)| {
-                        format!("{}:{}", escape_json_string(k), v.to_json_string(runtime))
-                    })
-                    .collect();
-
-                // Create start and end node JSON without "type" field (nested nodes)
-                let start_node_json = Self::node_to_json_string(runtime, start_id, false);
-                let end_node_json = Self::node_to_json_string(runtime, end_id, false);
-
-                format!(
-                    r#"{{"type":"relationship","id":{},"relationship":{},"properties":{{{}}},"start":{},"end":{}}}"#,
-                    rel_id_u64,
-                    escape_json_string(&type_name),
-                    props_json.join(","),
-                    start_node_json,
-                    end_node_json
-                )
-            }
-            Self::Path(values) => {
-                let items: Vec<String> = values.iter().map(|v| v.to_json_string(runtime)).collect();
-                format!("[{}]", items.join(","))
-            }
-            Self::VecF32(vec) => {
-                // Treat VecF32 as a JSON array of numbers
-                let items: Vec<String> = vec
-                    .iter()
-                    .map(|f| {
-                        if f.is_nan() || f.is_infinite() {
-                            String::from("null")
-                        } else {
-                            f.to_string()
-                        }
-                    })
-                    .collect();
-                format!("[{}]", items.join(","))
-            }
-            Self::Arc(inner) => inner.to_json_string(runtime),
+        struct JsonWrapper<'a> {
+            value: &'a Value,
+            runtime: &'a crate::runtime::runtime::Runtime,
         }
-    }
 
-    /// Helper method to serialize a node with or without the "type" field
-    fn node_to_json_string(
-        runtime: &crate::runtime::runtime::Runtime,
-        id: crate::graph::graph::NodeId,
-        include_type: bool,
-    ) -> String {
-        let node_id = u64::from(id);
-        let labels = runtime.get_node_labels(id);
-        let properties = runtime.get_node_attrs(id);
-
-        let labels_json: Vec<String> = labels.iter().map(|s| escape_json_string(s)).collect();
-        let props_json: Vec<String> = properties
-            .iter()
-            .map(|(k, v)| {
-                format!("{}:{}", escape_json_string(k), v.to_json_string(runtime))
-            })
-            .collect();
-
-        if include_type {
-            format!(
-                r#"{{"type":"node","id":{},"labels":[{}],"properties":{{{}}}}}"#,
-                node_id,
-                labels_json.join(","),
-                props_json.join(",")
-            )
-        } else {
-            format!(
-                r#"{{"id":{},"labels":[{}],"properties":{{{}}}}}"#,
-                node_id,
-                labels_json.join(","),
-                props_json.join(",")
-            )
+        impl fmt::Display for JsonWrapper<'_> {
+            fn fmt(
+                &self,
+                f: &mut fmt::Formatter<'_>,
+            ) -> fmt::Result {
+                self.value.fmt_json(f, self.runtime)
+            }
         }
+
+        JsonWrapper {
+            value: self,
+            runtime,
+        }
+        .to_string()
     }
 
     fn compare_list<T: CompareValue>(
@@ -722,6 +639,165 @@ impl Value {
         }
         (Ordering::Equal, DisjointOrNull::None)
     }
+}
+
+impl DisplayJson for Value {
+    fn fmt_json(
+        &self,
+        f: &mut fmt::Formatter<'_>,
+        runtime: &crate::runtime::runtime::Runtime,
+    ) -> fmt::Result {
+        match self {
+            Self::Null => write!(f, "null"),
+            Self::Bool(b) => write!(f, "{b}"),
+            Self::Int(i) => write!(f, "{i}"),
+            Self::Float(fl) => {
+                if fl.is_nan() || fl.is_infinite() {
+                    write!(f, "null")
+                } else {
+                    write!(f, "{fl}")
+                }
+            }
+            Self::String(s) => write_json_string(f, s),
+            Self::List(list) => {
+                write!(f, "[")?;
+                for (i, v) in list.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ",")?;
+                    }
+                    v.fmt_json(f, runtime)?;
+                }
+                write!(f, "]")
+            }
+            Self::Map(map) => {
+                write!(f, "{{")?;
+                for (i, (k, v)) in map.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ",")?;
+                    }
+                    write_json_string(f, k)?;
+                    write!(f, ":")?;
+                    v.fmt_json(f, runtime)?;
+                }
+                write!(f, "}}")
+            }
+            Self::Node(id) => write_node_json(f, runtime, *id, true),
+            Self::Relationship(rel) => {
+                let (rel_id, start_id, end_id) = **rel;
+                let rel_id_u64 = u64::from(rel_id);
+                let properties = runtime.get_relationship_attrs(rel_id);
+                let type_name = runtime
+                    .get_relationship_type(rel_id)
+                    .unwrap_or_else(|| Arc::new(String::new()));
+
+                write!(f, r#"{{"type":"relationship","id":{rel_id_u64},"relationship":"#)?;
+                write_json_string(f, &type_name)?;
+                write!(f, r#","properties":{{"#)?;
+
+                for (i, (k, v)) in properties.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ",")?;
+                    }
+                    write_json_string(f, k)?;
+                    write!(f, ":")?;
+                    v.fmt_json(f, runtime)?;
+                }
+
+                write!(f, r#"}},"start":"#)?;
+                write_node_json(f, runtime, start_id, false)?;
+                write!(f, r#","end":"#)?;
+                write_node_json(f, runtime, end_id, false)?;
+                write!(f, "}}")
+            }
+            Self::Path(values) => {
+                write!(f, "[")?;
+                for (i, v) in values.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ",")?;
+                    }
+                    v.fmt_json(f, runtime)?;
+                }
+                write!(f, "]")
+            }
+            Self::VecF32(vec) => {
+                write!(f, "[")?;
+                for (i, fl) in vec.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ",")?;
+                    }
+                    if fl.is_nan() || fl.is_infinite() {
+                        write!(f, "null")?;
+                    } else {
+                        write!(f, "{fl}")?;
+                    }
+                }
+                write!(f, "]")
+            }
+            Self::Arc(inner) => inner.fmt_json(f, runtime),
+        }
+    }
+}
+
+/// Write a string in JSON format with proper escaping
+fn write_json_string(
+    f: &mut fmt::Formatter<'_>,
+    s: &str,
+) -> fmt::Result {
+    write!(f, "\"")?;
+    for ch in s.chars() {
+        match ch {
+            '"' => write!(f, "\\\"")?,
+            '\\' => write!(f, "\\\\")?,
+            '\n' => write!(f, "\\n")?,
+            '\r' => write!(f, "\\r")?,
+            '\t' => write!(f, "\\t")?,
+            '\x08' => write!(f, "\\b")?,
+            '\x0C' => write!(f, "\\f")?,
+            c if c.is_control() => write!(f, "\\u{:04x}", c as u32)?,
+            c => write!(f, "{c}")?,
+        }
+    }
+    write!(f, "\"")
+}
+
+/// Write a node in JSON format with or without the "type" field
+fn write_node_json(
+    f: &mut fmt::Formatter<'_>,
+    runtime: &crate::runtime::runtime::Runtime,
+    id: NodeId,
+    include_type: bool,
+) -> fmt::Result {
+    let node_id = u64::from(id);
+    let labels = runtime.get_node_labels(id);
+    let properties = runtime.get_node_attrs(id);
+
+    write!(f, "{{")?;
+
+    if include_type {
+        write!(f, r#""type":"node","#)?;
+    }
+
+    write!(f, r#""id":{node_id},"labels":["#)?;
+
+    for (i, label) in labels.iter().enumerate() {
+        if i > 0 {
+            write!(f, ",")?;
+        }
+        write_json_string(f, label)?;
+    }
+
+    write!(f, r#"],"properties":{{"#)?;
+
+    for (i, (k, v)) in properties.iter().enumerate() {
+        if i > 0 {
+            write!(f, ",")?;
+        }
+        write_json_string(f, k)?;
+        write!(f, ":")?;
+        v.fmt_json(f, runtime)?;
+    }
+
+    write!(f, "}}}}")
 }
 
 pub trait Contains {
@@ -818,28 +894,4 @@ impl ValuesDeduper {
             false
         }
     }
-}
-
-/// Escape a string for JSON format
-fn escape_json_string(s: &str) -> String {
-    let mut result = String::from("\"");
-    for ch in s.chars() {
-        match ch {
-            '"' => result.push_str("\\\""),
-            '\\' => result.push_str("\\\\"),
-            '\n' => result.push_str("\\n"),
-            '\r' => result.push_str("\\r"),
-            '\t' => result.push_str("\\t"),
-            '\x08' => result.push_str("\\b"),
-            '\x0C' => result.push_str("\\f"),
-            c if c.is_control() => {
-                // Escape other control characters as \uXXXX
-                use std::fmt::Write;
-                let _ = write!(&mut result, "\\u{:04x}", c as u32);
-            }
-            c => result.push(c),
-        }
-    }
-    result.push('"');
-    result
 }

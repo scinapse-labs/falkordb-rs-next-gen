@@ -23,4 +23,17 @@ if [[ "$TESTS_FILE" == "" ]]; then
   TESTS_FILE=flow_tests_done.txt
 fi
 
-RLTest -f $TESTS_FILE --module $TARGET_DIR/$TARGET --no-progress --parallelism 8 --clear-logs --log-dir tests/flow/logs $V
+STOP_ON_FAILURE=""
+PARALLELISM="--parallelism 8"
+if [[ "$FAIL_FAST" == 1 ]]; then
+	STOP_ON_FAILURE="--stop-on-failure"
+	PARALLELISM="--parallelism 1"
+fi
+
+# Add test filter support
+TEST_FILTER=""
+if [[ "$TEST" != "" ]]; then
+    TEST_FILTER="--test-name $TEST"
+fi
+
+RLTest -f $TESTS_FILE --module $TARGET_DIR/$TARGET --no-progress $PARALLELISM $STOP_ON_FAILURE $TEST_FILTER  --clear-logs --log-dir tests/flow/logs $V
