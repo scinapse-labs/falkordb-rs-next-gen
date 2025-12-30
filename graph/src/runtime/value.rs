@@ -690,7 +690,10 @@ impl DisplayJson for Value {
                     .get_relationship_type(rel_id)
                     .unwrap_or_else(|| Arc::new(String::new()));
 
-                write!(f, r#"{{"type":"relationship","id":{rel_id_u64},"relationship":"#)?;
+                write!(
+                    f,
+                    r#"{{"type":"relationship","id":{rel_id_u64},"relationship":"#
+                )?;
                 write_json_string(f, &type_name)?;
                 write!(f, r#","properties":{{"#)?;
 

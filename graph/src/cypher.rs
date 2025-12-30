@@ -798,19 +798,18 @@ impl<'a> Parser<'a> {
     }
 
     /// Checks if a tree or its descendants contain an aggregate function using DFS traversal
-    fn contains_nested_aggregate(
-        tree: &DynTree<ExprIR<Arc<String>>>
-    ) -> bool {
+    fn contains_nested_aggregate(tree: &DynTree<ExprIR<Arc<String>>>) -> bool {
         use orx_tree::Dfs;
-        
+
         // Traverse all nodes in the tree using DFS
         for idx in tree.root().indices::<Dfs>() {
             if let ExprIR::FuncInvocation(func) = tree.node(idx).data()
-                && func.is_aggregate() {
-                    return true;
-                }
+                && func.is_aggregate()
+            {
+                return true;
+            }
         }
-        
+
         false
     }
 
