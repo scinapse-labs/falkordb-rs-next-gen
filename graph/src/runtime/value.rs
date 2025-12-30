@@ -547,27 +547,7 @@ impl Value {
                     .collect();
                 format!("{{{}}}", items.join(","))
             }
-            Self::Node(id) => {
-                let node_id = u64::from(*id);
-                let labels = runtime.get_node_labels(*id);
-                let properties = runtime.get_node_attrs(*id);
-
-                let labels_json: Vec<String> =
-                    labels.iter().map(|s| escape_json_string(s)).collect();
-                let props_json: Vec<String> = properties
-                    .iter()
-                    .map(|(k, v)| {
-                        format!("{}:{}", escape_json_string(k), v.to_json_string(runtime))
-                    })
-                    .collect();
-
-                format!(
-                    r#"{{"type":"node","id":{},"labels":[{}],"properties":{{{}}}}}"#,
-                    node_id,
-                    labels_json.join(","),
-                    props_json.join(",")
-                )
-            }
+            Self::Node(id) => Self::node_to_json_string(runtime, *id, true),
             Self::Relationship(rel) => {
                 let (rel_id, start_id, end_id) = **rel;
                 let rel_id_u64 = u64::from(rel_id);
@@ -583,9 +563,9 @@ impl Value {
                     })
                     .collect();
 
-                // Create start and end node JSON
-                let start_node_json = Self::Node(start_id).to_json_string(runtime);
-                let end_node_json = Self::Node(end_id).to_json_string(runtime);
+                // Create start and end node JSON without "type" field (nested nodes)
+                let start_node_json = Self::node_to_json_string(runtime, start_id, false);
+                let end_node_json = Self::node_to_json_string(runtime, end_id, false);
 
                 format!(
                     r#"{{"type":"relationship","id":{},"relationship":{},"properties":{{{}}},"start":{},"end":{}}}"#,
@@ -615,6 +595,41 @@ impl Value {
                 format!("[{}]", items.join(","))
             }
             Self::Arc(inner) => inner.to_json_string(runtime),
+        }
+    }
+
+    /// Helper method to serialize a node with or without the "type" field
+    fn node_to_json_string(
+        runtime: &crate::runtime::runtime::Runtime,
+        id: crate::graph::graph::NodeId,
+        include_type: bool,
+    ) -> String {
+        let node_id = u64::from(id);
+        let labels = runtime.get_node_labels(id);
+        let properties = runtime.get_node_attrs(id);
+
+        let labels_json: Vec<String> = labels.iter().map(|s| escape_json_string(s)).collect();
+        let props_json: Vec<String> = properties
+            .iter()
+            .map(|(k, v)| {
+                format!("{}:{}", escape_json_string(k), v.to_json_string(runtime))
+            })
+            .collect();
+
+        if include_type {
+            format!(
+                r#"{{"type":"node","id":{},"labels":[{}],"properties":{{{}}}}}"#,
+                node_id,
+                labels_json.join(","),
+                props_json.join(",")
+            )
+        } else {
+            format!(
+                r#"{{"id":{},"labels":[{}],"properties":{{{}}}}}"#,
+                node_id,
+                labels_json.join(","),
+                props_json.join(",")
+            )
         }
     }
 
