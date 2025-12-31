@@ -268,12 +268,29 @@ impl<'a> Runtime {
                     ));
                 };
 
-                // OPTIMIZATION: Move ownership instead of cloning
-                // Take value from acc (no clone), transfer to curr, compute new value, store result
+                // OPTIMIZATION: Take accumulator from acc (ref_count=1, no clone)
                 let prev_value = acc.take(key).unwrap_or(Value::Null);
-                curr.insert(key, prev_value);
 
-                let new_value = self.run_expr(ir, idx, curr, Some(agg_group_key))?;
+                // OPTIMIZATION: Build args manually to avoid cloning the accumulator
+                // Evaluate all arguments EXCEPT the last one (accumulator variable)
+                // The accumulator should not be needed for evaluating these arguments
+                let mut args = thin_vec![];
+                let num_children = ir.node(idx).num_children();
+                for i in 0..num_children - 1 {
+                    let child = ir.node(idx).child(i);
+                    let arg_value = self.run_expr(ir, child.idx(), curr, Some(agg_group_key))?;
+                    args.push(arg_value);
+                }
+
+                // Push the accumulator as the last argument (moved, not cloned!)
+                // This is the ONLY Arc reference - ref_count=1
+                args.push(prev_value);
+
+                // Call the aggregation function directly
+                // Now collect() receives Arc with ref_count=1 and can unwrap without cloning!
+                let new_value = (func.func)(self, args)?;
+
+                // Store result back in accumulator
                 acc.insert(key, new_value);
             }
             _ => {
