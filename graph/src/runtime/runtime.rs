@@ -1336,7 +1336,32 @@ impl<'a> Runtime {
                         let mut vars = v?;
                         vars.merge(key?);
                         for (name, tree) in agg {
-                            vars.insert(name, self.run_expr(tree, tree.root().idx(), &vars, None)?);
+                            // Check if this is an aggregation function that needs finalization
+                            let value = if let ExprIR::FuncInvocation(func) = tree.root().data()
+                                && let FnType::Aggregation(_, finalize) = &func.fn_type
+                                && let ExprIR::Variable(agg_key) =
+                                    tree.root().child(tree.root().num_children() - 1).data()
+                            {
+                                // OPTIMIZATION: Take (not get) the Arc-wrapped accumulator
+                                // Since we own vars, take() moves the value out without cloning the Arc
+                                let mut acc = vars.take(agg_key).unwrap_or(Value::Null);
+
+                                // Unwrap Arc if present - now we have the only reference (ref_count=1)
+                                if let Value::Arc(arc_value) = acc {
+                                    acc = Arc::unwrap_or_clone(arc_value);
+                                }
+
+                                // Apply finalization function
+                                match finalize {
+                                    Some(f) => (f)(acc),
+                                    None => acc,
+                                }
+                            } else {
+                                // Non-aggregation expression - use immutable reference
+                                self.run_expr(tree, tree.root().idx(), &vars, None)?
+                            };
+
+                            vars.insert(name, value);
                         }
                         Ok(vars)
                     })
