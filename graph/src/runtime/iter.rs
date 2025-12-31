@@ -41,7 +41,11 @@ where
 
                 self.cache
                     .entry(group_key)
-                    .and_modify(|v| v.1 = (self.agg_fn)(group_key, item.clone(), v.1.clone()))
+                    .and_modify(|v| {
+                        // Take ownership of v.1, pass to agg_fn, get new value, assign back
+                        let old_acc = std::mem::replace(&mut v.1, self.default_value.clone());
+                        v.1 = (self.agg_fn)(group_key, item.clone(), old_acc);
+                    })
                     .or_insert_with(|| {
                         (
                             key,
