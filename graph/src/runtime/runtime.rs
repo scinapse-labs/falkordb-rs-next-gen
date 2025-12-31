@@ -283,9 +283,10 @@ impl<'a> Runtime {
                     args.push(arg_value);
                 }
 
-                // Check if we have DISTINCT as first child (matching line 704 pattern)
+                // Check if we have DISTINCT as first child (matching line 690 pattern)
+                // num_children == 3 means: DISTINCT child + one argument + accumulator variable
                 if num_children == 3 && matches!(ir.node(idx).child(0).data(), ExprIR::Distinct) {
-                    // Unpack the distinct result (matching lines 707-714)
+                    // Unpack the distinct result (matching lines 692-699)
                     let arg = &args[0];
                     if let Value::List(values) = arg {
                         let mut values = values.clone();
