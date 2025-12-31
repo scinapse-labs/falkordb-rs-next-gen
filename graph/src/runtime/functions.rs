@@ -1055,18 +1055,7 @@ fn collect(
 ) -> Result<Value, String> {
     let mut iter = args.into_iter();
     match (iter.next(), iter.next()) {
-        (Some(a), Some(Value::Null)) => Ok(Value::Arc(Arc::new(Value::List(thin_vec![a])))),
-        (Some(a), Some(Value::Arc(arc_list))) => {
-            // OPTIMIZATION: Unwrap Arc, modify, rewrap (cheap if sole owner)
-            let Value::List(mut list) = Arc::unwrap_or_clone(arc_list) else {
-                unreachable!();
-            };
-            if a == Value::Null {
-                return Ok(Value::Arc(Arc::new(Value::List(list))));
-            }
-            list.push(a);
-            Ok(Value::Arc(Arc::new(Value::List(list))))
-        }
+        (Some(a), Some(Value::Null)) => Ok(Value::List(thin_vec![a])),
         (Some(a), Some(Value::List(mut l))) => {
             if a == Value::Null {
                 return Ok(Value::List(l));
@@ -1164,46 +1153,6 @@ fn avg(
             // If the first value is null, return the accumulator unchanged
             Ok(ctx)
         }
-        (val, Value::Arc(arc_list)) => {
-            // OPTIMIZATION: Unwrap Arc, modify, rewrap (cheap if sole owner)
-            let Value::List(vec) = Arc::unwrap_or_clone(arc_list) else {
-                unreachable!();
-            };
-            let val = val.get_numeric();
-            // Extract existing sum and count
-            let (Value::Float(sum), Value::Int(count), Value::Bool(had_overflow)) =
-                (&vec[0], &vec[1], &vec[2])
-            else {
-                unreachable!("avg accumulator should be [sum, count, overflow]");
-            };
-
-            let count = *count + 1;
-
-            let overflow = *had_overflow || about_to_overflow(*sum, val);
-
-            let sum = {
-                if *had_overflow {
-                    // continue incremental averaging
-                    let mut total = sum / count as f64;
-                    total *= (count - 1) as f64;
-                    total += val / count as f64;
-                    total
-                } else if overflow {
-                    // switch to incremental averaging
-                    let mut total = sum / count as f64;
-                    total += val / count as f64;
-                    total
-                } else {
-                    sum + val
-                }
-            };
-
-            Ok(Value::Arc(Arc::new(Value::List(thin_vec![
-                Value::Float(sum),
-                Value::Int(count),
-                Value::Bool(overflow),
-            ]))))
-        }
         (val, Value::List(vec)) => {
             let val = val.get_numeric();
             // Extract existing sum and count
@@ -1282,17 +1231,12 @@ fn percentile(
         ));
     }
 
-    let mut ctx = args.remove(0);
+    let ctx = args.remove(0);
     if matches!(val, Value::Null) {
         return Ok(ctx);
     }
 
-    // OPTIMIZATION: Unwrap Arc if present (cheap if sole owner)
-    if let Value::Arc(arc_value) = ctx {
-        ctx = Arc::unwrap_or_clone(arc_value);
-    }
-
-    let Value::List(state) = &mut ctx else {
+    let Value::List(mut state) = ctx else {
         unreachable!("Context must be a List");
     };
 
@@ -1302,10 +1246,10 @@ fn percentile(
 
     collected_values.push(Value::Float(val.get_numeric()));
 
-    Ok(Value::Arc(Arc::new(Value::List(thin_vec![
+    Ok(Value::List(thin_vec![
         Value::Float(percentile),
         Value::List(collected_values),
-    ]))))
+    ]))
 }
 
 #[allow(clippy::needless_pass_by_value)]
@@ -1390,24 +1334,6 @@ fn stdev(
     let ctx = iter.next().unwrap();
     match (val, ctx) {
         (Value::Null, ctx) => Ok(ctx),
-        (val, Value::Arc(arc_list)) => {
-            // OPTIMIZATION: Unwrap Arc, modify, rewrap (cheap if sole owner)
-            let Value::List(vec) = Arc::unwrap_or_clone(arc_list) else {
-                unreachable!();
-            };
-            let val = val.get_numeric();
-            let (Value::Float(sum), Value::List(vec)) = (&vec[0], &vec[1]) else {
-                unreachable!("stdev accumulator should be [sum, values]");
-            };
-
-            let mut vec = vec.clone();
-            vec.push(Value::Float(val));
-
-            Ok(Value::Arc(Arc::new(Value::List(thin_vec![
-                Value::Float(sum + val),
-                Value::List(vec)
-            ]))))
-        }
         (val, Value::List(vec)) => {
             let val = val.get_numeric();
             let (Value::Float(sum), Value::List(vec)) = (&vec[0], &vec[1]) else {

@@ -234,12 +234,8 @@ impl<'a> Runtime {
                     let ExprIR::Variable(key) = ir.child(ir.num_children() - 1).data() else {
                         unreachable!();
                     };
-                    // OPTIMIZATION: Wrap List and Map values in Arc for cheap cloning during aggregation
-                    let zero_value = match zero {
-                        Value::List(_) | Value::Map(_) => Value::Arc(Arc::new(zero.clone())),
-                        _ => zero.clone(),
-                    };
-                    env.insert(key, zero_value);
+                    // Initialize accumulator with zero value
+                    env.insert(key, zero.clone());
                 }
             }
             _ => {
@@ -273,12 +269,11 @@ impl<'a> Runtime {
                     ));
                 };
 
-                // OPTIMIZATION: Take accumulator from acc (ref_count=1, no clone)
+                // OPTIMIZATION: Take ownership of accumulator (moves value, no clone)
                 let prev_value = acc.take(key).unwrap_or(Value::Null);
 
                 // OPTIMIZATION: Build args manually to avoid cloning the accumulator
                 // Evaluate all arguments EXCEPT the last one (accumulator variable)
-                // This bypasses run_expr for the accumulator, preventing Arc cloning
                 let mut args = thin_vec![];
                 for i in 0..num_children - 1 {
                     let child = ir.node(idx).child(i);
@@ -287,11 +282,9 @@ impl<'a> Runtime {
                 }
 
                 // Push the accumulator as the last argument (moved, not cloned!)
-                // This is the ONLY Arc reference - ref_count=1
                 args.push(prev_value);
 
                 // Call the aggregation function directly
-                // Now collect() receives Arc with ref_count=1 and can unwrap without cloning!
                 let new_value = (func.func)(self, args)?;
 
                 // Store result back in accumulator

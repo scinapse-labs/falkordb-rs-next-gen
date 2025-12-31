@@ -166,8 +166,22 @@ impl Env {
         self.0.get(key.id as usize).cloned()
     }
 
-    /// Take ownership of a value from the environment, replacing it with Null.
-    /// Returns None if the key doesn't exist or contains Null.
+    /// Takes ownership of a value from the environment, replacing it with `Null`.
+    ///
+    /// This method is designed for aggregation optimizations where we need to transfer
+    /// ownership of large accumulated values (like lists with millions of items) without
+    /// cloning them. By replacing the environment entry with `Null`, we ensure the value
+    /// can be moved (not cloned) to the aggregation function.
+    ///
+    /// # Returns
+    /// - `Some(value)` if the key exists and contains a non-Null value
+    /// - `None` if the key doesn't exist or already contains `Null`
+    ///
+    /// # Usage
+    /// Prefer this over `get()` when:
+    /// - You need exclusive ownership of a value
+    /// - The value is expensive to clone (e.g., large collections)
+    /// - The environment slot won't be read again before being overwritten
     pub fn take(
         &mut self,
         key: &Variable,
