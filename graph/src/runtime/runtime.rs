@@ -234,7 +234,12 @@ impl<'a> Runtime {
                     let ExprIR::Variable(key) = ir.child(ir.num_children() - 1).data() else {
                         unreachable!();
                     };
-                    env.insert(key, zero.clone());
+                    // OPTIMIZATION: Wrap List and Map values in Arc for cheap cloning during aggregation
+                    let zero_value = match zero {
+                        Value::List(_) | Value::Map(_) => Value::Arc(Arc::new(zero.clone())),
+                        _ => zero.clone(),
+                    };
+                    env.insert(key, zero_value);
                 }
             }
             _ => {
@@ -636,7 +641,12 @@ impl<'a> Runtime {
                         && let FnType::Aggregation(_, finalize) = &func.fn_type
                         && let ExprIR::Variable(key) = node.child(node.num_children() - 1).data()
                     {
-                        let acc = env.get(key).unwrap();
+                        let mut acc = env.get(key).unwrap();
+
+                        // OPTIMIZATION: Unwrap Arc if present
+                        if let Value::Arc(arc_value) = acc {
+                            acc = (**arc_value).clone();
+                        }
 
                         return match finalize {
                             Some(func) => Ok((func)(acc)),
