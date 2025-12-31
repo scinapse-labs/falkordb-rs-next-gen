@@ -12,7 +12,6 @@ use crate::{
         value::{Value, ValueTypeOf},
     },
 };
-use itertools::Itertools;
 use rand::Rng;
 use std::{
     collections::HashMap,
@@ -1058,8 +1057,8 @@ fn collect(
     match (iter.next(), iter.next()) {
         (Some(a), Some(Value::Null)) => Ok(Value::Arc(Arc::new(Value::List(thin_vec![a])))),
         (Some(a), Some(Value::Arc(arc_list))) => {
-            // OPTIMIZATION: Unwrap Arc, modify, rewrap
-            let Value::List(mut list) = (**arc_list).clone() else {
+            // OPTIMIZATION: Unwrap Arc, modify, rewrap (cheap if sole owner)
+            let Value::List(mut list) = Arc::unwrap_or_clone(arc_list) else {
                 unreachable!();
             };
             if a == Value::Null {
@@ -1166,8 +1165,8 @@ fn avg(
             Ok(ctx)
         }
         (val, Value::Arc(arc_list)) => {
-            // OPTIMIZATION: Unwrap Arc, modify, rewrap
-            let Value::List(vec) = (**arc_list).clone() else {
+            // OPTIMIZATION: Unwrap Arc, modify, rewrap (cheap if sole owner)
+            let Value::List(vec) = Arc::unwrap_or_clone(arc_list) else {
                 unreachable!();
             };
             let val = val.get_numeric();
@@ -1288,9 +1287,9 @@ fn percentile(
         return Ok(ctx);
     }
 
-    // OPTIMIZATION: Unwrap Arc if present
+    // OPTIMIZATION: Unwrap Arc if present (cheap if sole owner)
     if let Value::Arc(arc_value) = ctx {
-        ctx = (**arc_value).clone();
+        ctx = Arc::unwrap_or_clone(arc_value);
     }
 
     let Value::List(state) = &mut ctx else {
@@ -1392,8 +1391,8 @@ fn stdev(
     match (val, ctx) {
         (Value::Null, ctx) => Ok(ctx),
         (val, Value::Arc(arc_list)) => {
-            // OPTIMIZATION: Unwrap Arc, modify, rewrap
-            let Value::List(vec) = (**arc_list).clone() else {
+            // OPTIMIZATION: Unwrap Arc, modify, rewrap (cheap if sole owner)
+            let Value::List(vec) = Arc::unwrap_or_clone(arc_list) else {
                 unreachable!();
             };
             let val = val.get_numeric();

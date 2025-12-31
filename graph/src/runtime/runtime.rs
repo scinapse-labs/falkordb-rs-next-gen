@@ -643,9 +643,9 @@ impl<'a> Runtime {
                     {
                         let mut acc = env.get(key).unwrap();
 
-                        // OPTIMIZATION: Unwrap Arc if present
+                        // OPTIMIZATION: Unwrap Arc if present (cheap if sole owner)
                         if let Value::Arc(arc_value) = acc {
-                            acc = (**arc_value).clone();
+                            acc = Arc::unwrap_or_clone(arc_value);
                         }
 
                         return match finalize {
