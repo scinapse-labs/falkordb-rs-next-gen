@@ -284,7 +284,8 @@ impl<'a> Runtime {
                 }
 
                 // Check if we have DISTINCT as first child (matching line 690 pattern)
-                // num_children == 3 means: DISTINCT child + one argument + accumulator variable
+                // In aggregation optimization path: num_children == 3 (DISTINCT + one arg + accumulator variable)
+                // In normal path (line 690): num_children() == 2 (DISTINCT + one arg), no accumulator variable
                 if num_children == 3 && matches!(ir.node(idx).child(0).data(), ExprIR::Distinct) {
                     // Unpack the distinct result (matching lines 692-699)
                     let arg = &args[0];
