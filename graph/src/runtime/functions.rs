@@ -1721,41 +1721,105 @@ fn string_join(
     _: &Runtime,
     args: ThinVec<Value>,
 ) -> Result<Value, String> {
-    fn to_string_vec(vec: &[Value]) -> Result<Vec<Arc<String>>, String> {
-        vec.iter()
-            .map(|item| {
-                if let Value::String(s) = item {
-                    Ok(s.clone())
-                } else {
-                    Err(format!(
-                        "Type mismatch: expected String but was {}",
-                        item.name()
-                    ))
-                }
+    /// Convert Value list to Arc<String> vector, checking types
+    fn to_string_vec(values: &[Value]) -> Result<Vec<Arc<String>>, String> {
+        values
+            .iter()
+            .map(|value| match value {
+                Value::String(s) => Ok(Arc::clone(s)),
+                _ => Err(format!(
+                    "Type mismatch: expected String but was {}",
+                    value.name()
+                )),
             })
             .collect()
     }
+
+    /// Compute the total length needed, with overflow detection
+    fn compute_join_length(
+        strings: &[Arc<String>],
+        delimiter: &str,
+    ) -> Result<usize, String> {
+        if strings.is_empty() {
+            return Ok(0);
+        }
+
+        let delimiter_len = delimiter.len();
+        let n = strings.len();
+        let mut total_len: usize = 0;
+
+        // Calculate delimiter contribution first
+        if n >= 2 {
+            let delimiter_contribution = delimiter_len
+                .checked_mul(n - 1)
+                .ok_or_else(|| String::from("String overflow"))?;
+
+            total_len = total_len
+                .checked_add(delimiter_contribution)
+                .ok_or_else(|| String::from("String overflow"))?;
+
+            // Early exit if already exceeding i32::MAX
+            if total_len > i32::MAX as usize {
+                return Err(String::from("String overflow"));
+            }
+        }
+
+        // Add each string's length with overflow check
+        for s in strings.iter() {
+            total_len = total_len
+                .checked_add(s.len())
+                .ok_or_else(|| String::from("String overflow"))?;
+
+            // Check boundary after each addition for early exit
+            if total_len > i32::MAX as usize {
+                return Err(String::from("String overflow"));
+            }
+        }
+
+        Ok(total_len)
+    }
+
+    /// Join strings with pre-allocated buffer
+    fn join_with_preallocate(
+        strings: &[Arc<String>],
+        delimiter: &str,
+        capacity: usize,
+    ) -> String {
+        if strings.is_empty() {
+            return String::new();
+        }
+
+        let mut result = String::with_capacity(capacity);
+        let mut first = true;
+
+        for s in strings.iter() {
+            if !first {
+                result.push_str(delimiter);
+            }
+            result.push_str(s.as_str());
+            first = false;
+        }
+
+        result
+    }
+
     let mut iter = args.into_iter();
     let first = iter.next().unwrap();
+
     match (first, iter.next()) {
         (Value::List(vec), Some(Value::String(s))) => {
-            let result = to_string_vec(&vec);
-            result.map(|strings| {
-                Value::String(Arc::new(
-                    strings.iter().map(|label| label.as_str()).join(s.as_str()),
-                ))
-            })
+            let strings = to_string_vec(&vec)?;
+            let size = compute_join_length(&strings, s.as_str())?;
+            let joined = join_with_preallocate(&strings, s.as_str(), size);
+            Ok(Value::String(Arc::new(joined)))
         }
         (Value::List(vec), None) => {
-            let result = to_string_vec(&vec);
-            result.map(|strings| {
-                Value::String(Arc::new(
-                    strings.iter().map(|label| label.as_str()).join(""),
-                ))
-            })
+            let strings = to_string_vec(&vec)?;
+            let size = compute_join_length(&strings, "")?;
+            let joined = join_with_preallocate(&strings, "", size);
+            Ok(Value::String(Arc::new(joined)))
         }
         (Value::Null, _) => Ok(Value::Null),
-
         _ => unreachable!(),
     }
 }
