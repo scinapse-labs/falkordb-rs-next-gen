@@ -166,6 +166,20 @@ impl Env {
         self.0.get(key.id as usize).cloned()
     }
 
+    /// Take ownership of a value from the environment, replacing it with Null.
+    /// Returns None if the key doesn't exist or contains Null.
+    pub fn take(
+        &mut self,
+        key: &Variable,
+    ) -> Option<Value> {
+        self.0.get_mut(key.id as usize).and_then(|value| {
+            match std::mem::replace(value, Value::Null) {
+                Value::Null => None,
+                v => Some(v),
+            }
+        })
+    }
+
     pub fn merge(
         &mut self,
         other: Self,

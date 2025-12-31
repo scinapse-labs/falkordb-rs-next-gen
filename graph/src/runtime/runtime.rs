@@ -263,8 +263,13 @@ impl<'a> Runtime {
                     ));
                 };
 
-                curr.insert(key, acc.get(key).unwrap_or(Value::Null));
-                acc.insert(key, self.run_expr(ir, idx, curr, Some(agg_group_key))?);
+                // OPTIMIZATION: Move ownership instead of cloning
+                // Take value from acc (no clone), transfer to curr, compute new value, store result
+                let prev_value = acc.take(key).unwrap_or(Value::Null);
+                curr.insert(key, prev_value);
+
+                let new_value = self.run_expr(ir, idx, curr, Some(agg_group_key))?;
+                acc.insert(key, new_value);
             }
             _ => {
                 for child in ir.node(idx).children() {
