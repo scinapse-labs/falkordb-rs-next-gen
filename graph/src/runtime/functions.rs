@@ -12,7 +12,6 @@ use crate::{
         value::{Value, ValueTypeOf},
     },
 };
-use itertools::Itertools;
 use rand::Rng;
 use std::{
     collections::HashMap,
@@ -1232,12 +1231,12 @@ fn percentile(
         ));
     }
 
-    let mut ctx = args.remove(0);
+    let ctx = args.remove(0);
     if matches!(val, Value::Null) {
         return Ok(ctx);
     }
 
-    let Value::List(state) = &mut ctx else {
+    let Value::List(mut state) = ctx else {
         unreachable!("Context must be a List");
     };
 
@@ -1736,6 +1735,7 @@ fn string_join(
     }
 
     /// Compute the total length needed, with overflow detection
+    /// Uses i32 for calculations to match C implementation behavior
     fn compute_join_length(
         strings: &[Arc<String>],
         delimiter: &str,
@@ -1744,39 +1744,40 @@ fn string_join(
             return Ok(0);
         }
 
-        let delimiter_len = delimiter.len();
-        let n = strings.len();
-        let mut total_len: usize = 0;
+        // Convert to i32 for overflow detection (matches C's int type)
+        let delimiter_len =
+            i32::try_from(delimiter.len()).map_err(|_| String::from("String overflow"))?;
+        let n = i32::try_from(strings.len()).map_err(|_| String::from("String overflow"))?;
+        let mut str_len: i32 = 0;
 
-        // Calculate delimiter contribution first
+        // Calculate delimiter contribution first: delimiter_len * (n - 1)
         if n >= 2 {
             let delimiter_contribution = delimiter_len
                 .checked_mul(n - 1)
                 .ok_or_else(|| String::from("String overflow"))?;
 
-            total_len = total_len
+            str_len = str_len
                 .checked_add(delimiter_contribution)
                 .ok_or_else(|| String::from("String overflow"))?;
-
-            // Early exit if already exceeding i32::MAX
-            if total_len > i32::MAX as usize {
-                return Err(String::from("String overflow"));
-            }
         }
 
         // Add each string's length with overflow check
         for s in strings.iter() {
-            total_len = total_len
-                .checked_add(s.len())
-                .ok_or_else(|| String::from("String overflow"))?;
+            let s_len = i32::try_from(s.len()).map_err(|_| String::from("String overflow"))?;
 
-            // Check boundary after each addition for early exit
-            if total_len > i32::MAX as usize {
-                return Err(String::from("String overflow"));
-            }
+            str_len = str_len
+                .checked_add(s_len)
+                .ok_or_else(|| String::from("String overflow"))?;
         }
 
-        Ok(total_len)
+        // Add 1 for null terminator (C compatibility check)
+        str_len = str_len
+            .checked_add(1)
+            .ok_or_else(|| String::from("String overflow"))?;
+
+        // Subtract the null terminator for Rust (doesn't need '\0')
+        let capacity = (str_len - 1) as usize;
+        Ok(capacity)
     }
 
     /// Join strings with pre-allocated buffer
@@ -1800,6 +1801,8 @@ fn string_join(
             first = false;
         }
 
+        // Verify capacity calculation was correct
+        debug_assert_eq!(result.len(), capacity, "String join calculation mismatch");
         result
     }
 

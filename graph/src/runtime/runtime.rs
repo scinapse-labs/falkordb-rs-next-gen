@@ -234,6 +234,7 @@ impl<'a> Runtime {
                     let ExprIR::Variable(key) = ir.child(ir.num_children() - 1).data() else {
                         unreachable!();
                     };
+                    // Initialize accumulator with zero value
                     env.insert(key, zero.clone());
                 }
             }
@@ -255,16 +256,39 @@ impl<'a> Runtime {
     ) -> Result<(), String> {
         match ir.node(idx).data() {
             ExprIR::FuncInvocation(func) if func.is_aggregate() => {
-                let ExprIR::Variable(key) =
-                    ir.node(idx).child(ir.node(idx).num_children() - 1).data()
-                else {
+                let num_children = ir.node(idx).num_children();
+                if num_children == 0 {
+                    return Err(String::from(
+                        "Aggregation function must have at least one argument",
+                    ));
+                }
+
+                let ExprIR::Variable(key) = ir.node(idx).child(num_children - 1).data() else {
                     return Err(String::from(
                         "Aggregation function must end with a variable",
                     ));
                 };
 
-                curr.insert(key, acc.get(key).unwrap_or(Value::Null));
-                acc.insert(key, self.run_expr(ir, idx, curr, Some(agg_group_key))?);
+                // OPTIMIZATION: Take ownership of accumulator (moves value, no clone)
+                let prev_value = acc.take(key).unwrap_or(Value::Null);
+
+                // OPTIMIZATION: Build args manually to avoid cloning the accumulator
+                // Evaluate all arguments EXCEPT the last one (accumulator variable)
+                let mut args = thin_vec![];
+                for i in 0..num_children - 1 {
+                    let child = ir.node(idx).child(i);
+                    let arg_value = self.run_expr(ir, child.idx(), curr, Some(agg_group_key))?;
+                    args.push(arg_value);
+                }
+
+                // Push the accumulator as the last argument (moved, not cloned!)
+                args.push(prev_value);
+
+                // Call the aggregation function directly
+                let new_value = (func.func)(self, args)?;
+
+                // Store result back in accumulator
+                acc.insert(key, new_value);
             }
             _ => {
                 for child in ir.node(idx).children() {
@@ -631,7 +655,12 @@ impl<'a> Runtime {
                         && let FnType::Aggregation(_, finalize) = &func.fn_type
                         && let ExprIR::Variable(key) = node.child(node.num_children() - 1).data()
                     {
-                        let acc = env.get(key).unwrap();
+                        let mut acc = env.get(key).unwrap();
+
+                        // OPTIMIZATION: Unwrap Arc if present (cheap if sole owner)
+                        if let Value::Arc(arc_value) = acc {
+                            acc = Arc::unwrap_or_clone(arc_value);
+                        }
 
                         return match finalize {
                             Some(func) => Ok((func)(acc)),
@@ -1321,7 +1350,32 @@ impl<'a> Runtime {
                         let mut vars = v?;
                         vars.merge(key?);
                         for (name, tree) in agg {
-                            vars.insert(name, self.run_expr(tree, tree.root().idx(), &vars, None)?);
+                            // Check if this is an aggregation function that needs finalization
+                            let value = if let ExprIR::FuncInvocation(func) = tree.root().data()
+                                && let FnType::Aggregation(_, finalize) = &func.fn_type
+                                && let ExprIR::Variable(agg_key) =
+                                    tree.root().child(tree.root().num_children() - 1).data()
+                            {
+                                // OPTIMIZATION: Take (not get) the Arc-wrapped accumulator
+                                // Since we own vars, take() moves the value out without cloning the Arc
+                                let mut acc = vars.take(agg_key).unwrap_or(Value::Null);
+
+                                // Unwrap Arc if present - now we have the only reference (ref_count=1)
+                                if let Value::Arc(arc_value) = acc {
+                                    acc = Arc::unwrap_or_clone(arc_value);
+                                }
+
+                                // Apply finalization function
+                                match finalize {
+                                    Some(f) => (f)(acc),
+                                    None => acc,
+                                }
+                            } else {
+                                // Non-aggregation expression - use immutable reference
+                                self.run_expr(tree, tree.root().idx(), &vars, None)?
+                            };
+
+                            vars.insert(name, value);
                         }
                         Ok(vars)
                     })
