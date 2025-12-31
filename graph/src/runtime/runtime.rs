@@ -29,7 +29,7 @@ use reqwest::blocking::get;
 use std::{
     cell::RefCell,
     cmp::Ordering,
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     fmt::Debug,
     hash::{DefaultHasher, Hash, Hasher},
     iter::{empty, once},
@@ -75,6 +75,7 @@ pub struct Runtime {
     pub deleted_nodes: RefCell<HashMap<NodeId, DeletedNode>>,
     pub deleted_relationships: RefCell<HashMap<RelationshipId, DeletedRelationship>>,
     argument_envs: RefCell<Vec<(NodeIdx<Dyn<IR>>, Env)>>,
+    merge_pattern_cache: RefCell<HashMap<u64, Env>>,
 }
 
 pub trait GetVariables {
@@ -202,6 +203,7 @@ impl<'a> Runtime {
             deleted_nodes: RefCell::new(HashMap::new()),
             deleted_relationships: RefCell::new(HashMap::new()),
             argument_envs: RefCell::new(Vec::new()),
+            merge_pattern_cache: RefCell::new(HashMap::new()),
         }
     }
 
@@ -818,6 +820,7 @@ impl<'a> Runtime {
                 let res = self.run_expr(ir, idx, env, None)?;
                 match res {
                     Value::List(arr) => Ok(Box::new(arr.into_iter())),
+                    Value::Null => Ok(Box::new(empty())),
                     _ => Ok(Box::new(once(res))),
                 }
             }
@@ -1034,6 +1037,14 @@ impl<'a> Runtime {
                     .filter(|&i| matches!(self.plan.node(i).data(), IR::Argument))
                     .collect();
 
+                let resolved_pattern = self.resolve_pattern(pattern);
+                let resolved_on_match_set_items = self.resolve_set_items(on_match_set_items);
+                let resolved_on_create_set_items = self.resolve_set_items(on_create_set_items);
+                self.pending.borrow_mut().resize(
+                    self.g.borrow().get_node_cap(),
+                    self.g.borrow().get_labels_count(),
+                );
+
                 Ok(iter
                     .try_flat_map(move |vars| {
                         let cvars = vars.clone();
@@ -1045,15 +1056,11 @@ impl<'a> Runtime {
                                 .push((*arg_idx, vars.clone()));
                         }
 
-                        let resolved_pattern = self.resolve_pattern(pattern);
-                        let resolved_on_match_set_items =
-                            self.resolve_set_items(on_match_set_items);
-                        let resolved_on_create_set_items =
-                            self.resolve_set_items(on_create_set_items);
-                        self.pending.borrow_mut().resize(
-                            self.g.borrow().get_node_cap(),
-                            self.g.borrow().get_labels_count(),
-                        );
+                        let resolved_pattern = resolved_pattern.clone();
+                        let resolved_on_match_set_items = resolved_on_match_set_items.clone();
+                        let resolved_on_create_set_items = resolved_on_create_set_items.clone();
+                        let resolved_on_match_set_items_for_lazy =
+                            resolved_on_match_set_items.clone();
                         let iter = self
                             .run(child_idx)?
                             .try_map(move |v| {
@@ -1064,11 +1071,46 @@ impl<'a> Runtime {
                             })
                             .lazy_replace(move || {
                                 let mut vars = cvars.clone();
-                                match self.create(&resolved_pattern, &mut vars) {
-                                    Ok(()) => {
-                                        match self.set(&resolved_on_create_set_items, &vars) {
-                                            Ok(()) => once(Ok(vars)),
-                                            Err(e) => once(Err(e)),
+
+                                // Compute hash for the pattern to check if it's already been created
+                                match self.compute_merge_pattern_hash(&resolved_pattern, &vars) {
+                                    Ok(pattern_hash) => {
+                                        let merge_cache = self.merge_pattern_cache.borrow_mut();
+
+                                        // Check if this pattern was already created in this query
+                                        if let Some(cached_vars) = merge_cache.get(&pattern_hash) {
+                                            // Pattern already created, apply ON MATCH and return cached vars
+                                            let mut result_vars = vars.clone();
+                                            result_vars.merge(cached_vars.clone());
+                                            drop(merge_cache);
+
+                                            match self.set(
+                                                &resolved_on_match_set_items_for_lazy,
+                                                &result_vars,
+                                            ) {
+                                                Ok(()) => once(Ok(result_vars)),
+                                                Err(e) => once(Err(e)),
+                                            }
+                                        } else {
+                                            // Pattern not yet created, create it
+                                            drop(merge_cache);
+
+                                            match self.create(&resolved_pattern, &mut vars) {
+                                                Ok(()) => {
+                                                    // Cache the created pattern
+                                                    self.merge_pattern_cache
+                                                        .borrow_mut()
+                                                        .insert(pattern_hash, vars.clone());
+
+                                                    match self
+                                                        .set(&resolved_on_create_set_items, &vars)
+                                                    {
+                                                        Ok(()) => once(Ok(vars)),
+                                                        Err(e) => once(Err(e)),
+                                                    }
+                                                }
+                                                Err(e) => once(Err(e)),
+                                            }
                                         }
                                     }
                                     Err(e) => once(Err(e)),
@@ -2356,6 +2398,49 @@ impl<'a> Runtime {
             );
         }
         Ok(())
+    }
+
+    fn compute_merge_pattern_hash(
+        &self,
+        pattern: &QueryGraph<Arc<String>, LabelId, Variable>,
+        vars: &Env,
+    ) -> Result<u64, String> {
+        let mut hasher = DefaultHasher::new();
+
+        // Hash nodes in the pattern
+        for node in pattern.nodes() {
+            // If the node variable exists in vars, hash its ID
+            if let Some(value) = vars.get(&node.alias) {
+                value.hash(&mut hasher);
+            } else {
+                // Hash the node structure (labels and attributes)
+                for label in node.labels.iter() {
+                    label.hash(&mut hasher);
+                }
+                let attrs = self.run_expr(&node.attrs, node.attrs.root().idx(), vars, None)?;
+                attrs.hash(&mut hasher);
+            }
+        }
+
+        // Hash relationships in the pattern
+        for rel in pattern.relationships() {
+            // Hash relationship type
+            rel.types.hash(&mut hasher);
+
+            // Hash from/to node references
+            if let Some(value) = vars.get(&rel.from.alias) {
+                value.hash(&mut hasher);
+            }
+            if let Some(value) = vars.get(&rel.to.alias) {
+                value.hash(&mut hasher);
+            }
+
+            // Hash relationship attributes
+            let attrs = self.run_expr(&rel.attrs, rel.attrs.root().idx(), vars, None)?;
+            attrs.hash(&mut hasher);
+        }
+
+        Ok(hasher.finish())
     }
 
     pub fn get_node_attribute(
