@@ -1056,7 +1056,18 @@ fn collect(
 ) -> Result<Value, String> {
     let mut iter = args.into_iter();
     match (iter.next(), iter.next()) {
-        (Some(a), Some(Value::Null)) => Ok(Value::List(thin_vec![a])),
+        (Some(a), Some(Value::Null)) => Ok(Value::Arc(Arc::new(Value::List(thin_vec![a])))),
+        (Some(a), Some(Value::Arc(arc_list))) => {
+            // OPTIMIZATION: Unwrap Arc, modify, rewrap
+            let Value::List(mut list) = (**arc_list).clone() else {
+                unreachable!();
+            };
+            if a == Value::Null {
+                return Ok(Value::Arc(Arc::new(Value::List(list))));
+            }
+            list.push(a);
+            Ok(Value::Arc(Arc::new(Value::List(list))))
+        }
         (Some(a), Some(Value::List(mut l))) => {
             if a == Value::Null {
                 return Ok(Value::List(l));
