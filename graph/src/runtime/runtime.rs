@@ -260,9 +260,14 @@ impl<'a> Runtime {
     ) -> Result<(), String> {
         match ir.node(idx).data() {
             ExprIR::FuncInvocation(func) if func.is_aggregate() => {
-                let ExprIR::Variable(key) =
-                    ir.node(idx).child(ir.node(idx).num_children() - 1).data()
-                else {
+                let num_children = ir.node(idx).num_children();
+                if num_children == 0 {
+                    return Err(String::from(
+                        "Aggregation function must have at least one argument",
+                    ));
+                }
+
+                let ExprIR::Variable(key) = ir.node(idx).child(num_children - 1).data() else {
                     return Err(String::from(
                         "Aggregation function must end with a variable",
                     ));
@@ -273,9 +278,8 @@ impl<'a> Runtime {
 
                 // OPTIMIZATION: Build args manually to avoid cloning the accumulator
                 // Evaluate all arguments EXCEPT the last one (accumulator variable)
-                // The accumulator should not be needed for evaluating these arguments
+                // This bypasses run_expr for the accumulator, preventing Arc cloning
                 let mut args = thin_vec![];
-                let num_children = ir.node(idx).num_children();
                 for i in 0..num_children - 1 {
                     let child = ir.node(idx).child(i);
                     let arg_value = self.run_expr(ir, child.idx(), curr, Some(agg_group_key))?;
