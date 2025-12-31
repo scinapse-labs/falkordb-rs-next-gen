@@ -277,37 +277,23 @@ impl<'a> Runtime {
                 // OPTIMIZATION: Build args manually to avoid cloning the accumulator
                 // Evaluate all arguments EXCEPT the last one (accumulator variable)
                 let mut args = thin_vec![];
+                for i in 0..num_children - 1 {
+                    let child = ir.node(idx).child(i);
+                    let arg_value = self.run_expr(ir, child.idx(), curr, Some(agg_group_key))?;
+                    args.push(arg_value);
+                }
 
-                // Check if we have DISTINCT as first child (matching line 676 pattern)
-                if num_children >= 2 && matches!(ir.node(idx).child(0).data(), ExprIR::Distinct) {
-                    // Evaluate the DISTINCT node
-                    let distinct_child = ir.node(idx).child(0);
-                    let distinct_value =
-                        self.run_expr(ir, distinct_child.idx(), curr, Some(agg_group_key))?;
-
-                    // Unpack the distinct result (matching lines 678-686)
-                    if let Value::List(values) = distinct_value {
-                        // Extend args with the distinct values
-                        // (might be empty list with single null if seen before)
-                        args.extend(values);
+                // Check if we have DISTINCT as first child (matching line 704 pattern)
+                if num_children == 3 && matches!(ir.node(idx).child(0).data(), ExprIR::Distinct) {
+                    // Unpack the distinct result (matching lines 707-714)
+                    let arg = &args[0];
+                    if let Value::List(values) = arg {
+                        let mut values = values.clone();
+                        args.remove(0);
+                        values.append(&mut args);
+                        args = values;
                     } else {
                         unreachable!("DISTINCT should return a list");
-                    }
-
-                    // Evaluate remaining children (skipping first DISTINCT and last accumulator variable)
-                    for i in 1..num_children - 1 {
-                        let child = ir.node(idx).child(i);
-                        let arg_value =
-                            self.run_expr(ir, child.idx(), curr, Some(agg_group_key))?;
-                        args.push(arg_value);
-                    }
-                } else {
-                    // Normal path: evaluate all arguments EXCEPT the last one (accumulator variable)
-                    for i in 0..num_children - 1 {
-                        let child = ir.node(idx).child(i);
-                        let arg_value =
-                            self.run_expr(ir, child.idx(), curr, Some(agg_group_key))?;
-                        args.push(arg_value);
                     }
                 }
 
