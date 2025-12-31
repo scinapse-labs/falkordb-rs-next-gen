@@ -166,9 +166,9 @@ impl Env {
         self.0.get(key.id as usize).cloned()
     }
 
-    /// Transfer ownership of a value from the environment, replacing it with Null.
+    /// Take ownership of a value from the environment, replacing it with Null.
     /// Returns None if the key doesn't exist or contains Null.
-    pub fn remove(
+    pub fn take(
         &mut self,
         key: &Variable,
     ) -> Option<Value> {

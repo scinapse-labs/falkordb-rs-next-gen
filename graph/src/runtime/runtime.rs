@@ -264,8 +264,8 @@ impl<'a> Runtime {
                 };
 
                 // OPTIMIZATION: Move ownership instead of cloning
-                // Remove value from acc (no clone), transfer to curr, compute, store result
-                let prev_value = acc.remove(key).unwrap_or(Value::Null);
+                // Take value from acc (no clone), transfer to curr, compute new value, store result
+                let prev_value = acc.take(key).unwrap_or(Value::Null);
                 curr.insert(key, prev_value);
 
                 let new_value = self.run_expr(ir, idx, curr, Some(agg_group_key))?;
