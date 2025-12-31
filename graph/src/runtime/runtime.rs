@@ -234,12 +234,8 @@ impl<'a> Runtime {
                     let ExprIR::Variable(key) = ir.child(ir.num_children() - 1).data() else {
                         unreachable!();
                     };
-                    // OPTIMIZATION: Wrap List and Map values in Arc for cheap cloning during aggregation
-                    let zero_value = match zero {
-                        Value::List(_) | Value::Map(_) => Value::Arc(Arc::new(zero.clone())),
-                        _ => zero.clone(),
-                    };
-                    env.insert(key, zero_value);
+                    // Initialize accumulator with zero value
+                    env.insert(key, zero.clone());
                 }
             }
             _ => {
