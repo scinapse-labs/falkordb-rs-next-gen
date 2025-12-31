@@ -260,20 +260,41 @@ impl<'a> Runtime {
     ) -> Result<(), String> {
         match ir.node(idx).data() {
             ExprIR::FuncInvocation(func) if func.is_aggregate() => {
-                let ExprIR::Variable(key) =
-                    ir.node(idx).child(ir.node(idx).num_children() - 1).data()
-                else {
+                let num_children = ir.node(idx).num_children();
+                if num_children == 0 {
+                    return Err(String::from(
+                        "Aggregation function must have at least one argument",
+                    ));
+                }
+
+                let ExprIR::Variable(key) = ir.node(idx).child(num_children - 1).data() else {
                     return Err(String::from(
                         "Aggregation function must end with a variable",
                     ));
                 };
 
-                // OPTIMIZATION: Move ownership instead of cloning
-                // Take value from acc (no clone), transfer to curr, compute new value, store result
+                // OPTIMIZATION: Take accumulator from acc (ref_count=1, no clone)
                 let prev_value = acc.take(key).unwrap_or(Value::Null);
-                curr.insert(key, prev_value);
 
-                let new_value = self.run_expr(ir, idx, curr, Some(agg_group_key))?;
+                // OPTIMIZATION: Build args manually to avoid cloning the accumulator
+                // Evaluate all arguments EXCEPT the last one (accumulator variable)
+                // This bypasses run_expr for the accumulator, preventing Arc cloning
+                let mut args = thin_vec![];
+                for i in 0..num_children - 1 {
+                    let child = ir.node(idx).child(i);
+                    let arg_value = self.run_expr(ir, child.idx(), curr, Some(agg_group_key))?;
+                    args.push(arg_value);
+                }
+
+                // Push the accumulator as the last argument (moved, not cloned!)
+                // This is the ONLY Arc reference - ref_count=1
+                args.push(prev_value);
+
+                // Call the aggregation function directly
+                // Now collect() receives Arc with ref_count=1 and can unwrap without cloning!
+                let new_value = (func.func)(self, args)?;
+
+                // Store result back in accumulator
                 acc.insert(key, new_value);
             }
             _ => {
