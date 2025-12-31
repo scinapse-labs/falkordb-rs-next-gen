@@ -283,10 +283,10 @@ impl<'a> Runtime {
                     args.push(arg_value);
                 }
 
-                // Check if we have DISTINCT as first child (matching line 690 pattern)
-                // In aggregation optimization path: num_children == 3 (DISTINCT + one arg + accumulator variable)
-                // In normal path (line 690): num_children() == 2 (DISTINCT + one arg), no accumulator variable
-                if num_children == 3 && matches!(ir.node(idx).child(0).data(), ExprIR::Distinct) {
+                // Check if we have DISTINCT as first child (matching line 692 pattern)
+                // In aggregation context: num_children == 2 (DISTINCT node + accumulator variable)
+                // The DISTINCT node's evaluation returns a List, which we need to unpack
+                if num_children == 2 && matches!(ir.node(idx).child(0).data(), ExprIR::Distinct) {
                     // Unpack the distinct result (matching lines 692-699)
                     let arg = &args[0];
                     if let Value::List(values) = arg {
