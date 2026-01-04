@@ -33,7 +33,12 @@ fi
 # Add test filter support
 TEST_FILTER=()
 if [[ "$TEST" != "" ]]; then
-    TEST_FILTER=(--test-name "$TEST")
+    TEST_FILTER=(-t "$TEST")
 fi
 
-RLTest -f "$TESTS_FILE" --module "$TARGET_DIR/$TARGET" --no-progress $PARALLELISM $STOP_ON_FAILURE "${TEST_FILTER[@]}" --clear-logs --log-dir tests/flow/logs $V
+# To run specific test files, use:
+# TEST="tests/flow/test_function_calls:testFunctionCallsFlow.test89_JOIN" FAIL_FAST=1 ./flow.sh
+# To run all tests in a specific file, use:
+# TEST="tests/flow/test_function_calls" FAIL_FAST=1 ./flow.sh
+
+RLTest ${TEST_FILTER[@]:--f "$TESTS_FILE"} --module "$TARGET_DIR/$TARGET" --no-progress $PARALLELISM $STOP_ON_FAILURE --clear-logs --log-dir tests/flow/logs $V
