@@ -36,5 +36,13 @@ if [[ "$TEST" != "" ]]; then
     TEST_FILTER=(-t "$TEST")
 fi
 
-set -x 
-RLTest ${TEST_FILTER[@]:--f "$TESTS_FILE"} --module "$TARGET_DIR/$TARGET" --no-progress $PARALLELISM $STOP_ON_FAILURE --clear-logs --log-dir tests/flow/logs $V
+# To run specific test files, use:
+# TEST="tests/flow/test_function_calls:testFunctionCallsFlow.test89_JOIN" FAIL_FAST=1 ./flow.sh
+# To run all tests in a specific file, use:
+# TEST="tests/flow/test_function_calls" FAIL_FAST=1 ./flow.sh
+
+if [[ ${#TEST_FILTER[@]} -eq 0 ]]; then
+    RLTest -f "$TESTS_FILE" --module "$TARGET_DIR/$TARGET" --no-progress $PARALLELISM $STOP_ON_FAILURE --clear-logs --log-dir tests/flow/logs $V
+else
+    RLTest "${TEST_FILTER[@]}" --module "$TARGET_DIR/$TARGET" --no-progress $PARALLELISM $STOP_ON_FAILURE --clear-logs --log-dir tests/flow/logs $V
+fi

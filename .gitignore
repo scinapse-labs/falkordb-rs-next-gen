@@ -28,3 +28,4 @@ data
 tests/flow/logs
 tests/flow/csvs
 redisearch
+.venv/
