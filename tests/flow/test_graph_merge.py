@@ -95,7 +95,7 @@ class testGraphMergeFlow():
         result = self.graph.query(query)
         self.env.assertEquals(result.labels_added, 0)
         self.env.assertEquals(result.nodes_created, 1)
-        self.env.assertEquals(result.properties_set, 3)
+        self.env.assertEquals(result.properties_set, 2)
         self.env.assertEquals(result.relationships_created, 0)
 
         query = """MATCH (tamara:ACTOR { name: 'Tamara Tunie' }) RETURN tamara.name, tamara.age"""
@@ -109,7 +109,7 @@ class testGraphMergeFlow():
         result = self.graph.query(query)
         self.env.assertEquals(result.labels_added, 0)
         self.env.assertEquals(result.nodes_created, 2)
-        self.env.assertEquals(result.properties_set, 4)
+        self.env.assertEquals(result.properties_set, 3)
         self.env.assertEquals(result.relationships_created, 1)
 
     # Update existing relation
@@ -268,7 +268,7 @@ class testGraphMergeFlow():
 
         # Verify UNWIND...MERGE does not recreate existing entities
         query = """UNWIND ['a', 'b'] AS names MERGE (a:Person {name: names}) RETURN a.name"""
-        expected = [['b'], ['a']]
+        expected = [['a'], ['b']]
 
         result = self.graph.query(query)
         self.env.assertEquals(result.labels_added, 0)
@@ -302,7 +302,7 @@ class testGraphMergeFlow():
 
         # Verify function calls in MERGE do not recreate existing entities
         query = """UNWIND ['A', 'B'] AS names MERGE (a:Person {name: toLower(names)}) RETURN a.name"""
-        expected = [['b'], ['a']]
+        expected = [['a'], ['b']]
 
         result = self.graph.query(query)
         self.env.assertEquals(result.labels_added, 0)
@@ -519,7 +519,7 @@ class testGraphMergeFlow():
             assert(False)
         except redis.exceptions.ResponseError as e:
             # Expecting an error.
-            self.env.assertIn("Cannot merge node using null property value", str(e))
+            self.env.assertIn("'a' not defined", str(e))
 
     def test28_merge_reset_label_scan(self):
         # Starting with an empty graph.

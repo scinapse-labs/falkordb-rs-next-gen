@@ -74,7 +74,7 @@ pub struct Runtime {
     import_folder: String,
     pub deleted_nodes: RefCell<HashMap<NodeId, DeletedNode>>,
     pub deleted_relationships: RefCell<HashMap<RelationshipId, DeletedRelationship>>,
-    argument_envs: RefCell<Vec<(NodeIdx<Dyn<IR>>, Env)>>,
+    argument_envs: RefCell<HashMap<u64, Env>>,
     merge_pattern_cache: RefCell<HashMap<u64, Env>>,
 }
 
@@ -202,7 +202,7 @@ impl<'a> Runtime {
             import_folder,
             deleted_nodes: RefCell::new(HashMap::new()),
             deleted_relationships: RefCell::new(HashMap::new()),
-            argument_envs: RefCell::new(Vec::new()),
+            argument_envs: RefCell::new(HashMap::new()),
             merge_pattern_cache: RefCell::new(HashMap::new()),
         }
     }
@@ -891,14 +891,12 @@ impl<'a> Runtime {
         match self.plan.node(idx).data() {
             IR::Empty => Ok(Box::new(empty())),
             IR::Argument => {
-                let env = self
-                    .argument_envs
-                    .borrow()
-                    .iter()
-                    .find(|(i, _)| *i == idx)
-                    .map(|(_, e)| e.clone());
+                let mut hasher = DefaultHasher::new();
+                idx.hash(&mut hasher);
+                let hash = hasher.finish();
+                let env = self.argument_envs.borrow_mut().remove(&hash).unwrap();
 
-                env.map_or_else(|| Ok(iter), |env| Ok(Box::new(once(Ok(env)))))
+                Ok(Box::new(once(Ok(env))))
             }
             IR::Optional(vars) => {
                 let child_idx = if self.plan.node(idx).num_children() == 1 {
@@ -1020,11 +1018,20 @@ impl<'a> Runtime {
                     .try_flat_map(move |vars| {
                         let cvars = vars.clone();
 
+                        // Check if all nodes in the pattern are already bound
+                        // If so, MERGE should only check existence (return one result)
+                        // If not, MERGE may need to return all matching nodes
+                        let all_nodes_bound = resolved_pattern
+                            .nodes()
+                            .iter()
+                            .all(|node| vars.get(&node.alias).is_some());
+
                         // Set the environment for all Argument nodes in this subtree
                         for arg_idx in &argument_indices {
-                            self.argument_envs
-                                .borrow_mut()
-                                .push((*arg_idx, vars.clone()));
+                            let mut hasher = DefaultHasher::new();
+                            arg_idx.hash(&mut hasher);
+                            let hash = hasher.finish();
+                            self.argument_envs.borrow_mut().insert(hash, vars.clone());
                         }
 
                         let resolved_pattern = resolved_pattern.clone();
@@ -1032,8 +1039,18 @@ impl<'a> Runtime {
                         let resolved_on_create_set_items = resolved_on_create_set_items.clone();
                         let resolved_on_match_set_items_for_lazy =
                             resolved_on_match_set_items.clone();
-                        let iter = self
-                            .run(child_idx)?
+
+                        // When all nodes are bound, we only need to check if the pattern exists
+                        // (take 1 match), otherwise we return all matches
+                        let child_iter = self.run(child_idx)?;
+                        let child_iter: Box<dyn Iterator<Item = Result<Env, String>> + '_> =
+                            if all_nodes_bound {
+                                Box::new(child_iter.take(1))
+                            } else {
+                                Box::new(child_iter)
+                            };
+
+                        let iter = child_iter
                             .try_map(move |v| {
                                 let mut vars = vars.clone();
                                 vars.merge(v);
@@ -2364,6 +2381,19 @@ impl<'a> Runtime {
                     label.hash(&mut hasher);
                 }
                 let attrs = self.run_expr(&node.attrs, node.attrs.root().idx(), vars, None)?;
+
+                // Validate that no attributes are NULL
+                if let Value::Map(ref map) = attrs {
+                    for (key, value) in map.iter() {
+                        if *value == Value::Null {
+                            return Err(format!(
+                                "Cannot merge node using null property value for key '{}'",
+                                key
+                            ));
+                        }
+                    }
+                }
+
                 attrs.hash(&mut hasher);
             }
         }
@@ -2383,6 +2413,19 @@ impl<'a> Runtime {
 
             // Hash relationship attributes
             let attrs = self.run_expr(&rel.attrs, rel.attrs.root().idx(), vars, None)?;
+
+            // Validate that no attributes are NULL
+            if let Value::Map(ref map) = attrs {
+                for (key, value) in map.iter() {
+                    if *value == Value::Null {
+                        return Err(format!(
+                            "Cannot merge relationship using null property value for key '{}'",
+                            key
+                        ));
+                    }
+                }
+            }
+
             attrs.hash(&mut hasher);
         }
 
@@ -2394,6 +2437,12 @@ impl<'a> Runtime {
         id: NodeId,
         attr: &Arc<String>,
     ) -> Option<Value> {
+        if let Some(dn) = self.deleted_nodes.borrow().get(&id) {
+            if let Some(value) = dn.attrs.get(attr) {
+                return Some(value.clone());
+            }
+            return None;
+        }
         if let Some(value) = self.pending.borrow().get_node_attribute(id, attr) {
             return Some(value.clone());
         }
@@ -2405,6 +2454,12 @@ impl<'a> Runtime {
         id: RelationshipId,
         attr: &Arc<String>,
     ) -> Option<Value> {
+        if let Some(dn) = self.deleted_relationships.borrow().get(&id) {
+            if let Some(value) = dn.attrs.get(attr) {
+                return Some(value.clone());
+            }
+            return None;
+        }
         if let Some(value) = self.pending.borrow().get_relationship_attribute(id, attr) {
             return Some(value.clone());
         }
@@ -2415,6 +2470,13 @@ impl<'a> Runtime {
         &self,
         id: NodeId,
     ) -> OrderSet<Arc<String>> {
+        if let Some(dn) = self.deleted_nodes.borrow().get(&id) {
+            return dn
+                .labels
+                .iter()
+                .map(|l| self.g.borrow().get_label_by_id(*l))
+                .collect();
+        }
         let mut labels = self
             .g
             .borrow()
@@ -2432,6 +2494,9 @@ impl<'a> Runtime {
         &self,
         id: NodeId,
     ) -> OrderMap<Arc<String>, Value> {
+        if let Some(dn) = self.deleted_nodes.borrow().get(&id) {
+            return dn.attrs.clone();
+        }
         let g = self.g.borrow();
         let mut actual = g
             .get_node_attrs(id)
@@ -2470,6 +2535,9 @@ impl<'a> Runtime {
         &self,
         id: RelationshipId,
     ) -> Option<Arc<String>> {
+        if let Some(dr) = self.deleted_relationships.borrow().get(&id) {
+            return Some(self.g.borrow().get_type(dr.type_id).unwrap());
+        }
         if let Some(type_name) = self.pending.borrow().get_relationship_type(id) {
             return Some(type_name);
         }
