@@ -17,7 +17,7 @@ use rand::Rng;
 use std::{
     collections::HashMap,
     fmt::{Debug, Display},
-    sync::{Arc, LazyLock, OnceLock},
+    sync::{Arc, OnceLock},
 };
 use thin_vec::{ThinVec, thin_vec};
 
@@ -975,9 +975,8 @@ fn property(
             Ok(map.get(&attr).cloned().unwrap_or(Value::Null))
         }
         (Some(Value::Point(point)), Some(Value::String(attr))) => match attr.as_str() {
-            "latitude" => Ok(Value::Float(point.latitude)),
-            "longitude" => Ok(Value::Float(point.longitude)),
-            "height" => Ok(point.height.map_or(Value::Null, Value::Float)),
+            "latitude" => Ok(Value::Float(f64::from(point.latitude))),
+            "longitude" => Ok(Value::Float(f64::from(point.longitude))),
             "crs" => Ok(Value::String(Arc::new(String::from("wgs-84")))),
             _ => Ok(Value::Null),
         },
@@ -2203,10 +2202,6 @@ fn vecf32(
     }
 }
 
-static KEY_LATITUDE: LazyLock<Arc<String>> = LazyLock::new(|| Arc::new(String::from("latitude")));
-static KEY_LONGITUDE: LazyLock<Arc<String>> = LazyLock::new(|| Arc::new(String::from("longitude")));
-static KEY_HEIGHT: LazyLock<Arc<String>> = LazyLock::new(|| Arc::new(String::from("height")));
-
 fn point(
     _: &Runtime,
     args: ThinVec<Value>,
@@ -2216,12 +2211,12 @@ fn point(
         Some(Value::Map(map)) => {
             // Extract latitude
             let latitude = map
-                .get(&*KEY_LATITUDE)
+                .get_str("latitude")
                 .ok_or_else(|| String::from("point() requires 'latitude' field"))?;
 
             let latitude = match latitude {
-                Value::Float(f) => *f,
-                Value::Int(i) => *i as f64,
+                Value::Float(f) => *f as f32,
+                Value::Int(i) => *i as f32,
                 _ => {
                     return Err(format!(
                         "Type mismatch: 'latitude' must be a number, got {}",
@@ -2232,12 +2227,12 @@ fn point(
 
             // Extract longitude
             let longitude = map
-                .get(&*KEY_LONGITUDE)
+                .get_str("longitude")
                 .ok_or_else(|| String::from("point() requires 'longitude' field"))?;
 
             let longitude = match longitude {
-                Value::Float(f) => *f,
-                Value::Int(i) => *i as f64,
+                Value::Float(f) => *f as f32,
+                Value::Int(i) => *i as f32,
                 _ => {
                     return Err(format!(
                         "Type mismatch: 'longitude' must be a number, got {}",
@@ -2246,14 +2241,7 @@ fn point(
                 }
             };
 
-            // Extract optional height
-            let height = map.get(&*KEY_HEIGHT).and_then(|h| match h {
-                Value::Float(f) => Some(*f),
-                Value::Int(i) => Some(*i as f64),
-                _ => None,
-            });
-
-            let point = Point::new(latitude, longitude, height);
+            let point = Point::new(latitude, longitude);
             point.validate()?;
             Ok(Value::Point(point))
         }

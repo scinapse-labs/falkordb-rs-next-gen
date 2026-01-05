@@ -1,4 +1,4 @@
-use std::{hash::Hash, ops::Index};
+use std::{borrow::Borrow, hash::Hash, ops::Index};
 
 use thin_vec::{ThinVec, thin_vec};
 
@@ -63,7 +63,7 @@ impl<K: PartialEq, V> OrderMap<K, V> {
         key: &K,
     ) -> Option<&V> {
         for (k, v) in &self.vec {
-            if k == key {
+            if k.borrow() == key {
                 return Some(v);
             }
         }
@@ -94,6 +94,26 @@ impl<K: PartialEq, V> OrderMap<K, V> {
 
     pub fn values(&self) -> impl Iterator<Item = &V> {
         self.vec.iter().map(|(_, v)| v)
+    }
+}
+
+// Specialized implementation for Arc<String> keys
+// Allows lookup with &str, &String, or &Arc<String> - zero allocations!
+impl<V> OrderMap<std::sync::Arc<String>, V> {
+    pub fn get_str<Q>(
+        &self,
+        key: &Q,
+    ) -> Option<&V>
+    where
+        Q: AsRef<str> + ?Sized,
+    {
+        let key_str = key.as_ref();
+        for (k, v) in &self.vec {
+            if k.as_ref() == key_str {
+                return Some(v);
+            }
+        }
+        None
     }
 }
 

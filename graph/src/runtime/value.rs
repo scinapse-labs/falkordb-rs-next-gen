@@ -62,22 +62,19 @@ impl DeletedRelationship {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Point {
-    pub latitude: f64,
-    pub longitude: f64,
-    pub height: Option<f64>,
+    pub latitude: f32,
+    pub longitude: f32,
 }
 
 impl Point {
     #[must_use]
     pub const fn new(
-        latitude: f64,
-        longitude: f64,
-        height: Option<f64>,
+        latitude: f32,
+        longitude: f32,
     ) -> Self {
         Self {
             latitude,
             longitude,
-            height,
         }
     }
 
@@ -96,12 +93,6 @@ impl Point {
                 self.longitude
             ));
         }
-        if let Some(h) = self.height
-            && !h.is_finite()
-        {
-            return Err(format!("height must be a finite number, got {h}"));
-        }
-
         // Then check range bounds
         if self.latitude < -90.0 || self.latitude > 90.0 {
             return Err(format!(
@@ -210,9 +201,6 @@ impl Hash for Value {
                 10.hash(state);
                 p.latitude.to_bits().hash(state);
                 p.longitude.to_bits().hash(state);
-                if let Some(h) = p.height {
-                    h.to_bits().hash(state);
-                }
             }
             Self::Arc(x) => {
                 x.hash(state);
@@ -494,23 +482,14 @@ impl CompareValue for Value {
             (Self::Relationship(rela), Self::Relationship(relb)) => {
                 (rela.0.cmp(&relb.0), DisjointOrNull::None)
             }
-            (Self::Point(a), Self::Point(b)) => {
-                // Compare points lexicographically:  latitude, then longitude, then height
-                match a.latitude.partial_cmp(&b.latitude) {
-                    Some(Ordering::Equal) => match a.longitude.partial_cmp(&b.longitude) {
-                        Some(Ordering::Equal) => match (a.height, b.height) {
-                            (Some(h1), Some(h2)) => compare_floats(h1, h2),
-                            (None, None) => (Ordering::Equal, DisjointOrNull::None),
-                            (Some(_), None) => (Ordering::Greater, DisjointOrNull::None),
-                            (None, Some(_)) => (Ordering::Less, DisjointOrNull::None),
-                        },
-                        Some(ord) => (ord, DisjointOrNull::None),
-                        None => (Ordering::Less, DisjointOrNull::NaN),
-                    },
+            (Self::Point(a), Self::Point(b)) => match a.latitude.partial_cmp(&b.latitude) {
+                Some(Ordering::Equal) => match a.longitude.partial_cmp(&b.longitude) {
                     Some(ord) => (ord, DisjointOrNull::None),
                     None => (Ordering::Less, DisjointOrNull::NaN),
-                }
-            }
+                },
+                Some(ord) => (ord, DisjointOrNull::None),
+                None => (Ordering::Less, DisjointOrNull::NaN),
+            },
             // the inputs have different type - compare them if they
             // are both numerics of differing types
             (Self::Int(i), Self::Float(f)) => compare_floats(*i as f64, *f),
@@ -831,11 +810,6 @@ impl DisplayJson for Value {
                 write!(f, "{}", point.latitude)?;
                 write!(f, r#","longitude":"#)?;
                 write!(f, "{}", point.longitude)?;
-                write!(f, r#","height":"#)?;
-                match point.height {
-                    Some(h) => write!(f, "{h}")?,
-                    None => write!(f, "null")?,
-                }
                 write!(f, "}}")
             }
             Self::Arc(inner) => inner.fmt_json(f, runtime),
