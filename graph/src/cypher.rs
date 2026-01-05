@@ -13,6 +13,7 @@ use crate::{
     tree,
 };
 use itertools::Itertools;
+use json_escape::unescape;
 use orx_tree::{DynTree, NodeRef};
 use std::sync::Arc;
 use std::{
@@ -20,7 +21,6 @@ use std::{
     num::IntErrorKind,
     str::Chars,
 };
-use unescaper::unescape;
 
 #[derive(Debug, PartialEq, Clone)]
 enum Keyword {
@@ -379,19 +379,17 @@ impl<'a> Lexer<'a> {
                     if !end {
                         return (Token::Error(String::from(&str[pos..pos + len])), len);
                     }
-                    unescape(&str[pos + 1..pos + len]).map_or_else(
-                        |e| match e {
-                            unescaper::Error::InvalidChar { .. } => (
-                                Token::String(Arc::new(String::from(&str[pos + 1..pos + len]))),
-                                len + 1,
-                            ),
-                            _ => (
-                                Token::Error(String::from(&str[pos + 1..pos + len])),
-                                len + 1,
-                            ),
-                        },
-                        |unescaped| (Token::String(Arc::new(unescaped)), len + 1),
-                    )
+                    unescape(&str[pos + 1..pos + len])
+                        .decode_utf8()
+                        .map_or_else(
+                            |_| {
+                                (
+                                    Token::String(Arc::new(String::from(&str[pos + 1..pos + len]))),
+                                    len + 1,
+                                )
+                            },
+                            |unescaped| (Token::String(Arc::new(unescaped.into_owned())), len + 1),
+                        )
                 }
                 '\"' => {
                     let mut len = 1;
@@ -418,19 +416,17 @@ impl<'a> Lexer<'a> {
                     if !end {
                         return (Token::Error(String::from(&str[pos..pos + len])), len);
                     }
-                    unescape(&str[pos + 1..pos + len]).map_or_else(
-                        |e| match e {
-                            unescaper::Error::InvalidChar { .. } => (
-                                Token::String(Arc::new(String::from(&str[pos + 1..pos + len]))),
-                                len + 1,
-                            ),
-                            _ => (
-                                Token::Error(String::from(&str[pos + 1..pos + len])),
-                                len + 1,
-                            ),
-                        },
-                        |unescaped| (Token::String(Arc::new(unescaped)), len + 1),
-                    )
+                    unescape(&str[pos + 1..pos + len])
+                        .decode_utf8()
+                        .map_or_else(
+                            |_| {
+                                (
+                                    Token::String(Arc::new(String::from(&str[pos + 1..pos + len]))),
+                                    len + 1,
+                                )
+                            },
+                            |unescaped| (Token::String(Arc::new(unescaped.into_owned())), len + 1),
+                        )
                 }
                 d @ '0'..='9' => Self::lex_numeric(str, chars, pos, d, 1),
                 '$' => {

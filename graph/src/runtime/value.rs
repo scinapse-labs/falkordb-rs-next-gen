@@ -1,5 +1,6 @@
 #![allow(clippy::cast_precision_loss)]
 
+use json_escape::escape_str;
 use std::{
     cell::RefCell,
     cmp::Ordering,
@@ -747,18 +748,8 @@ fn write_json_string(
     s: &str,
 ) -> fmt::Result {
     write!(f, "\"")?;
-    for ch in s.chars() {
-        match ch {
-            '"' => write!(f, "\\\"")?,
-            '\\' => write!(f, "\\\\")?,
-            '\n' => write!(f, "\\n")?,
-            '\r' => write!(f, "\\r")?,
-            '\t' => write!(f, "\\t")?,
-            '\x08' => write!(f, "\\b")?,
-            '\x0C' => write!(f, "\\f")?,
-            c if c.is_control() => write!(f, "\\u{:04x}", c as u32)?,
-            c => write!(f, "{c}")?,
-        }
+    for chunk in escape_str(s) {
+        write!(f, "{chunk}")?;
     }
     write!(f, "\"")
 }
