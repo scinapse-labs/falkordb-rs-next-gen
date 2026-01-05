@@ -97,9 +97,10 @@ impl Point {
             ));
         }
         if let Some(h) = self.height
-            && !h.is_finite() {
-                return Err(format!("height must be a finite number, got {h}"));
-            }
+            && !h.is_finite()
+        {
+            return Err(format!("height must be a finite number, got {h}"));
+        }
 
         // Then check range bounds
         if self.latitude < -90.0 || self.latitude > 90.0 {

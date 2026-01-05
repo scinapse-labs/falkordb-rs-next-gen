@@ -556,7 +556,7 @@ fn reply_verbose_value(
             // Format:  "point({latitude:%f, longitude:%f})"
             // Match the C implementation format exactly
             let str = format!(
-                "point({{latitude:{}, longitude: {}}})",
+                "point({{latitude:{}, longitude:{}}})",
                 point.latitude, point.longitude
             );
             raw::reply_with_string_buffer(ctx.ctx, str.as_ptr().cast::<c_char>(), str.len());
