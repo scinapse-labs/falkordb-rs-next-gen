@@ -17,7 +17,7 @@ use rand::Rng;
 use std::{
     collections::HashMap,
     fmt::{Debug, Display},
-    sync::{Arc, OnceLock},
+    sync::{Arc, LazyLock, OnceLock},
 };
 use thin_vec::{ThinVec, thin_vec};
 
@@ -2203,6 +2203,10 @@ fn vecf32(
     }
 }
 
+static KEY_LATITUDE: LazyLock<Arc<String>> = LazyLock::new(|| Arc::new(String::from("latitude")));
+static KEY_LONGITUDE: LazyLock<Arc<String>> = LazyLock::new(|| Arc::new(String::from("longitude")));
+static KEY_HEIGHT: LazyLock<Arc<String>> = LazyLock::new(|| Arc::new(String::from("height")));
+
 fn point(
     _: &Runtime,
     args: ThinVec<Value>,
@@ -2212,7 +2216,7 @@ fn point(
         Some(Value::Map(map)) => {
             // Extract latitude
             let latitude = map
-                .get(&Arc::new(String::from("latitude")))
+                .get(&*KEY_LATITUDE)
                 .ok_or_else(|| String::from("point() requires 'latitude' field"))?;
 
             let latitude = match latitude {
@@ -2228,7 +2232,7 @@ fn point(
 
             // Extract longitude
             let longitude = map
-                .get(&Arc::new(String::from("longitude")))
+                .get(&*KEY_LONGITUDE)
                 .ok_or_else(|| String::from("point() requires 'longitude' field"))?;
 
             let longitude = match longitude {
@@ -2243,13 +2247,11 @@ fn point(
             };
 
             // Extract optional height
-            let height = map
-                .get(&Arc::new(String::from("height")))
-                .and_then(|h| match h {
-                    Value::Float(f) => Some(*f),
-                    Value::Int(i) => Some(*i as f64),
-                    _ => None,
-                });
+            let height = map.get(&*KEY_HEIGHT).and_then(|h| match h {
+                Value::Float(f) => Some(*f),
+                Value::Int(i) => Some(*i as f64),
+                _ => None,
+            });
 
             let point = Point::new(latitude, longitude, height);
             point.validate()?;
