@@ -776,7 +776,7 @@ impl Binder {
         ty: Type,
         scope_id: u32,
     ) -> Variable {
-        let current_scope_idx = scope_id as usize;
+        let _current_scope_idx = scope_id as usize;
         let var_id = self.next_var_id;
         self.next_var_id += 1;
 
