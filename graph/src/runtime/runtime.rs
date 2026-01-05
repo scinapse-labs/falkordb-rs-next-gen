@@ -29,7 +29,7 @@ use reqwest::blocking::get;
 use std::{
     cell::RefCell,
     cmp::Ordering,
-    collections::{HashMap, HashSet},
+    collections::HashMap,
     fmt::Debug,
     hash::{DefaultHasher, Hash, Hasher},
     iter::{empty, once},

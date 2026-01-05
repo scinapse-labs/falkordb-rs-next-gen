@@ -806,6 +806,18 @@ impl DisplayJson for Value {
                 }
                 write!(f, "]")
             }
+            Self::Point(point) => {
+                write!(f, r#"{{"crs":"wgs-84","latitude":"#)?;
+                write!(f, "{}", point.latitude)?;
+                write!(f, r#","longitude":"#)?;
+                write!(f, "{}", point.longitude)?;
+                write!(f, r#","height":"#)?;
+                match point.height {
+				Some(h) => write!(f, "{h}")?,
+                    None => write!(f, "null")?,
+                }
+                write!(f, "}}")
+            }
             Self::Arc(inner) => inner.fmt_json(f, runtime),
         }
     }
