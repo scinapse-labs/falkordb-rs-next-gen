@@ -29,7 +29,7 @@ use reqwest::blocking::get;
 use std::{
     cell::RefCell,
     cmp::Ordering,
-    collections::{HashMap, HashSet},
+    collections::HashMap,
     fmt::Debug,
     hash::{DefaultHasher, Hash, Hasher},
     iter::{empty, once},
@@ -1455,7 +1455,7 @@ impl<'a> Runtime {
                 attrs,
                 index_type,
                 entity_type,
-                options,
+                options: _,
             } => {
                 if !self.write {
                     return Err(String::from(

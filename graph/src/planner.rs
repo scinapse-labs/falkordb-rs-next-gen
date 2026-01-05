@@ -1,6 +1,6 @@
 use std::{collections::HashSet, fmt::Display, sync::Arc};
 
-use orx_tree::{Bfs, DynTree, NodeRef, Side, Traversal, Traverser};
+use orx_tree::{DynTree, NodeRef, Side, Traversal, Traverser};
 
 use crate::{
     ast::{
