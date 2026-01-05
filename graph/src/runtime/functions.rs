@@ -2220,7 +2220,7 @@ fn point(
                 Value::Int(i) => *i as f64,
                 _ => {
                     return Err(format!(
-                        "Type mismatch:  'latitude' must be a number, got {}",
+                        "Type mismatch: 'latitude' must be a number, got {}",
                         latitude.name()
                     ));
                 }
@@ -2248,7 +2248,6 @@ fn point(
                 .and_then(|h| match h {
                     Value::Float(f) => Some(*f),
                     Value::Int(i) => Some(*i as f64),
-                    Value::Null => None,
                     _ => None,
                 });
 

@@ -83,6 +83,25 @@ impl Point {
 
     /// Validates that the point coordinates are within valid ranges
     pub fn validate(&self) -> Result<(), String> {
+        // Check for NaN or infinite values first
+        if !self.latitude.is_finite() {
+            return Err(format!(
+                "latitude must be a finite number, got {}",
+                self.latitude
+            ));
+        }
+        if !self.longitude.is_finite() {
+            return Err(format!(
+                "longitude must be a finite number, got {}",
+                self.longitude
+            ));
+        }
+        if let Some(h) = self.height
+            && !h.is_finite() {
+                return Err(format!("height must be a finite number, got {h}"));
+            }
+
+        // Then check range bounds
         if self.latitude < -90.0 || self.latitude > 90.0 {
             return Err(format!(
                 "latitude should be within the range -90.0 to 90.0, got {}",
@@ -813,7 +832,7 @@ impl DisplayJson for Value {
                 write!(f, "{}", point.longitude)?;
                 write!(f, r#","height":"#)?;
                 match point.height {
-				Some(h) => write!(f, "{h}")?,
+                    Some(h) => write!(f, "{h}")?,
                     None => write!(f, "null")?,
                 }
                 write!(f, "}}")
