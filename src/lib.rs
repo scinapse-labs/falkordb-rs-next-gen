@@ -742,6 +742,10 @@ fn reply_stats(
         let str = format!("Labels added: {}", stats.labels_added);
         raw::reply_with_string_buffer(ctx.ctx, str.as_ptr().cast::<c_char>(), str.len());
     }
+    if stats.labels_removed > 0 {
+        let str = format!("Labels removed: {}", stats.labels_removed);
+        raw::reply_with_string_buffer(ctx.ctx, str.as_ptr().cast::<c_char>(), str.len());
+    }
     if stats.nodes_created > 0 {
         let str = format!("Nodes created: {}", stats.nodes_created);
         raw::reply_with_string_buffer(ctx.ctx, str.as_ptr().cast::<c_char>(), str.len());
