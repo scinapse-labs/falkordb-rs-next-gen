@@ -712,6 +712,9 @@ fn reply_stats(
     if stats.labels_added > 0 {
         stats_len += 1;
     }
+    if stats.labels_removed > 0 {
+        stats_len += 1;
+    }
     if stats.nodes_created > 0 {
         stats_len += 1;
     }
