@@ -92,7 +92,7 @@ impl Binder {
             }
             QueryIR::Unwind(expr, var_name) => {
                 let expr = self.bind_expr(&expr)?;
-                let var = self.define_name_in_scope(var_name, Type::Any, true)?;
+                let var = self.define_name_in_scope(var_name, Type::Any, false)?;
                 Ok(QueryIR::Unwind(expr, var))
             }
             QueryIR::Merge(pattern, on_create, on_match) => {
@@ -683,7 +683,7 @@ impl Binder {
             && let Some(existing) = self.current_env().get(&name)
         {
             if !allow_reuse {
-                return Err(format!("{name} can't be redeclared"));
+                return Err(format!("Variable `{name}` already declared"));
             }
             self.ensure_type(existing, &ty)?;
             return Ok(existing.clone());

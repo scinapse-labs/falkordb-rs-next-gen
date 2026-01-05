@@ -5,7 +5,6 @@ test_distinct
 test_entity_update
 test_expand_into
 test_foreach
-test_function_calls
 test_graph_deletion
 test_graph_merge
 test_imdb
@@ -39,4 +38,3 @@ test_star_projections
 test_timeout
 test_traversal_construction
 test_union
-test_unwind_clause
