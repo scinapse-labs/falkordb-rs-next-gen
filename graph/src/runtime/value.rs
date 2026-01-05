@@ -1,10 +1,11 @@
 #![allow(clippy::cast_precision_loss)]
 
+use json_escape::escape_str;
 use std::{
     cell::RefCell,
     cmp::Ordering,
     collections::HashSet,
-    fmt::Debug,
+    fmt::{self},
     hash::{DefaultHasher, Hash, Hasher},
     ops::{Add, Div, Mul, Rem, Sub},
     sync::Arc,
@@ -17,6 +18,15 @@ use crate::{
     graph::graph::{LabelId, NodeId, RelationshipId, TypeId},
     runtime::{functions::Type, ordermap::OrderMap},
 };
+
+/// A trait for formatting values as JSON, similar to Display but for JSON output
+pub trait DisplayJson {
+    fn fmt_json(
+        &self,
+        f: &mut fmt::Formatter<'_>,
+        runtime: &crate::runtime::runtime::Runtime,
+    ) -> fmt::Result;
+}
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct DeletedNode {
@@ -515,6 +525,32 @@ impl Value {
         }
     }
 
+    /// Convert Value to JSON string representation
+    pub fn to_json_string(
+        &self,
+        runtime: &crate::runtime::runtime::Runtime,
+    ) -> String {
+        struct JsonWrapper<'a> {
+            value: &'a Value,
+            runtime: &'a crate::runtime::runtime::Runtime,
+        }
+
+        impl fmt::Display for JsonWrapper<'_> {
+            fn fmt(
+                &self,
+                f: &mut fmt::Formatter<'_>,
+            ) -> fmt::Result {
+                self.value.fmt_json(f, self.runtime)
+            }
+        }
+
+        JsonWrapper {
+            value: self,
+            runtime,
+        }
+        .to_string()
+    }
+
     fn compare_list<T: CompareValue>(
         a: &[T],
         b: &[T],
@@ -604,6 +640,158 @@ impl Value {
         }
         (Ordering::Equal, DisjointOrNull::None)
     }
+}
+
+impl DisplayJson for Value {
+    fn fmt_json(
+        &self,
+        f: &mut fmt::Formatter<'_>,
+        runtime: &crate::runtime::runtime::Runtime,
+    ) -> fmt::Result {
+        match self {
+            Self::Null => write!(f, "null"),
+            Self::Bool(b) => write!(f, "{b}"),
+            Self::Int(i) => write!(f, "{i}"),
+            Self::Float(fl) => {
+                if fl.is_nan() || fl.is_infinite() {
+                    write!(f, "null")
+                } else {
+                    write!(f, "{fl}")
+                }
+            }
+            Self::String(s) => write_json_string(f, s),
+            Self::List(list) => {
+                write!(f, "[")?;
+                for (i, v) in list.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ",")?;
+                    }
+                    v.fmt_json(f, runtime)?;
+                }
+                write!(f, "]")
+            }
+            Self::Map(map) => {
+                write!(f, "{{")?;
+                for (i, (k, v)) in map.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ",")?;
+                    }
+                    write_json_string(f, k)?;
+                    write!(f, ":")?;
+                    v.fmt_json(f, runtime)?;
+                }
+                write!(f, "}}")
+            }
+            Self::Node(id) => write_node_json(f, runtime, *id, true),
+            Self::Relationship(rel) => {
+                let (rel_id, start_id, end_id) = **rel;
+                let rel_id_u64 = u64::from(rel_id);
+                let properties = runtime.get_relationship_attrs(rel_id);
+                let type_name = runtime
+                    .get_relationship_type(rel_id)
+                    .unwrap_or_else(|| Arc::new(String::new()));
+
+                write!(
+                    f,
+                    r#"{{"type":"relationship","id":{rel_id_u64},"relationship":"#
+                )?;
+                write_json_string(f, &type_name)?;
+                write!(f, r#","properties":{{"#)?;
+
+                for (i, (k, v)) in properties.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ",")?;
+                    }
+                    write_json_string(f, k)?;
+                    write!(f, ":")?;
+                    v.fmt_json(f, runtime)?;
+                }
+
+                write!(f, r#"}},"start":"#)?;
+                write_node_json(f, runtime, start_id, false)?;
+                write!(f, r#","end":"#)?;
+                write_node_json(f, runtime, end_id, false)?;
+                write!(f, "}}")
+            }
+            Self::Path(values) => {
+                write!(f, "[")?;
+                for (i, v) in values.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ",")?;
+                    }
+                    v.fmt_json(f, runtime)?;
+                }
+                write!(f, "]")
+            }
+            Self::VecF32(vec) => {
+                write!(f, "[")?;
+                for (i, fl) in vec.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ",")?;
+                    }
+                    if fl.is_nan() || fl.is_infinite() {
+                        write!(f, "null")?;
+                    } else {
+                        write!(f, "{fl}")?;
+                    }
+                }
+                write!(f, "]")
+            }
+            Self::Arc(inner) => inner.fmt_json(f, runtime),
+        }
+    }
+}
+
+/// Write a string in JSON format with proper escaping
+fn write_json_string(
+    f: &mut fmt::Formatter<'_>,
+    s: &str,
+) -> fmt::Result {
+    write!(f, "\"")?;
+    for chunk in escape_str(s) {
+        write!(f, "{chunk}")?;
+    }
+    write!(f, "\"")
+}
+
+/// Write a node in JSON format with or without the "type" field
+fn write_node_json(
+    f: &mut fmt::Formatter<'_>,
+    runtime: &crate::runtime::runtime::Runtime,
+    id: NodeId,
+    include_type: bool,
+) -> fmt::Result {
+    let node_id = u64::from(id);
+    let labels = runtime.get_node_labels(id);
+    let properties = runtime.get_node_attrs(id);
+
+    write!(f, "{{")?;
+
+    if include_type {
+        write!(f, r#""type":"node","#)?;
+    }
+
+    write!(f, r#""id":{node_id},"labels":["#)?;
+
+    for (i, label) in labels.iter().enumerate() {
+        if i > 0 {
+            write!(f, ",")?;
+        }
+        write_json_string(f, label)?;
+    }
+
+    write!(f, r#"],"properties":{{"#)?;
+
+    for (i, (k, v)) in properties.iter().enumerate() {
+        if i > 0 {
+            write!(f, ",")?;
+        }
+        write_json_string(f, k)?;
+        write!(f, ":")?;
+        v.fmt_json(f, runtime)?;
+    }
+
+    write!(f, "}}}}")
 }
 
 pub trait Contains {

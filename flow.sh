@@ -23,4 +23,26 @@ if [[ "$TESTS_FILE" == "" ]]; then
   TESTS_FILE=flow_tests_done.txt
 fi
 
-RLTest -f $TESTS_FILE --module $TARGET_DIR/$TARGET --no-progress --parallelism 8 --clear-logs --log-dir tests/flow/logs $V
+STOP_ON_FAILURE=""
+PARALLELISM="--parallelism 8"
+if [[ "$FAIL_FAST" == 1 ]]; then
+	STOP_ON_FAILURE="--stop-on-failure"
+	PARALLELISM="--parallelism 1"
+fi
+
+# Add test filter support
+TEST_FILTER=()
+if [[ "$TEST" != "" ]]; then
+    TEST_FILTER=(-t "$TEST")
+fi
+
+# To run specific test files, use:
+# TEST="tests/flow/test_function_calls:testFunctionCallsFlow.test89_JOIN" FAIL_FAST=1 ./flow.sh
+# To run all tests in a specific file, use:
+# TEST="tests/flow/test_function_calls" FAIL_FAST=1 ./flow.sh
+
+if [[ ${#TEST_FILTER[@]} -eq 0 ]]; then
+    RLTest -f "$TESTS_FILE" --module "$TARGET_DIR/$TARGET" --no-progress $PARALLELISM $STOP_ON_FAILURE --clear-logs --log-dir tests/flow/logs $V
+else
+    RLTest "${TEST_FILTER[@]}" --module "$TARGET_DIR/$TARGET" --no-progress $PARALLELISM $STOP_ON_FAILURE --clear-logs --log-dir tests/flow/logs $V
+fi
