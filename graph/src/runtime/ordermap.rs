@@ -74,10 +74,6 @@ impl<K: PartialEq, V> OrderMap<K, V> {
         self.vec.iter().map(|(k, v)| (k, v))
     }
 
-    pub fn into_iter(self) -> impl Iterator<Item = (K, V)> {
-        self.vec.into_iter()
-    }
-
     #[must_use]
     pub fn len(&self) -> usize {
         self.vec.len()
@@ -140,5 +136,14 @@ impl<K: PartialEq, V: PartialEq> Index<&K> for OrderMap<K, V> {
         index: &K,
     ) -> &Self::Output {
         self.get(index).expect("no entry found for key")
+    }
+}
+
+impl<K, V> IntoIterator for OrderMap<K, V> {
+    type Item = (K, V);
+    type IntoIter = thin_vec::IntoIter<(K, V)>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.vec.into_iter()
     }
 }

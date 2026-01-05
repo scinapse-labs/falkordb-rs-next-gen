@@ -135,7 +135,6 @@ pub struct Planner {
 
 impl Planner {
     fn add_argument_to_leaves(
-        &self,
         tree: &mut DynTree<IR>,
     ) {
         let mut tr = Traversal.bfs().over_nodes();
@@ -408,7 +407,7 @@ impl Planner {
             QueryIR::Merge(pattern, on_create_set_items, on_match_set_items) => {
                 let create_pattern = pattern.filter_visited(&self.visited);
                 let mut match_branch = self.plan_match(&pattern, None);
-                self.add_argument_to_leaves(&mut match_branch);
+                Self::add_argument_to_leaves(&mut match_branch);
 
                 tree!(
                     IR::Merge(create_pattern, on_create_set_items, on_match_set_items),

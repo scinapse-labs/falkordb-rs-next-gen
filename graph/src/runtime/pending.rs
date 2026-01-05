@@ -51,6 +51,12 @@ pub struct Pending {
     index_remove_docs: HashMap<Arc<String>, RoaringTreemap>,
 }
 
+impl Default for Pending {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Pending {
     #[must_use]
     pub fn new() -> Self {
