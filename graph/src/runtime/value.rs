@@ -807,10 +807,10 @@ impl DisplayJson for Value {
             }
             Self::Point(point) => {
                 write!(f, r#"{{"crs":"wgs-84","latitude":"#)?;
-                write!(f, "{}", point.latitude)?;
+                write!(f, "{:.6}", f64::from(point.latitude))?;
                 write!(f, r#","longitude":"#)?;
-                write!(f, "{}", point.longitude)?;
-                write!(f, "}}")
+                write!(f, "{:.6}", f64::from(point.longitude))?;
+                write!(f, r#","height": null}}"#)
             }
             Self::Arc(inner) => inner.fmt_json(f, runtime),
         }
