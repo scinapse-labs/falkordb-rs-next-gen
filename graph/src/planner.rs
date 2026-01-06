@@ -134,9 +134,7 @@ pub struct Planner {
 }
 
 impl Planner {
-    fn add_argument_to_leaves(
-        tree: &mut DynTree<IR>,
-    ) {
+    fn add_argument_to_leaves(tree: &mut DynTree<IR>) {
         let mut tr = Traversal.bfs().over_nodes();
 
         let leaves: Vec<_> = tree
