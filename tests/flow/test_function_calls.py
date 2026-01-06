@@ -577,55 +577,55 @@ class testFunctionCallsFlow(FlowTestsBase):
                            ['STR2', [1, 2, 3]]]
         self.env.assertEquals(actual_result.result_set, expected_result)
 
-    #def test19_has_labels(self):
-    #    # Test existing label
-    #    query = """MATCH (n) WHERE n:person RETURN n.name"""
-    #    actual_result = self.graph.query(query)
-    #    expected_result = [['Roi'], ['Alon'], ['Ailon'], ['Boaz']]
-    #    self.env.assertEquals(actual_result.result_set, expected_result)
+    def test19_has_labels(self):
+        # Test existing label
+        query = """MATCH (n) WHERE n:person RETURN n.name"""
+        actual_result = self.graph.query(query)
+        expected_result = [['Roi'], ['Alon'], ['Ailon'], ['Boaz']]
+        self.env.assertEquals(actual_result.result_set, expected_result)
 
-    #    # Test not existing label
-    #    query = """MATCH (n) WHERE n:L RETURN n.name"""
-    #    actual_result = self.graph.query(query)
-    #    expected_result = []
-    #    self.env.assertEquals(actual_result.result_set, expected_result)
+        # Test not existing label
+        query = """MATCH (n) WHERE n:L RETURN n.name"""
+        actual_result = self.graph.query(query)
+        expected_result = []
+        self.env.assertEquals(actual_result.result_set, expected_result)
 
-    #    # Test multi label
-    #    query = """MATCH (n) WHERE n:person:L RETURN n.name"""
-    #    actual_result = self.graph.query(query)
-    #    expected_result = []
-    #    self.env.assertEquals(actual_result.result_set, expected_result)
+        # Test multi label
+        query = """MATCH (n) WHERE n:person:L RETURN n.name"""
+        actual_result = self.graph.query(query)
+        expected_result = []
+        self.env.assertEquals(actual_result.result_set, expected_result)
 
-    #    # Test multi label
-    #    query = """MATCH (n) WHERE n:person:student RETURN n.name"""
-    #    actual_result = self.graph.query(query)
-    #    expected_result = [['Alon'], ['Boaz']]
-    #    self.env.assertEquals(actual_result.result_set, expected_result)
+        # Test multi label
+        query = """MATCH (n) WHERE n:person:student RETURN n.name"""
+        actual_result = self.graph.query(query)
+        expected_result = [['Alon'], ['Boaz']]
+        self.env.assertEquals(actual_result.result_set, expected_result)
 
-    #    # Test or between different labels label
-    #    query = """MATCH (n) WHERE n:person OR n:L RETURN n.name"""
-    #    actual_result = self.graph.query(query)
-    #    expected_result = [['Roi'], ['Alon'], ['Ailon'], ['Boaz']]
-    #    self.env.assertEquals(actual_result.result_set, expected_result)
+        # Test or between different labels label
+        query = """MATCH (n) WHERE n:person OR n:L RETURN n.name"""
+        actual_result = self.graph.query(query)
+        expected_result = [['Roi'], ['Alon'], ['Ailon'], ['Boaz']]
+        self.env.assertEquals(actual_result.result_set, expected_result)
 
-    #    # Test multi label using functions
-    #    query = """MATCH (n) WHERE hasLabels(n, ['person', 'L']) RETURN n.name"""
-    #    actual_result = self.graph.query(query)
-    #    expected_result = []
-    #    self.env.assertEquals(actual_result.result_set, expected_result)
+        # Test multi label using functions
+        query = """MATCH (n) WHERE hasLabels(n, ['person', 'L']) RETURN n.name"""
+        actual_result = self.graph.query(query)
+        expected_result = []
+        self.env.assertEquals(actual_result.result_set, expected_result)
 
-    #    # Test multi label using functions
-    #    query = """MATCH (n) WHERE hasLabels(n, ['person', 'student']) RETURN n.name"""
-    #    actual_result = self.graph.query(query)
-    #    expected_result =  [['Alon'], ['Boaz']]
-    #    self.env.assertEquals(actual_result.result_set, expected_result)
+        # Test multi label using functions
+        query = """MATCH (n) WHERE hasLabels(n, ['person', 'student']) RETURN n.name"""
+        actual_result = self.graph.query(query)
+        expected_result =  [['Alon'], ['Boaz']]
+        self.env.assertEquals(actual_result.result_set, expected_result)
 
-    #    # Test has labels using functions mismatch type
-    #    query = """MATCH (n) WHERE hasLabels(n, ['person', 1]) RETURN n.name"""
-    #    try:
-    #        self.graph.query(query)
-    #    except redis.ResponseError as e:
-    #        self.env.assertContains("Type mismatch: expected String but was Integer", str(e))
+        # Test has labels using functions mismatch type
+        query = """MATCH (n) WHERE hasLabels(n, ['person', 1]) RETURN n.name"""
+        try:
+            self.graph.query(query)
+        except redis.ResponseError as e:
+            self.env.assertContains("Type mismatch: expected String but was Integer", str(e))
 
     #def test20_keys(self):
     #    # Test retrieving keys of a nested map

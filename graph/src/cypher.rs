@@ -1863,7 +1863,7 @@ impl<'a> Parser<'a> {
                         let labels = tree!(ExprIR::List; self.parse_labels()?.into_iter().map(|l| tree!(ExprIR::String(l))));
                         res = tree!(
                             ExprIR::FuncInvocation(
-                                get_functions().get("node_has_labels", &FnType::Internal)?
+                                get_functions().get("hasLabels", &FnType::Function)?
                             ),
                             res,
                             labels
@@ -2249,9 +2249,7 @@ impl<'a> Parser<'a> {
                 remove_items.push(Arc::new(expr));
             } else if self.lexer.current() == Token::Colon {
                 expr = tree!(
-                    ExprIR::FuncInvocation(
-                        get_functions().get("node_has_labels", &FnType::Internal)?
-                    ),
+                    ExprIR::FuncInvocation(get_functions().get("hasLabels", &FnType::Function)?),
                     expr,
                     tree!(ExprIR::List; self.parse_labels()?.into_iter().map(|l| tree!(ExprIR::String(l))))
                 );

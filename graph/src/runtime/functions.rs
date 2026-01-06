@@ -336,6 +336,16 @@ pub fn init_functions() -> Result<(), Functions> {
         FnType::Function,
     );
     funcs.add(
+        "hasLabels",
+        has_labels,
+        false,
+        vec![
+            Type::Union(vec![Type::Node, Type::Null]),
+            Type::Union(vec![Type::List(Box::new(Type::Any)), Type::Null]),
+        ],
+        FnType::Function,
+    );
+    funcs.add(
         "id",
         id,
         false,
@@ -857,13 +867,6 @@ pub fn init_functions() -> Result<(), Functions> {
         FnType::Internal,
     );
     funcs.add(
-        "node_has_labels",
-        internal_node_has_labels,
-        false,
-        vec![Type::Node, Type::List(Box::new(Type::Any))],
-        FnType::Internal,
-    );
-    funcs.add(
         "regex_matches",
         internal_regex_matches,
         false,
@@ -996,6 +999,48 @@ fn labels(
         }
         Some(Value::Null) => Ok(Value::Null),
 
+        _ => unreachable!(),
+    }
+}
+
+fn has_labels(
+    runtime: &Runtime,
+    args: ThinVec<Value>,
+) -> Result<Value, String> {
+    let mut iter = args.into_iter();
+    match (iter.next(), iter.next()) {
+        (Some(Value::Node(id)), Some(Value::List(required_labels))) => {
+            // Validate that all items in the list are strings
+            for label_value in &required_labels {
+                match label_value {
+                    Value::String(_) => {}
+                    Value::Int(_) => {
+                        return Err("Type mismatch: expected String but was Integer".to_string());
+                    }
+                    Value::Float(_) => {
+                        return Err("Type mismatch: expected String but was Float".to_string());
+                    }
+                    Value::Bool(_) => {
+                        return Err("Type mismatch: expected String but was Boolean".to_string());
+                    }
+                    _ => return Err("Type mismatch: expected String".to_string()),
+                }
+            }
+
+            // Get the actual labels of the node
+            let node_labels = runtime.get_node_labels(id);
+            // Check if all required labels are present
+            let has_all = required_labels.iter().all(|req_label| {
+                if let Value::String(req_str) = req_label {
+                    node_labels.iter().any(|node_label| node_label == req_str)
+                } else {
+                    false
+                }
+            });
+
+            Ok(Value::Bool(has_all))
+        }
+        (Some(Value::Null), _) | (_, Some(Value::Null)) => Ok(Value::Null),
         _ => unreachable!(),
     }
 }
@@ -2318,29 +2363,6 @@ fn internal_is_null(
     match (iter.next(), iter.next()) {
         (Some(Value::Bool(is_not)), Some(Value::Null)) => Ok(Value::Bool(!is_not)),
         (Some(Value::Bool(is_not)), Some(_)) => Ok(Value::Bool(is_not)),
-
-        _ => unreachable!(),
-    }
-}
-
-fn internal_node_has_labels(
-    runtime: &Runtime,
-    args: ThinVec<Value>,
-) -> Result<Value, String> {
-    let mut iter = args.into_iter();
-    match (iter.next(), iter.next()) {
-        (Some(Value::Node(id)), Some(Value::List(required_labels))) => {
-            let labels = runtime.get_node_labels(id);
-            let all_labels_present = required_labels.iter().all(|label| {
-                if let Value::String(label_str) = label {
-                    labels.contains(label_str)
-                } else {
-                    false
-                }
-            });
-
-            Ok(Value::Bool(all_labels_present))
-        }
 
         _ => unreachable!(),
     }
