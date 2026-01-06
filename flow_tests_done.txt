@@ -5,6 +5,7 @@ tests/flow/test_empty_query
 tests/flow/test_filters
 tests/flow/test_function_calls
 tests/flow/test_graph_create
+tests/flow/test_graph_deletion
 tests/flow/test_graph_merge
 tests/flow/test_mix_labels
 tests/flow/test_multi_pattern

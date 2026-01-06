@@ -6,11 +6,11 @@ pub struct ThreadCountingAllocator;
 
 thread_local! {
     // Per-thread allocation counter
-    static THREAD_ALLOCATED: Cell<usize> = Cell::new(0);
-    static THREAD_DEALLOCATED: Cell<usize> = Cell::new(0);
+    static THREAD_ALLOCATED: Cell<usize> = const { Cell::new(0) };
+    static THREAD_DEALLOCATED: Cell<usize> = const { Cell::new(0) };
 
     // Per-thread tracking flag
-    static TRACKING_ENABLED: Cell<bool> = Cell::new(true);
+    static TRACKING_ENABLED: Cell<bool> = const { Cell::new(true) };
 }
 
 unsafe impl GlobalAlloc for ThreadCountingAllocator {
