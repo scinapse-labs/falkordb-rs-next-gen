@@ -309,7 +309,7 @@ class testGraphDeletionFlow(FlowTestsBase):
             self.graph.query(query)
             self.env.assertTrue(False)
         except ResponseError as e:
-            self.env.assertContains("Delete was constructed without a child operation", str(e))
+            self.env.assertContains("DELETE can only be called on nodes, paths and relationships", str(e))
 
         # try to delete a function return that's not a graph entity
         try:
@@ -406,6 +406,7 @@ class testGraphDeletionFlow(FlowTestsBase):
         res = self.graph.query("""
             MATCH (a:A)
             DELETE a
+            WITH *
             CREATE (b:A)
             RETURN ID(b) ORDER BY ID(b)"""
         )
@@ -416,6 +417,7 @@ class testGraphDeletionFlow(FlowTestsBase):
         res = self.graph.query("""
             MATCH (a:A)
             DELETE a
+            WITH *
             CREATE (b:A)
             RETURN ID(b) ORDER BY ID(b)"""
         )
@@ -433,6 +435,7 @@ class testGraphDeletionFlow(FlowTestsBase):
             MATCH (a:A)
             WITH a, a.id as id
             DELETE a
+            WITH *
             MERGE (b:A {id: id})
             RETURN ID(b), b.id ORDER BY ID(b)"""
         )
@@ -444,6 +447,7 @@ class testGraphDeletionFlow(FlowTestsBase):
             MATCH (a:A)
             WITH a, a.id as id
             DELETE a
+            WITH *
             MERGE (b:A {id: id})
             RETURN ID(b), b.id ORDER BY ID(b) DESC"""
         )
