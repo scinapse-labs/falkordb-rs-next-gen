@@ -1468,14 +1468,12 @@ fn value_to_integer(
             if s.is_empty() {
                 return Ok(Value::Null);
             }
-            
+
             // Try to parse as i64 first (no decimal point)
-            if ! s.contains('.') {
-                return Ok(s.parse::<i64>()
-                    .map(Value::Int)
-                    . unwrap_or(Value:: Null));
+            if !s.contains('.') {
+                return Ok(s.parse::<i64>().map(Value::Int).unwrap_or(Value::Null));
             }
-            
+
             // Has decimal - parse as f64 then floor
             s.parse::<f64>()
                 .ok()
