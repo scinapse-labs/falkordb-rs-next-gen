@@ -29,7 +29,7 @@ use reqwest::blocking::get;
 use std::{
     cell::RefCell,
     cmp::Ordering,
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     fmt::Debug,
     hash::{DefaultHasher, Hash, Hasher},
     iter::{empty, once},
@@ -1754,6 +1754,11 @@ impl<'a> Runtime {
             };
             match entity {
                 Value::Node(node) => {
+                    if self.g.borrow().is_node_deleted(node)
+                        || self.pending.borrow().is_node_deleted(node)
+                    {
+                        continue;
+                    }
                     if let Some(property) = property {
                         self.pending.borrow_mut().set_node_attribute(
                             node,
@@ -1762,9 +1767,15 @@ impl<'a> Runtime {
                         )?;
                     }
                     if let Some(labels) = labels {
+                        let current_labels = self
+                            .g
+                            .borrow()
+                            .get_node_label_ids(node)
+                            .collect::<HashSet<_>>();
                         let labels = labels
                             .iter()
                             .filter_map(|l| self.g.borrow_mut().get_label_id(l.as_str()))
+                            .filter(|l| current_labels.contains(l))
                             .collect();
                         self.pending.borrow_mut().remove_node_labels(node, labels);
                     }
