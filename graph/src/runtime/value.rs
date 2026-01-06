@@ -307,7 +307,7 @@ impl Add for Value {
             }
             (Self::String(a), Self::String(b)) => Ok(Self::String(Arc::new(format!("{a}{b}")))),
             (Self::String(s), Self::Int(i)) => Ok(Self::String(Arc::new(format!("{s}{i}")))),
-            (Self::String(s), Self::Float(f)) => Ok(Self::String(Arc::new(format!("{s}{f}")))),
+            (Self::String(s), Self::Float(f)) => Ok(Self::String(Arc::new(format!("{s}{f:.6}")))),
             (Self::String(s), Self::Bool(f)) => Ok(Self::String(Arc::new(format!("{s}{f}")))),
             (a, b) => Err(format!(
                 "Unexpected types for add operator ({}, {})",
