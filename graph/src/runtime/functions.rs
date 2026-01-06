@@ -1464,17 +1464,27 @@ fn value_to_integer(
     args: ThinVec<Value>,
 ) -> Result<Value, String> {
     match args.into_iter().next() {
-        Some(Value::String(s)) => s.parse::<i64>().map(Value::Int).or_else(|_| {
+        Some(Value::String(s)) => {
+            if s.is_empty() {
+                return Ok(Value::Null);
+            }
+
+            // Try to parse as i64 first (no decimal point)
+            if !s.contains('.') {
+                return Ok(s.parse::<i64>().map(Value::Int).unwrap_or(Value::Null));
+            }
+
+            // Has decimal - parse as f64 then floor
             s.parse::<f64>()
+                .ok()
+                .filter(|f| f.is_finite())
                 .map(|f| Value::Int(f.floor() as i64))
-                .or(Ok(Value::Null))
-        }),
+                .ok_or_else(|| "Invalid number".to_string())
+        }
         Some(Value::Int(i)) => Ok(Value::Int(i)),
         Some(Value::Float(f)) => Ok(Value::Int(f.floor() as i64)),
         Some(Value::Bool(b)) => Ok(Value::Int(i64::from(b))),
-        Some(Value::Null) => Ok(Value::Null),
-
-        _ => unreachable!(),
+        _ => Ok(Value::Null),
     }
 }
 
