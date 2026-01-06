@@ -2398,8 +2398,7 @@ impl<'a> Runtime {
                     for (key, value) in map.iter() {
                         if *value == Value::Null {
                             return Err(format!(
-                                "Cannot merge node using null property value for key '{}'",
-                                key
+                                "Cannot merge node using null property value for key '{key}'"
                             ));
                         }
                     }
@@ -2430,8 +2429,7 @@ impl<'a> Runtime {
                 for (key, value) in map.iter() {
                     if *value == Value::Null {
                         return Err(format!(
-                            "Cannot merge relationship using null property value for key '{}'",
-                            key
+                            "Cannot merge relationship using null property value for key '{key}'"
                         ));
                     }
                 }

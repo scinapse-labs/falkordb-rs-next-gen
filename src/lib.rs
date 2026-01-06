@@ -644,7 +644,7 @@ fn query_mut(
                     if is_write {
                         graph.sender.send((bc, query, compact)).unwrap();
                         drop(graph);
-                        process_write_queued_query(g);
+                        process_write_queued_query(&g);
                     } else {
                         drop(bc);
                         unsafe { raw::RedisModule_FreeThreadSafeContext.unwrap()(ctx.ctx) };
@@ -656,7 +656,7 @@ fn query_mut(
                     drop(bc);
                     unsafe { raw::RedisModule_FreeThreadSafeContext.unwrap()(ctx.ctx) };
                 }
-            };
+            }
             if track_mem {
                 let (allocated, deallocated) = current_thread_usage();
                 disable_tracking();
@@ -673,7 +673,7 @@ fn query_mut(
     );
 }
 
-fn process_write_queued_query(graph: Arc<RwLock<ThreadedGraph>>) {
+fn process_write_queued_query(graph: &Arc<RwLock<ThreadedGraph>>) {
     let mut graph = graph.write().unwrap();
     if graph
         .write_loop
@@ -1169,7 +1169,7 @@ fn graph_init(
         mem::forget(agent_running);
     }
     unsafe {
-        let result = RediSearch_Init(ctx.ctx as _, REDISEARCH_INIT_LIBRARY as c_int);
+        let result = RediSearch_Init(ctx.ctx.cast(), REDISEARCH_INIT_LIBRARY as c_int);
         if result == REDISMODULE_OK as c_int {
             ctx.log_notice("RediSearch initialized successfully.");
         } else {
