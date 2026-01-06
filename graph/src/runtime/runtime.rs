@@ -1731,7 +1731,7 @@ impl<'a> Runtime {
                         None,
                     )
                 }
-                ExprIR::FuncInvocation(func) if func.name == "haslabels" => {
+                ExprIR::FuncInvocation(func) if func.name == "hasLabels" => {
                     let labels = item
                         .root()
                         .child(1)

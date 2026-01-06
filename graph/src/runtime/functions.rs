@@ -1023,7 +1023,6 @@ fn has_labels(
 
             // Get the actual labels of the node
             let node_labels = runtime.get_node_labels(id);
-            
             // Check if all required labels are present
             let has_all = required_labels.iter().all(|req_label| {
                 if let Value::String(req_str) = req_label {
