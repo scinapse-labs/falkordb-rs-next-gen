@@ -1459,41 +1459,34 @@ fn finalize_stdevp(ctx: Value) -> Value {
     Value::Float(variance.sqrt())
 }
 
-#[inline]
-fn convert_float_to_integer(
-    f: f64,
-    from_string: bool,
-) -> Value {
-    // For string parsing, check if it's a whole number representation
-    // that exceeds i64 range - those should return NULL
-    if from_string && (f > i64::MAX as f64 || f < i64::MIN as f64) {
-        // Check if it's close to a whole number (not a decimal like 1.5)
-        if (f - f.round()).abs() < 1e-10 {
-            return Value::Null;
-        }
-    }
-    // Otherwise convert to i64 (will clamp at boundaries for direct floats)
-    Value::Int(f.floor() as i64)
-}
-
 fn value_to_integer(
     _runtime: &Runtime,
     args: ThinVec<Value>,
 ) -> Result<Value, String> {
     match args.into_iter().next() {
         Some(Value::String(s)) => {
-            // Try to parse as i64 first
-            s.parse::<i64>()
-                .map(Value::Int)
-                .or_else(|_| s.parse::<f64>().map(|f| convert_float_to_integer(f, true)))
-                .or(Ok(Value::Null))
+            if s.is_empty() {
+                return Ok(Value::Null);
+            }
+            
+            // Try to parse as i64 first (no decimal point)
+            if ! s.contains('.') {
+                return Ok(s.parse::<i64>()
+                    .map(Value::Int)
+                    . unwrap_or(Value:: Null));
+            }
+            
+            // Has decimal - parse as f64 then floor
+            s.parse::<f64>()
+                .ok()
+                .filter(|f| f.is_finite())
+                .map(|f| Value::Int(f.floor() as i64))
+                .ok_or_else(|| "Invalid number".to_string())
         }
         Some(Value::Int(i)) => Ok(Value::Int(i)),
-        Some(Value::Float(f)) => Ok(convert_float_to_integer(f, false)),
+        Some(Value::Float(f)) => Ok(Value::Int(f.floor() as i64)),
         Some(Value::Bool(b)) => Ok(Value::Int(i64::from(b))),
-        Some(Value::Null) => Ok(Value::Null),
-
-        _ => unreachable!(),
+        _ => Ok(Value::Null),
     }
 }
 
