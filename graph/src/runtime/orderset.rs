@@ -44,10 +44,6 @@ impl<T: PartialEq> OrderSet<T> {
         self.vec.iter()
     }
 
-    pub fn into_iter(self) -> impl Iterator<Item = T> {
-        self.vec.into_iter()
-    }
-
     #[must_use]
     pub const fn len(&self) -> usize {
         self.vec.len()
@@ -110,5 +106,14 @@ impl<T: PartialEq> Index<usize> for OrderSet<T> {
         index: usize,
     ) -> &Self::Output {
         self.vec.get(index).expect("no entry found for key")
+    }
+}
+
+impl<T> IntoIterator for OrderSet<T> {
+    type Item = T;
+    type IntoIter = std::vec::IntoIter<T>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.vec.into_iter()
     }
 }

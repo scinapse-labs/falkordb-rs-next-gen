@@ -762,7 +762,7 @@ impl Binder {
                 self.current_env_mut()
                     .insert(name.clone(), copied_var.clone());
                 self.copy_from_parent
-                    .insert(name.clone(), (var.clone(), copied_var.clone()));
+                    .insert(name.clone(), (var, copied_var.clone()));
                 return Ok(copied_var);
             }
         }
@@ -770,13 +770,13 @@ impl Binder {
         Err(format!("'{}' not defined", name.as_str()))
     }
 
-    fn fresh_var(
+    const fn fresh_var(
         &mut self,
         name: Option<Arc<String>>,
         ty: Type,
         scope_id: u32,
     ) -> Variable {
-        let current_scope_idx = scope_id as usize;
+        let _current_scope_idx = scope_id as usize;
         let var_id = self.next_var_id;
         self.next_var_id += 1;
 

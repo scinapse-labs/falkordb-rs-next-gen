@@ -772,7 +772,7 @@ impl<TVar: Eq + Hash> QueryIR<TVar> {
                 iter.next()
                     .map_or(Ok(()), |first| first.inner_validate(iter))
             }
-            Self::With { exprs, orderby: _orderby, .. } | Self::Return { exprs, orderby: _orderby, .. } => {
+            Self::With { exprs: _, orderby: _orderby, .. } | Self::Return { exprs: _, orderby: _orderby, .. } => {
                 iter.next()
                     .map_or(Ok(()), |first| first.inner_validate(iter))
             }

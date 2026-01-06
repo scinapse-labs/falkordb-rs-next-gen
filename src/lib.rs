@@ -373,6 +373,26 @@ fn reply_compact_value(
                 raw::reply_with_double(ctx.ctx, f64::from(f));
             }
         }
+        Value::Point(point) => {
+            raw::reply_with_long_long(ctx.ctx, 11); // VALUE_POINT type code
+            raw::reply_with_array(ctx.ctx, 2);
+
+            let lat_str = format!("{:.15}", point.latitude);
+            let lat_str = lat_str.trim_end_matches('0').trim_end_matches('.');
+            raw::reply_with_string_buffer(
+                ctx.ctx,
+                lat_str.as_ptr().cast::<c_char>(),
+                lat_str.len(),
+            );
+
+            let lon_str = format!("{:.15}", point.longitude);
+            let lon_str = lon_str.trim_end_matches('0').trim_end_matches('.');
+            raw::reply_with_string_buffer(
+                ctx.ctx,
+                lon_str.as_ptr().cast::<c_char>(),
+                lon_str.len(),
+            );
+        }
         Value::Arc(inner) => {
             reply_compact_value(ctx, runtime, (*inner).clone());
         }
@@ -532,6 +552,15 @@ fn reply_verbose_value(
                 raw::reply_with_double(ctx.ctx, f64::from(f));
             }
         }
+        Value::Point(point) => {
+            // Format:  "point({latitude:%f, longitude:%f})"
+            // Match the C implementation format exactly
+            let str = format!(
+                "point({{latitude:{}, longitude:{}}})",
+                point.latitude, point.longitude
+            );
+            raw::reply_with_string_buffer(ctx.ctx, str.as_ptr().cast::<c_char>(), str.len());
+        }
         Value::Arc(inner) => {
             reply_verbose_value(ctx, runtime, (*inner).clone());
         }
@@ -615,7 +644,7 @@ fn query_mut(
                     if is_write {
                         graph.sender.send((bc, query, compact)).unwrap();
                         drop(graph);
-                        process_write_queued_query(g);
+                        process_write_queued_query(&g);
                     } else {
                         drop(bc);
                         unsafe { raw::RedisModule_FreeThreadSafeContext.unwrap()(ctx.ctx) };
@@ -627,7 +656,7 @@ fn query_mut(
                     drop(bc);
                     unsafe { raw::RedisModule_FreeThreadSafeContext.unwrap()(ctx.ctx) };
                 }
-            };
+            }
             if track_mem {
                 let (allocated, deallocated) = current_thread_usage();
                 disable_tracking();
@@ -644,7 +673,7 @@ fn query_mut(
     );
 }
 
-fn process_write_queued_query(graph: Arc<RwLock<ThreadedGraph>>) {
+fn process_write_queued_query(graph: &Arc<RwLock<ThreadedGraph>>) {
     let mut graph = graph.write().unwrap();
     if graph
         .write_loop
@@ -683,6 +712,9 @@ fn reply_stats(
     if stats.labels_added > 0 {
         stats_len += 1;
     }
+    if stats.labels_removed > 0 {
+        stats_len += 1;
+    }
     if stats.nodes_created > 0 {
         stats_len += 1;
     }
@@ -711,6 +743,10 @@ fn reply_stats(
     raw::reply_with_array(ctx.ctx, stats_len.into());
     if stats.labels_added > 0 {
         let str = format!("Labels added: {}", stats.labels_added);
+        raw::reply_with_string_buffer(ctx.ctx, str.as_ptr().cast::<c_char>(), str.len());
+    }
+    if stats.labels_removed > 0 {
+        let str = format!("Labels removed: {}", stats.labels_removed);
         raw::reply_with_string_buffer(ctx.ctx, str.as_ptr().cast::<c_char>(), str.len());
     }
     if stats.nodes_created > 0 {
@@ -1111,9 +1147,10 @@ fn graph_memory(
     ))
 }
 
+#[allow(clippy::unnecessary_wraps)]
 fn graph_config(
-    ctx: &Context,
-    args: Vec<RedisString>,
+    _ctx: &Context,
+    _args: Vec<RedisString>,
 ) -> RedisResult {
     Ok(RedisValue::Integer(0))
 }
@@ -1132,7 +1169,7 @@ fn graph_init(
         mem::forget(agent_running);
     }
     unsafe {
-        let result = RediSearch_Init(ctx.ctx as _, REDISEARCH_INIT_LIBRARY as c_int);
+        let result = RediSearch_Init(ctx.ctx.cast(), REDISEARCH_INIT_LIBRARY as c_int);
         if result == REDISMODULE_OK as c_int {
             ctx.log_notice("RediSearch initialized successfully.");
         } else {

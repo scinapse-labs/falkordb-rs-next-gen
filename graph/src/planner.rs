@@ -1,6 +1,6 @@
 use std::{collections::HashSet, fmt::Display, sync::Arc};
 
-use orx_tree::{Bfs, DynTree, NodeRef, Side, Traversal, Traverser};
+use orx_tree::{DynTree, NodeRef, Side, Traversal, Traverser};
 
 use crate::{
     ast::{
@@ -134,10 +134,7 @@ pub struct Planner {
 }
 
 impl Planner {
-    fn add_argument_to_leaves(
-        &self,
-        tree: &mut DynTree<IR>,
-    ) {
+    fn add_argument_to_leaves(tree: &mut DynTree<IR>) {
         let mut tr = Traversal.bfs().over_nodes();
 
         let leaves: Vec<_> = tree
@@ -248,14 +245,14 @@ impl Planner {
         } else {
             tree!(IR::Project(exprs, copy_from_parent))
         };
+        if write {
+            res.root_mut().push_child(IR::Commit);
+        }
         if distinct {
             res = tree!(IR::Distinct, res);
         }
         if !orderby.is_empty() {
             res = tree!(IR::Sort(orderby), res);
-        }
-        if write {
-            res = tree!(IR::Commit, res);
         }
         if let Some(skip_expr) = skip {
             res = tree!(IR::Skip(skip_expr), res);
@@ -281,10 +278,20 @@ impl Planner {
         let mut iter = plans.into_iter().rev();
         let mut res = iter.next().unwrap();
         let mut idx = res.root().idx();
-        while matches!(
-            res.node(idx).data(),
-            IR::Commit | IR::Sort(_) | IR::Skip(_) | IR::Limit(_) | IR::Distinct | IR::Filter(_)
-        ) {
+        while matches!(res.node(idx).data(), |IR::Sort(_)| IR::Skip(_)
+            | IR::Limit(_)
+            | IR::Distinct
+            | IR::Filter(_))
+        {
+            idx = res.node(idx).child(0).idx();
+        }
+        if matches!(res.node(idx).data(), |IR::Project(_, _)| IR::Aggregate(
+            _,
+            _,
+            _
+        )) && res.node(idx).num_children() > 0
+            && matches!(res.node(idx).child(0).data(), IR::Commit)
+        {
             idx = res.node(idx).child(0).idx();
         }
         for n in iter {
@@ -296,15 +303,20 @@ impl Planner {
             } else {
                 idx = res.node_mut(idx).push_child_tree(n);
             }
-            while matches!(
-                res.node(idx).data(),
-                IR::Commit
-                    | IR::Sort(_)
-                    | IR::Skip(_)
-                    | IR::Limit(_)
-                    | IR::Distinct
-                    | IR::Filter(_)
-            ) {
+            while matches!(res.node(idx).data(), |IR::Sort(_)| IR::Skip(_)
+                | IR::Limit(_)
+                | IR::Distinct
+                | IR::Filter(_))
+            {
+                idx = res.node(idx).child(0).idx();
+            }
+            if matches!(res.node(idx).data(), |IR::Project(_, _)| IR::Aggregate(
+                _,
+                _,
+                _
+            )) && res.node(idx).num_children() > 0
+                && matches!(res.node(idx).child(0).data(), IR::Commit)
+            {
                 idx = res.node(idx).child(0).idx();
             }
         }
@@ -393,7 +405,7 @@ impl Planner {
             QueryIR::Merge(pattern, on_create_set_items, on_match_set_items) => {
                 let create_pattern = pattern.filter_visited(&self.visited);
                 let mut match_branch = self.plan_match(&pattern, None);
-                self.add_argument_to_leaves(&mut match_branch);
+                Self::add_argument_to_leaves(&mut match_branch);
 
                 tree!(
                     IR::Merge(create_pattern, on_create_set_items, on_match_set_items),
