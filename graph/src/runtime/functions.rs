@@ -1013,10 +1013,16 @@ fn has_labels(
             // Validate that all items in the list are strings
             for label_value in &required_labels {
                 match label_value {
-                    Value::String(_) => {},
-                    Value::Int(_) => return Err("Type mismatch: expected String but was Integer".to_string()),
-                    Value::Float(_) => return Err("Type mismatch: expected String but was Float".to_string()),
-                    Value::Bool(_) => return Err("Type mismatch: expected String but was Boolean".to_string()),
+                    Value::String(_) => {}
+                    Value::Int(_) => {
+                        return Err("Type mismatch: expected String but was Integer".to_string());
+                    }
+                    Value::Float(_) => {
+                        return Err("Type mismatch: expected String but was Float".to_string());
+                    }
+                    Value::Bool(_) => {
+                        return Err("Type mismatch: expected String but was Boolean".to_string());
+                    }
                     _ => return Err("Type mismatch: expected String".to_string()),
                 }
             }
