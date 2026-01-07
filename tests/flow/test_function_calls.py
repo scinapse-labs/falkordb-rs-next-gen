@@ -706,97 +706,97 @@ class testFunctionCallsFlow(FlowTestsBase):
             actual_result = self.graph.query(query)
             self.env.assertEquals(actual_result.result_set[0][0], None)
 
-    #def test24_substring(self):
-    #    query_to_expected_result = {
-    #        """RETURN SUBSTRING('muchacho', 0, 4)""": [["much"]],
-    #        """RETURN SUBSTRING('muchacho', 3, 20)""": [["hacho"]],
-    #        """RETURN SUBSTRING(NULL, 3, 20)""": [[None]],
-    #        """RETURN SUBSTRING('ab', 1, 999999999999999)""": [["b"]],
-    #        # test unicode charecters
-    #        """RETURN SUBSTRING('丁丂七丄丅丆万丈三上', 3, 4)""" : [['丄丅丆万']],
-    #    }
-    #    for query, expected_result in query_to_expected_result.items():
-    #        self.get_res_and_assertEquals(query, expected_result)
+    def test24_substring(self):
+        query_to_expected_result = {
+            """RETURN SUBSTRING('muchacho', 0, 4)""": [["much"]],
+            """RETURN SUBSTRING('muchacho', 3, 20)""": [["hacho"]],
+            """RETURN SUBSTRING(NULL, 3, 20)""": [[None]],
+            """RETURN SUBSTRING('ab', 1, 999999999999999)""": [["b"]],
+            # test unicode charecters
+            """RETURN SUBSTRING('丁丂七丄丅丆万丈三上', 3, 4)""" : [['丄丅丆万']],
+        }
+        for query, expected_result in query_to_expected_result.items():
+            self.get_res_and_assertEquals(query, expected_result)
         
-    #    self.expect_error("""RETURN SUBSTRING("muchacho", 3, -20)""",
-    #        "length must be a non-negative integer")
+        self.expect_error("""RETURN SUBSTRING("muchacho", 3, -20)""",
+            "length must be a non-negative integer")
 
-    #    self.expect_error("""RETURN SUBSTRING("muchacho", -3, 3)""",
-    #        "start must be a non-negative integer")
+        self.expect_error("""RETURN SUBSTRING("muchacho", -3, 3)""",
+            "start must be a non-negative integer")
 
-    #def test25_left(self):
-    #    query_to_expected_result = {
-    #        "RETURN LEFT('muchacho', 4)" : [['much']],
-    #        "RETURN LEFT('muchacho', 100)" : [['muchacho']],
-    #        "RETURN LEFT(NULL, -1)" : [[None]],
-    #        "RETURN LEFT(NULL, 100)" : [[None]],
-    #        "RETURN LEFT(NULL, NULL)" : [[None]],
-    #        # test unicode charecters
-    #        "RETURN LEFT('丁丂七丄丅丆万丈三上', 4)" : [['丁丂七丄']],
-    #        "RETURN LEFT('丁丂七丄丅丆万丈三上', 100)" : [['丁丂七丄丅丆万丈三上']],
-    #    }
-    #    for query, expected_result in query_to_expected_result.items():
-    #        self.get_res_and_assertEquals(query, expected_result)
+    def test25_left(self):
+        query_to_expected_result = {
+            "RETURN LEFT('muchacho', 4)" : [['much']],
+            "RETURN LEFT('muchacho', 100)" : [['muchacho']],
+            "RETURN LEFT(NULL, -1)" : [[None]],
+            "RETURN LEFT(NULL, 100)" : [[None]],
+            "RETURN LEFT(NULL, NULL)" : [[None]],
+            # test unicode charecters
+            "RETURN LEFT('丁丂七丄丅丆万丈三上', 4)" : [['丁丂七丄']],
+            "RETURN LEFT('丁丂七丄丅丆万丈三上', 100)" : [['丁丂七丄丅丆万丈三上']],
+        }
+        for query, expected_result in query_to_expected_result.items():
+            self.get_res_and_assertEquals(query, expected_result)
 
-    #    # invalid length argument
-    #    queries = [
-    #        """RETURN LEFT('', -100)""",
-    #        """RETURN LEFT('a', NULL)""",
-    #        ]
-    #    for query in queries:
-    #        try:
-    #            self.graph.query(query)
-    #            self.env.assertTrue(False)
-    #        except ResponseError as e:
-    #            self.env.assertEqual(str(e), "length must be a non-negative integer")
+        # invalid length argument
+        queries = [
+            """RETURN LEFT('', -100)""",
+            """RETURN LEFT('a', NULL)""",
+            ]
+        for query in queries:
+            try:
+                self.graph.query(query)
+                self.env.assertTrue(False)
+            except ResponseError as e:
+                self.env.assertEqual(str(e), "length must be a non-negative integer")
 
-    #    # invalid input types
-    #    queries = [
-    #        """RETURN LEFT(NULL, 'a')""",
-    #        """RETURN LEFT(NULL, 1.3)""",
-    #    ]
-    #    for query in queries:
-    #        self.expect_type_error(query)
+        # invalid input types
+        queries = [
+            """RETURN LEFT(NULL, 'a')""",
+            """RETURN LEFT(NULL, 1.3)""",
+        ]
+        for query in queries:
+            self.expect_type_error(query)
 
-    #def test26_right(self):
-    #    query_to_expected_result = {
-    #        "RETURN RIGHT('muchacho', 4)" : [['acho']],
-    #        "RETURN RIGHT('muchacho', 100)" : [['muchacho']],
-    #        "RETURN RIGHT(NULL, -1)" : [[None]],
-    #        "RETURN RIGHT(NULL, 100)" : [[None]],
-    #        "RETURN RIGHT(NULL, NULL)" : [[None]],
-    #        # test unicode charecters
-    #        "RETURN RIGHT('丁丂七丄丅丆万丈三上', 4)" : [['万丈三上']],
-    #        "RETURN RIGHT('丁丂七丄丅丆万丈三上', 100)" : [['丁丂七丄丅丆万丈三上']],
-    #    }
-    #    for query, expected_result in query_to_expected_result.items():
-    #        self.get_res_and_assertEquals(query, expected_result)
+    def test26_right(self):
+        query_to_expected_result = {
+            "RETURN RIGHT('muchacho', 4)" : [['acho']],
+            "RETURN RIGHT('muchacho', 100)" : [['muchacho']],
+            "RETURN RIGHT(NULL, -1)" : [[None]],
+            "RETURN RIGHT(NULL, 100)" : [[None]],
+            "RETURN RIGHT(NULL, NULL)" : [[None]],
+            # test unicode charecters
+            "RETURN RIGHT('丁丂七丄丅丆万丈三上', 4)" : [['万丈三上']],
+            "RETURN RIGHT('丁丂七丄丅丆万丈三上', 100)" : [['丁丂七丄丅丆万丈三上']],
+        }
+        for query, expected_result in query_to_expected_result.items():
+            self.get_res_and_assertEquals(query, expected_result)
 
-    #    # invalid length argument
-    #    queries = [
-    #        """RETURN RIGHT('', -100)""",
-    #        """RETURN RIGHT('a', NULL)""",
-    #        ]
-    #    for query in queries:
-    #        try:
-    #            self.graph.query(query)
-    #            self.env.assertTrue(False)
-    #        except ResponseError as e:
-    #            self.env.assertEqual(str(e), "length must be a non-negative integer")
+        # invalid length argument
+        queries = [
+            """RETURN RIGHT('', -100)""",
+            """RETURN RIGHT('a', NULL)""",
+            ]
+        for query in queries:
+            try:
+                self.graph.query(query)
+                self.env.assertTrue(False)
+            except ResponseError as e:
+                self.env.assertEqual(str(e), "length must be a non-negative integer")
 
-    #    # invalid input types
-    #    queries = [
-    #        """RETURN RIGHT(NULL, 'a')""",
-    #        """RETURN RIGHT(NULL, 1.3)""",
-    #    ]
-    #    for query in queries:
-    #        self.expect_type_error(query)
+        # invalid input types
+        queries = [
+            """RETURN RIGHT(NULL, 'a')""",
+            """RETURN RIGHT(NULL, 1.3)""",
+        ]
+        for query in queries:
+            self.expect_type_error(query)
 
-    #def test27_string_concat(self):
-    #    larg_double = 1.123456e300
-    #    query = f"""RETURN '' + {larg_double} + {larg_double}"""
-    #    actual_result = self.graph.query(query)
-    #    self.env.assertEquals(actual_result.result_set[0][0], "%f%f" % (larg_double, larg_double))
+    def test27_string_concat(self):
+        larg_double = 1.123456e300
+        query = f"""RETURN '' + {larg_double} + {larg_double}"""
+        actual_result = self.graph.query(query)
+        self.env.assertEquals(actual_result.result_set[0][0], "%f%f" % (larg_double, larg_double))
 
     #def test28_sqrt(self):
     #    query = """RETURN sqrt(0)"""

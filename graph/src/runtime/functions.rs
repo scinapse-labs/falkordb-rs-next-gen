@@ -1506,7 +1506,7 @@ fn value_string(value: &Value) -> Result<Arc<String>, String> {
     match value {
         Value::Bool(b) => Ok(Arc::new(String::from(if *b { "true" } else { "false" }))),
         Value::Int(i) => Ok(Arc::new(i.to_string())),
-        Value::Float(f) => Ok(Arc::new(f.to_string())),
+        Value::Float(f) => Ok(Arc::new(format!("{f:.6}"))),
         Value::String(s) => Ok(s.clone()),
 
         _ => unreachable!(),
