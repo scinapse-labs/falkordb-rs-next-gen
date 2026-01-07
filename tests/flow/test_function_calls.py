@@ -2067,57 +2067,57 @@ class testFunctionCallsFlow(FlowTestsBase):
         for query, expected_result in query_to_expected_result.items():
             self.get_res_and_assertEquals(query, expected_result)
     
-    #def test79_Range(self):
-    #    query_to_expected_result = {
-    #        "RETURN range(0,10)": [[[i for i in range(11)]]],
-    #        "RETURN range(2,18,3)": [[[i for i in range(2, 18, 3)]]]
-    #    }
-    #    for query, expected_result in query_to_expected_result.items():
-    #        self.get_res_and_assertEquals(query, expected_result)
+    def test79_Range(self):
+        query_to_expected_result = {
+            "RETURN range(0,10)": [[[i for i in range(11)]]],
+            "RETURN range(2,18,3)": [[[i for i in range(2, 18, 3)]]]
+        }
+        for query, expected_result in query_to_expected_result.items():
+            self.get_res_and_assertEquals(query, expected_result)
     
-    #def test80_IN(self):
-    #    query_to_expected_result = {
-    #        "RETURN 3 IN [1,2,3]": [[True]],
-    #        "RETURN 4 IN [1,2,3]": [[False]],
-    #        "RETURN [1,2] IN [1,2,3]": [[False]],
-    #        "RETURN [1,2] IN [[1,2],3]": [[True]]
-    #    }
-    #    for query, expected_result in query_to_expected_result.items():
-    #        self.get_res_and_assertEquals(query, expected_result)
+    def test80_IN(self):
+        query_to_expected_result = {
+            "RETURN 3 IN [1,2,3]": [[True]],
+            "RETURN 4 IN [1,2,3]": [[False]],
+            "RETURN [1,2] IN [1,2,3]": [[False]],
+            "RETURN [1,2] IN [[1,2],3]": [[True]]
+        }
+        for query, expected_result in query_to_expected_result.items():
+            self.get_res_and_assertEquals(query, expected_result)
 
-    #def test81_ISNULL(self):
-    #    arr = ["NULL", "1", "1.2", "TRUE", "FALSE", "'string'", "[1,2,3]"]
-    #    for ind, s in enumerate(arr):
-    #        query1 = f'RETURN {s} IS NOT NULL'
-    #        expected1 = [[True]] if ind!=0 else [[False]]
-    #        self.get_res_and_assertEquals(query1, expected1)
-    #        query2 = f'RETURN {s} IS NULL'
-    #        expected2 = [[False]] if ind!=0 else [[True]]
-    #        self.get_res_and_assertEquals(query2, expected2)
+    def test81_ISNULL(self):
+        arr = ["NULL", "1", "1.2", "TRUE", "FALSE", "'string'", "[1,2,3]"]
+        for ind, s in enumerate(arr):
+            query1 = f'RETURN {s} IS NOT NULL'
+            expected1 = [[True]] if ind!=0 else [[False]]
+            self.get_res_and_assertEquals(query1, expected1)
+            query2 = f'RETURN {s} IS NULL'
+            expected2 = [[False]] if ind!=0 else [[True]]
+            self.get_res_and_assertEquals(query2, expected2)
     
-    #def test82_Coalesce(self):
-    #    query_to_expected_result = {
-    #        "RETURN coalesce(1)": [[1]],
-    #        "RETURN coalesce(NULL, 1)": [[1]],
-    #        "RETURN coalesce(NULL, NULL, 500, NULL)": [[500]]
-    #    }
-    #    for query, expected_result in query_to_expected_result.items():
-    #        self.get_res_and_assertEquals(query, expected_result)
+    def test82_Coalesce(self):
+        query_to_expected_result = {
+            "RETURN coalesce(1)": [[1]],
+            "RETURN coalesce(NULL, 1)": [[1]],
+            "RETURN coalesce(NULL, NULL, 500, NULL)": [[500]]
+        }
+        for query, expected_result in query_to_expected_result.items():
+            self.get_res_and_assertEquals(query, expected_result)
     
-    #def test83_Replace(self):
-    #    query_to_expected_result = {
-    #        "RETURN replace('abcabc', 'a', '00')": [["00bc00bc"]],
-    #        "RETURN replace('abcabc', 'bc', '0')": [["a0a0"]],
-    #        "RETURN replace('abcabc', 'abc', '')": [[""]],
-    #        "RETURN replace('abcabc', 'ab', '')": [["cc"]],
-    #        "RETURN replace('abcabc', '', '0')": [["0a0b0c0a0b0c0"]],
-    #        # test unicode charecters
-    #        # changing half unicode charecter will not change the original string
-    #        "RETURN replace('丁丂七丄丅丆万丈三上', '\xe4', 'X')": [["丁丂七丄丅丆万丈三上"]],
-    #        "RETURN replace('丁丂七丄丅丆万丈三上', '丄', 'X')": [["丁丂七X丅丆万丈三上"]]
-    #    }
-    #    for query, expected_result in query_to_expected_result.items():
-    #        self.get_res_and_assertEquals(query, expected_result)
+    def test83_Replace(self):
+        query_to_expected_result = {
+            "RETURN replace('abcabc', 'a', '00')": [["00bc00bc"]],
+            "RETURN replace('abcabc', 'bc', '0')": [["a0a0"]],
+            "RETURN replace('abcabc', 'abc', '')": [[""]],
+            "RETURN replace('abcabc', 'ab', '')": [["cc"]],
+            "RETURN replace('abcabc', '', '0')": [["0a0b0c0a0b0c0"]],
+            # test unicode charecters
+            # changing half unicode charecter will not change the original string
+            "RETURN replace('丁丂七丄丅丆万丈三上', '\xe4', 'X')": [["丁丂七丄丅丆万丈三上"]],
+            "RETURN replace('丁丂七丄丅丆万丈三上', '丄', 'X')": [["丁丂七X丅丆万丈三上"]]
+        }
+        for query, expected_result in query_to_expected_result.items():
+            self.get_res_and_assertEquals(query, expected_result)
 
     #def test84_RandomUUID(self):
     #    query = "RETURN randomUUID()"

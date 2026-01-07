@@ -2175,10 +2175,12 @@ pub(crate) fn apply_pow(
     exponent: Value,
 ) -> Value {
     match (base, exponent) {
+        // Convert all numeric types to f64 and use powf
+        // This matches C's behavior:  pow(SI_GET_NUMERIC(base), SI_GET_NUMERIC(exp))
         (Value::Int(a), Value::Int(b)) => Value::Float((a as f64).powf(b as f64)),
         (Value::Float(a), Value::Float(b)) => Value::Float(a.powf(b)),
         (Value::Int(a), Value::Float(b)) => Value::Float((a as f64).powf(b)),
-        (Value::Float(a), Value::Int(b)) => Value::Float(a.powi(b as i32)),
+        (Value::Float(a), Value::Int(b)) => Value::Float(a.powf(b as f64)),
         _ => Value::Null,
     }
 }
