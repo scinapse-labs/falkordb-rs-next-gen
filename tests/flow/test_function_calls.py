@@ -1876,196 +1876,196 @@ class testFunctionCallsFlow(FlowTestsBase):
 
         self.expect_error('RETURN toUpper(replace("�", "", "   "))', "Invalid UTF8 string")
     
-    #def test67_Exists(self):
-    #    query_to_expected_result = {
-    #        "RETURN EXISTS(null)": [[0]],
-    #        "RETURN EXISTS(1)": [[1]]
-    #    }
-    #    for query, expected_result in query_to_expected_result.items():
-    #        self.get_res_and_assertEquals(query, expected_result)
+    def test67_Exists(self):
+        query_to_expected_result = {
+            "RETURN EXISTS(null)": [[0]],
+            "RETURN EXISTS(1)": [[1]]
+        }
+        for query, expected_result in query_to_expected_result.items():
+            self.get_res_and_assertEquals(query, expected_result)
     
-    #def test68_Case(self):
-    #    query_to_expected_result = {
-    #        "RETURN CASE 'brown' WHEN 'blue' THEN 1+0 WHEN 'brown' THEN 2-0 ELSE 3*1 END": [[2]],
-    #        "RETURN CASE 'green' WHEN 'blue' THEN 1+0 WHEN 'brown' THEN 2-0 ELSE 3*1 END": [[3]],
-    #        "RETURN CASE WHEN NULL THEN 1+0 WHEN true THEN 2-0 END": [[2]],
-    #        "RETURN CASE WHEN NULL THEN 1+0 WHEN NULL THEN 2-0 ELSE 3*1 END": [[3]],
-    #        "RETURN CASE WHEN NULL THEN 1+0 WHEN NULL THEN 2-0 END": [[None]],
-    #        "RETURN CASE NULL WHEN NULL THEN NULL ELSE 'else' END AS result": [[None]],
-    #        "RETURN CASE NULL WHEN 'value' THEN 'value' WHEN NULL THEN NULL ELSE 'else' END AS result": [[None]],
-    #        "RETURN CASE NULL WHEN 'when' THEN 'then' ELSE NULL END AS result": [[None]],
-    #        "RETURN CASE 'value' WHEN NULL THEN NULL ELSE true END AS result": [[True]],
-    #        "RETURN CASE 'value' WHEN NULL THEN NULL WHEN 'value' THEN true ELSE false END AS result": [[True]]
-    #    }
-    #    for query, expected_result in query_to_expected_result.items():
-    #        self.get_res_and_assertEquals(query, expected_result)
+    def test68_Case(self):
+        query_to_expected_result = {
+            "RETURN CASE 'brown' WHEN 'blue' THEN 1+0 WHEN 'brown' THEN 2-0 ELSE 3*1 END": [[2]],
+            "RETURN CASE 'green' WHEN 'blue' THEN 1+0 WHEN 'brown' THEN 2-0 ELSE 3*1 END": [[3]],
+            "RETURN CASE WHEN NULL THEN 1+0 WHEN true THEN 2-0 END": [[2]],
+            "RETURN CASE WHEN NULL THEN 1+0 WHEN NULL THEN 2-0 ELSE 3*1 END": [[3]],
+            "RETURN CASE WHEN NULL THEN 1+0 WHEN NULL THEN 2-0 END": [[None]],
+            "RETURN CASE NULL WHEN NULL THEN NULL ELSE 'else' END AS result": [[None]],
+            "RETURN CASE NULL WHEN 'value' THEN 'value' WHEN NULL THEN NULL ELSE 'else' END AS result": [[None]],
+            "RETURN CASE NULL WHEN 'when' THEN 'then' ELSE NULL END AS result": [[None]],
+            "RETURN CASE 'value' WHEN NULL THEN NULL ELSE true END AS result": [[True]],
+            "RETURN CASE 'value' WHEN NULL THEN NULL WHEN 'value' THEN true ELSE false END AS result": [[True]]
+        }
+        for query, expected_result in query_to_expected_result.items():
+            self.get_res_and_assertEquals(query, expected_result)
     
-    #def test69_AND(self):
-    #    scenarios = [
-    #        ['TRUE', 'FALSE', False],
-    #        ['FALSE', 'TRUE', False],
-    #        ['TRUE', 'TRUE', True],
-    #        ['FALSE', 'FALSE', False],
-    #        ['NULL', 'FALSE', None],
-    #        ['FALSE', 'NULL', None],
-    #        ['TRUE', 'NULL', None],
-    #        ['NULL', 'TRUE', None],
-    #        ['NULL', 'NULL', None]
-    #    ]
-    #    for i in range(0, len(scenarios), 3):
-    #        lhs = scenarios[i][0]
-    #        rhs = scenarios[i][1]
-    #        expected = scenarios[i][2]
-    #        actual_result = self.graph.query(f"RETURN {lhs} AND {rhs}").result_set[0][0]
-    #        self.env.assertEquals(actual_result, expected)
+    def test69_AND(self):
+        scenarios = [
+            ['TRUE', 'FALSE', False],
+            ['FALSE', 'TRUE', False],
+            ['TRUE', 'TRUE', True],
+            ['FALSE', 'FALSE', False],
+            ['NULL', 'FALSE', None],
+            ['FALSE', 'NULL', None],
+            ['TRUE', 'NULL', None],
+            ['NULL', 'TRUE', None],
+            ['NULL', 'NULL', None]
+        ]
+        for i in range(0, len(scenarios), 3):
+            lhs = scenarios[i][0]
+            rhs = scenarios[i][1]
+            expected = scenarios[i][2]
+            actual_result = self.graph.query(f"RETURN {lhs} AND {rhs}").result_set[0][0]
+            self.env.assertEquals(actual_result, expected)
     
-    #def test70_OR(self):
-    #    scenarios = [
-    #        ['TRUE', 'FALSE', True],
-    #        ['FALSE', 'TRUE', True],
-    #        ['TRUE', 'TRUE', True],
-    #        ['FALSE', 'FALSE', False],
-    #        ['NULL', 'FALSE', None],
-    #        ['FALSE', 'NULL', None],
-    #        ['TRUE', 'NULL', True],
-    #        ['NULL', 'TRUE', True],
-    #        ['NULL', 'NULL', None]
-    #    ]
-    #    for i in range(len(scenarios)):
-    #        lhs = scenarios[i][0]
-    #        rhs = scenarios[i][1]
-    #        expected = scenarios[i][2]
-    #        actual_result = self.graph.query(f"RETURN {lhs} OR {rhs}").result_set[0][0]
-    #        self.env.assertEquals(actual_result, expected)
+    def test70_OR(self):
+        scenarios = [
+            ['TRUE', 'FALSE', True],
+            ['FALSE', 'TRUE', True],
+            ['TRUE', 'TRUE', True],
+            ['FALSE', 'FALSE', False],
+            ['NULL', 'FALSE', None],
+            ['FALSE', 'NULL', None],
+            ['TRUE', 'NULL', True],
+            ['NULL', 'TRUE', True],
+            ['NULL', 'NULL', None]
+        ]
+        for i in range(len(scenarios)):
+            lhs = scenarios[i][0]
+            rhs = scenarios[i][1]
+            expected = scenarios[i][2]
+            actual_result = self.graph.query(f"RETURN {lhs} OR {rhs}").result_set[0][0]
+            self.env.assertEquals(actual_result, expected)
     
-    #def test71_XOR(self):
-    #    scenarios = [
-    #        ['TRUE', 'FALSE', True],
-    #        ['FALSE', 'TRUE', True],
-    #        ['TRUE', 'TRUE', False],
-    #        ['FALSE', 'FALSE', False],
-    #        ['NULL', 'FALSE', None],
-    #        ['FALSE', 'NULL', None],
-    #        ['TRUE', 'NULL', None],
-    #        ['NULL', 'TRUE', None],
-    #        ['NULL', 'NULL', None]
-    #    ]
-    #    for i in range(len(scenarios)):
-    #        lhs = scenarios[i][0]
-    #        rhs = scenarios[i][1]
-    #        expected = scenarios[i][2]
-    #        actual_result = self.graph.query(f"RETURN {lhs} XOR {rhs}").result_set[0][0]
-    #        self.env.assertEquals(actual_result, expected)
+    def test71_XOR(self):
+        scenarios = [
+            ['TRUE', 'FALSE', True],
+            ['FALSE', 'TRUE', True],
+            ['TRUE', 'TRUE', False],
+            ['FALSE', 'FALSE', False],
+            ['NULL', 'FALSE', None],
+            ['FALSE', 'NULL', None],
+            ['TRUE', 'NULL', None],
+            ['NULL', 'TRUE', None],
+            ['NULL', 'NULL', None]
+        ]
+        for i in range(len(scenarios)):
+            lhs = scenarios[i][0]
+            rhs = scenarios[i][1]
+            expected = scenarios[i][2]
+            actual_result = self.graph.query(f"RETURN {lhs} XOR {rhs}").result_set[0][0]
+            self.env.assertEquals(actual_result, expected)
 
-    #def test72_NOT(self):
-    #    scenarios = [
-    #        ['TRUE', False],
-    #        ['FALSE', True],
-    #        ['NULL', None]
-    #    ]
-    #    for i in range(len(scenarios)):
-    #        b = scenarios[i][0]
-    #        expected = scenarios[i][1]
-    #        actual_result = self.graph.query(f"RETURN NOT {b}").result_set[0][0]
-    #        self.env.assertEquals(actual_result, expected)
+    def test72_NOT(self):
+        scenarios = [
+            ['TRUE', False],
+            ['FALSE', True],
+            ['NULL', None]
+        ]
+        for i in range(len(scenarios)):
+            b = scenarios[i][0]
+            expected = scenarios[i][1]
+            actual_result = self.graph.query(f"RETURN NOT {b}").result_set[0][0]
+            self.env.assertEquals(actual_result, expected)
     
-    #def test73_LT(self):
-    #    scenarios = [
-    #        ['1','1', False],
-    #        ['1', '2', True],
-    #        ['2', '1', False],
-    #        ['2', 'NULL', None],
-    #        ['2', '2', False],
-    #        ['1', 'NULL', None],
-    #        ['NULL', '2', None],
-    #        ['NULL', '1', None],
-    #        ['NULL', 'NULL', None]
-    #    ]
-    #    for i in range(len(scenarios)):
-    #        lhs = scenarios[i][0]
-    #        rhs = scenarios[i][1]
-    #        expected = scenarios[i][2]
-    #        actual_result = self.graph.query(f"RETURN {lhs} < {rhs}").result_set[0][0]
-    #        self.env.assertEquals(actual_result, expected)
+    def test73_LT(self):
+        scenarios = [
+            ['1','1', False],
+            ['1', '2', True],
+            ['2', '1', False],
+            ['2', 'NULL', None],
+            ['2', '2', False],
+            ['1', 'NULL', None],
+            ['NULL', '2', None],
+            ['NULL', '1', None],
+            ['NULL', 'NULL', None]
+        ]
+        for i in range(len(scenarios)):
+            lhs = scenarios[i][0]
+            rhs = scenarios[i][1]
+            expected = scenarios[i][2]
+            actual_result = self.graph.query(f"RETURN {lhs} < {rhs}").result_set[0][0]
+            self.env.assertEquals(actual_result, expected)
     
-    #def test74_LE(self):
-    #    scenarios = [
-    #        ['1','1', True],
-    #        ['1', '2', True],
-    #        ['2', '1', False],
-    #        ['2', 'NULL', None],
-    #        ['2', '2', True],
-    #        ['1', 'NULL', None],
-    #        ['NULL', '2', None],
-    #        ['NULL', '1', None],
-    #        ['NULL', 'NULL', None]
-    #    ]
-    #    for i in range(len(scenarios)):
-    #        lhs = scenarios[i][0]
-    #        rhs = scenarios[i][1]
-    #        expected = scenarios[i][2]
-    #        actual_result = self.graph.query(f"RETURN {lhs} <= {rhs}").result_set[0][0]
-    #        self.env.assertEquals(actual_result, expected)
+    def test74_LE(self):
+        scenarios = [
+            ['1','1', True],
+            ['1', '2', True],
+            ['2', '1', False],
+            ['2', 'NULL', None],
+            ['2', '2', True],
+            ['1', 'NULL', None],
+            ['NULL', '2', None],
+            ['NULL', '1', None],
+            ['NULL', 'NULL', None]
+        ]
+        for i in range(len(scenarios)):
+            lhs = scenarios[i][0]
+            rhs = scenarios[i][1]
+            expected = scenarios[i][2]
+            actual_result = self.graph.query(f"RETURN {lhs} <= {rhs}").result_set[0][0]
+            self.env.assertEquals(actual_result, expected)
 
-    #def test75_EQ(self):
-    #    scenarios = [
-    #        ['1','1', True],
-    #        ['1', '2', False],
-    #        ['2', '1', False],
-    #        ['2', 'NULL', None],
-    #        ['2', '2', True],
-    #        ['1', 'NULL', None],
-    #        ['NULL', '2', None],
-    #        ['NULL', '1', None],
-    #        ['NULL', 'NULL', None]
-    #    ]
-    #    for i in range(len(scenarios)):
-    #        lhs = scenarios[i][0]
-    #        rhs = scenarios[i][1]
-    #        expected = scenarios[i][2]
-    #        actual_result = self.graph.query(f"RETURN {lhs} = {rhs}").result_set[0][0]
-    #        self.env.assertEquals(actual_result, expected)
+    def test75_EQ(self):
+        scenarios = [
+            ['1','1', True],
+            ['1', '2', False],
+            ['2', '1', False],
+            ['2', 'NULL', None],
+            ['2', '2', True],
+            ['1', 'NULL', None],
+            ['NULL', '2', None],
+            ['NULL', '1', None],
+            ['NULL', 'NULL', None]
+        ]
+        for i in range(len(scenarios)):
+            lhs = scenarios[i][0]
+            rhs = scenarios[i][1]
+            expected = scenarios[i][2]
+            actual_result = self.graph.query(f"RETURN {lhs} = {rhs}").result_set[0][0]
+            self.env.assertEquals(actual_result, expected)
     
-    #def test76_NE(self):
-    #    scenarios = [
-    #        ['1','1', False],
-    #        ['1', '2', True],
-    #        ['2', '1', True],
-    #        ['2', 'NULL', None],
-    #        ['2', '2', False],
-    #        ['1', 'NULL', None],
-    #        ['NULL', '2', None],
-    #        ['NULL', '1', None],
-    #        ['NULL', 'NULL', None]
-    #    ]
-    #    for i in range(len(scenarios)):
-    #        lhs = scenarios[i][0]
-    #        rhs = scenarios[i][1]
-    #        expected = scenarios[i][2]
-    #        actual_result = self.graph.query(f"RETURN {lhs} <> {rhs}").result_set[0][0]
-    #        self.env.assertEquals(actual_result, expected)
+    def test76_NE(self):
+        scenarios = [
+            ['1','1', False],
+            ['1', '2', True],
+            ['2', '1', True],
+            ['2', 'NULL', None],
+            ['2', '2', False],
+            ['1', 'NULL', None],
+            ['NULL', '2', None],
+            ['NULL', '1', None],
+            ['NULL', 'NULL', None]
+        ]
+        for i in range(len(scenarios)):
+            lhs = scenarios[i][0]
+            rhs = scenarios[i][1]
+            expected = scenarios[i][2]
+            actual_result = self.graph.query(f"RETURN {lhs} <> {rhs}").result_set[0][0]
+            self.env.assertEquals(actual_result, expected)
     
-    #def test77_List(self):
-    #    arr = [1, 2.3, '4', True, False, None]
-    #    query = "RETURN [1,2.3,'4',TRUE,FALSE, NULL]"
-    #    actual_result = self.graph.query(query).result_set[0][0]
-    #    if not type(actual_result) is list:
-    #        assert(False)                   # Fail if the record returned is not a list.
-    #    for i in range(len(arr)):
-    #        self.env.assertEquals(actual_result[i], arr[i])
+    def test77_List(self):
+        arr = [1, 2.3, '4', True, False, None]
+        query = "RETURN [1,2.3,'4',TRUE,FALSE, NULL]"
+        actual_result = self.graph.query(query).result_set[0][0]
+        if not type(actual_result) is list:
+            assert(False)                   # Fail if the record returned is not a list.
+        for i in range(len(arr)):
+            self.env.assertEquals(actual_result[i], arr[i])
 
-    #def test78_ListSlice(self):
-    #    arr = [0,1,2,3,4,5,6,7,8,9,10]
-    #    query_to_expected_result = {
-    #        "RETURN [0,1,2,3,4,5,6,7,8,9,10][3]": [[arr[3]]],
-    #        "RETURN [0,1,2,3,4,5,6,7,8,9,10][-3]": [[arr[-3]]],
-    #        "RETURN [0,1,2,3,4,5,6,7,8,9,10][0..3]": [[arr[0:3]]],
-    #        "RETURN [0,1,2,3,4,5,6,7,8,9,10][0..-5]": [[arr[0:-5]]],
-    #        "RETURN [0,1,2,3,4,5,6,7,8,9,10][-5..]": [[arr[-5:]]],
-    #        "RETURN [0,1,2,3,4,5,6,7,8,9,10][..4]": [[arr[:4]]]
-    #    }
-    #    for query, expected_result in query_to_expected_result.items():
-    #        self.get_res_and_assertEquals(query, expected_result)
+    def test78_ListSlice(self):
+        arr = [0,1,2,3,4,5,6,7,8,9,10]
+        query_to_expected_result = {
+            "RETURN [0,1,2,3,4,5,6,7,8,9,10][3]": [[arr[3]]],
+            "RETURN [0,1,2,3,4,5,6,7,8,9,10][-3]": [[arr[-3]]],
+            "RETURN [0,1,2,3,4,5,6,7,8,9,10][0..3]": [[arr[0:3]]],
+            "RETURN [0,1,2,3,4,5,6,7,8,9,10][0..-5]": [[arr[0:-5]]],
+            "RETURN [0,1,2,3,4,5,6,7,8,9,10][-5..]": [[arr[-5:]]],
+            "RETURN [0,1,2,3,4,5,6,7,8,9,10][..4]": [[arr[:4]]]
+        }
+        for query, expected_result in query_to_expected_result.items():
+            self.get_res_and_assertEquals(query, expected_result)
     
     #def test79_Range(self):
     #    query_to_expected_result = {
