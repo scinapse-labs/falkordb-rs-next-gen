@@ -949,61 +949,61 @@ class testFunctionCallsFlow(FlowTestsBase):
         actual_result = self.graph.query(query)
         self.env.assertEquals(actual_result.result_set[0][0], None)
 
-    #def test31_toIntegerOrNull(self):
-    #    # integers
-    #    query = """RETURN toIntegerOrNull(0)"""
-    #    actual_result = self.graph.query(query)
-    #    self.env.assertEquals(actual_result.result_set[0][0], 0)
-    #    query = """RETURN toIntegerOrNull(1)"""
-    #    actual_result = self.graph.query(query)
-    #    self.env.assertEquals(actual_result.result_set[0][0], 1)
-    #    query = """RETURN toIntegerOrNull(-1)"""
-    #    actual_result = self.graph.query(query)
-    #    self.env.assertEquals(actual_result.result_set[0][0], -1)
+    def test31_toIntegerOrNull(self):
+        # integers
+        query = """RETURN toIntegerOrNull(0)"""
+        actual_result = self.graph.query(query)
+        self.env.assertEquals(actual_result.result_set[0][0], 0)
+        query = """RETURN toIntegerOrNull(1)"""
+        actual_result = self.graph.query(query)
+        self.env.assertEquals(actual_result.result_set[0][0], 1)
+        query = """RETURN toIntegerOrNull(-1)"""
+        actual_result = self.graph.query(query)
+        self.env.assertEquals(actual_result.result_set[0][0], -1)
 
-    #    # floats
-    #    query = """RETURN toIntegerOrNull(0.1)"""
-    #    actual_result = self.graph.query(query)
-    #    self.env.assertEquals(actual_result.result_set[0][0], 0)
-    #    query = """RETURN toIntegerOrNull(0.9)"""
-    #    actual_result = self.graph.query(query)
-    #    self.env.assertEquals(actual_result.result_set[0][0], 0)
+        # floats
+        query = """RETURN toIntegerOrNull(0.1)"""
+        actual_result = self.graph.query(query)
+        self.env.assertEquals(actual_result.result_set[0][0], 0)
+        query = """RETURN toIntegerOrNull(0.9)"""
+        actual_result = self.graph.query(query)
+        self.env.assertEquals(actual_result.result_set[0][0], 0)
 
-    #    # strings
-    #    query = """RETURN toIntegerOrNull('1')"""
-    #    actual_result = self.graph.query(query)
-    #    self.env.assertEquals(actual_result.result_set[0][0], 1)
-    #    query = """RETURN toIntegerOrNull('1.2')"""
-    #    actual_result = self.graph.query(query)
-    #    self.env.assertEquals(actual_result.result_set[0][0], 1)
+        # strings
+        query = """RETURN toIntegerOrNull('1')"""
+        actual_result = self.graph.query(query)
+        self.env.assertEquals(actual_result.result_set[0][0], 1)
+        query = """RETURN toIntegerOrNull('1.2')"""
+        actual_result = self.graph.query(query)
+        self.env.assertEquals(actual_result.result_set[0][0], 1)
 
-    #    # null
-    #    query = """RETURN toIntegerOrNull(null)"""
-    #    actual_result = self.graph.query(query)
-    #    self.env.assertEquals(actual_result.result_set[0][0], None)
+        # null
+        query = """RETURN toIntegerOrNull(null)"""
+        actual_result = self.graph.query(query)
+        self.env.assertEquals(actual_result.result_set[0][0], None)
 
-    #    # boolean
-    #    query = """RETURN toIntegerOrNull(true)"""
-    #    actual_result = self.graph.query(query)
-    #    self.env.assertEquals(actual_result.result_set[0][0], 1)
-    #    query = """RETURN toIntegerOrNull(false)"""
-    #    actual_result =self.graph.query(query)
-    #    self.env.assertEquals(actual_result.result_set[0][0], 0)
+        # boolean
+        query = """RETURN toIntegerOrNull(true)"""
+        actual_result = self.graph.query(query)
+        self.env.assertEquals(actual_result.result_set[0][0], 1)
+        query = """RETURN toIntegerOrNull(false)"""
+        actual_result =self.graph.query(query)
+        self.env.assertEquals(actual_result.result_set[0][0], 0)
 
-    #    # list
-    #    query = """RETURN toIntegerOrNull([1])"""
-    #    actual_result = self.graph.query(query)
-    #    self.env.assertEquals(actual_result.result_set[0][0], None)
+        # list
+        query = """RETURN toIntegerOrNull([1])"""
+        actual_result = self.graph.query(query)
+        self.env.assertEquals(actual_result.result_set[0][0], None)
 
-    #    # node
-    #    query = """CREATE (n) RETURN toIntegerOrNull(n)"""
-    #    actual_result = self.graph.query(query)
-    #    self.env.assertEquals(actual_result.result_set[0][0], None)
+        # node
+        query = """CREATE (n) RETURN toIntegerOrNull(n)"""
+        actual_result = self.graph.query(query)
+        self.env.assertEquals(actual_result.result_set[0][0], None)
 
-    #    # edge
-    #    query = """CREATE ()-[r:R]->() RETURN toIntegerOrNull(r)"""
-    #    actual_result = self.graph.query(query)
-    #    self.env.assertEquals(actual_result.result_set[0][0], None)
+        # edge
+        query = """CREATE ()-[r:R]->() RETURN toIntegerOrNull(r)"""
+        actual_result = self.graph.query(query)
+        self.env.assertEquals(actual_result.result_set[0][0], None)
 
     #def test32_toStringOrNull(self):
     #    # strings

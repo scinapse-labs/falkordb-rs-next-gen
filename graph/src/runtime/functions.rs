@@ -693,9 +693,23 @@ pub fn init_functions() -> Result<(), Functions> {
     );
     funcs.add(
         "toBooleanOrNull",
-        to_boolean_or_null,
+        to_boolean,
         false,
         vec![Type::Any], // Accept ANY type, unlike toBoolean which is restricted
+        FnType::Function,
+    );
+    funcs.add(
+        "toFloatOrNull",
+        value_to_float, // Reuse the same function
+        false,
+        vec![Type::Any], // Accept ANY type instead of restricted union
+        FnType::Function,
+    );
+    funcs.add(
+        "toIntegerOrNull",
+        value_to_integer, // Reuse the same function
+        false,
+        vec![Type::Any], // Accept ANY type instead of restricted union
         FnType::Function,
     );
     funcs.add(
@@ -1503,9 +1517,7 @@ fn value_to_float(
         Some(Value::String(s)) => s.parse::<f64>().map(Value::Float).or(Ok(Value::Null)),
         Some(Value::Float(f)) => Ok(Value::Float(f)),
         Some(Value::Int(i)) => Ok(Value::Float(i as f64)),
-        Some(Value::Null) => Ok(Value::Null),
-
-        _ => unreachable!(),
+        _ => Ok(Value::Null),
     }
 }
 
@@ -2183,29 +2195,6 @@ fn to_boolean(
             }
         }
         Some(Value::Int(n)) => Ok(Value::Bool(n != 0)),
-        Some(Value::Null) => Ok(Value::Null),
-
-        _ => unreachable!(),
-    }
-}
-
-fn to_boolean_or_null(
-    _: &Runtime,
-    args: ThinVec<Value>,
-) -> Result<Value, String> {
-    match args.into_iter().next() {
-        Some(Value::Bool(b)) => Ok(Value::Bool(b)),
-        Some(Value::String(s)) => {
-            if s.eq_ignore_ascii_case("true") {
-                Ok(Value::Bool(true))
-            } else if s.eq_ignore_ascii_case("false") {
-                Ok(Value::Bool(false))
-            } else {
-                Ok(Value::Null)
-            }
-        }
-        Some(Value::Int(n)) => Ok(Value::Bool(n != 0)),
-        // All other types return Null (Float, List, Map, Node, Edge, Path, Point, Vector)
         _ => Ok(Value::Null),
     }
 }
