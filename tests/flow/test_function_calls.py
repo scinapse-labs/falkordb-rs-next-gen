@@ -1064,310 +1064,312 @@ class testFunctionCallsFlow(FlowTestsBase):
         actual_result = self.graph.query(query)
         self.env.assertEquals(actual_result.result_set[0][0], None)
     
-    #def test33_toString(self):
-    #    # strings
-    #    query = """RETURN toString('1')"""
-    #    actual_result = self.graph.query(query)
-    #    self.env.assertEquals(actual_result.result_set[0][0], "1")
-    #    query = """RETURN toString('1.2')"""
-    #    actual_result = self.graph.query(query)
-    #    self.env.assertEquals(actual_result.result_set[0][0], "1.2")
-    #    query = """RETURN toString('hello')"""
-    #    actual_result = self.graph.query(query)
-    #    self.env.assertEquals(actual_result.result_set[0][0], "hello")
+    def test33_toString(self):
+        # strings
+        query = """RETURN toString('1')"""
+        actual_result = self.graph.query(query)
+        self.env.assertEquals(actual_result.result_set[0][0], "1")
+        query = """RETURN toString('1.2')"""
+        actual_result = self.graph.query(query)
+        self.env.assertEquals(actual_result.result_set[0][0], "1.2")
+        query = """RETURN toString('hello')"""
+        actual_result = self.graph.query(query)
+        self.env.assertEquals(actual_result.result_set[0][0], "hello")
 
-    #    # integers
-    #    query = """RETURN toString(0)"""
-    #    actual_result = self.graph.query(query)
-    #    self.env.assertEquals(actual_result.result_set[0][0], "0")
-    #    query = """RETURN toString(1)"""
-    #    actual_result = self.graph.query(query)
-    #    self.env.assertEquals(actual_result.result_set[0][0], "1")
-    #    query = """RETURN toString(-1)"""
-    #    actual_result = self.graph.query(query)
-    #    self.env.assertEquals(actual_result.result_set[0][0], "-1")
+        # integers
+        query = """RETURN toString(0)"""
+        actual_result = self.graph.query(query)
+        self.env.assertEquals(actual_result.result_set[0][0], "0")
+        query = """RETURN toString(1)"""
+        actual_result = self.graph.query(query)
+        self.env.assertEquals(actual_result.result_set[0][0], "1")
+        query = """RETURN toString(-1)"""
+        actual_result = self.graph.query(query)
+        self.env.assertEquals(actual_result.result_set[0][0], "-1")
 
-    #    # floats
-    #    query = """RETURN toString(0.1)"""
-    #    actual_result = self.graph.query(query)
-    #    self.env.assertEquals(actual_result.result_set[0][0], "0.100000")
-    #    query = """RETURN toString(0.9)"""
-    #    actual_result = self.graph.query(query)
-    #    self.env.assertEquals(actual_result.result_set[0][0], "0.900000")
+        # floats
+        query = """RETURN toString(0.1)"""
+        actual_result = self.graph.query(query)
+        self.env.assertEquals(actual_result.result_set[0][0], "0.100000")
+        query = """RETURN toString(0.9)"""
+        actual_result = self.graph.query(query)
+        self.env.assertEquals(actual_result.result_set[0][0], "0.900000")
 
-    #    # boolean
-    #    query = """RETURN toString(true)"""
-    #    actual_result = self.graph.query(query)
-    #    self.env.assertEquals(actual_result.result_set[0][0], "true")
-    #    query = """RETURN toString(false)"""
-    #    actual_result = self.graph.query(query)
-    #    self.env.assertEquals(actual_result.result_set[0][0], "false")
+        # boolean
+        query = """RETURN toString(true)"""
+        actual_result = self.graph.query(query)
+        self.env.assertEquals(actual_result.result_set[0][0], "true")
+        query = """RETURN toString(false)"""
+        actual_result = self.graph.query(query)
+        self.env.assertEquals(actual_result.result_set[0][0], "false")
         
-    #    # null
-    #    query = """RETURN toString(null)"""
-    #    actual_result = self.graph.query(query)
-    #    self.env.assertEquals(actual_result.result_set[0][0], None)
+        # null
+        query = """RETURN toString(null)"""
+        actual_result = self.graph.query(query)
+        self.env.assertEquals(actual_result.result_set[0][0], None)
 
-    #    queries = [
-    #        """RETURN toString([1])""",                   # list
-    #        """CREATE (n) RETURN toString(n)""",          # node
-    #        """CREATE ()-[r:R]->() RETURN toString(r)"""  # edge
-    #        ]
-    #    for query in queries:
-    #        try:
-    #            self.graph.query(query)
-    #            self.env.assertTrue(False)
-    #        except redis.exceptions.ResponseError as e:
-    #            # Expecting a type error.
-    #            self.env.assertIn("Type mismatch", str(e))
+        queries = [
+            """RETURN toString([1])""",                   # list
+            """CREATE (n) RETURN toString(n)""",          # node
+            """CREATE ()-[r:R]->() RETURN toString(r)"""  # edge
+            ]
+        for query in queries:
+            try:
+                self.graph.query(query)
+                self.env.assertTrue(False)
+            except redis.exceptions.ResponseError as e:
+                # Expecting a type error.
+                self.env.assertIn("Type mismatch", str(e))
 
-    #def test34_split(self):
-    #    query_to_expected_result = {
-    #        "RETURN split(null, ',')": [[None]],
-    #        "RETURN split('hello world', null)": [[None]],
-    #        "RETURN split('hello world', ',')": [[["hello world"]]],
-    #        "RETURN split('hello world', '')": [[['h', 'e', 'l', 'l', 'o', ' ', 'w', 'o', 'r', 'l', 'd']]],
-    #        "RETURN split('aa', 'a')": [[["", "", ""]]],
-    #        "RETURN split('', ',')": [[[""]]],
-    #        "RETURN split('', '')": [[[""]]],
-    #        "RETURN split('aAbBcC', '')": [[['a', 'A', 'b', 'B', 'c', 'C']]],
-    #        "RETURN split('aAbBcC', 'B')": [[['aAb', 'cC']]],
-    #        # test unicode charecters
-    #        "RETURN split('丁丂七丄丅丆万丈三上', '丄')": [[["丁丂七", "丅丆万丈三上"]]],
-    #        "RETURN split('丁丂七丅', '')": [[["丁", "丂", "七", "丅"]]],
-    #    }
-    #    for query, expected_result in query_to_expected_result.items():
-    #        self.get_res_and_assertEquals(query, expected_result)
+    def test34_split(self):
+        query_to_expected_result = {
+            "RETURN split(null, ',')": [[None]],
+            "RETURN split('hello world', null)": [[None]],
+            "RETURN split('hello world', ',')": [[["hello world"]]],
+            "RETURN split('hello world', '')": [[['h', 'e', 'l', 'l', 'o', ' ', 'w', 'o', 'r', 'l', 'd']]],
+            "RETURN split('aa', 'a')": [[["", "", ""]]],
+            "RETURN split('', ',')": [[[""]]],
+            "RETURN split('', '')": [[[""]]],
+            "RETURN split('aAbBcC', '')": [[['a', 'A', 'b', 'B', 'c', 'C']]],
+            "RETURN split('aAbBcC', 'B')": [[['aAb', 'cC']]],
+            # test unicode charecters
+            "RETURN split('丁丂七丄丅丆万丈三上', '丄')": [[["丁丂七", "丅丆万丈三上"]]],
+            "RETURN split('丁丂七丅', '')": [[["丁", "丂", "七", "丅"]]],
+        }
+        for query, expected_result in query_to_expected_result.items():
+            self.get_res_and_assertEquals(query, expected_result)
 
-    #def test35_min_max(self):
-    #    query = "UNWIND [[1], [2], [2], [1]] AS x RETURN max(x), min(x)"
-    #    actual_result = self.graph.query(query)
-    #    expected_result = [[[2], [1]]]
-    #    self.env.assertEquals(actual_result.result_set, expected_result)
+    def test35_min_max(self):
+        query = "UNWIND [[1], [2], [2], [1]] AS x RETURN max(x), min(x)"
+        actual_result = self.graph.query(query)
+        expected_result = [[[2], [1]]]
+        self.env.assertEquals(actual_result.result_set, expected_result)
 
-    #    query = "UNWIND [1, 2, '1' ,'2' ,[1] ,[2] ,1 ,2, '1', '2', NULL, True] AS x RETURN max(x), min(x)"
-    #    actual_result = self.graph.query(query)
-    #    expected_result = [[2, [1]]]
-    #    self.env.assertEquals(actual_result.result_set, expected_result)
+        query = "UNWIND [1, 2, '1' ,'2' ,[1] ,[2] ,1 ,2, '1', '2', NULL, True] AS x RETURN max(x), min(x)"
+        actual_result = self.graph.query(query)
+        expected_result = [[2, [1]]]
+        self.env.assertEquals(actual_result.result_set, expected_result)
 
-    #def test36_log(self):
+    def test36_log(self):
 
-    #    # log(0)
-    #    query = """RETURN log(0)"""
-    #    actual_result = self.graph.query(query)
-    #    self.env.assertTrue(isinf(-actual_result.result_set[0][0]))
+        # log(0)
+        query = """RETURN log(0)"""
+        actual_result = self.graph.query(query)
+        self.env.assertTrue(isinf(-actual_result.result_set[0][0]))
 
-    #    # log(-1)
-    #    query = """RETURN log(-1)"""
-    #    actual_result = self.graph.query(query)
-    #    self.env.assertTrue(isnan(actual_result.result_set[0][0]))
+        # log(-1)
+        query = """RETURN log(-1)"""
+        actual_result = self.graph.query(query)
+        self.env.assertTrue(isnan(actual_result.result_set[0][0]))
 
-    #    # log(1)
-    #    query = """RETURN log(1)"""
-    #    actual_result = self.graph.query(query)
-    #    self.env.assertAlmostEqual(actual_result.result_set[0][0], 0, 0.0001)
+        # log(1)
+        query = """RETURN log(1)"""
+        actual_result = self.graph.query(query)
+        self.env.assertAlmostEqual(actual_result.result_set[0][0], 0, 0.0001)
 
-    #    # log(10)
-    #    query = """RETURN log(10)"""
-    #    actual_result = self.graph.query(query)
-    #    self.env.assertAlmostEqual(actual_result.result_set[0][0], 2.30258509299405, 0.0001)
+        # log(10)
+        query = """RETURN log(10)"""
+        actual_result = self.graph.query(query)
+        self.env.assertAlmostEqual(actual_result.result_set[0][0], 2.30258509299405, 0.0001)
 
-    #    # log10(0)
-    #    query = """RETURN log10(0)"""
-    #    actual_result = self.graph.query(query)
-    #    self.env.assertTrue(isinf(-actual_result.result_set[0][0]))
+        # log10(0)
+        query = """RETURN log10(0)"""
+        actual_result = self.graph.query(query)
+        self.env.assertTrue(isinf(-actual_result.result_set[0][0]))
 
-    #    # log10(-11.3)
-    #    query = """RETURN log10(-11.3)"""
-    #    actual_result = self.graph.query(query)
-    #    self.env.assertTrue(isnan(actual_result.result_set[0][0]))
+        # log10(-11.3)
+        query = """RETURN log10(-11.3)"""
+        actual_result = self.graph.query(query)
+        self.env.assertTrue(isnan(actual_result.result_set[0][0]))
 
-    #    # log10(100)
-    #    query = """RETURN log10(100)"""
-    #    actual_result = self.graph.query(query)
-    #    self.env.assertAlmostEqual(actual_result.result_set[0][0], 2, 0.0001)
+        # log10(100)
+        query = """RETURN log10(100)"""
+        actual_result = self.graph.query(query)
+        self.env.assertAlmostEqual(actual_result.result_set[0][0], 2, 0.0001)
 
-    #    # log10(110)
-    #    query = """RETURN log10(110)"""
-    #    actual_result = self.graph.query(query)
-    #    self.env.assertAlmostEqual(actual_result.result_set[0][0], 2.04139268515822, 0.0001)
+        # log10(110)
+        query = """RETURN log10(110)"""
+        actual_result = self.graph.query(query)
+        self.env.assertAlmostEqual(actual_result.result_set[0][0], 2.04139268515822, 0.0001)
 
-    #    # log(True)
-    #    query = """RETURN log(True)"""
-    #    self.expect_type_error(query)
+        # log(True)
+        query = """RETURN log(True)"""
+        self.expect_type_error(query)
 
-    #    # log10(True)
-    #    query = """RETURN log10(True)"""
-    #    self.expect_type_error(query)
+        # log10(True)
+        query = """RETURN log10(True)"""
+        self.expect_type_error(query)
 
-    #def test37_exp(self):
-    #    # exp(0)
-    #    query = """RETURN exp(0)"""
-    #    actual_result = self.graph.query(query)
-    #    self.env.assertAlmostEqual(actual_result.result_set[0][0], 1.0, 0.0001)
+    def test37_exp(self):
+        # exp(0)
+        query = """RETURN exp(0)"""
+        actual_result = self.graph.query(query)
+        self.env.assertAlmostEqual(actual_result.result_set[0][0], 1.0, 0.0001)
 
-    #    # exp(1)
-    #    query = """RETURN exp(1)"""
-    #    actual_result = self.graph.query(query)
-    #    self.env.assertAlmostEqual(actual_result.result_set[0][0], 2.71828182845905, 0.0001)
+        # exp(1)
+        query = """RETURN exp(1)"""
+        actual_result = self.graph.query(query)
+        self.env.assertAlmostEqual(actual_result.result_set[0][0], 2.71828182845905, 0.0001)
 
-    #    # exp(1.4)
-    #    query = """RETURN exp(1.4)"""
-    #    actual_result = self.graph.query(query)
-    #    self.env.assertAlmostEqual(actual_result.result_set[0][0], 4.05519996684467, 0.0001)
+        # exp(1.4)
+        query = """RETURN exp(1.4)"""
+        actual_result = self.graph.query(query)
+        self.env.assertAlmostEqual(actual_result.result_set[0][0], 4.05519996684467, 0.0001)
 
-    #    # exp(-1.2)
-    #    query = """RETURN exp(0)"""
-    #    actual_result = self.graph.query(query)
-    #    self.env.assertAlmostEqual(actual_result.result_set[0][0], 1, 0.0001)
+        # exp(-1.2)
+        query = """RETURN exp(0)"""
+        actual_result = self.graph.query(query)
+        self.env.assertAlmostEqual(actual_result.result_set[0][0], 1, 0.0001)
 
-    #    # e()
-    #    query = """RETURN e()"""
-    #    actual_result = self.graph.query(query)
-    #    self.env.assertAlmostEqual(actual_result.result_set[0][0], 2.71828182845905, 0.0001)
+        # e()
+        query = """RETURN e()"""
+        actual_result = self.graph.query(query)
+        self.env.assertAlmostEqual(actual_result.result_set[0][0], 2.71828182845905, 0.0001)
 
-    #    # exp(True)
-    #    query = """RETURN exp(True)"""
-    #    self.expect_type_error(query)
+        # exp(True)
+        query = """RETURN exp(True)"""
+        self.expect_type_error(query)
 
-    #def test38_properties(self):
-    #    # null input
-    #    query = """RETURN properties(null)"""
-    #    query_result = self.graph.query(query)
-    #    expected_result = [[None]]
-    #    self.env.assertEquals(query_result.result_set, expected_result)
+    def test38_properties(self):
+        # null input
+        query = """RETURN properties(null)"""
+        query_result = self.graph.query(query)
+        expected_result = [[None]]
+        self.env.assertEquals(query_result.result_set, expected_result)
 
-    #    # map input
-    #    query = """WITH {val: 5, nested: {nested_val: 'nested_str'}} AS map RETURN properties(map)"""
-    #    query_result = self.graph.query(query)
-    #    expected_result = [[{'val': 5, 'nested': {'nested_val': 'nested_str'}}]]
-    #    self.env.assertEquals(query_result.result_set, expected_result)
+        # map input
+        query = """WITH {val: 5, nested: {nested_val: 'nested_str'}} AS map RETURN properties(map)"""
+        query_result = self.graph.query(query)
+        expected_result = [[{'val': 5, 'nested': {'nested_val': 'nested_str'}}]]
+        self.env.assertEquals(query_result.result_set, expected_result)
 
-    #    # node input
-    #    query = """CREATE (p:Person {name: 'Alexa', city: 'Buga', age: 44}) RETURN properties(p)"""
-    #    query_result = self.graph.query(query)
-    #    expected_result = [[{'name': 'Alexa', 'city': 'Buga', 'age': 44}]]
-    #    self.env.assertEquals(query_result.result_set, expected_result)
+        # node input
+        query = """CREATE (p:Person {name: 'Alexa', city: 'Buga', age: 44}) RETURN properties(p)"""
+        query_result = self.graph.query(query)
+        expected_result = [[{'name': 'Alexa', 'city': 'Buga', 'age': 44}]]
+        self.env.assertEquals(query_result.result_set, expected_result)
 
-    #    # edge input
-    #    query = """CREATE (a:X)-[r:R {name:'R1', len:5}]->(b:Y) RETURN properties(r)"""
-    #    query_result = self.graph.query(query)
-    #    expected_result = [[{'name': 'R1', 'len': 5}]]
-    #    self.env.assertEquals(query_result.result_set, expected_result)
+        # edge input
+        query = """CREATE (a:X)-[r:R {name:'R1', len:5}]->(b:Y) RETURN properties(r)"""
+        query_result = self.graph.query(query)
+        expected_result = [[{'name': 'R1', 'len': 5}]]
+        self.env.assertEquals(query_result.result_set, expected_result)
 
-    #    # properies of entity properties subset
-    #    query = """MATCH (p:Person {name: 'Alexa'}) RETURN properties(p{.name, .age})"""
-    #    query_result = self.graph.query(query)
-    #    expected_result = [[{'name': 'Alexa', 'age': 44}]]
-    #    self.env.assertEquals(query_result.result_set, expected_result)
+        # @todo Barak fixme
+        # properies of entity properties subset
+        #query = """MATCH (p:Person {name: 'Alexa'}) RETURN properties(p{.name, .age})"""
+        #query_result = self.graph.query(query)
+        #expected_result = [[{'name': 'Alexa', 'age': 44}]]
+        #self.env.assertEquals(query_result.result_set, expected_result)
+        
+        # @todo Barak fixme 
+        #query = """MATCH ()-[r:R {name:'R1', len:5}]->() RETURN properties(r{.name})"""
+        #query_result = self.graph.query(query)
+        #expected_result = [[{'name': 'R1'}]]
+        #self.env.assertEquals(query_result.result_set, expected_result)
 
-    #    query = """MATCH ()-[r:R {name:'R1', len:5}]->() RETURN properties(r{.name})"""
-    #    query_result = self.graph.query(query)
-    #    expected_result = [[{'name': 'R1'}]]
-    #    self.env.assertEquals(query_result.result_set, expected_result)
+        # string input
+        query = """RETURN properties('a')"""
+        self.expect_type_error(query)
 
-    #    # string input
-    #    query = """RETURN properties('a')"""
-    #    self.expect_type_error(query)
+        # integer input
+        query = """RETURN properties(1)"""
+        self.expect_type_error(query)
 
-    #    # integer input
-    #    query = """RETURN properties(1)"""
-    #    self.expect_type_error(query)
+        # list input
+        query = """RETURN properties([1, 2, 3])"""
+        self.expect_type_error(query)
 
-    #    # list input
-    #    query = """RETURN properties([1, 2, 3])"""
-    #    self.expect_type_error(query)
+        # call without input arguments
+        query = """RETURN properties()"""
+        self.expect_error(query, "Received 0 arguments")
 
-    #    # call without input arguments
-    #    query = """RETURN properties()"""
-    #    self.expect_error(query, "Received 0 arguments")
+    def test39_sin(self):
+        # sin(0)
+        query = """RETURN sin(0)"""
+        actual_result = self.graph.query(query)
+        self.env.assertAlmostEqual(actual_result.result_set[0][0], 0.0, 0.0001)
 
-    #def test39_sin(self):
-    #    # sin(0)
-    #    query = """RETURN sin(0)"""
-    #    actual_result = self.graph.query(query)
-    #    self.env.assertAlmostEqual(actual_result.result_set[0][0], 0.0, 0.0001)
+        # sin(1.5)
+        query = """RETURN sin(1.5)"""
+        actual_result = self.graph.query(query)
+        self.env.assertAlmostEqual(actual_result.result_set[0][0], 0.997494986604054, 0.0001)
 
-    #    # sin(1.5)
-    #    query = """RETURN sin(1.5)"""
-    #    actual_result = self.graph.query(query)
-    #    self.env.assertAlmostEqual(actual_result.result_set[0][0], 0.997494986604054, 0.0001)
+        # sin(1.5)
+        query = """RETURN sin(-2.45)"""
+        actual_result = self.graph.query(query)
+        self.env.assertAlmostEqual(actual_result.result_set[0][0], -0.637764702134504, 0.0001)
 
-    #    # sin(1.5)
-    #    query = """RETURN sin(-2.45)"""
-    #    actual_result = self.graph.query(query)
-    #    self.env.assertAlmostEqual(actual_result.result_set[0][0], -0.637764702134504, 0.0001)
+        # sin(null)
+        query = """RETURN sin(null)"""
+        actual_result = self.graph.query(query)
+        self.env.assertIsNone(actual_result.result_set[0][0])
 
-    #    # sin(null)
-    #    query = """RETURN sin(null)"""
-    #    actual_result = self.graph.query(query)
-    #    self.env.assertIsNone(actual_result.result_set[0][0])
+        # sin(True)
+        query = """RETURN sin(True)"""
+        self.expect_type_error(query)
 
-    #    # sin(True)
-    #    query = """RETURN sin(True)"""
-    #    self.expect_type_error(query)
+        # sin(2,3)
+        query = """RETURN sin(2,3)"""
+        self.expect_error(query, "Received 2 arguments to function 'sin', expected at most 1")
 
-    #    # sin(2,3)
-    #    query = """RETURN sin(2,3)"""
-    #    self.expect_error(query, "Received 2 arguments to function 'sin', expected at most 1")
+    def test40_cos(self):
+        # cos(0)
+        query = """RETURN cos(0)"""
+        actual_result = self.graph.query(query)
+        self.env.assertAlmostEqual(actual_result.result_set[0][0], 1.0, 0.0001)
 
-    #def test40_cos(self):
-    #    # cos(0)
-    #    query = """RETURN cos(0)"""
-    #    actual_result = self.graph.query(query)
-    #    self.env.assertAlmostEqual(actual_result.result_set[0][0], 1.0, 0.0001)
+        # cos(1.6)
+        query = """RETURN cos(1.6)"""
+        actual_result = self.graph.query(query)
+        self.env.assertAlmostEqual(actual_result.result_set[0][0], -0.0291995223012888, 0.0001)
 
-    #    # cos(1.6)
-    #    query = """RETURN cos(1.6)"""
-    #    actual_result = self.graph.query(query)
-    #    self.env.assertAlmostEqual(actual_result.result_set[0][0], -0.0291995223012888, 0.0001)
+        # cos(-3.27)
+        query = """RETURN cos(-3.27)"""
+        actual_result = self.graph.query(query)
+        self.env.assertAlmostEqual(actual_result.result_set[0][0], -0.991767098339465, 0.0001)
 
-    #    # cos(-3.27)
-    #    query = """RETURN cos(-3.27)"""
-    #    actual_result = self.graph.query(query)
-    #    self.env.assertAlmostEqual(actual_result.result_set[0][0], -0.991767098339465, 0.0001)
+        # cos(null)
+        query = """RETURN cos(null)"""
+        actual_result = self.graph.query(query)
+        self.env.assertIsNone(actual_result.result_set[0][0])
 
-    #    # cos(null)
-    #    query = """RETURN cos(null)"""
-    #    actual_result = self.graph.query(query)
-    #    self.env.assertIsNone(actual_result.result_set[0][0])
+        # cos(True)
+        query = """RETURN cos(True)"""
+        self.expect_type_error(query)
 
-    #    # cos(True)
-    #    query = """RETURN cos(True)"""
-    #    self.expect_type_error(query)
+        # cos(2,3)
+        query = """RETURN cos(2,3)"""
+        self.expect_error(query, "Received 2 arguments to function 'cos', expected at most 1")
 
-    #    # cos(2,3)
-    #    query = """RETURN cos(2,3)"""
-    #    self.expect_error(query, "Received 2 arguments to function 'cos', expected at most 1")
+    def test41_tan(self):
+        # tan(0)
+        query = """RETURN tan(0)"""
+        actual_result = self.graph.query(query)
+        self.env.assertAlmostEqual(actual_result.result_set[0][0], 0.0, 0.0001)
 
-    #def test41_tan(self):
-    #    # tan(0)
-    #    query = """RETURN tan(0)"""
-    #    actual_result = self.graph.query(query)
-    #    self.env.assertAlmostEqual(actual_result.result_set[0][0], 0.0, 0.0001)
+        # tan(3.8)
+        query = """RETURN tan(3.8)"""
+        actual_result = self.graph.query(query)
+        self.env.assertAlmostEqual(actual_result.result_set[0][0], 0.773556090503126, 0.0001)
 
-    #    # tan(3.8)
-    #    query = """RETURN tan(3.8)"""
-    #    actual_result = self.graph.query(query)
-    #    self.env.assertAlmostEqual(actual_result.result_set[0][0], 0.773556090503126, 0.0001)
+        # tan(-1.97)
+        query = """RETURN tan(-1.97)"""
+        actual_result = self.graph.query(query)
+        self.env.assertAlmostEqual(actual_result.result_set[0][0], 2.37048352994376, 0.0001)
 
-    #    # tan(-1.97)
-    #    query = """RETURN tan(-1.97)"""
-    #    actual_result = self.graph.query(query)
-    #    self.env.assertAlmostEqual(actual_result.result_set[0][0], 2.37048352994376, 0.0001)
+        # tan(null)
+        query = """RETURN tan(null)"""
+        actual_result = self.graph.query(query)
+        self.env.assertIsNone(actual_result.result_set[0][0])
 
-    #    # tan(null)
-    #    query = """RETURN tan(null)"""
-    #    actual_result = self.graph.query(query)
-    #    self.env.assertIsNone(actual_result.result_set[0][0])
+        # tan(True)
+        query = """RETURN tan(True)"""
+        self.expect_type_error(query)
 
-    #    # tan(True)
-    #    query = """RETURN tan(True)"""
-    #    self.expect_type_error(query)
-
-    #    # tan(2,3)
-    #    query = """RETURN tan(2,3)"""
-    #    self.expect_error(query, "Received 2 arguments to function 'tan', expected at most 1")
+        # tan(2,3)
+        query = """RETURN tan(2,3)"""
+        self.expect_error(query, "Received 2 arguments to function 'tan', expected at most 1")
 
     #def test42_cot(self):
     #    # cot(0)
