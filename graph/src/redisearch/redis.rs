@@ -292,7 +292,7 @@ pub struct RedisModuleCommandArg {
     pub since: *const ::std::os::raw::c_char,
     pub flags: ::std::os::raw::c_int,
     pub deprecated_since: *const ::std::os::raw::c_char,
-    pub subargs: *mut RedisModuleCommandArg,
+    pub subargs: *mut Self,
     pub display_text: *const ::std::os::raw::c_char,
 }
 

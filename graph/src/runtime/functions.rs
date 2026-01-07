@@ -335,6 +335,16 @@ pub fn init_functions() -> Result<(), Functions> {
         FnType::Function,
     );
     funcs.add(
+        "hasLabels",
+        has_labels,
+        false,
+        vec![
+            Type::Union(vec![Type::Node, Type::Null]),
+            Type::Union(vec![Type::List(Box::new(Type::Any)), Type::Null]),
+        ],
+        FnType::Function,
+    );
+    funcs.add(
         "id",
         id,
         false,
@@ -856,13 +866,6 @@ pub fn init_functions() -> Result<(), Functions> {
         FnType::Internal,
     );
     funcs.add(
-        "node_has_labels",
-        internal_node_has_labels,
-        false,
-        vec![Type::Node, Type::List(Box::new(Type::Any))],
-        FnType::Internal,
-    );
-    funcs.add(
         "regex_matches",
         internal_regex_matches,
         false,
@@ -995,6 +998,48 @@ fn labels(
         }
         Some(Value::Null) => Ok(Value::Null),
 
+        _ => unreachable!(),
+    }
+}
+
+fn has_labels(
+    runtime: &Runtime,
+    args: ThinVec<Value>,
+) -> Result<Value, String> {
+    let mut iter = args.into_iter();
+    match (iter.next(), iter.next()) {
+        (Some(Value::Node(id)), Some(Value::List(required_labels))) => {
+            // Validate that all items in the list are strings
+            for label_value in &required_labels {
+                match label_value {
+                    Value::String(_) => {}
+                    Value::Int(_) => {
+                        return Err("Type mismatch: expected String but was Integer".to_string());
+                    }
+                    Value::Float(_) => {
+                        return Err("Type mismatch: expected String but was Float".to_string());
+                    }
+                    Value::Bool(_) => {
+                        return Err("Type mismatch: expected String but was Boolean".to_string());
+                    }
+                    _ => return Err("Type mismatch: expected String".to_string()),
+                }
+            }
+
+            // Get the actual labels of the node
+            let node_labels = runtime.get_node_labels(id);
+            // Check if all required labels are present
+            let has_all = required_labels.iter().all(|req_label| {
+                if let Value::String(req_str) = req_label {
+                    node_labels.iter().any(|node_label| node_label == req_str)
+                } else {
+                    false
+                }
+            });
+
+            Ok(Value::Bool(has_all))
+        }
+        (Some(Value::Null), _) | (_, Some(Value::Null)) => Ok(Value::Null),
         _ => unreachable!(),
     }
 }
@@ -1335,7 +1380,7 @@ fn finalize_percentile_cont(ctx: Value) -> Value {
     Value::Float(lhs + rhs)
 }
 
-fn modf(x: f64) -> (f64, f64) {
+const fn modf(x: f64) -> (f64, f64) {
     let int_part = x.trunc();
     let frac_part = x.fract();
     (frac_part, int_part)
@@ -1418,17 +1463,27 @@ fn value_to_integer(
     args: ThinVec<Value>,
 ) -> Result<Value, String> {
     match args.into_iter().next() {
-        Some(Value::String(s)) => s.parse::<i64>().map(Value::Int).or_else(|_| {
+        Some(Value::String(s)) => {
+            if s.is_empty() {
+                return Ok(Value::Null);
+            }
+
+            // Try to parse as i64 first (no decimal point)
+            if !s.contains('.') {
+                return Ok(s.parse::<i64>().map(Value::Int).unwrap_or(Value::Null));
+            }
+
+            // Has decimal - parse as f64 then floor
             s.parse::<f64>()
+                .ok()
+                .filter(|f| f.is_finite())
                 .map(|f| Value::Int(f.floor() as i64))
-                .or(Ok(Value::Null))
-        }),
+                .ok_or_else(|| "Invalid number".to_string())
+        }
         Some(Value::Int(i)) => Ok(Value::Int(i)),
         Some(Value::Float(f)) => Ok(Value::Int(f.floor() as i64)),
         Some(Value::Bool(b)) => Ok(Value::Int(i64::from(b))),
-        Some(Value::Null) => Ok(Value::Null),
-
-        _ => unreachable!(),
+        _ => Ok(Value::Null),
     }
 }
 
@@ -2385,29 +2440,6 @@ fn internal_is_null(
     match (iter.next(), iter.next()) {
         (Some(Value::Bool(is_not)), Some(Value::Null)) => Ok(Value::Bool(!is_not)),
         (Some(Value::Bool(is_not)), Some(_)) => Ok(Value::Bool(is_not)),
-
-        _ => unreachable!(),
-    }
-}
-
-fn internal_node_has_labels(
-    runtime: &Runtime,
-    args: ThinVec<Value>,
-) -> Result<Value, String> {
-    let mut iter = args.into_iter();
-    match (iter.next(), iter.next()) {
-        (Some(Value::Node(id)), Some(Value::List(required_labels))) => {
-            let labels = runtime.get_node_labels(id);
-            let all_labels_present = required_labels.iter().all(|label| {
-                if let Value::String(label_str) = label {
-                    labels.contains(label_str)
-                } else {
-                    false
-                }
-            });
-
-            Ok(Value::Bool(all_labels_present))
-        }
 
         _ => unreachable!(),
     }

@@ -578,90 +578,92 @@ class testFunctionCallsFlow(FlowTestsBase):
                            ['STR2', [1, 2, 3]]]
         self.env.assertEquals(actual_result.result_set, expected_result)
 
-    #def test19_has_labels(self):
-    #    # Test existing label
-    #    query = """MATCH (n) WHERE n:person RETURN n.name"""
-    #    actual_result = self.graph.query(query)
-    #    expected_result = [['Roi'], ['Alon'], ['Ailon'], ['Boaz']]
-    #    self.env.assertEquals(actual_result.result_set, expected_result)
+    def test19_has_labels(self):
+        # Test existing label
+        query = """MATCH (n) WHERE n:person RETURN n.name"""
+        actual_result = self.graph.query(query)
+        expected_result = [['Roi'], ['Alon'], ['Ailon'], ['Boaz']]
+        self.env.assertEquals(actual_result.result_set, expected_result)
 
-    #    # Test not existing label
-    #    query = """MATCH (n) WHERE n:L RETURN n.name"""
-    #    actual_result = self.graph.query(query)
-    #    expected_result = []
-    #    self.env.assertEquals(actual_result.result_set, expected_result)
+        # Test not existing label
+        query = """MATCH (n) WHERE n:L RETURN n.name"""
+        actual_result = self.graph.query(query)
+        expected_result = []
+        self.env.assertEquals(actual_result.result_set, expected_result)
 
-    #    # Test multi label
-    #    query = """MATCH (n) WHERE n:person:L RETURN n.name"""
-    #    actual_result = self.graph.query(query)
-    #    expected_result = []
-    #    self.env.assertEquals(actual_result.result_set, expected_result)
+        # Test multi label
+        query = """MATCH (n) WHERE n:person:L RETURN n.name"""
+        actual_result = self.graph.query(query)
+        expected_result = []
+        self.env.assertEquals(actual_result.result_set, expected_result)
 
-    #    # Test multi label
-    #    query = """MATCH (n) WHERE n:person:student RETURN n.name"""
-    #    actual_result = self.graph.query(query)
-    #    expected_result = [['Alon'], ['Boaz']]
-    #    self.env.assertEquals(actual_result.result_set, expected_result)
+        # Test multi label
+        query = """MATCH (n) WHERE n:person:student RETURN n.name"""
+        actual_result = self.graph.query(query)
+        expected_result = [['Alon'], ['Boaz']]
+        self.env.assertEquals(actual_result.result_set, expected_result)
 
-    #    # Test or between different labels label
-    #    query = """MATCH (n) WHERE n:person OR n:L RETURN n.name"""
-    #    actual_result = self.graph.query(query)
-    #    expected_result = [['Roi'], ['Alon'], ['Ailon'], ['Boaz']]
-    #    self.env.assertEquals(actual_result.result_set, expected_result)
+        # Test or between different labels label
+        query = """MATCH (n) WHERE n:person OR n:L RETURN n.name"""
+        actual_result = self.graph.query(query)
+        expected_result = [['Roi'], ['Alon'], ['Ailon'], ['Boaz']]
+        self.env.assertEquals(actual_result.result_set, expected_result)
 
-    #    # Test multi label using functions
-    #    query = """MATCH (n) WHERE hasLabels(n, ['person', 'L']) RETURN n.name"""
-    #    actual_result = self.graph.query(query)
-    #    expected_result = []
-    #    self.env.assertEquals(actual_result.result_set, expected_result)
+        # Test multi label using functions
+        query = """MATCH (n) WHERE hasLabels(n, ['person', 'L']) RETURN n.name"""
+        actual_result = self.graph.query(query)
+        expected_result = []
+        self.env.assertEquals(actual_result.result_set, expected_result)
 
-    #    # Test multi label using functions
-    #    query = """MATCH (n) WHERE hasLabels(n, ['person', 'student']) RETURN n.name"""
-    #    actual_result = self.graph.query(query)
-    #    expected_result =  [['Alon'], ['Boaz']]
-    #    self.env.assertEquals(actual_result.result_set, expected_result)
+        # Test multi label using functions
+        query = """MATCH (n) WHERE hasLabels(n, ['person', 'student']) RETURN n.name"""
+        actual_result = self.graph.query(query)
+        expected_result =  [['Alon'], ['Boaz']]
+        self.env.assertEquals(actual_result.result_set, expected_result)
 
-    #    # Test has labels using functions mismatch type
-    #    query = """MATCH (n) WHERE hasLabels(n, ['person', 1]) RETURN n.name"""
-    #    try:
-    #        self.graph.query(query)
-    #    except redis.ResponseError as e:
-    #        self.env.assertContains("Type mismatch: expected String but was Integer", str(e))
+        # Test has labels using functions mismatch type
+        query = """MATCH (n) WHERE hasLabels(n, ['person', 1]) RETURN n.name"""
+        try:
+            self.graph.query(query)
+        except redis.ResponseError as e:
+            self.env.assertContains("Type mismatch: expected String but was Integer", str(e))
 
-    #def test20_keys(self):
-    #    # Test retrieving keys of a nested map
-    #    query = """RETURN keys({a: 5, b: 10})"""
-    #    actual_result = self.graph.query(query)
-    #    expected_result = [[['a', 'b']]]
-    #    self.env.assertEquals(actual_result.result_set, expected_result)
+    def test20_keys(self):
+        # Test retrieving keys of a nested map
+        query = """RETURN keys({a: 5, b: 10})"""
+        actual_result = self.graph.query(query)
+        expected_result = [[['a', 'b']]]
+        self.env.assertEquals(actual_result.result_set, expected_result)
 
-    #    # Test retrieving keys of a map reference
-    #    query = """WITH {a: 5, b: 10} AS map RETURN keys(map)"""
-    #    actual_result = self.graph.query(query)
-    #    self.env.assertEquals(actual_result.result_set, expected_result)
+        # Test retrieving keys of a map reference
+        query = """WITH {a: 5, b: 10} AS map RETURN keys(map)"""
+        actual_result = self.graph.query(query)
+        self.env.assertEquals(actual_result.result_set, expected_result)
 
-    #    # Test retrieving keys of a node
-    #    query = """MATCH (n:person {name: 'Roi'}) RETURN keys(n)"""
-    #    actual_result = self.graph.query(query)
-    #    expected_result = [[['name', 'val']]]
-    #    self.env.assertEquals(actual_result.result_set, expected_result)
+        # Test retrieving keys of a node
+        query = """MATCH (n:person {name: 'Roi'}) RETURN keys(n)"""
+        actual_result = self.graph.query(query)
+        expected_result = [[['name', 'val']]]
+        self.env.assertEquals(actual_result.result_set, expected_result)
 
-    #    # Test retrieving keys of an (empty) edge
-    #    query = """MATCH (:person {name: 'Roi'})-[e:works_with]->(:person {name: 'Alon'}) RETURN keys(e)"""
-    #    actual_result = self.graph.query(query)
-    #    expected_result = [[[]]]
-    #    self.env.assertEquals(actual_result.result_set, expected_result)
+        # @todo barak fix
+        # Test retrieving keys of an (empty) edge
+        #query = """MATCH (:person {name: 'Roi'})-[e:works_with]->(:person {name: 'Alon'}) RETURN keys(e)"""
+        #actual_result = self.graph.query(query)
+        #expected_result = [[[]]]
+        #self.env.assertEquals(actual_result.result_set, expected_result)
 
-    #    # Test a null input
-    #    query = """WITH NULL AS map RETURN keys(map)"""
-    #    actual_result = self.graph.query(query)
-    #    expected_result = [[None]]
-    #    self.env.assertEquals(actual_result.result_set, expected_result)
+        # Test a null input
+        query = """WITH NULL AS map RETURN keys(map)"""
+        actual_result = self.graph.query(query)
+        expected_result = [[None]]
+        self.env.assertEquals(actual_result.result_set, expected_result)
 
-    #    # Test trying to retrieve keys of an invalid type
-    #    query = """WITH 10 AS map RETURN keys(map)"""
-    #    self.expect_type_error(query)
+        # Test trying to retrieve keys of an invalid type
+        query = """WITH 10 AS map RETURN keys(map)"""
+        self.expect_type_error(query)
 
+    # @todo barak fixme
     #def test21_distinct_memory_management(self):
     #    # validate behavior of the DISTINCT function with allocated values
     #    query = """MATCH (a {val: 0}) RETURN collect(DISTINCT a { .name })"""
@@ -669,41 +671,41 @@ class testFunctionCallsFlow(FlowTestsBase):
     #    expected_result = [[[{'name': 'Roi'}]]]
     #    self.env.assertEquals(actual_result.result_set, expected_result)
 
-    #def test22_large_list_argument(self):
-    #    # validate that large lists arguments are not allocated on stack
-    #    large_list = str([1] * 1000000)
-    #    query = f"""RETURN {large_list}"""
-    #    actual_result = self.graph.query(query)
-    #    self.env.assertEquals(len(actual_result.result_set[0][0]), 1000000)
+    def test22_large_list_argument(self):
+        # validate that large lists arguments are not allocated on stack
+        large_list = str([1] * 1000000)
+        query = f"""RETURN {large_list}"""
+        actual_result = self.graph.query(query)
+        self.env.assertEquals(len(actual_result.result_set[0][0]), 1000000)
     
-    #def test23_toInteger(self):
-    #    # expect calling toInteger to succeed
-    #    query_to_expected_result = {
-    #        """RETURN toInteger(1)""": [[1]],
-    #        """RETURN toInteger(1.1)""": [[1]],
-    #        """RETURN toInteger(1.9)""": [[1]],
-    #        """RETURN toInteger('1')""": [[1]],
-    #        """RETURN toInteger('1.1')""": [[1]],
-    #        """RETURN toInteger('1.9')""": [[1]],
-    #        """RETURN toInteger(true)""": [[1]],
-    #        """RETURN toInteger(false)""": [[0]],
-    #        """RETURN toInteger('1790460441484152222')""": [[1790460441484152222]],
-    #        """RETURN toInteger('-1790460441484152222')""": [[-1790460441484152222]],
-    #    }
-    #    for query, expected_result in query_to_expected_result.items():
-    #        self.get_res_and_assertEquals(query, expected_result)
+    def test23_toInteger(self):
+        # expect calling toInteger to succeed
+        query_to_expected_result = {
+            """RETURN toInteger(1)""": [[1]],
+            """RETURN toInteger(1.1)""": [[1]],
+            """RETURN toInteger(1.9)""": [[1]],
+            """RETURN toInteger('1')""": [[1]],
+            """RETURN toInteger('1.1')""": [[1]],
+            """RETURN toInteger('1.9')""": [[1]],
+            """RETURN toInteger(true)""": [[1]],
+            """RETURN toInteger(false)""": [[0]],
+            """RETURN toInteger('1790460441484152222')""": [[1790460441484152222]],
+            """RETURN toInteger('-1790460441484152222')""": [[-1790460441484152222]],
+        }
+        for query, expected_result in query_to_expected_result.items():
+            self.get_res_and_assertEquals(query, expected_result)
 
-    #    # expect calling toInteger to return NULL
-    #    queries = [
-    #        """RETURN toInteger('z')""",
-    #        """RETURN toInteger(NULL)""",
-    #        """RETURN toInteger('')""",
-    #        """RETURN toInteger('18446744073709551616')""",
-    #        """RETURN toInteger('-18446744073709551616')""",
-    #    ]
-    #    for query in queries:
-    #        actual_result = self.graph.query(query)
-    #        self.env.assertEquals(actual_result.result_set[0][0], None)
+        # expect calling toInteger to return NULL
+        queries = [
+            """RETURN toInteger('z')""",
+            """RETURN toInteger(NULL)""",
+            """RETURN toInteger('')""",
+            """RETURN toInteger('18446744073709551616')""",
+            """RETURN toInteger('-18446744073709551616')""",
+        ]
+        for query in queries:
+            actual_result = self.graph.query(query)
+            self.env.assertEquals(actual_result.result_set[0][0], None)
 
     #def test24_substring(self):
     #    query_to_expected_result = {

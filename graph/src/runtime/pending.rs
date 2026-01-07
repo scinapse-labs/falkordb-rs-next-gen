@@ -51,6 +51,12 @@ pub struct Pending {
     index_remove_docs: HashMap<Arc<String>, RoaringTreemap>,
 }
 
+impl Default for Pending {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Pending {
     #[must_use]
     pub fn new() -> Self {
@@ -399,6 +405,7 @@ impl Pending {
             self.set_node_labels.clear();
         }
         if self.remove_node_labels.nvals() > 0 {
+            stats.borrow_mut().labels_removed += self.remove_node_labels.nvals() as usize;
             g.borrow_mut()
                 .remove_nodes_labels(&mut self.remove_node_labels, &mut self.index_remove_docs);
 
