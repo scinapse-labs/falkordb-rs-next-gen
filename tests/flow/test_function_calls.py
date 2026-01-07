@@ -798,103 +798,103 @@ class testFunctionCallsFlow(FlowTestsBase):
         actual_result = self.graph.query(query)
         self.env.assertEquals(actual_result.result_set[0][0], "%f%f" % (larg_double, larg_double))
 
-    #def test28_sqrt(self):
-    #    query = """RETURN sqrt(0)"""
-    #    actual_result = self.graph.query(query)
-    #    self.env.assertEquals(actual_result.result_set[0][0], 0)
+    def test28_sqrt(self):
+        query = """RETURN sqrt(0)"""
+        actual_result = self.graph.query(query)
+        self.env.assertEquals(actual_result.result_set[0][0], 0)
 
-    #    query = """RETURN sqrt(9801)"""
-    #    actual_result = self.graph.query(query)
-    #    self.env.assertEquals(actual_result.result_set[0][0], 99)
+        query = """RETURN sqrt(9801)"""
+        actual_result = self.graph.query(query)
+        self.env.assertEquals(actual_result.result_set[0][0], 99)
 
-    #    query = """RETURN sqrt(-1)"""
-    #    actual_result = self.graph.query(query)
-    #    self.env.assertTrue(isnan(actual_result.result_set[0][0]))
+        query = """RETURN sqrt(-1)"""
+        actual_result = self.graph.query(query)
+        self.env.assertTrue(isnan(actual_result.result_set[0][0]))
 
-    #    query = """RETURN sqrt(-9)"""
-    #    actual_result = self.graph.query(query)
-    #    self.env.assertTrue(isnan(actual_result.result_set[0][0]))
+        query = """RETURN sqrt(-9)"""
+        actual_result = self.graph.query(query)
+        self.env.assertTrue(isnan(actual_result.result_set[0][0]))
 
-    #    query = """RETURN sqrt(-0.0000000001)"""
-    #    actual_result = self.graph.query(query)
-    #    self.env.assertTrue(isnan(actual_result.result_set[0][0]))
+        query = """RETURN sqrt(-0.0000000001)"""
+        actual_result = self.graph.query(query)
+        self.env.assertTrue(isnan(actual_result.result_set[0][0]))
 
-    #    query = """RETURN sqrt(null)"""
-    #    actual_result = self.graph.query(query)
-    #    self.env.assertEquals(actual_result.result_set[0][0], None)
+        query = """RETURN sqrt(null)"""
+        actual_result = self.graph.query(query)
+        self.env.assertEquals(actual_result.result_set[0][0], None)
 
-    #    query = """RETURN sqrt(2540.95581553)"""
-    #    actual_result = self.graph.query(query)
-    #    self.env.assertEquals(actual_result.result_set[0][0], 50.4078943770715)
+        query = """RETURN sqrt(2540.95581553)"""
+        actual_result = self.graph.query(query)
+        self.env.assertEquals(actual_result.result_set[0][0], 50.4078943770715)
     
-    #def test29_toBoolean(self):
-    #    # all other toBoolean cases (boolean, strings, null, errors) are covered in TCK
-    #    # integers
-    #    query = """RETURN toBoolean(0)"""
-    #    actual_result = self.graph.query(query)
-    #    self.env.assertEquals(actual_result.result_set[0][0], False)
-    #    query = """RETURN toBoolean(1)"""
-    #    actual_result = self.graph.query(query)
-    #    self.env.assertEquals(actual_result.result_set[0][0], True)
-    #    query = """RETURN toBoolean(-1)"""
-    #    actual_result = self.graph.query(query)
-    #    self.env.assertEquals(actual_result.result_set[0][0], True)
+    def test29_toBoolean(self):
+        # all other toBoolean cases (boolean, strings, null, errors) are covered in TCK
+        # integers
+        query = """RETURN toBoolean(0)"""
+        actual_result = self.graph.query(query)
+        self.env.assertEquals(actual_result.result_set[0][0], False)
+        query = """RETURN toBoolean(1)"""
+        actual_result = self.graph.query(query)
+        self.env.assertEquals(actual_result.result_set[0][0], True)
+        query = """RETURN toBoolean(-1)"""
+        actual_result = self.graph.query(query)
+        self.env.assertEquals(actual_result.result_set[0][0], True)
 
-    #def test29_toBooleanOrNull(self):
-    #    # boolean
-    #    query = """RETURN toBooleanOrNull(true)"""
-    #    actual_result = self.graph.query(query)
-    #    self.env.assertEquals(actual_result.result_set[0][0], True)
-    #    query = """RETURN toBooleanOrNull(false)"""
-    #    actual_result = self.graph.query(query)
-    #    self.env.assertEquals(actual_result.result_set[0][0], False)
+    def test29_toBooleanOrNull(self):
+        # boolean
+        query = """RETURN toBooleanOrNull(true)"""
+        actual_result = self.graph.query(query)
+        self.env.assertEquals(actual_result.result_set[0][0], True)
+        query = """RETURN toBooleanOrNull(false)"""
+        actual_result = self.graph.query(query)
+        self.env.assertEquals(actual_result.result_set[0][0], False)
 
-    #    # strings
-    #    query = """RETURN toBooleanOrNull('TruE')"""
-    #    actual_result = self.graph.query(query)
-    #    self.env.assertEquals(actual_result.result_set[0][0], True)
-    #    query = """RETURN toBooleanOrNull('FaLsE')"""
-    #    actual_result = self.graph.query(query)
-    #    self.env.assertEquals(actual_result.result_set[0][0], False)
-    #    query = """RETURN toBooleanOrNull('not a boolean')"""
-    #    actual_result = self.graph.query(query)
-    #    self.env.assertEquals(actual_result.result_set[0][0], None)
+        # strings
+        query = """RETURN toBooleanOrNull('TruE')"""
+        actual_result = self.graph.query(query)
+        self.env.assertEquals(actual_result.result_set[0][0], True)
+        query = """RETURN toBooleanOrNull('FaLsE')"""
+        actual_result = self.graph.query(query)
+        self.env.assertEquals(actual_result.result_set[0][0], False)
+        query = """RETURN toBooleanOrNull('not a boolean')"""
+        actual_result = self.graph.query(query)
+        self.env.assertEquals(actual_result.result_set[0][0], None)
 
-    #    # integers
-    #    query = """RETURN toBooleanOrNull(0)"""
-    #    actual_result = self.graph.query(query)
-    #    self.env.assertEquals(actual_result.result_set[0][0], False)
-    #    query = """RETURN toBooleanOrNull(1)"""
-    #    actual_result = self.graph.query(query)
-    #    self.env.assertEquals(actual_result.result_set[0][0], True)
-    #    query = """RETURN toBooleanOrNull(-1)"""
-    #    actual_result = self.graph.query(query)
-    #    self.env.assertEquals(actual_result.result_set[0][0], True)
+        # integers
+        query = """RETURN toBooleanOrNull(0)"""
+        actual_result = self.graph.query(query)
+        self.env.assertEquals(actual_result.result_set[0][0], False)
+        query = """RETURN toBooleanOrNull(1)"""
+        actual_result = self.graph.query(query)
+        self.env.assertEquals(actual_result.result_set[0][0], True)
+        query = """RETURN toBooleanOrNull(-1)"""
+        actual_result = self.graph.query(query)
+        self.env.assertEquals(actual_result.result_set[0][0], True)
 
-    #    # null
-    #    query = """RETURN toBooleanOrNull(null)"""
-    #    actual_result = self.graph.query(query)
-    #    self.env.assertEquals(actual_result.result_set[0][0], None)
+        # null
+        query = """RETURN toBooleanOrNull(null)"""
+        actual_result = self.graph.query(query)
+        self.env.assertEquals(actual_result.result_set[0][0], None)
 
-    #    # float
-    #    query = """RETURN toBooleanOrNull(0.1)"""
-    #    actual_result = self.graph.query(query)
-    #    self.env.assertEquals(actual_result.result_set[0][0], None)
+        # float
+        query = """RETURN toBooleanOrNull(0.1)"""
+        actual_result = self.graph.query(query)
+        self.env.assertEquals(actual_result.result_set[0][0], None)
 
-    #    # list
-    #    query = """RETURN toBooleanOrNull([true])"""
-    #    actual_result = self.graph.query(query)
-    #    self.env.assertEquals(actual_result.result_set[0][0], None)
+        # list
+        query = """RETURN toBooleanOrNull([true])"""
+        actual_result = self.graph.query(query)
+        self.env.assertEquals(actual_result.result_set[0][0], None)
 
-    #    # node
-    #    query = """CREATE (n) RETURN toBooleanOrNull(n)"""
-    #    actual_result = self.graph.query(query)
-    #    self.env.assertEquals(actual_result.result_set[0][0], None)
+        # node
+        query = """CREATE (n) RETURN toBooleanOrNull(n)"""
+        actual_result = self.graph.query(query)
+        self.env.assertEquals(actual_result.result_set[0][0], None)
 
-    #    # edge
-    #    query = """CREATE ()-[r:R]->() RETURN toBooleanOrNull(r)"""
-    #    actual_result = self.graph.query(query)
-    #    self.env.assertEquals(actual_result.result_set[0][0], None)
+        # edge
+        query = """CREATE ()-[r:R]->() RETURN toBooleanOrNull(r)"""
+        actual_result = self.graph.query(query)
+        self.env.assertEquals(actual_result.result_set[0][0], None)
 
     #def test30_toFloatOrNull(self):
     #    # floats
