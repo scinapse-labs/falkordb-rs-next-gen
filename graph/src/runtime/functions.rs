@@ -713,6 +713,13 @@ pub fn init_functions() -> Result<(), Functions> {
         FnType::Function,
     );
     funcs.add(
+        "toStringOrNull",
+        value_to_string,
+        false,
+        vec![Type::Any],
+        FnType::Function,
+    );
+    funcs.add(
         "type",
         relationship_type,
         false,
@@ -1528,7 +1535,7 @@ fn value_string(value: &Value) -> Result<Arc<String>, String> {
         Value::Float(f) => Ok(Arc::new(format!("{f:.6}"))),
         Value::String(s) => Ok(s.clone()),
 
-        _ => unreachable!(),
+        _ => Err(format!("Cannot convert {} to string", value.name())),
     }
 }
 
@@ -1538,7 +1545,11 @@ fn value_to_string(
 ) -> Result<Value, String> {
     match args.into_iter().next() {
         Some(Value::Null) => Ok(Value::Null),
-        Some(v) => Ok(Value::String(value_string(&v)?)),
+        Some(v) => {
+            // Try to convert supported types to string
+            // For unsupported types (List, Node, etc.), return Null
+            value_string(&v).map_or_else(|_| Ok(Value::Null), |s| Ok(Value::String(s)))
+        }
 
         _ => unreachable!(),
     }
