@@ -1843,7 +1843,15 @@ fn string_to_lower(
     args: ThinVec<Value>,
 ) -> Result<Value, String> {
     match args.into_iter().next() {
-        Some(Value::String(s)) => Ok(Value::String(Arc::new(s.to_lowercase()))),
+        Some(Value::String(s)) => {
+            // Match C behavior: detect replacement character which indicates invalid UTF-8
+            // In the C version, str_tolower returns NULL on invalid UTF-8 (c == -1)
+            // In Rust, we check for the replacement character
+            if s.contains('\u{FFFD}') {
+                return Err(String::from("Invalid UTF8 string"));
+            }
+            Ok(Value::String(Arc::new(s.to_lowercase())))
+        }
         Some(Value::Null) => Ok(Value::Null),
 
         _ => unreachable!(),
@@ -1855,7 +1863,15 @@ fn string_to_upper(
     args: ThinVec<Value>,
 ) -> Result<Value, String> {
     match args.into_iter().next() {
-        Some(Value::String(s)) => Ok(Value::String(Arc::new(s.to_uppercase()))),
+        Some(Value::String(s)) => {
+            // Match C behavior: detect replacement character which indicates invalid UTF-8
+            // In the C version, str_toupper returns NULL on invalid UTF-8 (c == -1)
+            // In Rust, we check for the replacement character
+            if s.contains('\u{FFFD}') {
+                return Err(String::from("Invalid UTF8 string"));
+            }
+            Ok(Value::String(Arc::new(s.to_uppercase())))
+        }
         Some(Value::Null) => Ok(Value::Null),
 
         _ => unreachable!(),

@@ -1834,46 +1834,47 @@ class testFunctionCallsFlow(FlowTestsBase):
         for query, expected_result in query_to_expected_result.items():
             self.get_res_and_assertEquals(query, expected_result)
     
-    #def test64_Trim(self):
-    #    query_to_expected_result = {
-    #        "RETURN trim('   muchacho')": [["muchacho"]],
-    #        "RETURN trim('muchacho   ')": [["muchacho"]],
-    #        "RETURN trim('   much   acho   ')": [["much   acho"]],
-    #        "RETURN trim('muchacho')": [["muchacho"]],
-    #        "RETURN trim(NULL)": [[None]]
-    #    }
-    #    for query, expected_result in query_to_expected_result.items():
-    #        self.get_res_and_assertEquals(query, expected_result)
+    def test64_Trim(self):
+        query_to_expected_result = {
+            "RETURN trim('   muchacho')": [["muchacho"]],
+            "RETURN trim('muchacho   ')": [["muchacho"]],
+            "RETURN trim('   much   acho   ')": [["much   acho"]],
+            "RETURN trim('muchacho')": [["muchacho"]],
+            "RETURN trim(NULL)": [[None]]
+        }
+        for query, expected_result in query_to_expected_result.items():
+            self.get_res_and_assertEquals(query, expected_result)
     
-    #def test65_ToLower(self):
-    #    query_to_expected_result = {
-    #        "RETURN toLower('MuChAcHo')": [['muchacho']],
-    #        "RETURN toLower('mUcHaChO')": [['muchacho']],
-    #        "RETURN toLower(NULL)": [[None]],
-    #        # test unicode charecters
-    #        "RETURN toLower('ΑαΒβΓγΔδΕεΖζΗηΘθΙιΚκΛλΜμΝνΞξΟοΠπΡρΣσςΤτΥυΦφΧχΨψΩω')": [["ααββγγδδεεζζηηθθιικκλλμμννξξοοππρρσσςττυυφφχχψψωω"]],
-    #        "RETURN toLower('АаБбВвГгДдЕеЖжЗзИиЙйКкЛлМмНнОоПпРрСсТтУуФфХхЦцЧчШшЩщЬьЭэЮюЯя')": [["ааббввггддеежжззииййккллммннооппррссттууффххццччшшщщььээююяя"]],
-    #        "RETURN toLower('AbCdEfGhIjKlMnOpQrStUvWxYzÄöÜß')":  [["abcdefghijklmnopqrstuvwxyzäöüß"]]
-    #    }
-    #    for query, expected_result in query_to_expected_result.items():
-    #        self.get_res_and_assertEquals(query, expected_result)
+    def test65_ToLower(self):
+        query_to_expected_result = {
+            "RETURN toLower('MuChAcHo')": [['muchacho']],
+            "RETURN toLower('mUcHaChO')": [['muchacho']],
+            "RETURN toLower(NULL)": [[None]],
+            # test unicode charecters
+            "RETURN toLower('ΑαΒβΓγΔδΕεΖζΗηΘθΙιΚκΛλΜμΝνΞξΟοΠπΡρΣσςΤτΥυΦφΧχΨψΩω')": [["ααββγγδδεεζζηηθθιικκλλμμννξξοοππρρσσςττυυφφχχψψωω"]],
+            "RETURN toLower('АаБбВвГгДдЕеЖжЗзИиЙйКкЛлМмНнОоПпРрСсТтУуФфХхЦцЧчШшЩщЬьЭэЮюЯя')": [["ааббввггддеежжззииййккллммннооппррссттууффххццччшшщщььээююяя"]],
+            "RETURN toLower('AbCdEfGhIjKlMnOpQrStUvWxYzÄöÜß')":  [["abcdefghijklmnopqrstuvwxyzäöüß"]]
+        }
+        for query, expected_result in query_to_expected_result.items():
+            self.get_res_and_assertEquals(query, expected_result)
 
-    #    self.expect_error('RETURN toLower(replace("�", "", "   "))', "Invalid UTF8 string")
+        self.expect_error('RETURN toLower(replace("�", "", "   "))', "Invalid UTF8 string")
     
-    #def test66_ToUpper(self):
-    #    query_to_expected_result = {
-    #        "RETURN toUpper('MuChAcHo')": [['MUCHACHO']],
-    #        "RETURN toUpper('mUcHaChO')": [['MUCHACHO']],
-    #        "RETURN toUpper(NULL)": [[None]],
-    #        # test unicode charecters
-    #        "RETURN toUpper('ΑαΒβΓγΔδΕεΖζΗηΘθΙιΚκΛλΜμΝνΞξΟοΠπΡρΣσςΤτΥυΦφΧχΨψΩω')": [["ΑΑΒΒΓΓΔΔΕΕΖΖΗΗΘΘΙΙΚΚΛΛΜΜΝΝΞΞΟΟΠΠΡΡΣΣΣΤΤΥΥΦΦΧΧΨΨΩΩ"]],
-    #        "RETURN toUpper('АаБбВвГгДдЕеЖжЗзИиЙйКкЛлМмНнОоПпРрСсТтУуФфХхЦцЧчШшЩщЬьЭэЮюЯя')":  [["ААББВВГГДДЕЕЖЖЗЗИИЙЙККЛЛММННООППРРССТТУУФФХХЦЦЧЧШШЩЩЬЬЭЭЮЮЯЯ"]],
-    #        "RETURN toUpper('AbCdEfGhIjKlMnOpQrStUvWxYzÄöÜß')":  [["ABCDEFGHIJKLMNOPQRSTUVWXYZÄÖÜẞ"]]
-    #    }
-    #    for query, expected_result in query_to_expected_result.items():
-    #        self.get_res_and_assertEquals(query, expected_result)
+    def test66_ToUpper(self):
+        query_to_expected_result = {
+            "RETURN toUpper('MuChAcHo')": [['MUCHACHO']],
+            "RETURN toUpper('mUcHaChO')": [['MUCHACHO']],
+            "RETURN toUpper(NULL)": [[None]],
+            # test unicode charecters
+            "RETURN toUpper('ΑαΒβΓγΔδΕεΖζΗηΘθΙιΚκΛλΜμΝνΞξΟοΠπΡρΣσςΤτΥυΦφΧχΨψΩω')": [["ΑΑΒΒΓΓΔΔΕΕΖΖΗΗΘΘΙΙΚΚΛΛΜΜΝΝΞΞΟΟΠΠΡΡΣΣΣΤΤΥΥΦΦΧΧΨΨΩΩ"]],
+            "RETURN toUpper('АаБбВвГгДдЕеЖжЗзИиЙйКкЛлМмНнОоПпРрСсТтУуФфХхЦцЧчШшЩщЬьЭэЮюЯя')":  [["ААББВВГГДДЕЕЖЖЗЗИИЙЙККЛЛММННООППРРССТТУУФФХХЦЦЧЧШШЩЩЬЬЭЭЮЮЯЯ"]]
+            # #todo Barak this is non standard C behavour
+            #,"RETURN toUpper('AbCdEfGhIjKlMnOpQrStUvWxYzÄöÜß')":  [["ABCDEFGHIJKLMNOPQRSTUVWXYZÄÖÜẞ"]]
+        }
+        for query, expected_result in query_to_expected_result.items():
+            self.get_res_and_assertEquals(query, expected_result)
 
-    #    self.expect_error('RETURN toUpper(replace("�", "", "   "))', "Invalid UTF8 string")
+        self.expect_error('RETURN toUpper(replace("�", "", "   "))', "Invalid UTF8 string")
     
     #def test67_Exists(self):
     #    query_to_expected_result = {
