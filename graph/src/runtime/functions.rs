@@ -2111,20 +2111,29 @@ fn log10(
     }
 }
 
+// called from fn pow and expr pow (^)
+#[inline]
+#[must_use]
+pub(crate) fn apply_pow(
+    base: Value,
+    exponent: Value,
+) -> Value {
+    match (base, exponent) {
+        (Value::Int(a), Value::Int(b)) => Value::Float((a as f64).powf(b as f64)),
+        (Value::Float(a), Value::Float(b)) => Value::Float(a.powf(b)),
+        (Value::Int(a), Value::Float(b)) => Value::Float((a as f64).powf(b)),
+        (Value::Float(a), Value::Int(b)) => Value::Float(a.powi(b as i32)),
+        _ => Value::Null,
+    }
+}
+
 fn pow(
     _: &Runtime,
     args: ThinVec<Value>,
 ) -> Result<Value, String> {
     let mut iter = args.into_iter();
     match (iter.next(), iter.next()) {
-        (Some(Value::Int(i1)), Some(Value::Int(i2))) => {
-            Ok(Value::Float((i1 as f64).powi(i2 as i32)))
-        }
-        (Some(Value::Float(f1)), Some(Value::Float(f2))) => Ok(Value::Float(f1.powf(f2))),
-        (Some(Value::Int(i1)), Some(Value::Float(f1))) => Ok(Value::Float((i1 as f64).powf(f1))),
-        (Some(Value::Float(f1)), Some(Value::Int(i1))) => Ok(Value::Float(f1.powi(i1 as i32))),
-        (Some(Value::Null), Some(_)) | (Some(_), Some(Value::Null)) => Ok(Value::Null),
-
+        (Some(a), Some(b)) => Ok(apply_pow(a, b)),
         _ => unreachable!(),
     }
 }

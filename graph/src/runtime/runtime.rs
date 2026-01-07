@@ -11,7 +11,7 @@ use crate::{
     indexer::IndexQuery,
     planner::IR,
     runtime::{
-        functions::FnType,
+        functions::{FnType, apply_pow},
         iter::{Aggregate, CondInspectIter, LazyReplace, TryFlatMap, TryMap},
         ordermap::OrderMap,
         orderset::OrderSet,
@@ -604,10 +604,7 @@ impl<'a> Runtime {
                 ExprIR::Pow => res.push(
                     node.children()
                         .flat_map(|child| self.run_expr(ir, child.idx(), env, agg_group_key))
-                        .reduce(|a, b| match (a, b) {
-                            (Value::Int(a), Value::Int(b)) => Value::Float((a as f64).powf(b as _)),
-                            _ => Value::Null,
-                        })
+                        .reduce(|a, b| apply_pow(a, b))
                         .ok_or_else(|| {
                             String::from("Pow operator requires at least one argument")
                         })?,
