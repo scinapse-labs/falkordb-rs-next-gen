@@ -692,6 +692,13 @@ pub fn init_functions() -> Result<(), Functions> {
         FnType::Function,
     );
     funcs.add(
+        "toBooleanOrNull",
+        to_boolean_or_null,
+        false,
+        vec![Type::Any], // Accept ANY type, unlike toBoolean which is restricted
+        FnType::Function,
+    );
+    funcs.add(
         "type",
         relationship_type,
         false,
@@ -2179,6 +2186,27 @@ fn to_boolean(
         Some(Value::Null) => Ok(Value::Null),
 
         _ => unreachable!(),
+    }
+}
+
+fn to_boolean_or_null(
+    _: &Runtime,
+    args: ThinVec<Value>,
+) -> Result<Value, String> {
+    match args.into_iter().next() {
+        Some(Value::Bool(b)) => Ok(Value::Bool(b)),
+        Some(Value::String(s)) => {
+            if s.eq_ignore_ascii_case("true") {
+                Ok(Value::Bool(true))
+            } else if s.eq_ignore_ascii_case("false") {
+                Ok(Value::Bool(false))
+            } else {
+                Ok(Value::Null)
+            }
+        }
+        Some(Value::Int(n)) => Ok(Value::Bool(n != 0)),
+        // All other types return Null (Float, List, Map, Node, Edge, Path, Point, Vector)
+        _ => Ok(Value::Null),
     }
 }
 
