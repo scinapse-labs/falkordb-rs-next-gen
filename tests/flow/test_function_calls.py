@@ -1714,92 +1714,92 @@ class testFunctionCallsFlow(FlowTestsBase):
         for query, expected_result in query_to_expected_result.items():
             self.get_res_and_assertEquals(query, expected_result)
     
-    #def test54_Abs(self):
-    #    query_to_expected_result = {
-    #        "RETURN ABS(1)": [[1]],
-    #        "RETURN ABS(-1)": [[1]],
-    #        "RETURN ABS(0)": [[0]],
-    #        "RETURN ABS(NULL)": [[None]]
-    #    }
-    #    for query, expected_result in query_to_expected_result.items():
-    #        self.get_res_and_assertEquals(query, expected_result)
+    def test54_Abs(self):
+        query_to_expected_result = {
+            "RETURN ABS(1)": [[1]],
+            "RETURN ABS(-1)": [[1]],
+            "RETURN ABS(0)": [[0]],
+            "RETURN ABS(NULL)": [[None]]
+        }
+        for query, expected_result in query_to_expected_result.items():
+            self.get_res_and_assertEquals(query, expected_result)
     
-    #def test55_Aggregate(self):
-    #    query_to_expected_result = {
-    #        "UNWIND [1, 1, 1] AS one RETURN SUM(one)": [[3]],
-    #        "UNWIND [1, 1, 1] AS one WITH SUM(one) AS s RETURN s+2": [[5]]
-    #    }
-    #    for query, expected_result in query_to_expected_result.items():
-    #        self.get_res_and_assertEquals(query, expected_result)
+    def test55_Aggregate(self):
+        query_to_expected_result = {
+            "UNWIND [1, 1, 1] AS one RETURN SUM(one)": [[3]],
+            "UNWIND [1, 1, 1] AS one WITH SUM(one) AS s RETURN s+2": [[5]]
+        }
+        for query, expected_result in query_to_expected_result.items():
+            self.get_res_and_assertEquals(query, expected_result)
     
-    #def test56_Ciel(self):
-    #    query_to_expected_result = {
-    #        "RETURN CEIL(0.5)": [[1]],
-    #        "RETURN CEIL(1)": [[1]],
-    #        "RETURN CEIL(0.1)": [[1]],
-    #        "RETURN CEIL(NULL)": [[None]]
-    #    }
-    #    for query, expected_result in query_to_expected_result.items():
-    #        self.get_res_and_assertEquals(query, expected_result)
+    def test56_Ciel(self):
+        query_to_expected_result = {
+            "RETURN CEIL(0.5)": [[1]],
+            "RETURN CEIL(1)": [[1]],
+            "RETURN CEIL(0.1)": [[1]],
+            "RETURN CEIL(NULL)": [[None]]
+        }
+        for query, expected_result in query_to_expected_result.items():
+            self.get_res_and_assertEquals(query, expected_result)
     
-    #def test57_Floor(self):
-    #    query_to_expected_result = {
-    #        "RETURN FLOOR(0.5)": [[0]], 
-    #        "RETURN FLOOR(1)": [[1]], 
-    #        "RETURN FLOOR(0.1)": [[0]], 
-    #        "RETURN FLOOR(NULL)": [[None]] 
-    #    }
-    #    for query, expected_result in query_to_expected_result.items():
-    #        self.get_res_and_assertEquals(query, expected_result)
+    def test57_Floor(self):
+        query_to_expected_result = {
+            "RETURN FLOOR(0.5)": [[0]], 
+            "RETURN FLOOR(1)": [[1]], 
+            "RETURN FLOOR(0.1)": [[0]], 
+            "RETURN FLOOR(NULL)": [[None]] 
+        }
+        for query, expected_result in query_to_expected_result.items():
+            self.get_res_and_assertEquals(query, expected_result)
     
-    #def test58_Round(self):
-    #    query_to_expected_result = {
-    #        "RETURN ROUND(0)": [[0]], 
-    #        "RETURN ROUND(0.49)": [[0]], 
-    #        "RETURN ROUND(0.5)": [[1]], 
-    #        "RETURN ROUND(1)": [[1]], 
-    #        "RETURN ROUND(NULL)": [[None]]
-    #    }
-    #    for query, expected_result in query_to_expected_result.items():
-    #        self.get_res_and_assertEquals(query, expected_result)
+    def test58_Round(self):
+        query_to_expected_result = {
+            "RETURN ROUND(0)": [[0]], 
+            "RETURN ROUND(0.49)": [[0]], 
+            "RETURN ROUND(0.5)": [[1]], 
+            "RETURN ROUND(1)": [[1]], 
+            "RETURN ROUND(NULL)": [[None]]
+        }
+        for query, expected_result in query_to_expected_result.items():
+            self.get_res_and_assertEquals(query, expected_result)
 
-    #def test59_Sign(self):
-    #    query_to_expected_result = {
-    #        "RETURN SIGN(0)": [[0]], 
-    #        "RETURN SIGN(-1)": [[-1]], 
-    #        "RETURN SIGN(1)": [[1]], 
-    #        "RETURN SIGN(NULL)": [[None]]
-    #    }
-    #    for query, expected_result in query_to_expected_result.items():
-    #        self.get_res_and_assertEquals(query, expected_result)
+    def test59_Sign(self):
+        query_to_expected_result = {
+            "RETURN SIGN(0)": [[0]], 
+            "RETURN SIGN(-1)": [[-1]], 
+            "RETURN SIGN(1)": [[1]], 
+            "RETURN SIGN(NULL)": [[None]]
+        }
+        for query, expected_result in query_to_expected_result.items():
+            self.get_res_and_assertEquals(query, expected_result)
 
-    #def test60_Pow(self):
-    #    query_to_expected_result = {
-    #        "RETURN pow(1,0)": [[1]], 
-    #        "RETURN 1^0": [[1]], 
-    #        "RETURN pow(0,1)": [[0]], 
-    #        "RETURN 0^1": [[0]], 
-    #        "RETURN pow(0,0)": [[1]], 
-    #        "RETURN 0^0": [[1]], 
-    #        "RETURN pow(2,3)": [[8]], 
-    #        "RETURN 2^3": [[8]], 
-    #        "RETURN pow(2,-3)": [[0.125]], 
-    #        "RETURN 2^-3": [[0.125]], 
-    #        "RETURN 2^(-3)": [[0.125]], 
-    #        "RETURN pow(0.5,2)": [[0.25]], 
-    #        "RETURN 0.5^2": [[0.25]], 
-    #        "RETURN pow(-1,2)": [[1]], 
-    #        "RETURN -1^2": [[1]], 
-    #        "RETURN (-1)^2": [[1]], 
-    #        "RETURN pow(NULL,1)": [[None]], 
-    #        "RETURN NULL^1": [[None]], 
-    #        "RETURN pow(1,NULL)": [[None]], 
-    #        "RETURN 1^NULL": [[None]], 
-    #        "RETURN pow(NULL,NULL)": [[None]], 
-    #        "RETURN NULL^NULL": [[None]]
-    #    }
-    #    for query, expected_result in query_to_expected_result.items():
-    #        self.get_res_and_assertEquals(query, expected_result)
+    def test60_Pow(self):
+        query_to_expected_result = {
+            "RETURN pow(1,0)": [[1]], 
+            "RETURN 1^0": [[1]], 
+            "RETURN pow(0,1)": [[0]], 
+            "RETURN 0^1": [[0]], 
+            "RETURN pow(0,0)": [[1]], 
+            "RETURN 0^0": [[1]], 
+            "RETURN pow(2,3)": [[8]], 
+            "RETURN 2^3": [[8]], 
+            "RETURN pow(2,-3)": [[0.125]], 
+            "RETURN 2^-3": [[0.125]], 
+            "RETURN 2^(-3)": [[0.125]], 
+            "RETURN pow(0.5,2)": [[0.25]], 
+            "RETURN 0.5^2": [[0.25]], 
+            "RETURN pow(-1,2)": [[1]], 
+            "RETURN -1^2": [[1]], 
+            "RETURN (-1)^2": [[1]], 
+            "RETURN pow(NULL,1)": [[None]], 
+            "RETURN NULL^1": [[None]], 
+            "RETURN pow(1,NULL)": [[None]], 
+            "RETURN 1^NULL": [[None]], 
+            "RETURN pow(NULL,NULL)": [[None]], 
+            "RETURN NULL^NULL": [[None]]
+        }
+        for query, expected_result in query_to_expected_result.items():
+            self.get_res_and_assertEquals(query, expected_result)
     
     #def test61_Reverse(self):
     #    query_to_expected_result = {
