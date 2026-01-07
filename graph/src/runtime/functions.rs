@@ -761,6 +761,18 @@ pub fn init_functions() -> Result<(), Functions> {
         FnType::Function,
     );
     funcs.add(
+        "isEmpty",
+        is_empty,
+        false,
+        vec![Type::Union(vec![
+            Type::List(Box::new(Type::Any)),
+            Type::Map,
+            Type::String,
+            Type::Null,
+        ])],
+        FnType::Function,
+    );
+    funcs.add(
         "toBoolean",
         to_boolean,
         false,
@@ -2426,6 +2438,20 @@ fn haversin(
         }
         Some(Value::Float(f)) => Ok(Value::Float((1.0 - f.cos()) / 2.0)),
         Some(Value::Null) => Ok(Value::Null),
+
+        _ => unreachable!(),
+    }
+}
+
+fn is_empty(
+    _: &Runtime,
+    args: ThinVec<Value>,
+) -> Result<Value, String> {
+    match args.into_iter().next() {
+        Some(Value::Null) => Ok(Value::Null),
+        Some(Value::String(s)) => Ok(Value::Bool(s.is_empty())),
+        Some(Value::List(v)) => Ok(Value::Bool(v.is_empty())),
+        Some(Value::Map(m)) => Ok(Value::Bool(m.is_empty())),
 
         _ => unreachable!(),
     }

@@ -1683,36 +1683,36 @@ class testFunctionCallsFlow(FlowTestsBase):
         for query in queries:
             self.expect_type_error(query)
 
-    #def test52_Expression(self):
-    #    query_to_expected_result = {
-    #        "RETURN 'muchacho'": [['muchacho']],
-    #        "RETURN 1": [[1]],
-    #        "RETURN 1+2*3": [[7]],
-    #        "RETURN 1 + 1 + 1 + 1 + 1 + 1": [[6]],
-    #        "RETURN ABS(-5 + 2 * 1)": [[3]],
-    #        "RETURN 'a' + 'b'": [['ab']],
-    #        "RETURN 1 + 2 + 'a' + 2 + 1": [['3a21']],
-    #        "RETURN 2 * 2 + 'a' + 3 * 3": [['4a9']],
-    #        "RETURN 9 % 5": [[4]],
-    #        "RETURN 9 % 5 % 3": [[1]]
-    #    }
-    #    for query, expected_result in query_to_expected_result.items():
-    #        self.get_res_and_assertEquals(query, expected_result)
+    def test52_Expression(self):
+        query_to_expected_result = {
+            "RETURN 'muchacho'": [['muchacho']],
+            "RETURN 1": [[1]],
+            "RETURN 1+2*3": [[7]],
+            "RETURN 1 + 1 + 1 + 1 + 1 + 1": [[6]],
+            "RETURN ABS(-5 + 2 * 1)": [[3]],
+            "RETURN 'a' + 'b'": [['ab']],
+            "RETURN 1 + 2 + 'a' + 2 + 1": [['3a21']],
+            "RETURN 2 * 2 + 'a' + 3 * 3": [['4a9']],
+            "RETURN 9 % 5": [[4]],
+            "RETURN 9 % 5 % 3": [[1]]
+        }
+        for query, expected_result in query_to_expected_result.items():
+            self.get_res_and_assertEquals(query, expected_result)
         
-    #def test53_NullArithmetic(self):
-    #    query_to_expected_result = {
-    #        "RETURN null + 1": [[None]],
-    #        "RETURN 1 + null": [[None]],
-    #        "RETURN null - 1": [[None]],
-    #        "RETURN 1 - null": [[None]],
-    #        "RETURN 1 * null": [[None]],
-    #        "RETURN null / 1": [[None]],
-    #        "RETURN 1 / null": [[None]],
-    #        "RETURN 5 % null": [[None]],
-    #        "RETURN null % 5": [[None]]
-    #    }
-    #    for query, expected_result in query_to_expected_result.items():
-    #        self.get_res_and_assertEquals(query, expected_result)
+    def test53_NullArithmetic(self):
+        query_to_expected_result = {
+            "RETURN null + 1": [[None]],
+            "RETURN 1 + null": [[None]],
+            "RETURN null - 1": [[None]],
+            "RETURN 1 - null": [[None]],
+            "RETURN 1 * null": [[None]],
+            "RETURN null / 1": [[None]],
+            "RETURN 1 / null": [[None]],
+            "RETURN 5 % null": [[None]],
+            "RETURN null % 5": [[None]]
+        }
+        for query, expected_result in query_to_expected_result.items():
+            self.get_res_and_assertEquals(query, expected_result)
     
     #def test54_Abs(self):
     #    query_to_expected_result = {
