@@ -544,6 +544,20 @@ pub fn init_functions() -> Result<(), Functions> {
         FnType::Function,
     );
     funcs.add(
+        "rtrim",
+        string_rtrim,
+        false,
+        vec![Type::Union(vec![Type::String, Type::Null])],
+        FnType::Function,
+    );
+    funcs.add(
+        "trim",
+        string_trim,
+        false,
+        vec![Type::Union(vec![Type::String, Type::Null])],
+        FnType::Function,
+    );
+    funcs.add(
         "right",
         string_right,
         false,
@@ -1897,6 +1911,32 @@ fn string_ltrim(
         Some(Value::String(s)) => Ok(Value::String(Arc::new(String::from(
             s.trim_start_matches(' '),
         )))),
+        Some(Value::Null) => Ok(Value::Null),
+
+        _ => unreachable!(),
+    }
+}
+
+fn string_rtrim(
+    _: &Runtime,
+    args: ThinVec<Value>,
+) -> Result<Value, String> {
+    match args.into_iter().next() {
+        Some(Value::String(s)) => Ok(Value::String(Arc::new(String::from(
+            s.trim_end_matches(' '),
+        )))),
+        Some(Value::Null) => Ok(Value::Null),
+
+        _ => unreachable!(),
+    }
+}
+
+fn string_trim(
+    _: &Runtime,
+    args: ThinVec<Value>,
+) -> Result<Value, String> {
+    match args.into_iter().next() {
+        Some(Value::String(s)) => Ok(Value::String(Arc::new(String::from(s.trim_matches(' '))))),
         Some(Value::Null) => Ok(Value::Null),
 
         _ => unreachable!(),

@@ -1801,38 +1801,38 @@ class testFunctionCallsFlow(FlowTestsBase):
         for query, expected_result in query_to_expected_result.items():
             self.get_res_and_assertEquals(query, expected_result)
     
-    #def test61_Reverse(self):
-    #    query_to_expected_result = {
-    #        "RETURN REVERSE('muchacho')": [["ohcahcum"]], 
-    #        "RETURN REVERSE('')": [[""]], 
-    #        "RETURN REVERSE(NULL)": [[None]],
-    #        # test unicode charecters
-    #        "RETURN reverse('丁丂七丄丅丆万丈三上')": [["上三丈万丆丅丄七丂丁"]]
-    #    }
-    #    for query, expected_result in query_to_expected_result.items():
-    #        self.get_res_and_assertEquals(query, expected_result)
+    def test61_Reverse(self):
+        query_to_expected_result = {
+            "RETURN REVERSE('muchacho')": [["ohcahcum"]], 
+            "RETURN REVERSE('')": [[""]], 
+            "RETURN REVERSE(NULL)": [[None]],
+            # test unicode charecters
+            "RETURN reverse('丁丂七丄丅丆万丈三上')": [["上三丈万丆丅丄七丂丁"]]
+        }
+        for query, expected_result in query_to_expected_result.items():
+            self.get_res_and_assertEquals(query, expected_result)
     
-    #def test62_LTrim(self):
-    #    query_to_expected_result = {
-    #        "RETURN lTrim('   muchacho')": [["muchacho"]], 
-    #        "RETURN lTrim('muchacho   ')": [["muchacho   "]], 
-    #        "RETURN lTrim('   much   acho   ')": [["much   acho   "]], 
-    #        "RETURN lTrim('muchacho')": [["muchacho"]], 
-    #        "RETURN lTrim(NULL)": [[None]]
-    #    }
-    #    for query, expected_result in query_to_expected_result.items():
-    #        self.get_res_and_assertEquals(query, expected_result)
+    def test62_LTrim(self):
+        query_to_expected_result = {
+            "RETURN lTrim('   muchacho')": [["muchacho"]], 
+            "RETURN lTrim('muchacho   ')": [["muchacho   "]], 
+            "RETURN lTrim('   much   acho   ')": [["much   acho   "]], 
+            "RETURN lTrim('muchacho')": [["muchacho"]], 
+            "RETURN lTrim(NULL)": [[None]]
+        }
+        for query, expected_result in query_to_expected_result.items():
+            self.get_res_and_assertEquals(query, expected_result)
     
-    #def test63_RTrim(self):
-    #    query_to_expected_result = {
-    #        "RETURN rTrim('   muchacho')": [["   muchacho"]], 
-    #        "RETURN rTrim('muchacho   ')": [["muchacho"]], 
-    #        "RETURN rTrim('   much   acho   ')": [["   much   acho"]], 
-    #        "RETURN rTrim('muchacho')": [["muchacho"]], 
-    #        "RETURN rTrim(NULL)": [[None]]
-    #    }
-    #    for query, expected_result in query_to_expected_result.items():
-    #        self.get_res_and_assertEquals(query, expected_result)
+    def test63_RTrim(self):
+        query_to_expected_result = {
+            "RETURN rTrim('   muchacho')": [["   muchacho"]], 
+            "RETURN rTrim('muchacho   ')": [["muchacho"]], 
+            "RETURN rTrim('   much   acho   ')": [["   much   acho"]], 
+            "RETURN rTrim('muchacho')": [["muchacho"]], 
+            "RETURN rTrim(NULL)": [[None]]
+        }
+        for query, expected_result in query_to_expected_result.items():
+            self.get_res_and_assertEquals(query, expected_result)
     
     #def test64_Trim(self):
     #    query_to_expected_result = {
