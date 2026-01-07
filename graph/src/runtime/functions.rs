@@ -680,6 +680,87 @@ pub fn init_functions() -> Result<(), Functions> {
         FnType::Function,
     );
     funcs.add(
+        "sin",
+        sin,
+        false,
+        vec![Type::Union(vec![Type::Int, Type::Float, Type::Null])],
+        FnType::Function,
+    );
+    funcs.add(
+        "cos",
+        cos,
+        false,
+        vec![Type::Union(vec![Type::Int, Type::Float, Type::Null])],
+        FnType::Function,
+    );
+    funcs.add(
+        "tan",
+        tan,
+        false,
+        vec![Type::Union(vec![Type::Int, Type::Float, Type::Null])],
+        FnType::Function,
+    );
+    funcs.add(
+        "cot",
+        cot,
+        false,
+        vec![Type::Union(vec![Type::Int, Type::Float, Type::Null])],
+        FnType::Function,
+    );
+    funcs.add(
+        "asin",
+        asin,
+        false,
+        vec![Type::Union(vec![Type::Int, Type::Float, Type::Null])],
+        FnType::Function,
+    );
+    funcs.add(
+        "acos",
+        acos,
+        false,
+        vec![Type::Union(vec![Type::Int, Type::Float, Type::Null])],
+        FnType::Function,
+    );
+    funcs.add(
+        "atan",
+        atan,
+        false,
+        vec![Type::Union(vec![Type::Int, Type::Float, Type::Null])],
+        FnType::Function,
+    );
+    funcs.add(
+        "atan2",
+        atan2,
+        false,
+        vec![
+            Type::Union(vec![Type::Int, Type::Float, Type::Null]),
+            Type::Union(vec![Type::Int, Type::Float, Type::Null]),
+        ],
+        FnType::Function,
+    );
+    funcs.add(
+        "degrees",
+        degrees,
+        false,
+        vec![Type::Union(vec![Type::Int, Type::Float, Type::Null])],
+        FnType::Function,
+    );
+    funcs.add(
+        "radians",
+        radians,
+        false,
+        vec![Type::Union(vec![Type::Int, Type::Float, Type::Null])],
+        FnType::Function,
+    );
+    funcs.add("pi", pi, false, vec![], FnType::Function);
+    funcs.add(
+        "haversin",
+        haversin,
+        false,
+        vec![Type::Union(vec![Type::Int, Type::Float, Type::Null])],
+        FnType::Function,
+    );
+    funcs.add(
         "toBoolean",
         to_boolean,
         false,
@@ -2184,6 +2265,166 @@ fn keys(
                 .map(Value::String)
                 .collect::<ThinVec<_>>(),
         )),
+        Some(Value::Null) => Ok(Value::Null),
+
+        _ => unreachable!(),
+    }
+}
+
+fn sin(
+    _: &Runtime,
+    args: ThinVec<Value>,
+) -> Result<Value, String> {
+    match args.into_iter().next() {
+        Some(Value::Int(n)) => Ok(Value::Float((n as f64).sin())),
+        Some(Value::Float(f)) => Ok(Value::Float(f.sin())),
+        Some(Value::Null) => Ok(Value::Null),
+
+        _ => unreachable!(),
+    }
+}
+
+fn cos(
+    _: &Runtime,
+    args: ThinVec<Value>,
+) -> Result<Value, String> {
+    match args.into_iter().next() {
+        Some(Value::Int(n)) => Ok(Value::Float((n as f64).cos())),
+        Some(Value::Float(f)) => Ok(Value::Float(f.cos())),
+        Some(Value::Null) => Ok(Value::Null),
+
+        _ => unreachable!(),
+    }
+}
+
+fn tan(
+    _: &Runtime,
+    args: ThinVec<Value>,
+) -> Result<Value, String> {
+    match args.into_iter().next() {
+        Some(Value::Int(n)) => Ok(Value::Float((n as f64).tan())),
+        Some(Value::Float(f)) => Ok(Value::Float(f.tan())),
+        Some(Value::Null) => Ok(Value::Null),
+
+        _ => unreachable!(),
+    }
+}
+
+fn cot(
+    _: &Runtime,
+    args: ThinVec<Value>,
+) -> Result<Value, String> {
+    match args.into_iter().next() {
+        Some(Value::Int(n)) => {
+            let val = n as f64;
+            Ok(Value::Float(val.cos() / val.sin()))
+        }
+        Some(Value::Float(f)) => Ok(Value::Float(f.cos() / f.sin())),
+        Some(Value::Null) => Ok(Value::Null),
+
+        _ => unreachable!(),
+    }
+}
+
+fn asin(
+    _: &Runtime,
+    args: ThinVec<Value>,
+) -> Result<Value, String> {
+    match args.into_iter().next() {
+        Some(Value::Int(n)) => Ok(Value::Float((n as f64).asin())),
+        Some(Value::Float(f)) => Ok(Value::Float(f.asin())),
+        Some(Value::Null) => Ok(Value::Null),
+
+        _ => unreachable!(),
+    }
+}
+
+fn acos(
+    _: &Runtime,
+    args: ThinVec<Value>,
+) -> Result<Value, String> {
+    match args.into_iter().next() {
+        Some(Value::Int(n)) => Ok(Value::Float((n as f64).acos())),
+        Some(Value::Float(f)) => Ok(Value::Float(f.acos())),
+        Some(Value::Null) => Ok(Value::Null),
+
+        _ => unreachable!(),
+    }
+}
+
+fn atan(
+    _: &Runtime,
+    args: ThinVec<Value>,
+) -> Result<Value, String> {
+    match args.into_iter().next() {
+        Some(Value::Int(n)) => Ok(Value::Float((n as f64).atan())),
+        Some(Value::Float(f)) => Ok(Value::Float(f.atan())),
+        Some(Value::Null) => Ok(Value::Null),
+
+        _ => unreachable!(),
+    }
+}
+
+fn atan2(
+    _: &Runtime,
+    args: ThinVec<Value>,
+) -> Result<Value, String> {
+    let mut iter = args.into_iter();
+    match (iter.next(), iter.next()) {
+        (Some(Value::Int(y)), Some(Value::Int(x))) => Ok(Value::Float((y as f64).atan2(x as f64))),
+        (Some(Value::Float(y)), Some(Value::Float(x))) => Ok(Value::Float(y.atan2(x))),
+        (Some(Value::Int(y)), Some(Value::Float(x))) => Ok(Value::Float((y as f64).atan2(x))),
+        (Some(Value::Float(y)), Some(Value::Int(x))) => Ok(Value::Float(y.atan2(x as f64))),
+        (Some(Value::Null), Some(_)) | (Some(_), Some(Value::Null)) => Ok(Value::Null),
+
+        _ => unreachable!(),
+    }
+}
+
+fn degrees(
+    _: &Runtime,
+    args: ThinVec<Value>,
+) -> Result<Value, String> {
+    match args.into_iter().next() {
+        Some(Value::Int(n)) => Ok(Value::Float((n as f64).to_degrees())),
+        Some(Value::Float(f)) => Ok(Value::Float(f.to_degrees())),
+        Some(Value::Null) => Ok(Value::Null),
+
+        _ => unreachable!(),
+    }
+}
+
+fn radians(
+    _: &Runtime,
+    args: ThinVec<Value>,
+) -> Result<Value, String> {
+    match args.into_iter().next() {
+        Some(Value::Int(n)) => Ok(Value::Float((n as f64).to_radians())),
+        Some(Value::Float(f)) => Ok(Value::Float(f.to_radians())),
+        Some(Value::Null) => Ok(Value::Null),
+
+        _ => unreachable!(),
+    }
+}
+
+fn pi(
+    _: &Runtime,
+    args: ThinVec<Value>,
+) -> Result<Value, String> {
+    debug_assert!(args.is_empty());
+    Ok(Value::Float(std::f64::consts::PI))
+}
+
+fn haversin(
+    _: &Runtime,
+    args: ThinVec<Value>,
+) -> Result<Value, String> {
+    match args.into_iter().next() {
+        Some(Value::Int(n)) => {
+            let val = n as f64;
+            Ok(Value::Float((1.0 - val.cos()) / 2.0))
+        }
+        Some(Value::Float(f)) => Ok(Value::Float((1.0 - f.cos()) / 2.0)),
         Some(Value::Null) => Ok(Value::Null),
 
         _ => unreachable!(),
