@@ -349,7 +349,7 @@ pub fn init_functions() -> Result<(), Functions> {
         false,
         vec![
             Type::Union(vec![Type::Node, Type::Null]),
-            Type::Union(vec![Type::List(Box::new(Type::String)), Type::Null]),
+            Type::Union(vec![Type::List(Box::new(Type::Any)), Type::Null]),
         ],
         FnType::Function,
     );
@@ -440,9 +440,9 @@ pub fn init_functions() -> Result<(), Functions> {
     );
     funcs.add(
         "tostringornull",
-        value_to_string, 
+        value_to_string,
         false,
-        vec![Type::Any], 
+        vec![Type::Any],
         FnType::Function,
     );
 
@@ -482,7 +482,10 @@ pub fn init_functions() -> Result<(), Functions> {
         "tail",
         tail,
         false,
-        vec![Type::Union(vec![Type::List(Box::new(Type::Any))])],
+        vec![Type::Union(vec![
+            Type::List(Box::new(Type::Any)),
+            Type::Null,
+        ])],
         FnType::Function,
     );
     funcs.add(
