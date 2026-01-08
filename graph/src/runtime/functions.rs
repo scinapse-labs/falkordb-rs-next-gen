@@ -349,7 +349,7 @@ pub fn init_functions() -> Result<(), Functions> {
         false,
         vec![
             Type::Union(vec![Type::Node, Type::Null]),
-            Type::Union(vec![Type::List(Box::new(Type::Any))]),
+            Type::List(Box::new(Type::String)),
         ],
         FnType::Function,
     );
@@ -428,8 +428,6 @@ pub fn init_functions() -> Result<(), Functions> {
         false,
         vec![Type::Union(vec![
             Type::Datetime,
-            Type::Date,
-            Type::Time,
             Type::Duration,
             Type::String,
             Type::Bool,
