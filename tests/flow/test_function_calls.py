@@ -2246,19 +2246,19 @@ class testFunctionCallsFlow(FlowTestsBase):
         for query, error in queries_with_errors.items():
             self.expect_error(query, error)
 
-    #def test87_typeof(self):
-    #    query_to_expected_result = {
-    #        "RETURN typeOf(NULL)" : [['Null']],
-    #        "RETURN typeOf([1,2])" : [['List']],
-    #        "RETURN typeOf({a: 1})" : [['Map']],
-    #        "RETURN typeOf(point({latitude:1,longitude:2}))" : [['Point']],
-    #        "RETURN typeOf(1), typeOf('1'), typeOf(true)" : [['Integer', 'String', 'Boolean']],
-    #        "MATCH path=({val: 0})-[e:works_with]->({val: 1}) RETURN typeOf(path)" : [['Path']],
-    #        "CREATE (a)-[b:B]->(c) RETURN typeOf(a), typeOf(b), typeOf(c)" : [['Node', 'Edge', 'Node']],
-    #        "CREATE (a:A {x:1, y:'1', z:true}) RETURN typeOf(a.x), typeOf(a.y), typeOf(a.z)" : [['Integer', 'String', 'Boolean']],
-    #    }
-    #    for query, expected_result in query_to_expected_result.items():
-    #        self.get_res_and_assertEquals(query, expected_result)
+    def test87_typeof(self):
+        query_to_expected_result = {
+            "RETURN typeOf(NULL)" : [['Null']],
+            "RETURN typeOf([1,2])" : [['List']],
+            "RETURN typeOf({a: 1})" : [['Map']],
+            "RETURN typeOf(point({latitude:1,longitude:2}))" : [['Point']],
+            "RETURN typeOf(1), typeOf('1'), typeOf(true)" : [['Integer', 'String', 'Boolean']],
+            "MATCH path=({val: 0})-[e:works_with]->({val: 1}) RETURN typeOf(path)" : [['Path']],
+            "CREATE (a)-[b:B]->(c) RETURN typeOf(a), typeOf(b), typeOf(c)" : [['Node', 'Edge', 'Node']],
+            "CREATE (a:A {x:1, y:'1', z:true}) RETURN typeOf(a.x), typeOf(a.y), typeOf(a.z)" : [['Integer', 'String', 'Boolean']],
+        }
+        for query, expected_result in query_to_expected_result.items():
+            self.get_res_and_assertEquals(query, expected_result)
 
     #def test88_in_out_degree(self):
     #    # clear graph

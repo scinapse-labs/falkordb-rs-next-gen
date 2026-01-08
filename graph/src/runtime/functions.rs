@@ -343,6 +343,7 @@ pub fn init_functions() -> Result<(), Functions> {
         vec![Type::Union(vec![Type::Node, Type::Null])],
         FnType::Function,
     );
+    funcs.add("typeOf", type_of, false, vec![Type::Any], FnType::Function);
     funcs.add(
         "hasLabels",
         has_labels,
@@ -1149,6 +1150,40 @@ fn labels(
 
         _ => unreachable!(),
     }
+}
+
+fn type_of(
+    _runtime: &Runtime,
+    args: ThinVec<Value>,
+) -> Result<Value, String> {
+    let type_name = match args.into_iter().next() {
+        Some(Value::Null) => "Null",
+        Some(Value::Bool(_)) => "Boolean",
+        Some(Value::Int(_)) => "Integer",
+        Some(Value::Float(_)) => "Float",
+        Some(Value::String(_)) => "String",
+        Some(Value::List(_)) => "List",
+        Some(Value::Arc(v)) => {
+            // Handle Arc-wrapped values
+            match &*v {
+                Value::List(_) => "List",
+                Value::Map(_) => "Map",
+                _ => "Unknown",
+            }
+        }
+        Some(Value::Map(_)) => "Map",
+        Some(Value::Node(_)) => "Node",
+        Some(Value::Relationship(_)) => "Edge",
+        Some(Value::Path(_)) => "Path",
+        Some(Value::VecF32(_)) => "Vectorf32",
+        Some(Value::Point(_)) => "Point",
+        Some(Value::Datetime(_)) => "Datetime",
+        Some(Value::Date(_)) => "Date",
+        Some(Value::Time(_)) => "Time",
+        Some(Value::Duration(_)) => "Duration",
+        None => unreachable!(),
+    };
+    Ok(Value::String(Arc::new(String::from(type_name))))
 }
 
 fn has_labels(
