@@ -641,6 +641,7 @@ pub fn init_functions() -> Result<(), Functions> {
         vec![Type::Union(vec![Type::Int, Type::Float, Type::Null])],
         FnType::Function,
     );
+    funcs.add("randomUUID", random_uuid, false, vec![], FnType::Function);
     funcs.add(
         "pow",
         pow,
@@ -2165,6 +2166,37 @@ fn log10(
 
         _ => unreachable!(),
     }
+}
+
+fn random_uuid(
+    _: &Runtime,
+    _args: ThinVec<Value>,
+) -> Result<Value, String> {
+    use rand::Rng;
+
+    // Generate 16 random bytes (128 bits)
+    let mut rng = rand::rng();
+    let mut bytes = [0u8; 16];
+    rng.fill(&mut bytes);
+
+    // Set version to 4 (random UUID) - set bits 12-15 of byte 6 to 0100
+    bytes[6] = (bytes[6] & 0x0F) | 0x40;
+
+    // Set variant to RFC 4122 - set bits 6-7 of byte 8 to 10
+    bytes[8] = (bytes[8] & 0x3F) | 0x80;
+
+    // Format as UUID string:  xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx
+    let uuid = format!(
+        "{:08x}-{:04x}-{:04x}-{:04x}-{:04x}{:08x}",
+        u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]),
+        u16::from_be_bytes([bytes[4], bytes[5]]),
+        u16::from_be_bytes([bytes[6], bytes[7]]),
+        u16::from_be_bytes([bytes[8], bytes[9]]),
+        u16::from_be_bytes([bytes[10], bytes[11]]),
+        u32::from_be_bytes([bytes[12], bytes[13], bytes[14], bytes[15]]),
+    );
+
+    Ok(Value::String(Arc::new(uuid)))
 }
 
 // called from fn pow and expr pow (^)
