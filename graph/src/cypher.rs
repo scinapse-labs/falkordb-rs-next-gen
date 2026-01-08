@@ -533,12 +533,11 @@ impl<'a> Lexer<'a> {
                         is_float = true;
                         is_e = true;
                         len += 1;
-                        if pos + len < str.len()
-                            && (&str[pos + len..=pos + len] == "-"
-                                || &str[pos + len..=pos + len] == "+")
+                        if let Some(next_char) = str.get(pos + len..).and_then(|s| s.chars().next())
+                            && (next_char == '-' || next_char == '+')
                         {
                             chars.next();
-                            len += 1;
+                            len += next_char.len_utf8();
                         }
                         break;
                     }
@@ -575,12 +574,11 @@ impl<'a> Lexer<'a> {
                         );
                     }
                     len += 1;
-                    if pos + len < str.len()
-                        && (&str[pos + len..=pos + len] == "-"
-                            || &str[pos + len..=pos + len] == "+")
+                    if let Some(next_char) = str.get(pos + len..).and_then(|s| s.chars().next())
+                        && (next_char == '-' || next_char == '+')
                     {
                         chars.next();
-                        len += 1;
+                        len += next_char.len_utf8();
                     }
                     for c in chars.by_ref() {
                         if c.is_digit(radix) {
