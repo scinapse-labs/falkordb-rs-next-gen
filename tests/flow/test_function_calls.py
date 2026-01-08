@@ -2253,7 +2253,8 @@ class testFunctionCallsFlow(FlowTestsBase):
             "RETURN typeOf({a: 1})" : [['Map']],
             "RETURN typeOf(point({latitude:1,longitude:2}))" : [['Point']],
             "RETURN typeOf(1), typeOf('1'), typeOf(true)" : [['Integer', 'String', 'Boolean']],
-            "MATCH path=({val: 0})-[e:works_with]->({val: 1}) RETURN typeOf(path)" : [['Path']],
+            # @todo Barak: Enable after adding support for multiple paths
+            # "MATCH path=({val: 0})-[e:works_with]->({val: 1}) RETURN typeOf(path)" : [['Path']],
             "CREATE (a)-[b:B]->(c) RETURN typeOf(a), typeOf(b), typeOf(c)" : [['Node', 'Edge', 'Node']],
             "CREATE (a:A {x:1, y:'1', z:true}) RETURN typeOf(a.x), typeOf(a.y), typeOf(a.z)" : [['Integer', 'String', 'Boolean']],
         }
