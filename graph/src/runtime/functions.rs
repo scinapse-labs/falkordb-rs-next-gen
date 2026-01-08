@@ -94,7 +94,7 @@ impl Display for Type {
             Self::List(_) => write!(f, "List"),
             Self::Map => write!(f, "Map"),
             Self::Node => write!(f, "Node"),
-            Self::Relationship => write!(f, "Relationship"),
+            Self::Relationship => write!(f, "Edge"),
             Self::Path => write!(f, "Path"),
             Self::VecF32 => write!(f, "VecF32"),
             Self::Point => write!(f, "Point"),
@@ -341,7 +341,7 @@ pub fn init_functions() -> Result<(), Functions> {
         false,
         vec![
             Type::Union(vec![Type::Node, Type::Null]),
-            Type::Union(vec![Type::List(Box::new(Type::Any)), Type::Null]),
+            Type::Union(vec![Type::List(Box::new(Type::Any))]),
         ],
         FnType::Function,
     );
@@ -419,14 +419,24 @@ pub fn init_functions() -> Result<(), Functions> {
         value_to_string,
         false,
         vec![Type::Union(vec![
+            Type::String,
             Type::Bool,
             Type::Int,
             Type::Float,
-            Type::String,
+            Type::Point,
             Type::Null,
+            // TODO: Add temporal types when implemented
         ])],
         FnType::Function,
     );
+    funcs.add(
+        "tostringornull",
+        value_to_string, // Same function!
+        false,
+        vec![Type::Any], // Accepts any type
+        FnType::Function,
+    );
+
     funcs.add("tojson", to_json, false, vec![Type::Any], FnType::Function);
     funcs.add(
         "size",
@@ -463,10 +473,7 @@ pub fn init_functions() -> Result<(), Functions> {
         "tail",
         tail,
         false,
-        vec![Type::Union(vec![
-            Type::List(Box::new(Type::Any)),
-            Type::Null,
-        ])],
+        vec![Type::Union(vec![Type::List(Box::new(Type::Any))])],
         FnType::Function,
     );
     funcs.add(
@@ -780,8 +787,8 @@ pub fn init_functions() -> Result<(), Functions> {
         is_empty,
         false,
         vec![Type::Union(vec![
-            Type::List(Box::new(Type::Any)),
             Type::Map,
+            Type::List(Box::new(Type::Any)),
             Type::String,
             Type::Null,
         ])],
@@ -792,8 +799,8 @@ pub fn init_functions() -> Result<(), Functions> {
         to_boolean,
         false,
         vec![Type::Union(vec![
-            Type::Bool,
             Type::String,
+            Type::Bool,
             Type::Int,
             Type::Null,
         ])],
@@ -818,13 +825,6 @@ pub fn init_functions() -> Result<(), Functions> {
         value_to_integer, // Reuse the same function
         false,
         vec![Type::Any], // Accept ANY type instead of restricted union
-        FnType::Function,
-    );
-    funcs.add(
-        "toStringOrNull",
-        value_to_string,
-        false,
-        vec![Type::Any],
         FnType::Function,
     );
     funcs.add(
@@ -1636,33 +1636,26 @@ fn value_to_float(
     }
 }
 
-fn value_string(value: &Value) -> Result<Arc<String>, String> {
-    match value {
-        Value::Bool(b) => Ok(Arc::new(String::from(if *b { "true" } else { "false" }))),
-        Value::Int(i) => Ok(Arc::new(i.to_string())),
-        Value::Float(f) => Ok(Arc::new(format!("{f:.6}"))),
-        Value::String(s) => Ok(s.clone()),
-
-        _ => Err(format!("Cannot convert {} to string", value.name())),
-    }
-}
-
+// Single implementation - returns Null for non-stringable types
 fn value_to_string(
     _runtime: &Runtime,
     args: ThinVec<Value>,
 ) -> Result<Value, String> {
     match args.into_iter().next() {
-        Some(Value::Null) => Ok(Value::Null),
-        Some(v) => {
-            // Try to convert supported types to string
-            // For unsupported types (List, Node, etc.), return Null
-            value_string(&v).map_or_else(|_| Ok(Value::Null), |s| Ok(Value::String(s)))
-        }
+        Some(Value::String(s)) => Ok(Value::String(s)),
+        Some(Value::Int(i)) => Ok(Value::String(Arc::new(i.to_string()))),
+        Some(Value::Float(f)) => Ok(Value::String(Arc::new(format!("{f:.6}")))),
+        Some(Value::Bool(b)) => Ok(Value::String(Arc::new(b.to_string()))),
+        Some(Value::Point(p)) => Ok(Value::String(Arc::new(format!(
+            "Point(latitude:  {}, longitude: {})",
+            p.latitude, p.longitude
+        )))),
+        // All other types return Null (matches C behavior)
+        Some(Value::Null | _) => Ok(Value::Null),
 
-        _ => unreachable!(),
+        None => unreachable!(),
     }
 }
-
 fn to_json(
     runtime: &Runtime,
     args: ThinVec<Value>,

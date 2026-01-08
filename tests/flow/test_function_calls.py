@@ -2130,121 +2130,121 @@ class testFunctionCallsFlow(FlowTestsBase):
             assert(False)
         self.env.assertEquals(actual_result[23], '-')
 
-    #def test85_division_inputs(self):
-    #    # Validate integer dividend division by 0
-    #    # redis-cli output example:
-    #    # 127.0.0.1:6379> self.GRAPH.QUERY g "RETURN 3 / 0"
-    #    # (error) Division by zero
-    #    query = "RETURN 3 / 0"
-    #    try:
-    #        actual_result = self.graph.query(query)
-    #    except redis.ResponseError as e:
-    #        self.env.assertContains("Division by zero", str(e))
+    def test85_division_inputs(self):
+        # Validate integer dividend division by 0
+        # redis-cli output example:
+        # 127.0.0.1:6379> self.GRAPH.QUERY g "RETURN 3 / 0"
+        # (error) Division by zero
+        query = "RETURN 3 / 0"
+        try:
+            actual_result = self.graph.query(query)
+        except redis.ResponseError as e:
+            self.env.assertContains("Division by zero", str(e))
         
-    #    # Validate floating-point dividend division by 0
-    #    # redis-cli output example:
-    #    # 127.0.0.1:6379> self.GRAPH.QUERY g "RETURN 1.0 / 0"
-    #    # 1) 1) "1.0 / 0"
-    #    # 2) 1) 1) "inf"
-    #    query = "RETURN 1.0 / 0"
-    #    actual_result = self.graph.query(query)
-    #    self.env.assertEquals(actual_result.result_set[0][0],float('inf'))
+        # Validate floating-point dividend division by 0
+        # redis-cli output example:
+        # 127.0.0.1:6379> self.GRAPH.QUERY g "RETURN 1.0 / 0"
+        # 1) 1) "1.0 / 0"
+        # 2) 1) 1) "inf"
+        query = "RETURN 1.0 / 0"
+        actual_result = self.graph.query(query)
+        self.env.assertEquals(actual_result.result_set[0][0],float('inf'))
 
-    #    # Validate negative floating-point dividend division by 0
-    #    # redis-cli output example:
-    #    # 127.0.0.1:6379> self.GRAPH.QUERY g "RETURN -1.0 / 0"
-    #    # 1) 1) "-1.0 / 0"
-    #    # 2) 1) 1) "-inf"
-    #    query = "RETURN -1.0 / 0"
-    #    actual_result = self.graph.query(query)
-    #    self.env.assertEquals(actual_result.result_set[0][0],float('-inf'))
+        # Validate negative floating-point dividend division by 0
+        # redis-cli output example:
+        # 127.0.0.1:6379> self.GRAPH.QUERY g "RETURN -1.0 / 0"
+        # 1) 1) "-1.0 / 0"
+        # 2) 1) 1) "-inf"
+        query = "RETURN -1.0 / 0"
+        actual_result = self.graph.query(query)
+        self.env.assertEquals(actual_result.result_set[0][0],float('-inf'))
 
-    #    # Validate integer dividend division by 0.0 
-    #    # redis-cli output example:
-    #    # 127.0.0.1:6379> self.GRAPH.QUERY g "RETURN 1 / 0.0"
-    #    # 1) 1) "1 / 0.0"
-    #    # 2) 1) 1) "inf"
-    #    query = "RETURN 1 / 0.0"
-    #    actual_result = self.graph.query(query)
-    #    self.env.assertEquals(actual_result.result_set[0][0],float('inf'))
+        # Validate integer dividend division by 0.0 
+        # redis-cli output example:
+        # 127.0.0.1:6379> self.GRAPH.QUERY g "RETURN 1 / 0.0"
+        # 1) 1) "1 / 0.0"
+        # 2) 1) 1) "inf"
+        query = "RETURN 1 / 0.0"
+        actual_result = self.graph.query(query)
+        self.env.assertEquals(actual_result.result_set[0][0],float('inf'))
 
-    #    # Validate negative integer dividend division by 0.0 
-    #    # redis-cli output example:
-    #    # 127.0.0.1:6379> self.GRAPH.QUERY g "RETURN -1 / 0.0"
-    #    # 1) 1) "-1 / 0.0"
-    #    # 2) 1) 1) "-inf"
-    #    query = "RETURN -1 / 0.0"
-    #    actual_result = self.graph.query(query)
-    #    self.env.assertEquals(actual_result.result_set[0][0],float('-inf'))
+        # Validate negative integer dividend division by 0.0 
+        # redis-cli output example:
+        # 127.0.0.1:6379> self.GRAPH.QUERY g "RETURN -1 / 0.0"
+        # 1) 1) "-1 / 0.0"
+        # 2) 1) 1) "-inf"
+        query = "RETURN -1 / 0.0"
+        actual_result = self.graph.query(query)
+        self.env.assertEquals(actual_result.result_set[0][0],float('-inf'))
 
-    #    # Validate floating-point dividend division by 0.0 
-    #    # redis-cli output example:
-    #    # 127.0.0.1:6379> self.GRAPH.QUERY g "RETURN 1.0 / 0.0"
-    #    # 1) 1) "1.0 / 0.0"
-    #    # 2) 1) 1) "inf"
-    #    query = "RETURN 1.0 / 0.0"
-    #    actual_result = self.graph.query(query)
-    #    self.env.assertEquals(actual_result.result_set[0][0],float('inf'))
+        # Validate floating-point dividend division by 0.0 
+        # redis-cli output example:
+        # 127.0.0.1:6379> self.GRAPH.QUERY g "RETURN 1.0 / 0.0"
+        # 1) 1) "1.0 / 0.0"
+        # 2) 1) 1) "inf"
+        query = "RETURN 1.0 / 0.0"
+        actual_result = self.graph.query(query)
+        self.env.assertEquals(actual_result.result_set[0][0],float('inf'))
 
-    #    # Validate negative floating-point dividend division by 0.0 
-    #    # redis-cli output example:
-    #    # 127.0.0.1:6379> self.GRAPH.QUERY g "RETURN -1.0 / 0.0"
-    #    # 1) 1) "-1.0 / 0.0"
-    #    # 2) 1) 1) "-inf"
-    #    query = "RETURN -1.0 / 0.0"
-    #    actual_result = self.graph.query(query)
-    #    self.env.assertEquals(actual_result.result_set[0][0],float('-inf'))
+        # Validate negative floating-point dividend division by 0.0 
+        # redis-cli output example:
+        # 127.0.0.1:6379> self.GRAPH.QUERY g "RETURN -1.0 / 0.0"
+        # 1) 1) "-1.0 / 0.0"
+        # 2) 1) 1) "-inf"
+        query = "RETURN -1.0 / 0.0"
+        actual_result = self.graph.query(query)
+        self.env.assertEquals(actual_result.result_set[0][0],float('-inf'))
 
-    #    # Validate floating-point 0.0 divided by floating-point 0.0 
-    #    # redis-cli output example:
-    #    # 127.0.0.1:6379> self.GRAPH.QUERY g "RETURN 0.0 / 0.0"
-    #    # 1) 1) "0.0 / 0.0"
-    #    # 2) 1) 1) "-nan"
-    #    query = "RETURN 0.0 / 0.0"
-    #    actual_result = self.graph.query(query)
-    #    self.env.assertTrue(math.isnan(actual_result.result_set[0][0]))
+        # Validate floating-point 0.0 divided by floating-point 0.0 
+        # redis-cli output example:
+        # 127.0.0.1:6379> self.GRAPH.QUERY g "RETURN 0.0 / 0.0"
+        # 1) 1) "0.0 / 0.0"
+        # 2) 1) 1) "-nan"
+        query = "RETURN 0.0 / 0.0"
+        actual_result = self.graph.query(query)
+        self.env.assertTrue(math.isnan(actual_result.result_set[0][0]))
 
-    #    # Validate integer 0 divided by floating 0.0 
-    #    # redis-cli output example:
-    #    # 127.0.0.1:6379> self.GRAPH.QUERY g "RETURN 0 / 0.0"
-    #    # 1) 1) "0 / 0.0"
-    #    # 2) 1) 1) "-nan"
-    #    query = "RETURN 0 / 0.0"
-    #    actual_result = self.graph.query(query)
-    #    self.env.assertTrue(math.isnan(actual_result.result_set[0][0]))
+        # Validate integer 0 divided by floating 0.0 
+        # redis-cli output example:
+        # 127.0.0.1:6379> self.GRAPH.QUERY g "RETURN 0 / 0.0"
+        # 1) 1) "0 / 0.0"
+        # 2) 1) 1) "-nan"
+        query = "RETURN 0 / 0.0"
+        actual_result = self.graph.query(query)
+        self.env.assertTrue(math.isnan(actual_result.result_set[0][0]))
 
-    #    # Validate floating-point 0.0 divided by integer 0 
-    #    # redis-cli output example:
-    #    # 127.0.0.1:6379> self.GRAPH.QUERY g "RETURN 0.0 / 0"
-    #    # 1) 1) "0.0 / 0"
-    #    # 2) 1) 1) "-nan"
-    #    query = "RETURN 0.0 / 0"
-    #    actual_result = self.graph.query(query)
-    #    self.env.assertTrue(math.isnan(actual_result.result_set[0][0]))
+        # Validate floating-point 0.0 divided by integer 0 
+        # redis-cli output example:
+        # 127.0.0.1:6379> self.GRAPH.QUERY g "RETURN 0.0 / 0"
+        # 1) 1) "0.0 / 0"
+        # 2) 1) 1) "-nan"
+        query = "RETURN 0.0 / 0"
+        actual_result = self.graph.query(query)
+        self.env.assertTrue(math.isnan(actual_result.result_set[0][0]))
 
-    #    # Validate integer 0 divided by 0 
-    #    # redis-cli output example:
-    #    # 127.0.0.1:6379> self.GRAPH.QUERY g "RETURN 0 / 0"
-    #    # (error) Division by zero
-    #    query = "RETURN 0 / 0"
-    #    try:
-    #        actual_result = self.graph.query(query)
-    #    except redis.ResponseError as e:
-    #        self.env.assertContains("Division by zero", str(e))
+        # Validate integer 0 divided by 0 
+        # redis-cli output example:
+        # 127.0.0.1:6379> self.GRAPH.QUERY g "RETURN 0 / 0"
+        # (error) Division by zero
+        query = "RETURN 0 / 0"
+        try:
+            actual_result = self.graph.query(query)
+        except redis.ResponseError as e:
+            self.env.assertContains("Division by zero", str(e))
 
-    #def test86_type_mismatch_message(self):
-    #    # A list of queries and errors which are expected to occur with the
-    #    # specified query.
-    #    queries_with_errors = {
-    #        "RETURN tail(1)": "Type mismatch: expected List or Null but was Integer",
-    #        "CREATE (n) RETURN hasLabels(n, 1)": "Type mismatch: expected List but was Integer",
-    #        "CREATE ()-[r:R]->() RETURN hasLabels(r, ['abc', 'def'])": "Type mismatch: expected Node or Null but was Edge",
-    #        "RETURN toBoolean(1.2)": "Type mismatch: expected String, Boolean, Integer, or Null but was Float",
-    #        "RETURN isEmpty(1)": "Type mismatch: expected Map, List, String, or Null but was Integer",
-    #        "CREATE ()-[r:R]->() RETURN toString(r)": "Type mismatch: expected Datetime, Duration, String, Boolean, Integer, Float, Null, or Point but was Edge",
-    #    }
-    #    for query, error in queries_with_errors.items():
-    #        self.expect_error(query, error)
+    def test86_type_mismatch_message(self):
+        # A list of queries and errors which are expected to occur with the
+        # specified query.
+        queries_with_errors = {
+            "RETURN tail(1)": "Type mismatch: expected List or Null but was Integer",
+            "CREATE (n) RETURN hasLabels(n, 1)": "Type mismatch: expected List but was Integer",
+            "CREATE ()-[r:R]->() RETURN hasLabels(r, ['abc', 'def'])": "Type mismatch: expected Node or Null but was Edge",
+            "RETURN toBoolean(1.2)": "Type mismatch: expected String, Boolean, Integer, or Null but was Float",
+            "RETURN isEmpty(1)": "Type mismatch: expected Map, List, String, or Null but was Integer",
+            "CREATE ()-[r:R]->() RETURN toString(r)": "Type mismatch: expected Datetime, Duration, String, Boolean, Integer, Float, Null, or Point but was Edge",
+        }
+        for query, error in queries_with_errors.items():
+            self.expect_error(query, error)
 
     #def test87_typeof(self):
     #    query_to_expected_result = {

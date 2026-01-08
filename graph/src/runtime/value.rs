@@ -590,7 +590,7 @@ impl Value {
             Self::List(_) => String::from("List"),
             Self::Map(_) => String::from("Map"),
             Self::Node(_) => String::from("Node"),
-            Self::Relationship(_) => String::from("Relationship"),
+            Self::Relationship(_) => String::from("Edge"),
             Self::Path(_) => String::from("Path"),
             Self::VecF32(_) => String::from("VecF32"),
             Self::Point(_) => String::from("Point"),
