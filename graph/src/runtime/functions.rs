@@ -1702,7 +1702,7 @@ fn value_to_string(
         Some(Value::Time(ts)) => Ok(Value::String(Arc::new(Value::format_time(ts)))),
         Some(Value::Duration(dur)) => Ok(Value::String(Arc::new(Value::format_duration(dur)))),
         // All other types return Null (matches C behavior)
-        Some(Value::Null | _) => Ok(Value::Null),
+        Some(_) => Ok(Value::Null),
 
         None => unreachable!(),
     }

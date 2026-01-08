@@ -143,32 +143,40 @@ impl Value {
         }
     }
     // Format datetime as ISO-8601: "2025-04-14T06:08:21"
+    #[must_use]
     pub fn format_datetime(timestamp_ms: i64) -> String {
         use chrono::{TimeZone, Utc};
-        let dt = Utc.timestamp_millis_opt(timestamp_ms).unwrap();
-        dt.format("%Y-%m-%dT%H:%M:%S").to_string()
+        match Utc.timestamp_millis_opt(timestamp_ms) {
+            chrono::LocalResult::Single(dt) => dt.format("%Y-%m-%dT%H:%M:%S").to_string(),
+            _ => format!("<invalid timestamp: {timestamp_ms}>"),
+        }
     }
 
     // Format date as ISO-8601: "2025-04-14"
+    #[must_use]
     pub fn format_date(timestamp_ms: i64) -> String {
         use chrono::{TimeZone, Utc};
-        let dt = Utc.timestamp_millis_opt(timestamp_ms).unwrap();
-        dt.format("%Y-%m-%d").to_string()
+        match Utc.timestamp_millis_opt(timestamp_ms) {
+            chrono::LocalResult::Single(dt) => dt.format("%Y-%m-%d").to_string(),
+            _ => format!("<invalid timestamp: {timestamp_ms}>"),
+        }
     }
 
     // Format time as ISO-8601: "06:08:21"
+    #[must_use]
     pub fn format_time(timestamp_ms: i64) -> String {
         use chrono::{TimeZone, Utc};
-        let dt = Utc.timestamp_millis_opt(timestamp_ms).unwrap();
-        dt.format("%H:%M:%S").to_string()
+        match Utc.timestamp_millis_opt(timestamp_ms) {
+            chrono::LocalResult::Single(dt) => dt.format("%H:%M:%S").to_string(),
+            _ => format!("<invalid timestamp: {timestamp_ms}>"),
+        }
     }
 
     // Format duration as ISO-8601: "P1Y2M3DT4H5M6S"
+    #[must_use]
     pub fn format_duration(duration_ms: i64) -> String {
-        // This requires implementing duration components extraction
-        // For now, simplified version:
         let seconds = duration_ms / 1000;
-        format!("PT{}S", seconds)
+        format!("PT{seconds}S")
     }
 }
 
@@ -234,8 +242,20 @@ impl Hash for Value {
                 p.latitude.to_bits().hash(state);
                 p.longitude.to_bits().hash(state);
             }
-            Self::Datetime(x) | Self::Date(x) | Self::Time(x) | Self::Duration(x) => {
+            Self::Datetime(x) => {
                 11.hash(state);
+                x.hash(state);
+            }
+            Self::Date(x) => {
+                12.hash(state);
+                x.hash(state);
+            }
+            Self::Time(x) => {
+                13.hash(state);
+                x.hash(state);
+            }
+            Self::Duration(x) => {
+                14.hash(state);
                 x.hash(state);
             }
             Self::Arc(x) => {
@@ -483,12 +503,13 @@ impl OrderedEnum for Value {
             Self::Node(_) => 1 << 1,
             Self::Relationship(_) => 1 << 2,
             Self::Path(_) => 1 << 4,
-            Self::Datetime(_) => 1 << 5,
+            Self::Point(_) => 1 << 5,
+            Self::Datetime(_) => 1 << 6,
             Self::Date(_) => 1 << 7,
             Self::Time(_) => 1 << 8,
             Self::Duration(_) => 1 << 10,
             Self::VecF32(_) => 1 << 18,
-            Self::Point(_) => 1 << 5,
+
             Self::Arc(inner) => inner.order(),
         }
     }
