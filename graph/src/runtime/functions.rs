@@ -1694,7 +1694,7 @@ fn value_to_string(
         Some(Value::Float(f)) => Ok(Value::String(Arc::new(format!("{f:.6}")))),
         Some(Value::Bool(b)) => Ok(Value::String(Arc::new(b.to_string()))),
         Some(Value::Point(p)) => Ok(Value::String(Arc::new(format!(
-            "Point(latitude:  {}, longitude: {})",
+            "Point(latitude: {}, longitude: {})",
             p.latitude, p.longitude
         )))),
         Some(Value::Datetime(ts)) => Ok(Value::String(Arc::new(Value::format_datetime(ts)))),
