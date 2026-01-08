@@ -128,7 +128,7 @@ pub enum Value {
     Datetime(i64), // Unix timestamp in milliseconds
     Date(i64),     // Unix timestamp in milliseconds (midnight UTC)
     Time(i64),     // Unix timestamp in milliseconds (time from epoch)
-    Duration(i64), // Duration in milliseconds from epoch
+    Duration(i64), // Duration length in milliseconds
     Arc(Arc<Self>),
 }
 
