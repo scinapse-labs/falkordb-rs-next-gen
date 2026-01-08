@@ -125,6 +125,10 @@ pub enum Value {
     Path(ThinVec<Self>),
     VecF32(ThinVec<f32>),
     Point(Point),
+    Datetime(i64), // Unix timestamp in milliseconds
+    Date(i64),     // Unix timestamp in milliseconds (midnight UTC)
+    Time(i64),     // Unix timestamp in milliseconds (time from epoch)
+    Duration(i64), // Duration in milliseconds from epoch
     Arc(Arc<Self>),
 }
 
@@ -137,6 +141,34 @@ impl Value {
             Self::Float(f) => *f,
             _ => unreachable!("avg expects numeric value"),
         }
+    }
+    // Format datetime as ISO-8601: "2025-04-14T06:08:21"
+    pub fn format_datetime(timestamp_ms: i64) -> String {
+        use chrono::{TimeZone, Utc};
+        let dt = Utc.timestamp_millis_opt(timestamp_ms).unwrap();
+        dt.format("%Y-%m-%dT%H:%M:%S").to_string()
+    }
+
+    // Format date as ISO-8601: "2025-04-14"
+    pub fn format_date(timestamp_ms: i64) -> String {
+        use chrono::{TimeZone, Utc};
+        let dt = Utc.timestamp_millis_opt(timestamp_ms).unwrap();
+        dt.format("%Y-%m-%d").to_string()
+    }
+
+    // Format time as ISO-8601: "06:08:21"
+    pub fn format_time(timestamp_ms: i64) -> String {
+        use chrono::{TimeZone, Utc};
+        let dt = Utc.timestamp_millis_opt(timestamp_ms).unwrap();
+        dt.format("%H:%M:%S").to_string()
+    }
+
+    // Format duration as ISO-8601: "P1Y2M3DT4H5M6S"
+    pub fn format_duration(duration_ms: i64) -> String {
+        // This requires implementing duration components extraction
+        // For now, simplified version:
+        let seconds = duration_ms / 1000;
+        format!("PT{}S", seconds)
     }
 }
 
@@ -201,6 +233,10 @@ impl Hash for Value {
                 10.hash(state);
                 p.latitude.to_bits().hash(state);
                 p.longitude.to_bits().hash(state);
+            }
+            Self::Datetime(x) | Self::Date(x) | Self::Time(x) | Self::Duration(x) => {
+                11.hash(state);
+                x.hash(state);
             }
             Self::Arc(x) => {
                 x.hash(state);
@@ -447,6 +483,10 @@ impl OrderedEnum for Value {
             Self::Node(_) => 1 << 1,
             Self::Relationship(_) => 1 << 2,
             Self::Path(_) => 1 << 4,
+            Self::Datetime(_) => 1 << 5,
+            Self::Date(_) => 1 << 7,
+            Self::Time(_) => 1 << 8,
+            Self::Duration(_) => 1 << 10,
             Self::VecF32(_) => 1 << 18,
             Self::Point(_) => 1 << 5,
             Self::Arc(inner) => inner.order(),
@@ -495,6 +535,10 @@ impl CompareValue for Value {
                 Some(ord) => (ord, DisjointOrNull::None),
                 None => (Ordering::Less, DisjointOrNull::NaN),
             },
+            (Self::Datetime(a), Self::Datetime(b))
+            | (Self::Date(a), Self::Date(b))
+            | (Self::Time(a), Self::Time(b))
+            | (Self::Duration(a), Self::Duration(b)) => (a.cmp(b), DisjointOrNull::None),
             // the inputs have different type - compare them if they
             // are both numerics of differing types
             (Self::Int(i), Self::Float(f)) => compare_floats(*i as f64, *f),
@@ -538,6 +582,10 @@ impl ValueTypeOf for Value {
             | (Self::Relationship(_), Type::Relationship)
             | (Self::Path(_), Type::Path)
             | (Self::Point(_), Type::Point)
+            | (Value::Datetime(_), Type::Datetime)
+            | (Value::Date(_), Type::Date)
+            | (Value::Time(_), Type::Time)
+            | (Value::Duration(_), Type::Duration)
             | (_, Type::Any) => None,
             (Self::Arc(inner), ty) => {
                 // If the inner value is a Rc, we need to check its type
@@ -574,6 +622,10 @@ impl ValueGetType for Value {
             Self::Path(_) => Type::Path,
             Self::VecF32(_) => Type::VecF32,
             Self::Point(_) => Type::Point,
+            Self::Datetime(_) => Type::Datetime,
+            Self::Date(_) => Type::Date,
+            Self::Time(_) => Type::Time,
+            Self::Duration(_) => Type::Duration,
             Self::Arc(inner) => inner.get_type(),
         }
     }
@@ -594,6 +646,10 @@ impl Value {
             Self::Path(_) => String::from("Path"),
             Self::VecF32(_) => String::from("VecF32"),
             Self::Point(_) => String::from("Point"),
+            Self::Datetime(_) => String::from("Datetime"),
+            Self::Date(_) => String::from("Date"),
+            Self::Time(_) => String::from("Time"),
+            Self::Duration(_) => String::from("Duration"),
             Self::Arc(inner) => inner.name(),
         }
     }
@@ -816,6 +872,22 @@ impl DisplayJson for Value {
                 write!(f, r#","longitude":"#)?;
                 write!(f, "{:.6}", f64::from(point.longitude))?;
                 write!(f, r#","height": null}}"#)
+            }
+            Self::Datetime(ts) => {
+                let formatted = Self::format_datetime(*ts);
+                write_json_string(f, &formatted)
+            }
+            Self::Date(ts) => {
+                let formatted = Self::format_date(*ts);
+                write_json_string(f, &formatted)
+            }
+            Self::Time(ts) => {
+                let formatted = Self::format_time(*ts);
+                write_json_string(f, &formatted)
+            }
+            Self::Duration(dur) => {
+                let formatted = Self::format_duration(*dur);
+                write_json_string(f, &formatted)
             }
             Self::Arc(inner) => inner.fmt_json(f, runtime),
         }

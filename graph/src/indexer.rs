@@ -109,6 +109,14 @@ impl Document {
                         },
                     );
                 }
+                Value::Datetime(ts) | Value::Date(ts) | Value::Time(ts) | Value::Duration(ts) => {
+                    RediSearch_DocumentAddFieldNumber(
+                        self.rs_doc,
+                        field.name.as_ptr().cast::<c_char>(),
+                        ts as f64,
+                        RSFLDTYPE_NUMERIC,
+                    );
+                }
                 Value::List(_) => todo!(),
                 Value::VecF32(_) => todo!(),
                 Value::Point(_) => todo!(),

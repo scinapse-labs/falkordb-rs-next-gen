@@ -74,6 +74,10 @@ pub enum Type {
     Path,
     VecF32,
     Point,
+    Datetime,
+    Date,
+    Time,
+    Duration,
     Any,
     Union(Vec<Self>),
     Optional(Box<Self>),
@@ -98,6 +102,10 @@ impl Display for Type {
             Self::Path => write!(f, "Path"),
             Self::VecF32 => write!(f, "VecF32"),
             Self::Point => write!(f, "Point"),
+            Self::Datetime => write!(f, "Datetime"),
+            Self::Date => write!(f, "Date"),
+            Self::Time => write!(f, "Time"),
+            Self::Duration => write!(f, "Duration"),
             Self::Any => write!(f, "Any"),
             Self::Union(types) => {
                 let mut iter = types.iter();
@@ -419,13 +427,16 @@ pub fn init_functions() -> Result<(), Functions> {
         value_to_string,
         false,
         vec![Type::Union(vec![
+            Type::Datetime,
+            Type::Date,
+            Type::Time,
+            Type::Duration,
             Type::String,
             Type::Bool,
             Type::Int,
             Type::Float,
             Type::Point,
             Type::Null,
-            // TODO: Add temporal types when implemented
         ])],
         FnType::Function,
     );
@@ -1650,6 +1661,10 @@ fn value_to_string(
             "Point(latitude:  {}, longitude: {})",
             p.latitude, p.longitude
         )))),
+        Some(Value::Datetime(ts)) => Ok(Value::String(Arc::new(Value::format_datetime(ts)))),
+        Some(Value::Date(ts)) => Ok(Value::String(Arc::new(Value::format_date(ts)))),
+        Some(Value::Time(ts)) => Ok(Value::String(Arc::new(Value::format_time(ts)))),
+        Some(Value::Duration(dur)) => Ok(Value::String(Arc::new(Value::format_duration(dur)))),
         // All other types return Null (matches C behavior)
         Some(Value::Null | _) => Ok(Value::Null),
 
