@@ -349,7 +349,7 @@ pub fn init_functions() -> Result<(), Functions> {
         false,
         vec![
             Type::Union(vec![Type::Node, Type::Null]),
-            Type::Union(vec![Type::List(Box::new(Type::Any)), Type::Null]),
+            Type::List(Box::new(Type::Any)),
         ],
         FnType::Function,
     );
