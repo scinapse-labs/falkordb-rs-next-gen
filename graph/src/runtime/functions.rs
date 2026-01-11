@@ -1362,46 +1362,47 @@ fn avg(
             // If the first value is null, return the accumulator unchanged
             Ok(ctx)
         }
-        (val @ (Value::Int(_) | Value::Float(_)), Value::List(vec)) => {
+        (val @ (Value::Int(_) | Value::Float(_)), Value::List(mut vec)) => {
             let val = val.get_numeric();
-            // Extract existing sum and count
-            let (Value::Float(sum), Value::Int(count), Value::Bool(had_overflow)) =
-                (&vec[0], &vec[1], &vec[2])
-            else {
-                unreachable!("avg accumulator should be [sum, count, overflow]");
+
+            // Use split_at_mut to get mutable references to all three elements safely
+            // vec = [sum, count, had_overflow]
+            let (first, rest) = vec.split_at_mut(1);
+            let (second, third) = rest.split_at_mut(1);
+
+            let (sum, count, had_overflow) = match (&mut first[0], &mut second[0], &mut third[0]) {
+                (Value::Float(sum), Value::Int(count), Value::Bool(had_overflow)) => {
+                    (sum, count, had_overflow)
+                }
+                _ => unreachable!("avg accumulator should be [sum, count, overflow]"),
             };
 
-            let count = *count + 1;
-
+            *count += 1;
             let overflow = *had_overflow || about_to_overflow(*sum, val);
 
-            let sum = {
-                if *had_overflow {
-                    // continue incremental averaging
-                    let mut total = sum / count as f64;
-                    total *= (count - 1) as f64;
-                    total += val / count as f64;
-                    total
-                } else if overflow {
-                    // switch to incremental averaging
-                    let mut total = sum / count as f64;
-                    total += val / count as f64;
-                    total
-                } else {
-                    sum + val
-                }
+            *sum = if *had_overflow {
+                // continue incremental averaging
+                let mut total = *sum / *count as f64;
+                total *= (*count - 1) as f64;
+                total += val / *count as f64;
+                total
+            } else if overflow {
+                // switch to incremental averaging
+                let mut total = *sum / *count as f64;
+                total += val / *count as f64;
+                total
+            } else {
+                *sum + val
             };
 
-            Ok(Value::List(thin_vec![
-                Value::Float(sum),
-                Value::Int(count),
-                Value::Bool(overflow),
-            ]))
+            *had_overflow = overflow;
+
+            Ok(Value::List(vec))
         }
         (val, Value::List(_)) => {
             // Non-numeric type passed to avg
             Err(format!(
-                "Type mismatch: expected Integer, Float, or Null but was {}",
+                "Type mismatch:  expected Integer, Float, or Null but was {}",
                 val.name()
             ))
         }
@@ -2021,7 +2022,7 @@ fn string_join(
             .map(|value| match value {
                 Value::String(s) => Ok(Arc::clone(s)),
                 _ => Err(format!(
-                    "Type mismatch:  expected String but was {}",
+                    "Type mismatch: expected String but was {}",
                     value.name()
                 )),
             })
