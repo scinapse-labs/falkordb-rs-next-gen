@@ -135,7 +135,8 @@ impl Value {
         match &self {
             Self::Int(i) => *i as f64,
             Self::Float(f) => *f,
-            _ => unreachable!("avg expects numeric value"),
+            Self::Null => 0.0,
+            _ => unreachable!("Expected numeric value, got {}", self.name()),
         }
     }
 }

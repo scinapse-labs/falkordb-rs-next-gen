@@ -1284,15 +1284,28 @@ fn sum(
     args: ThinVec<Value>,
 ) -> Result<Value, String> {
     let mut iter = args.into_iter();
-    match (iter.next(), iter.next()) {
-        (Some(Value::Null), Some(Value::Int(a))) => Ok(Value::Float(a as f64)),
-        (Some(Value::Null), Some(Value::Float(a))) => Ok(Value::Float(a)),
+    let first = iter.next();
+    let second = iter.next();
+
+    match (first, second) {
+        // Skip null values - return accumulator unchanged
+        (Some(Value::Null), Some(acc)) => Ok(acc),
+
+        // Numeric value + Int accumulator
         (Some(Value::Int(a)), Some(Value::Int(b))) => Ok(Value::Float((a + b) as f64)),
-        (Some(Value::Float(a)), Some(Value::Float(b))) => Ok(Value::Float(a + b)),
         (Some(Value::Int(a)), Some(Value::Float(b))) => Ok(Value::Float(a as f64 + b)),
+
+        // Numeric value + Float accumulator
+        (Some(Value::Float(a)), Some(Value::Float(b))) => Ok(Value::Float(a + b)),
         (Some(Value::Float(a)), Some(Value::Int(b))) => Ok(Value::Float(a + b as f64)),
 
-        _ => unreachable!(),
+        // Invalid type - return type mismatch error
+        (Some(val), Some(_)) => Err(format!(
+            "Type mismatch: expected Integer, Float, or Null but was {}",
+            val.name()
+        )),
+
+        _ => unreachable!("sum expects two arguments"),
     }
 }
 
@@ -1349,7 +1362,7 @@ fn avg(
             // If the first value is null, return the accumulator unchanged
             Ok(ctx)
         }
-        (val, Value::List(vec)) => {
+        (val @ (Value::Int(_) | Value::Float(_)), Value::List(vec)) => {
             let val = val.get_numeric();
             // Extract existing sum and count
             let (Value::Float(sum), Value::Int(count), Value::Bool(had_overflow)) =
@@ -1385,7 +1398,13 @@ fn avg(
                 Value::Bool(overflow),
             ]))
         }
-
+        (val, Value::List(_)) => {
+            // Non-numeric type passed to avg
+            Err(format!(
+                "Type mismatch:  expected Integer, Float, or Null but was {}",
+                val.name()
+            ))
+        }
         _ => unreachable!("avg expects numeric input"),
     }
 }
@@ -1530,22 +1549,26 @@ fn stdev(
     let ctx = iter.next().unwrap();
     match (val, ctx) {
         (Value::Null, ctx) => Ok(ctx),
-        (val, Value::List(vec)) => {
+        (val @ (Value::Int(_) | Value::Float(_)), Value::List(vec)) => {
             let val = val.get_numeric();
-            let (Value::Float(sum), Value::List(vec)) = (&vec[0], &vec[1]) else {
+            let (Value::Float(sum), Value::List(values)) = (&vec[0], &vec[1]) else {
                 unreachable!("stdev accumulator should be [sum, values]");
             };
 
-            let mut vec = vec.clone();
-            vec.push(Value::Float(val));
+            let mut values = values.clone();
+            values.push(Value::Float(val));
 
             Ok(Value::List(thin_vec![
                 Value::Float(sum + val),
-                Value::List(vec)
+                Value::List(values)
             ]))
         }
-
-        _ => unreachable!(),
+        // Invalid type - return type mismatch error
+        (val, Value::List(_)) => Err(format!(
+            "Type mismatch:  expected Integer, Float, or Null but was {}",
+            val.name()
+        )),
+        _ => unreachable!("stdev expects [value, accumulator]"),
     }
 }
 
@@ -2085,7 +2108,7 @@ fn string_join(
             let joined = join_with_preallocate(&strings, "", size);
             Ok(Value::String(Arc::new(joined)))
         }
-        (Value::Null, _) => Ok(Value::Null),
+        (Value::List(_), Some(Value::Null)) | (Value::Null, _) => Ok(Value::Null),
         _ => unreachable!(),
     }
 }
