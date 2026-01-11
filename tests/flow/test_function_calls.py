@@ -2261,6 +2261,7 @@ class testFunctionCallsFlow(FlowTestsBase):
         for query, expected_result in query_to_expected_result.items():
             self.get_res_and_assertEquals(query, expected_result)
 
+    #@todo Barak: Enable after implementing in/out degree functions
     #def test88_in_out_degree(self):
     #    # clear graph
     #    self.graph.delete()
