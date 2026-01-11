@@ -1438,7 +1438,14 @@ fn percentile(
     mut args: ThinVec<Value>,
 ) -> Result<Value, String> {
     let val = args.remove(0);
-    let percentile = args.remove(0).get_numeric();
+    let percentile_val = args.remove(0);
+
+    // Check if percentile is Null and return type mismatch error
+    if matches!(percentile_val, Value::Null) {
+        return Err("Type mismatch: expected Integer or Float but was Null".to_string());
+    }
+
+    let percentile = percentile_val.get_numeric();
 
     if !(0.0..=1.0).contains(&percentile) {
         return Err(format!(
