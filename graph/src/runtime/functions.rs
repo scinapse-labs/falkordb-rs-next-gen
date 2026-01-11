@@ -1401,7 +1401,7 @@ fn avg(
         (val, Value::List(_)) => {
             // Non-numeric type passed to avg
             Err(format!(
-                "Type mismatch:  expected Integer, Float, or Null but was {}",
+                "Type mismatch: expected Integer, Float, or Null but was {}",
                 val.name()
             ))
         }
@@ -1565,7 +1565,7 @@ fn stdev(
         }
         // Invalid type - return type mismatch error
         (val, Value::List(_)) => Err(format!(
-            "Type mismatch:  expected Integer, Float, or Null but was {}",
+            "Type mismatch: expected Integer, Float, or Null but was {}",
             val.name()
         )),
         _ => unreachable!("stdev expects [value, accumulator]"),
@@ -2013,7 +2013,7 @@ fn string_join(
             .map(|value| match value {
                 Value::String(s) => Ok(Arc::clone(s)),
                 _ => Err(format!(
-                    "Type mismatch: expected String but was {}",
+                    "Type mismatch:  expected String but was {}",
                     value.name()
                 )),
             })
@@ -2030,13 +2030,11 @@ fn string_join(
             return Ok(0);
         }
 
-        // Convert to i32 for overflow detection (matches C's int type)
         let delimiter_len =
             i32::try_from(delimiter.len()).map_err(|_| String::from("String overflow"))?;
         let n = i32::try_from(strings.len()).map_err(|_| String::from("String overflow"))?;
         let mut str_len: i32 = 0;
 
-        // Calculate delimiter contribution first: delimiter_len * (n - 1)
         if n >= 2 {
             let delimiter_contribution = delimiter_len
                 .checked_mul(n - 1)
@@ -2047,7 +2045,6 @@ fn string_join(
                 .ok_or_else(|| String::from("String overflow"))?;
         }
 
-        // Add each string's length with overflow check
         for s in strings.iter() {
             let s_len = i32::try_from(s.len()).map_err(|_| String::from("String overflow"))?;
 
@@ -2056,12 +2053,10 @@ fn string_join(
                 .ok_or_else(|| String::from("String overflow"))?;
         }
 
-        // Add 1 for null terminator (C compatibility check)
         str_len = str_len
             .checked_add(1)
             .ok_or_else(|| String::from("String overflow"))?;
 
-        // Subtract the null terminator for Rust (doesn't need '\0')
         let capacity = (str_len - 1) as usize;
         Ok(capacity)
     }
@@ -2079,7 +2074,7 @@ fn string_join(
         let mut result = String::with_capacity(capacity);
         let mut first = true;
 
-        for s in strings.iter() {
+        for s in strings {
             if !first {
                 result.push_str(delimiter);
             }
@@ -2087,13 +2082,17 @@ fn string_join(
             first = false;
         }
 
-        // Verify capacity calculation was correct
         debug_assert_eq!(result.len(), capacity, "String join calculation mismatch");
         result
     }
 
     let mut iter = args.into_iter();
-    let first = iter.next().unwrap();
+
+    // Unwrap Arc if present (handles range() returning Arc-wrapped lists)
+    let first = match iter.next().unwrap() {
+        Value::Arc(arc) => Arc::unwrap_or_clone(arc),
+        v => v,
+    };
 
     match (first, iter.next()) {
         (Value::List(vec), Some(Value::String(s))) => {

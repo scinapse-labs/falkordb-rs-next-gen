@@ -236,7 +236,6 @@ impl<'a> Runtime {
                     let ExprIR::Variable(key) = ir.child(ir.num_children() - 1).data() else {
                         unreachable!();
                     };
-                    // Initialize accumulator with zero value
                     env.insert(key, zero.clone());
                 }
             }
@@ -274,20 +273,32 @@ impl<'a> Runtime {
                 // OPTIMIZATION: Take ownership of accumulator (moves value, no clone)
                 let prev_value = acc.take(key).unwrap_or(Value::Null);
 
-                // OPTIMIZATION: Build args manually to avoid cloning the accumulator
-                // Evaluate all arguments EXCEPT the last one (accumulator variable)
-                let mut args = thin_vec![];
-                for i in 0..num_children - 1 {
-                    let child = ir.node(idx).child(i);
-                    let arg_value = self.run_expr(ir, child.idx(), curr, Some(agg_group_key))?;
-                    args.push(arg_value);
-                }
+                // PHASE 1: Evaluate all arguments BEFORE consuming prev_value
+                // This is where most errors occur (type mismatches, missing variables, etc.)
+                // Collect results first to enable error recovery
+                let arg_results: Result<ThinVec<Value>, String> = (0..num_children - 1)
+                    .map(|i| {
+                        let child = ir.node(idx).child(i);
+                        self.run_expr(ir, child.idx(), curr, Some(agg_group_key))
+                    })
+                    .collect();
 
-                // Check if we have DISTINCT as first child (matching line 692 pattern)
-                // In aggregation context: num_children == 2 (DISTINCT node + accumulator variable)
+                // If arg evaluation failed, restore accumulator and propagate error
+                let mut args = match arg_results {
+                    Ok(a) => a,
+                    Err(e) => {
+                        // Restore accumulator to maintain consistent state
+                        acc.insert(key, prev_value);
+                        return Err(e);
+                    }
+                };
+
+                // PHASE 2: Handle DISTINCT unpacking (if present)
+                // Check if we have DISTINCT as first child
+                // In aggregation context:  num_children == 2 (DISTINCT node + accumulator variable)
                 // The DISTINCT node's evaluation returns a List, which we need to unpack
                 if num_children == 2 && matches!(ir.node(idx).child(0).data(), ExprIR::Distinct) {
-                    // Unpack the distinct result (matching lines 692-699)
+                    // Unpack the distinct result (matching lines 692-699 pattern)
                     let arg = &args[0];
                     if let Value::List(values) = arg {
                         let mut values = values.clone();
@@ -295,14 +306,19 @@ impl<'a> Runtime {
                         values.append(&mut args);
                         args = values;
                     } else {
-                        unreachable!("DISTINCT should return a list");
+                        // Restore accumulator before returning error
+                        acc.insert(key, prev_value);
+                        return Err(String::from("DISTINCT should return a list"));
                     }
                 }
 
+                // PHASE 3: Now it's safe to consume prev_value
+                // At this point, all fallible operations that we can recover from are done
                 // Push the accumulator as the last argument (moved, not cloned!)
                 args.push(prev_value);
 
-                // Call the aggregation function directly
+                // PHASE 4: Call the aggregation function
+                // If this fails, the query is aborting anyway, so state loss is acceptable
                 let new_value = (func.func)(self, args)?;
 
                 // Store result back in accumulator
@@ -683,13 +699,7 @@ impl<'a> Runtime {
                         && let FnType::Aggregation(_, finalize) = &func.fn_type
                         && let ExprIR::Variable(key) = node.child(node.num_children() - 1).data()
                     {
-                        // in aggregation function accumulater always present as last argument
-                        let mut acc = env.get(key).unwrap();
-
-                        // OPTIMIZATION: Unwrap Arc if present (cheap if sole owner)
-                        if let Value::Arc(arc_value) = acc {
-                            acc = Arc::unwrap_or_clone(arc_value);
-                        }
+                        let acc = env.get(key).unwrap();
 
                         return match finalize {
                             Some(func) => Ok((func)(acc)),
@@ -1436,32 +1446,7 @@ impl<'a> Runtime {
                         let mut vars = v?;
                         vars.merge(key?);
                         for (name, tree) in agg {
-                            // Check if this is an aggregation function that needs finalization
-                            let value = if let ExprIR::FuncInvocation(func) = tree.root().data()
-                                && let FnType::Aggregation(_, finalize) = &func.fn_type
-                                && let ExprIR::Variable(agg_key) =
-                                    tree.root().child(tree.root().num_children() - 1).data()
-                            {
-                                // OPTIMIZATION: Take (not get) the Arc-wrapped accumulator
-                                // Since we own vars, take() moves the value out without cloning the Arc
-                                let mut acc = vars.take(agg_key).unwrap_or(Value::Null);
-
-                                // Unwrap Arc if present - now we have the only reference (ref_count=1)
-                                if let Value::Arc(arc_value) = acc {
-                                    acc = Arc::unwrap_or_clone(arc_value);
-                                }
-
-                                // Apply finalization function
-                                match finalize {
-                                    Some(f) => (f)(acc),
-                                    None => acc,
-                                }
-                            } else {
-                                // Non-aggregation expression - use immutable reference
-                                self.run_expr(tree, tree.root().idx(), &vars, None)?
-                            };
-
-                            vars.insert(name, value);
+                            vars.insert(name, self.run_expr(tree, tree.root().idx(), &vars, None)?);
                         }
                         Ok(vars)
                     })
