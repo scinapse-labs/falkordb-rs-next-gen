@@ -683,6 +683,7 @@ impl<'a> Runtime {
                         && let FnType::Aggregation(_, finalize) = &func.fn_type
                         && let ExprIR::Variable(key) = node.child(node.num_children() - 1).data()
                     {
+                        // in aggregation function accumulater always present as last argument
                         let mut acc = env.get(key).unwrap();
 
                         // OPTIMIZATION: Unwrap Arc if present (cheap if sole owner)

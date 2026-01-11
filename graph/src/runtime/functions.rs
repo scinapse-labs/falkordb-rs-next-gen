@@ -1291,8 +1291,8 @@ fn sum(
         // Skip null values - return accumulator unchanged
         (Some(Value::Null), Some(acc)) => Ok(acc),
 
-        // Numeric value + Int accumulator
-        (Some(Value::Int(a)), Some(Value::Int(b))) => Ok(Value::Float((a + b) as f64)),
+        // Numeric value + Int accumulator (cast before adding to avoid i64 overflow)
+        (Some(Value::Int(a)), Some(Value::Int(b))) => Ok(Value::Float(a as f64 + b as f64)),
         (Some(Value::Int(a)), Some(Value::Float(b))) => Ok(Value::Float(a as f64 + b)),
 
         // Numeric value + Float accumulator
