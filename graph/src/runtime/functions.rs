@@ -543,6 +543,20 @@ pub fn init_functions() -> Result<(), Functions> {
         FnType::Function,
     );
     funcs.add(
+        "rtrim",
+        string_rtrim,
+        false,
+        vec![Type::Union(vec![Type::String, Type::Null])],
+        FnType::Function,
+    );
+    funcs.add(
+        "trim",
+        string_trim,
+        false,
+        vec![Type::Union(vec![Type::String, Type::Null])],
+        FnType::Function,
+    );
+    funcs.add(
         "right",
         string_right,
         false,
@@ -679,6 +693,99 @@ pub fn init_functions() -> Result<(), Functions> {
         FnType::Function,
     );
     funcs.add(
+        "sin",
+        sin,
+        false,
+        vec![Type::Union(vec![Type::Int, Type::Float, Type::Null])],
+        FnType::Function,
+    );
+    funcs.add(
+        "cos",
+        cos,
+        false,
+        vec![Type::Union(vec![Type::Int, Type::Float, Type::Null])],
+        FnType::Function,
+    );
+    funcs.add(
+        "tan",
+        tan,
+        false,
+        vec![Type::Union(vec![Type::Int, Type::Float, Type::Null])],
+        FnType::Function,
+    );
+    funcs.add(
+        "cot",
+        cot,
+        false,
+        vec![Type::Union(vec![Type::Int, Type::Float, Type::Null])],
+        FnType::Function,
+    );
+    funcs.add(
+        "asin",
+        asin,
+        false,
+        vec![Type::Union(vec![Type::Int, Type::Float, Type::Null])],
+        FnType::Function,
+    );
+    funcs.add(
+        "acos",
+        acos,
+        false,
+        vec![Type::Union(vec![Type::Int, Type::Float, Type::Null])],
+        FnType::Function,
+    );
+    funcs.add(
+        "atan",
+        atan,
+        false,
+        vec![Type::Union(vec![Type::Int, Type::Float, Type::Null])],
+        FnType::Function,
+    );
+    funcs.add(
+        "atan2",
+        atan2,
+        false,
+        vec![
+            Type::Union(vec![Type::Int, Type::Float, Type::Null]),
+            Type::Union(vec![Type::Int, Type::Float, Type::Null]),
+        ],
+        FnType::Function,
+    );
+    funcs.add(
+        "degrees",
+        degrees,
+        false,
+        vec![Type::Union(vec![Type::Int, Type::Float, Type::Null])],
+        FnType::Function,
+    );
+    funcs.add(
+        "radians",
+        radians,
+        false,
+        vec![Type::Union(vec![Type::Int, Type::Float, Type::Null])],
+        FnType::Function,
+    );
+    funcs.add("pi", pi, false, vec![], FnType::Function);
+    funcs.add(
+        "haversin",
+        haversin,
+        false,
+        vec![Type::Union(vec![Type::Int, Type::Float, Type::Null])],
+        FnType::Function,
+    );
+    funcs.add(
+        "isEmpty",
+        is_empty,
+        false,
+        vec![Type::Union(vec![
+            Type::List(Box::new(Type::Any)),
+            Type::Map,
+            Type::String,
+            Type::Null,
+        ])],
+        FnType::Function,
+    );
+    funcs.add(
         "toBoolean",
         to_boolean,
         false,
@@ -688,6 +795,34 @@ pub fn init_functions() -> Result<(), Functions> {
             Type::Int,
             Type::Null,
         ])],
+        FnType::Function,
+    );
+    funcs.add(
+        "toBooleanOrNull",
+        to_boolean,
+        false,
+        vec![Type::Any], // Accept ANY type, unlike toBoolean which is restricted
+        FnType::Function,
+    );
+    funcs.add(
+        "toFloatOrNull",
+        value_to_float, // Reuse the same function
+        false,
+        vec![Type::Any], // Accept ANY type instead of restricted union
+        FnType::Function,
+    );
+    funcs.add(
+        "toIntegerOrNull",
+        value_to_integer, // Reuse the same function
+        false,
+        vec![Type::Any], // Accept ANY type instead of restricted union
+        FnType::Function,
+    );
+    funcs.add(
+        "toStringOrNull",
+        value_to_string,
+        false,
+        vec![Type::Any],
         FnType::Function,
     );
     funcs.add(
@@ -1495,9 +1630,7 @@ fn value_to_float(
         Some(Value::String(s)) => s.parse::<f64>().map(Value::Float).or(Ok(Value::Null)),
         Some(Value::Float(f)) => Ok(Value::Float(f)),
         Some(Value::Int(i)) => Ok(Value::Float(i as f64)),
-        Some(Value::Null) => Ok(Value::Null),
-
-        _ => unreachable!(),
+        _ => Ok(Value::Null),
     }
 }
 
@@ -1505,10 +1638,10 @@ fn value_string(value: &Value) -> Result<Arc<String>, String> {
     match value {
         Value::Bool(b) => Ok(Arc::new(String::from(if *b { "true" } else { "false" }))),
         Value::Int(i) => Ok(Arc::new(i.to_string())),
-        Value::Float(f) => Ok(Arc::new(f.to_string())),
+        Value::Float(f) => Ok(Arc::new(format!("{f:.6}"))),
         Value::String(s) => Ok(s.clone()),
 
-        _ => unreachable!(),
+        _ => Err(format!("Cannot convert {} to string", value.name())),
     }
 }
 
@@ -1518,7 +1651,11 @@ fn value_to_string(
 ) -> Result<Value, String> {
     match args.into_iter().next() {
         Some(Value::Null) => Ok(Value::Null),
-        Some(v) => Ok(Value::String(value_string(&v)?)),
+        Some(v) => {
+            // Try to convert supported types to string
+            // For unsupported types (List, Node, etc.), return Null
+            value_string(&v).map_or_else(|_| Ok(Value::Null), |s| Ok(Value::String(s)))
+        }
 
         _ => unreachable!(),
     }
@@ -1705,7 +1842,15 @@ fn string_to_lower(
     args: ThinVec<Value>,
 ) -> Result<Value, String> {
     match args.into_iter().next() {
-        Some(Value::String(s)) => Ok(Value::String(Arc::new(s.to_lowercase()))),
+        Some(Value::String(s)) => {
+            // Match C behavior: detect replacement character which indicates invalid UTF-8
+            // In the C version, str_tolower returns NULL on invalid UTF-8 (c == -1)
+            // In Rust, we check for the replacement character
+            if s.contains('\u{FFFD}') {
+                return Err(String::from("Invalid UTF8 string"));
+            }
+            Ok(Value::String(Arc::new(s.to_lowercase())))
+        }
         Some(Value::Null) => Ok(Value::Null),
 
         _ => unreachable!(),
@@ -1717,7 +1862,15 @@ fn string_to_upper(
     args: ThinVec<Value>,
 ) -> Result<Value, String> {
     match args.into_iter().next() {
-        Some(Value::String(s)) => Ok(Value::String(Arc::new(s.to_uppercase()))),
+        Some(Value::String(s)) => {
+            // Match C behavior: detect replacement character which indicates invalid UTF-8
+            // In the C version, str_toupper returns NULL on invalid UTF-8 (c == -1)
+            // In Rust, we check for the replacement character
+            if s.contains('\u{FFFD}') {
+                return Err(String::from("Invalid UTF8 string"));
+            }
+            Ok(Value::String(Arc::new(s.to_uppercase())))
+        }
         Some(Value::Null) => Ok(Value::Null),
 
         _ => unreachable!(),
@@ -1773,6 +1926,32 @@ fn string_ltrim(
         Some(Value::String(s)) => Ok(Value::String(Arc::new(String::from(
             s.trim_start_matches(' '),
         )))),
+        Some(Value::Null) => Ok(Value::Null),
+
+        _ => unreachable!(),
+    }
+}
+
+fn string_rtrim(
+    _: &Runtime,
+    args: ThinVec<Value>,
+) -> Result<Value, String> {
+    match args.into_iter().next() {
+        Some(Value::String(s)) => Ok(Value::String(Arc::new(String::from(
+            s.trim_end_matches(' '),
+        )))),
+        Some(Value::Null) => Ok(Value::Null),
+
+        _ => unreachable!(),
+    }
+}
+
+fn string_trim(
+    _: &Runtime,
+    args: ThinVec<Value>,
+) -> Result<Value, String> {
+    match args.into_iter().next() {
+        Some(Value::String(s)) => Ok(Value::String(Arc::new(String::from(s.trim_matches(' '))))),
         Some(Value::Null) => Ok(Value::Null),
 
         _ => unreachable!(),
@@ -2055,20 +2234,31 @@ fn log10(
     }
 }
 
+// called from fn pow and expr pow (^)
+#[inline]
+#[must_use]
+pub(crate) fn apply_pow(
+    base: Value,
+    exponent: Value,
+) -> Value {
+    match (base, exponent) {
+        // Convert all numeric types to f64 and use powf
+        // This matches C's behavior:  pow(SI_GET_NUMERIC(base), SI_GET_NUMERIC(exp))
+        (Value::Int(a), Value::Int(b)) => Value::Float((a as f64).powf(b as f64)),
+        (Value::Float(a), Value::Float(b)) => Value::Float(a.powf(b)),
+        (Value::Int(a), Value::Float(b)) => Value::Float((a as f64).powf(b)),
+        (Value::Float(a), Value::Int(b)) => Value::Float(a.powf(b as f64)),
+        _ => Value::Null,
+    }
+}
+
 fn pow(
     _: &Runtime,
     args: ThinVec<Value>,
 ) -> Result<Value, String> {
     let mut iter = args.into_iter();
     match (iter.next(), iter.next()) {
-        (Some(Value::Int(i1)), Some(Value::Int(i2))) => {
-            Ok(Value::Float((i1 as f64).powi(i2 as i32)))
-        }
-        (Some(Value::Float(f1)), Some(Value::Float(f2))) => Ok(Value::Float(f1.powf(f2))),
-        (Some(Value::Int(i1)), Some(Value::Float(f1))) => Ok(Value::Float((i1 as f64).powf(f1))),
-        (Some(Value::Float(f1)), Some(Value::Int(i1))) => Ok(Value::Float(f1.powi(i1 as i32))),
-        (Some(Value::Null), Some(_)) | (Some(_), Some(Value::Null)) => Ok(Value::Null),
-
+        (Some(a), Some(b)) => Ok(apply_pow(a, b)),
         _ => unreachable!(),
     }
 }
@@ -2227,6 +2417,180 @@ fn keys(
     }
 }
 
+fn sin(
+    _: &Runtime,
+    args: ThinVec<Value>,
+) -> Result<Value, String> {
+    match args.into_iter().next() {
+        Some(Value::Int(n)) => Ok(Value::Float((n as f64).sin())),
+        Some(Value::Float(f)) => Ok(Value::Float(f.sin())),
+        Some(Value::Null) => Ok(Value::Null),
+
+        _ => unreachable!(),
+    }
+}
+
+fn cos(
+    _: &Runtime,
+    args: ThinVec<Value>,
+) -> Result<Value, String> {
+    match args.into_iter().next() {
+        Some(Value::Int(n)) => Ok(Value::Float((n as f64).cos())),
+        Some(Value::Float(f)) => Ok(Value::Float(f.cos())),
+        Some(Value::Null) => Ok(Value::Null),
+
+        _ => unreachable!(),
+    }
+}
+
+fn tan(
+    _: &Runtime,
+    args: ThinVec<Value>,
+) -> Result<Value, String> {
+    match args.into_iter().next() {
+        Some(Value::Int(n)) => Ok(Value::Float((n as f64).tan())),
+        Some(Value::Float(f)) => Ok(Value::Float(f.tan())),
+        Some(Value::Null) => Ok(Value::Null),
+
+        _ => unreachable!(),
+    }
+}
+
+fn cot(
+    _: &Runtime,
+    args: ThinVec<Value>,
+) -> Result<Value, String> {
+    match args.into_iter().next() {
+        Some(Value::Int(n)) => {
+            let val = n as f64;
+            Ok(Value::Float(val.cos() / val.sin()))
+        }
+        Some(Value::Float(f)) => Ok(Value::Float(f.cos() / f.sin())),
+        Some(Value::Null) => Ok(Value::Null),
+
+        _ => unreachable!(),
+    }
+}
+
+fn asin(
+    _: &Runtime,
+    args: ThinVec<Value>,
+) -> Result<Value, String> {
+    match args.into_iter().next() {
+        Some(Value::Int(n)) => Ok(Value::Float((n as f64).asin())),
+        Some(Value::Float(f)) => Ok(Value::Float(f.asin())),
+        Some(Value::Null) => Ok(Value::Null),
+
+        _ => unreachable!(),
+    }
+}
+
+fn acos(
+    _: &Runtime,
+    args: ThinVec<Value>,
+) -> Result<Value, String> {
+    match args.into_iter().next() {
+        Some(Value::Int(n)) => Ok(Value::Float((n as f64).acos())),
+        Some(Value::Float(f)) => Ok(Value::Float(f.acos())),
+        Some(Value::Null) => Ok(Value::Null),
+
+        _ => unreachable!(),
+    }
+}
+
+fn atan(
+    _: &Runtime,
+    args: ThinVec<Value>,
+) -> Result<Value, String> {
+    match args.into_iter().next() {
+        Some(Value::Int(n)) => Ok(Value::Float((n as f64).atan())),
+        Some(Value::Float(f)) => Ok(Value::Float(f.atan())),
+        Some(Value::Null) => Ok(Value::Null),
+
+        _ => unreachable!(),
+    }
+}
+
+fn atan2(
+    _: &Runtime,
+    args: ThinVec<Value>,
+) -> Result<Value, String> {
+    let mut iter = args.into_iter();
+    match (iter.next(), iter.next()) {
+        (Some(Value::Int(y)), Some(Value::Int(x))) => Ok(Value::Float((y as f64).atan2(x as f64))),
+        (Some(Value::Float(y)), Some(Value::Float(x))) => Ok(Value::Float(y.atan2(x))),
+        (Some(Value::Int(y)), Some(Value::Float(x))) => Ok(Value::Float((y as f64).atan2(x))),
+        (Some(Value::Float(y)), Some(Value::Int(x))) => Ok(Value::Float(y.atan2(x as f64))),
+        (Some(Value::Null), Some(_)) | (Some(_), Some(Value::Null)) => Ok(Value::Null),
+
+        _ => unreachable!(),
+    }
+}
+
+fn degrees(
+    _: &Runtime,
+    args: ThinVec<Value>,
+) -> Result<Value, String> {
+    match args.into_iter().next() {
+        Some(Value::Int(n)) => Ok(Value::Float((n as f64).to_degrees())),
+        Some(Value::Float(f)) => Ok(Value::Float(f.to_degrees())),
+        Some(Value::Null) => Ok(Value::Null),
+
+        _ => unreachable!(),
+    }
+}
+
+fn radians(
+    _: &Runtime,
+    args: ThinVec<Value>,
+) -> Result<Value, String> {
+    match args.into_iter().next() {
+        Some(Value::Int(n)) => Ok(Value::Float((n as f64).to_radians())),
+        Some(Value::Float(f)) => Ok(Value::Float(f.to_radians())),
+        Some(Value::Null) => Ok(Value::Null),
+
+        _ => unreachable!(),
+    }
+}
+
+fn pi(
+    _: &Runtime,
+    args: ThinVec<Value>,
+) -> Result<Value, String> {
+    debug_assert!(args.is_empty());
+    Ok(Value::Float(std::f64::consts::PI))
+}
+
+fn haversin(
+    _: &Runtime,
+    args: ThinVec<Value>,
+) -> Result<Value, String> {
+    match args.into_iter().next() {
+        Some(Value::Int(n)) => {
+            let val = n as f64;
+            Ok(Value::Float((1.0 - val.cos()) / 2.0))
+        }
+        Some(Value::Float(f)) => Ok(Value::Float((1.0 - f.cos()) / 2.0)),
+        Some(Value::Null) => Ok(Value::Null),
+
+        _ => unreachable!(),
+    }
+}
+
+fn is_empty(
+    _: &Runtime,
+    args: ThinVec<Value>,
+) -> Result<Value, String> {
+    match args.into_iter().next() {
+        Some(Value::Null) => Ok(Value::Null),
+        Some(Value::String(s)) => Ok(Value::Bool(s.is_empty())),
+        Some(Value::List(v)) => Ok(Value::Bool(v.is_empty())),
+        Some(Value::Map(m)) => Ok(Value::Bool(m.is_empty())),
+
+        _ => unreachable!(),
+    }
+}
+
 fn to_boolean(
     _: &Runtime,
     args: ThinVec<Value>,
@@ -2243,9 +2607,7 @@ fn to_boolean(
             }
         }
         Some(Value::Int(n)) => Ok(Value::Bool(n != 0)),
-        Some(Value::Null) => Ok(Value::Null),
-
-        _ => unreachable!(),
+        _ => Ok(Value::Null),
     }
 }
 

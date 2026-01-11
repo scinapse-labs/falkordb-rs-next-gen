@@ -11,7 +11,7 @@ use crate::{
     indexer::IndexQuery,
     planner::IR,
     runtime::{
-        functions::FnType,
+        functions::{FnType, apply_pow},
         iter::{Aggregate, CondInspectIter, LazyReplace, TryFlatMap, TryMap},
         ordermap::OrderMap,
         orderset::OrderSet,
@@ -408,14 +408,27 @@ impl<'a> Runtime {
                     let i = self.run_expr(ir, node.child(1).idx(), env, agg_group_key)?;
                     match (arr, i) {
                         (Value::List(values), Value::Int(i)) => {
-                            if i >= 0 && i < values.len() as _ {
-                                res.push(values[i as usize].clone());
+                            // Handle negative indexing:  -1 is last element, -2 is second to last, etc.
+                            let len = values.len() as i64;
+                            let normalized_index = if i < 0 {
+                                // Negative index: convert to positive offset
+                                len + i
+                            } else {
+                                i
+                            };
+
+                            // Check bounds:  valid range is [0, len)
+                            if normalized_index >= 0 && normalized_index < len {
+                                res.push(values[normalized_index as usize].clone());
                             } else {
                                 res.push(Value::Null);
                             }
                         }
                         (Value::List(_), v) => {
-                            return Err(format!("Type mismatch: expected Bool but was {v:?}"));
+                            return Err(format!(
+                                "Type mismatch: expected Integer but was {}",
+                                v.name()
+                            ));
                         }
                         (Value::Node(id), Value::String(key)) => {
                             res.push(self.get_node_attribute(id, &key).unwrap_or(Value::Null));
@@ -430,7 +443,7 @@ impl<'a> Runtime {
                             res.push(map.get(&key).map_or(Value::Null, std::clone::Clone::clone));
                         }
                         (Value::Map(_), Value::Null) | (Value::Null, _) => res.push(Value::Null),
-                        v => return Err(format!("Type mismatch: expected List but was {v:?}")),
+                        v => return Err(format!("Type mismatch: unexpected types {v:?}")),
                     }
                 }
                 ExprIR::GetElements => {
@@ -644,10 +657,7 @@ impl<'a> Runtime {
                 ExprIR::Pow => res.push(
                     node.children()
                         .flat_map(|child| self.run_expr(ir, child.idx(), env, agg_group_key))
-                        .reduce(|a, b| match (a, b) {
-                            (Value::Int(a), Value::Int(b)) => Value::Float((a as f64).powf(b as _)),
-                            _ => Value::Null,
-                        })
+                        .reduce(|a, b| apply_pow(a, b))
                         .ok_or_else(|| {
                             String::from("Pow operator requires at least one argument")
                         })?,
