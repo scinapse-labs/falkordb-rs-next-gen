@@ -1574,7 +1574,7 @@ fn stdev(
         }
         // Invalid type - return type mismatch error
         (val, Value::List(_)) => Err(format!(
-            "Type mismatch:  expected Integer, Float, or Null but was {}",
+            "Type mismatch: expected Integer, Float, or Null but was {}",
             val.name()
         )),
         _ => unreachable!("stdev expects [value, accumulator]"),
