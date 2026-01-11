@@ -142,7 +142,7 @@ impl Value {
             _ => unreachable!("avg expects numeric value"),
         }
     }
-    // Format datetime as ISO-8601: "2025-04-14T06:08:21"
+
     #[must_use]
     pub fn format_datetime(timestamp_ms: i64) -> String {
         use chrono::{TimeZone, Utc};
@@ -172,7 +172,6 @@ impl Value {
         }
     }
 
-    // Format duration as ISO-8601: "P1Y2M3DT4H5M6S"
     #[must_use]
     pub fn format_duration(duration_ms: i64) -> String {
         let seconds = duration_ms / 1000;
