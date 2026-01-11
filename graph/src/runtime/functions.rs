@@ -1556,23 +1556,24 @@ fn stdev(
     let ctx = iter.next().unwrap();
     match (val, ctx) {
         (Value::Null, ctx) => Ok(ctx),
-        (val @ (Value::Int(_) | Value::Float(_)), Value::List(vec)) => {
+        (val @ (Value::Int(_) | Value::Float(_)), Value::List(mut vec)) => {
             let val = val.get_numeric();
-            let (Value::Float(sum), Value::List(values)) = (&vec[0], &vec[1]) else {
-                unreachable!("stdev accumulator should be [sum, values]");
+
+            // Use split_at_mut to get mutable references to both elements safely
+            let (first, rest) = vec.split_at_mut(1);
+            let (Value::Float(sum), Value::List(values)) = (&mut first[0], &mut rest[0]) else {
+                unreachable!("stdev accumulator should be [sum, values]")
             };
 
-            let mut values = values.clone();
+            // Mutate in-place:  update sum and push value to list (avoids O(n²) cloning)
+            *sum += val;
             values.push(Value::Float(val));
 
-            Ok(Value::List(thin_vec![
-                Value::Float(sum + val),
-                Value::List(values)
-            ]))
+            Ok(Value::List(vec))
         }
         // Invalid type - return type mismatch error
         (val, Value::List(_)) => Err(format!(
-            "Type mismatch: expected Integer, Float, or Null but was {}",
+            "Type mismatch:  expected Integer, Float, or Null but was {}",
             val.name()
         )),
         _ => unreachable!("stdev expects [value, accumulator]"),
