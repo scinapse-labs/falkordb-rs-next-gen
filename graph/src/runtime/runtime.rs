@@ -271,12 +271,12 @@ impl<'a> Runtime {
                 };
 
                 // OPTIMIZATION: Take ownership of accumulator (moves value, no clone)
-                let prev_value = acc.take(key).unwrap_or(Value::Null);
+                let mut prev_value = acc.take(key).unwrap_or(Value::Null);
 
                 // Helper closure to restore accumulator and return error
                 // This ensures consistent error handling when operations fail
-                let restore_and_fail = |err: String| -> Result<(), String> {
-                    acc.insert(key, prev_value);
+                let mut restore_and_fail = |err: String| -> Result<(), String> {
+                    acc.insert(key, std::mem::replace(&mut prev_value, Value::Null));
                     Err(err)
                 };
 
