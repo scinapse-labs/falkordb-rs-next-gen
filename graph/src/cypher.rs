@@ -1549,7 +1549,7 @@ impl<'a> Parser<'a> {
                                     "COUNT is the only function which can accept * as an argument",
                                 ));
                             }
-							// Create args array like count(x) does
+                            // Create args array like count(x) does
                             let mut args = vec![tree!(ExprIR::Integer(1))]; // Dummy value for count(*)
 
                             if distinct {
