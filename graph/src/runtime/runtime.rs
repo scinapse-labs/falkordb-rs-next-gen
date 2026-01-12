@@ -270,20 +270,20 @@ impl<'a> Runtime {
                     ));
                 };
 
+                // The accumulator doesn't need to be in curr - it's passed as an explicit arg
                 // OPTIMIZATION: Take ownership of accumulator (moves value, no clone)
-                let prev_value = acc.take(key).unwrap_or(Value::Null);
+                let mut prev_value = Some(acc.take(key).unwrap_or(Value::Null));
 
                 // Helper closure to restore accumulator and return error
-                // This ensures consistent error handling when operations fail
-                // Note: We clone here since error paths are exceptional and performance is less critical
+                // Uses move semantics to avoid cloning large accumulators
                 let mut restore_and_fail = |err: String| -> Result<(), String> {
-                    acc.insert(key, prev_value.clone());
+                    if let Some(v) = prev_value.take() {
+                        acc.insert(key, v);
+                    }
                     Err(err)
                 };
 
                 // PHASE 1: Evaluate all arguments BEFORE consuming prev_value
-                // This is where most errors occur (type mismatches, missing variables, etc.)
-                // Collect results first to enable error recovery
                 let arg_results: Result<ThinVec<Value>, String> = (0..num_children - 1)
                     .map(|i| {
                         let child = ir.node(idx).child(i);
@@ -291,42 +291,31 @@ impl<'a> Runtime {
                     })
                     .collect();
 
-                // If arg evaluation failed, restore accumulator and propagate error
                 let mut args = match arg_results {
                     Ok(a) => a,
                     Err(e) => return restore_and_fail(e),
                 };
 
                 // PHASE 2: Handle DISTINCT unpacking (if present)
-                // Check if we have DISTINCT as first child
-                // In aggregation context:  num_children == 2 (DISTINCT node + accumulator variable)
-                // The DISTINCT node's evaluation returns a List, which we need to unpack
                 if num_children == 2 && matches!(ir.node(idx).child(0).data(), ExprIR::Distinct) {
-                    // Unpack the distinct result (matching lines 692-699 pattern)
-                    let arg = &args[0];
-                    if let Value::List(values) = arg {
-                        let mut values = values.clone();
-                        args.remove(0);
-                        values.append(&mut args);
-                        args = values;
+                    let arg = args.remove(0); // Move the value out
+                    if let Value::List(mut values) = arg {
+                        values.append(&mut args); // Append remaining args
+                        args = values; // Replace args with unpacked list
                     } else {
                         return restore_and_fail(String::from("DISTINCT should return a list"));
                     }
                 }
 
                 // PHASE 3: Validate argument types before consuming prev_value
-                // This allows error recovery by restoring the accumulator
                 if let Err(e) = func.validate_args_type(&args) {
                     return restore_and_fail(e);
                 }
 
-                // PHASE 4: Now it's safe to consume prev_value
-                // At this point, all fallible operations that we can recover from are done
-                // Push the accumulator as the last argument (moved, not cloned!)
-                args.push(prev_value);
+                // PHASE 4: Push the accumulator as the last argument (moved, not cloned!)
+                args.push(prev_value.take().unwrap_or(Value::Null));
 
                 // PHASE 5: Call the aggregation function
-                // If this fails, the query is aborting anyway, so state loss is acceptable
                 let new_value = (func.func)(self, args)?;
 
                 // Store result back in accumulator
