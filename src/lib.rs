@@ -229,6 +229,22 @@ fn reply_compact_value(
             raw::reply_with_long_long(ctx.ctx, 2);
             raw::reply_with_string_buffer(ctx.ctx, x.as_str().as_ptr().cast::<c_char>(), x.len());
         }
+        Value::Datetime(ts) => {
+            raw::reply_with_long_long(ctx.ctx, 13);
+            raw::reply_with_long_long(ctx.ctx, ts as _);
+        }
+        Value::Date(ts) => {
+            raw::reply_with_long_long(ctx.ctx, 14);
+            raw::reply_with_long_long(ctx.ctx, ts as _);
+        }
+        Value::Time(ts) => {
+            raw::reply_with_long_long(ctx.ctx, 15);
+            raw::reply_with_long_long(ctx.ctx, ts as _);
+        }
+        Value::Duration(dur) => {
+            raw::reply_with_long_long(ctx.ctx, 16);
+            raw::reply_with_long_long(ctx.ctx, dur as _);
+        }
         Value::List(values) => {
             raw::reply_with_long_long(ctx.ctx, 6);
             raw::reply_with_array(ctx.ctx, values.len() as _);
@@ -422,6 +438,38 @@ fn reply_verbose_value(
         }
         Value::String(x) => {
             raw::reply_with_string_buffer(ctx.ctx, x.as_str().as_ptr().cast::<c_char>(), x.len());
+        }
+        Value::Datetime(ts) => {
+            let formatted = Value::format_datetime(ts);
+            raw::reply_with_string_buffer(
+                ctx.ctx,
+                formatted.as_ptr().cast::<c_char>(),
+                formatted.len(),
+            );
+        }
+        Value::Date(ts) => {
+            let formatted = Value::format_date(ts);
+            raw::reply_with_string_buffer(
+                ctx.ctx,
+                formatted.as_ptr().cast::<c_char>(),
+                formatted.len(),
+            );
+        }
+        Value::Time(ts) => {
+            let formatted = Value::format_time(ts);
+            raw::reply_with_string_buffer(
+                ctx.ctx,
+                formatted.as_ptr().cast::<c_char>(),
+                formatted.len(),
+            );
+        }
+        Value::Duration(dur) => {
+            let formatted = Value::format_duration(dur);
+            raw::reply_with_string_buffer(
+                ctx.ctx,
+                formatted.as_ptr().cast::<c_char>(),
+                formatted.len(),
+            );
         }
         Value::List(values) => {
             raw::reply_with_array(ctx.ctx, values.len() as _);
