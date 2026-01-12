@@ -1441,7 +1441,7 @@ fn avg(
 
             Ok(Value::List(vec))
         }
-        _ => unreachable!("avg expects numeric input (validation done before call)"),
+        _ => unreachable!("avg expects Integer, Float, or Null (validation done before call)"),
     }
 }
 
@@ -1607,7 +1607,7 @@ fn stdev(
 
             Ok(Value::List(vec))
         }
-        _ => unreachable!("stdev expects numeric input (validation done before call)"),
+        _ => unreachable!("stdev expects Integer, Float, or Null (validation done before call)"),
     }
 }
 
