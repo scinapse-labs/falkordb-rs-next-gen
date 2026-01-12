@@ -564,7 +564,6 @@ impl CompareValue for Value {
         b: &Self,
     ) -> (Ordering, DisjointOrNull) {
         match (self, b) {
-            (Self::Int(a), Self::Int(b)) => (a.cmp(b), DisjointOrNull::None),
             (Self::Bool(a), Self::Bool(b)) => (a.cmp(b), DisjointOrNull::None),
             (Self::Float(a), Self::Float(b)) => compare_floats(*a, *b),
             (Self::String(a), Self::String(b)) => (a.cmp(b), DisjointOrNull::None),
@@ -573,18 +572,21 @@ impl CompareValue for Value {
             }
             (Self::Map(a), Self::Map(b)) => Self::compare_map(a, b),
             (Self::Node(a), Self::Node(b)) => (a.cmp(b), DisjointOrNull::None),
-            (Self::Relationship(rela), Self::Relationship(relb)) => {
-                (rela.0.cmp(&relb.0), DisjointOrNull::None)
+            (Self::Relationship(rel_a), Self::Relationship(rel_b)) => {
+                (rel_a.0.cmp(&rel_b.0), DisjointOrNull::None)
             }
             (Self::Point(a), Self::Point(b)) => match a.latitude.partial_cmp(&b.latitude) {
-                Some(Ordering::Equal) => match a.longitude.partial_cmp(&b.longitude) {
-                    Some(ord) => (ord, DisjointOrNull::None),
-                    None => (Ordering::Less, DisjointOrNull::NaN),
-                },
+                Some(Ordering::Equal) => a
+                    .longitude
+                    .partial_cmp(&b.longitude)
+                    .map_or((Ordering::Less, DisjointOrNull::NaN), |ord| {
+                        (ord, DisjointOrNull::None)
+                    }),
                 Some(ord) => (ord, DisjointOrNull::None),
                 None => (Ordering::Less, DisjointOrNull::NaN),
             },
-            (Self::Datetime(a), Self::Datetime(b))
+            (Self::Int(a), Self::Int(b))
+            | (Self::Datetime(a), Self::Datetime(b))
             | (Self::Date(a), Self::Date(b))
             | (Self::Time(a), Self::Time(b))
             | (Self::Duration(a), Self::Duration(b)) => (a.cmp(b), DisjointOrNull::None),
@@ -733,12 +735,12 @@ impl Value {
         a: &[T],
         b: &[T],
     ) -> (Ordering, DisjointOrNull) {
-        let array_a_len = a.len();
-        let array_b_len = b.len();
-        if array_a_len == 0 && array_b_len == 0 {
+        let len_a = a.len();
+        let len_b = b.len();
+        if len_a == 0 && len_b == 0 {
             return (Ordering::Equal, DisjointOrNull::None);
         }
-        let min_len = array_a_len.min(array_b_len);
+        let min_len = len_a.min(len_b);
 
         let mut first_not_equal = Ordering::Equal;
         let mut null_counter: usize = 0;
@@ -768,7 +770,7 @@ impl Value {
         }
 
         // if there was a null comparison on non-disjoint arrays
-        if null_counter > 0 && array_a_len == array_b_len {
+        if null_counter > 0 && len_a == len_b {
             return (first_not_equal, DisjointOrNull::ComparedNull);
         }
 
@@ -777,7 +779,7 @@ impl Value {
             return (first_not_equal, DisjointOrNull::None);
         }
 
-        (array_a_len.cmp(&array_b_len), DisjointOrNull::None)
+        (len_a.cmp(&len_b), DisjointOrNull::None)
     }
 
     fn compare_map(

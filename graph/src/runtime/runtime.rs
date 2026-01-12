@@ -276,7 +276,7 @@ impl<'a> Runtime {
                 // Helper closure to restore accumulator and return error
                 // This ensures consistent error handling when operations fail
                 // Note: We clone here since error paths are exceptional and performance is less critical
-                let restore_and_fail = |err: String| -> Result<(), String> {
+                let mut restore_and_fail = |err: String| -> Result<(), String> {
                     acc.insert(key, prev_value.clone());
                     Err(err)
                 };
@@ -973,7 +973,7 @@ impl<'a> Runtime {
                 Ok(Box::new(once(Ok(env))))
             }
             IR::Optional(vars) => {
-                let child_idx = if self.plan.node(idx).num_children() == 1 {
+                let optional_child_idx = if self.plan.node(idx).num_children() == 1 {
                     self.plan.node(idx).child(0).idx()
                 } else {
                     self.plan.node(idx).child(1).idx()
@@ -983,7 +983,9 @@ impl<'a> Runtime {
                         for v in vars {
                             env.insert(v, Value::Null);
                         }
-                        Ok(self.run(child_idx)?.lazy_replace(move || once(Ok(env))))
+                        Ok(self
+                            .run(optional_child_idx)?
+                            .lazy_replace(move || once(Ok(env))))
                     })
                     .cond_inspect(self.inspect, move |res| {
                         self.record.borrow_mut().push((idx, res.clone()));
@@ -1066,7 +1068,7 @@ impl<'a> Runtime {
                     }))
             }
             IR::Merge(pattern, on_create_set_items, on_match_set_items) => {
-                let child_idx = if self.plan.node(idx).num_children() == 1 {
+                let merge_child_idx = if self.plan.node(idx).num_children() == 1 {
                     self.plan.node(idx).child(0).idx()
                 } else {
                     self.plan.node(idx).child(1).idx()
@@ -1075,7 +1077,7 @@ impl<'a> Runtime {
                 // Find all Argument nodes in the child tree
                 let argument_indices: Vec<NodeIdx<Dyn<IR>>> = self
                     .plan
-                    .node(child_idx)
+                    .node(merge_child_idx)
                     .indices::<Bfs>()
                     .filter(|&i| matches!(self.plan.node(i).data(), IR::Argument))
                     .collect();
@@ -1116,7 +1118,7 @@ impl<'a> Runtime {
 
                         // When all nodes are bound, we only need to check if the pattern exists
                         // (take 1 match), otherwise we return all matches
-                        let child_iter = self.run(child_idx)?;
+                        let child_iter = self.run(merge_child_idx)?;
                         let child_iter: Box<dyn Iterator<Item = Result<Env, String>> + '_> =
                             if all_nodes_bound {
                                 Box::new(child_iter.take(1))
