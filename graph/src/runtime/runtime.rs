@@ -312,12 +312,20 @@ impl<'a> Runtime {
                     }
                 }
 
-                // PHASE 3: Now it's safe to consume prev_value
+                // PHASE 3: Validate argument types before consuming prev_value
+                // This allows error recovery by restoring the accumulator
+                if let Err(e) = func.validate_args_type(&args) {
+                    // Restore accumulator to maintain consistent state
+                    acc.insert(key, prev_value);
+                    return Err(e);
+                }
+
+                // PHASE 4: Now it's safe to consume prev_value
                 // At this point, all fallible operations that we can recover from are done
                 // Push the accumulator as the last argument (moved, not cloned!)
                 args.push(prev_value);
 
-                // PHASE 4: Call the aggregation function
+                // PHASE 5: Call the aggregation function
                 // If this fails, the query is aborting anyway, so state loss is acceptable
                 let new_value = (func.func)(self, args)?;
 
