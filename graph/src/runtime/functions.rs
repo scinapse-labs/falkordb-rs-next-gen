@@ -1347,7 +1347,7 @@ fn sum(
         (Some(Value::Float(a)), Some(Value::Float(b))) => Ok(Value::Float(a + b)),
         (Some(Value::Float(a)), Some(Value::Int(b))) => Ok(Value::Float(a + b as f64)),
 
-        _ => unreachable!("sum expects numeric arguments (validation done before call)"),
+        _ => unreachable!("sum expects Integer, Float, or Null (validation done before call)"),
     }
 }
 
