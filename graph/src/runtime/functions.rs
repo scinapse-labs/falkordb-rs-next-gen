@@ -2118,7 +2118,11 @@ fn string_join(
             first = false;
         }
 
-        debug_assert_eq!(result.len(), capacity, "String join calculation mismatch");
+        debug_assert_eq!(
+            result.len(),
+            capacity,
+            "Pre-allocated capacity does not match actual joined string length"
+        );
         result
     }
 
