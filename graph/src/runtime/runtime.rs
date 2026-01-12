@@ -1878,7 +1878,12 @@ impl<'a> Runtime {
                 SetItem::Property(entity, value, replace) => {
                     let run_expr = self.run_expr(value, value.root().idx(), vars, None)?;
                     let (entity, attr) = match entity.root().data() {
-                        ExprIR::Variable(name) => (vars.get(name).unwrap(), None),
+                        ExprIR::Variable(name) => {
+                            let entity = vars
+                                .get(name)
+                                .ok_or_else(|| format!("Variable {} not found", name.as_str()))?;
+                            (entity, None)
+                        }
                         ExprIR::FuncInvocation(func) if func.name == "property" => {
                             let ExprIR::String(property) = entity.root().child(1).data() else {
                                 unreachable!();

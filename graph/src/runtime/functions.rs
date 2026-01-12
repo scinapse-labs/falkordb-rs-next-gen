@@ -73,6 +73,10 @@ pub enum Type {
     Path,
     VecF32,
     Point,
+    Datetime,
+    Date,
+    Time,
+    Duration,
     Any,
     Union(Vec<Self>),
     Optional(Box<Self>),
@@ -93,10 +97,14 @@ impl Display for Type {
             Self::List(_) => write!(f, "List"),
             Self::Map => write!(f, "Map"),
             Self::Node => write!(f, "Node"),
-            Self::Relationship => write!(f, "Relationship"),
+            Self::Relationship => write!(f, "Edge"),
             Self::Path => write!(f, "Path"),
             Self::VecF32 => write!(f, "VecF32"),
             Self::Point => write!(f, "Point"),
+            Self::Datetime => write!(f, "Datetime"),
+            Self::Date => write!(f, "Date"),
+            Self::Time => write!(f, "Time"),
+            Self::Duration => write!(f, "Duration"),
             Self::Any => write!(f, "Any"),
             Self::Union(types) => {
                 let mut iter = types.iter();
@@ -334,13 +342,14 @@ pub fn init_functions() -> Result<(), Functions> {
         vec![Type::Union(vec![Type::Node, Type::Null])],
         FnType::Function,
     );
+    funcs.add("typeOf", type_of, false, vec![Type::Any], FnType::Function);
     funcs.add(
         "hasLabels",
         has_labels,
         false,
         vec![
             Type::Union(vec![Type::Node, Type::Null]),
-            Type::Union(vec![Type::List(Box::new(Type::Any)), Type::Null]),
+            Type::List(Box::new(Type::Any)),
         ],
         FnType::Function,
     );
@@ -418,14 +427,25 @@ pub fn init_functions() -> Result<(), Functions> {
         value_to_string,
         false,
         vec![Type::Union(vec![
+            Type::Datetime,
+            Type::Duration,
+            Type::String,
             Type::Bool,
             Type::Int,
             Type::Float,
-            Type::String,
             Type::Null,
+            Type::Point,
         ])],
         FnType::Function,
     );
+    funcs.add(
+        "tostringornull",
+        value_to_string,
+        false,
+        vec![Type::Any],
+        FnType::Function,
+    );
+
     funcs.add("tojson", to_json, false, vec![Type::Any], FnType::Function);
     funcs.add(
         "size",
@@ -640,6 +660,7 @@ pub fn init_functions() -> Result<(), Functions> {
         vec![Type::Union(vec![Type::Int, Type::Float, Type::Null])],
         FnType::Function,
     );
+    funcs.add("randomUUID", random_uuid, false, vec![], FnType::Function);
     funcs.add(
         "pow",
         pow,
@@ -778,8 +799,8 @@ pub fn init_functions() -> Result<(), Functions> {
         is_empty,
         false,
         vec![Type::Union(vec![
-            Type::List(Box::new(Type::Any)),
             Type::Map,
+            Type::List(Box::new(Type::Any)),
             Type::String,
             Type::Null,
         ])],
@@ -790,8 +811,8 @@ pub fn init_functions() -> Result<(), Functions> {
         to_boolean,
         false,
         vec![Type::Union(vec![
-            Type::Bool,
             Type::String,
+            Type::Bool,
             Type::Int,
             Type::Null,
         ])],
@@ -816,13 +837,6 @@ pub fn init_functions() -> Result<(), Functions> {
         value_to_integer, // Reuse the same function
         false,
         vec![Type::Any], // Accept ANY type instead of restricted union
-        FnType::Function,
-    );
-    funcs.add(
-        "toStringOrNull",
-        value_to_string,
-        false,
-        vec![Type::Any],
         FnType::Function,
     );
     funcs.add(
@@ -1135,6 +1149,40 @@ fn labels(
 
         _ => unreachable!(),
     }
+}
+
+fn type_of(
+    _runtime: &Runtime,
+    args: ThinVec<Value>,
+) -> Result<Value, String> {
+    let type_name = match args.into_iter().next() {
+        Some(Value::Null) => "Null",
+        Some(Value::Bool(_)) => "Boolean",
+        Some(Value::Int(_)) => "Integer",
+        Some(Value::Float(_)) => "Float",
+        Some(Value::String(_)) => "String",
+        Some(Value::List(_)) => "List",
+        Some(Value::Arc(v)) => {
+            // Handle Arc-wrapped values
+            match &*v {
+                Value::List(_) => "List",
+                Value::Map(_) => "Map",
+                _ => "Unknown",
+            }
+        }
+        Some(Value::Map(_)) => "Map",
+        Some(Value::Node(_)) => "Node",
+        Some(Value::Relationship(_)) => "Edge",
+        Some(Value::Path(_)) => "Path",
+        Some(Value::VecF32(_)) => "Vectorf32",
+        Some(Value::Point(_)) => "Point",
+        Some(Value::Datetime(_)) => "Datetime",
+        Some(Value::Date(_)) => "Date",
+        Some(Value::Time(_)) => "Time",
+        Some(Value::Duration(_)) => "Duration",
+        None => unreachable!(),
+    };
+    Ok(Value::String(Arc::new(String::from(type_name))))
 }
 
 fn has_labels(
@@ -1666,33 +1714,30 @@ fn value_to_float(
     }
 }
 
-fn value_string(value: &Value) -> Result<Arc<String>, String> {
-    match value {
-        Value::Bool(b) => Ok(Arc::new(String::from(if *b { "true" } else { "false" }))),
-        Value::Int(i) => Ok(Arc::new(i.to_string())),
-        Value::Float(f) => Ok(Arc::new(format!("{f:.6}"))),
-        Value::String(s) => Ok(s.clone()),
-
-        _ => Err(format!("Cannot convert {} to string", value.name())),
-    }
-}
-
+// Single implementation - returns Null for non-stringable types
 fn value_to_string(
     _runtime: &Runtime,
     args: ThinVec<Value>,
 ) -> Result<Value, String> {
     match args.into_iter().next() {
-        Some(Value::Null) => Ok(Value::Null),
-        Some(v) => {
-            // Try to convert supported types to string
-            // For unsupported types (List, Node, etc.), return Null
-            value_string(&v).map_or_else(|_| Ok(Value::Null), |s| Ok(Value::String(s)))
-        }
+        Some(Value::String(s)) => Ok(Value::String(s)),
+        Some(Value::Int(i)) => Ok(Value::String(Arc::new(i.to_string()))),
+        Some(Value::Float(f)) => Ok(Value::String(Arc::new(format!("{f:.6}")))),
+        Some(Value::Bool(b)) => Ok(Value::String(Arc::new(b.to_string()))),
+        Some(Value::Point(p)) => Ok(Value::String(Arc::new(format!(
+            "Point(latitude: {}, longitude: {})",
+            p.latitude, p.longitude
+        )))),
+        Some(Value::Datetime(ts)) => Ok(Value::String(Arc::new(Value::format_datetime(ts)))),
+        Some(Value::Date(ts)) => Ok(Value::String(Arc::new(Value::format_date(ts)))),
+        Some(Value::Time(ts)) => Ok(Value::String(Arc::new(Value::format_time(ts)))),
+        Some(Value::Duration(dur)) => Ok(Value::String(Arc::new(Value::format_duration(dur)))),
+        // All other types return Null (matches C behavior)
+        Some(_) => Ok(Value::Null),
 
-        _ => unreachable!(),
+        None => unreachable!(),
     }
 }
-
 fn to_json(
     runtime: &Runtime,
     args: ThinVec<Value>,
@@ -2263,6 +2308,37 @@ fn log10(
 
         _ => unreachable!(),
     }
+}
+
+fn random_uuid(
+    _: &Runtime,
+    _args: ThinVec<Value>,
+) -> Result<Value, String> {
+    use rand::Rng;
+
+    // Generate 16 random bytes (128 bits)
+    let mut rng = rand::rng();
+    let mut bytes = [0u8; 16];
+    rng.fill(&mut bytes);
+
+    // Set version to 4 (random UUID) - set bits 12-15 of byte 6 to 0100
+    bytes[6] = (bytes[6] & 0x0F) | 0x40;
+
+    // Set variant to RFC 4122 - set bits 6-7 of byte 8 to 10
+    bytes[8] = (bytes[8] & 0x3F) | 0x80;
+
+    // Format as UUID string:  xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx
+    let uuid = format!(
+        "{:08x}-{:04x}-{:04x}-{:04x}-{:04x}{:08x}",
+        u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]),
+        u16::from_be_bytes([bytes[4], bytes[5]]),
+        u16::from_be_bytes([bytes[6], bytes[7]]),
+        u16::from_be_bytes([bytes[8], bytes[9]]),
+        u16::from_be_bytes([bytes[10], bytes[11]]),
+        u32::from_be_bytes([bytes[12], bytes[13], bytes[14], bytes[15]]),
+    );
+
+    Ok(Value::String(Arc::new(uuid)))
 }
 
 // called from fn pow and expr pow (^)
