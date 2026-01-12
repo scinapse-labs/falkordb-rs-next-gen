@@ -273,6 +273,14 @@ impl<'a> Runtime {
                 // OPTIMIZATION: Take ownership of accumulator (moves value, no clone)
                 let prev_value = acc.take(key).unwrap_or(Value::Null);
 
+                // Helper closure to restore accumulator and return error
+                // This ensures consistent error handling when operations fail
+                // Note: We clone here since error paths are exceptional and performance is less critical
+                let restore_and_fail = |err: String| -> Result<(), String> {
+                    acc.insert(key, prev_value.clone());
+                    Err(err)
+                };
+
                 // PHASE 1: Evaluate all arguments BEFORE consuming prev_value
                 // This is where most errors occur (type mismatches, missing variables, etc.)
                 // Collect results first to enable error recovery
@@ -286,11 +294,7 @@ impl<'a> Runtime {
                 // If arg evaluation failed, restore accumulator and propagate error
                 let mut args = match arg_results {
                     Ok(a) => a,
-                    Err(e) => {
-                        // Restore accumulator to maintain consistent state
-                        acc.insert(key, prev_value);
-                        return Err(e);
-                    }
+                    Err(e) => return restore_and_fail(e),
                 };
 
                 // PHASE 2: Handle DISTINCT unpacking (if present)
@@ -306,18 +310,22 @@ impl<'a> Runtime {
                         values.append(&mut args);
                         args = values;
                     } else {
-                        // Restore accumulator before returning error
-                        acc.insert(key, prev_value);
-                        return Err(String::from("DISTINCT should return a list"));
+                        return restore_and_fail(String::from("DISTINCT should return a list"));
                     }
                 }
 
-                // PHASE 3: Now it's safe to consume prev_value
+                // PHASE 3: Validate argument types before consuming prev_value
+                // This allows error recovery by restoring the accumulator
+                if let Err(e) = func.validate_args_type(&args) {
+                    return restore_and_fail(e);
+                }
+
+                // PHASE 4: Now it's safe to consume prev_value
                 // At this point, all fallible operations that we can recover from are done
                 // Push the accumulator as the last argument (moved, not cloned!)
                 args.push(prev_value);
 
-                // PHASE 4: Call the aggregation function
+                // PHASE 5: Call the aggregation function
                 // If this fails, the query is aborting anyway, so state loss is acceptable
                 let new_value = (func.func)(self, args)?;
 

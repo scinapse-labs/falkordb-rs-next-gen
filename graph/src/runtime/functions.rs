@@ -1347,13 +1347,7 @@ fn sum(
         (Some(Value::Float(a)), Some(Value::Float(b))) => Ok(Value::Float(a + b)),
         (Some(Value::Float(a)), Some(Value::Int(b))) => Ok(Value::Float(a + b as f64)),
 
-        // Invalid type - return type mismatch error
-        (Some(val), Some(_)) => Err(format!(
-            "Type mismatch: expected Integer, Float, or Null but was {}",
-            val.name()
-        )),
-
-        _ => unreachable!("sum expects two arguments"),
+        _ => unreachable!("sum expects Integer, Float, or Null (validation done before call)"),
     }
 }
 
@@ -1447,14 +1441,7 @@ fn avg(
 
             Ok(Value::List(vec))
         }
-        (val, Value::List(_)) => {
-            // Non-numeric type passed to avg
-            Err(format!(
-                "Type mismatch:  expected Integer, Float, or Null but was {}",
-                val.name()
-            ))
-        }
-        _ => unreachable!("avg expects numeric input"),
+        _ => unreachable!("avg expects Integer, Float, or Null (validation done before call)"),
     }
 }
 
@@ -1620,12 +1607,7 @@ fn stdev(
 
             Ok(Value::List(vec))
         }
-        // Invalid type - return type mismatch error
-        (val, Value::List(_)) => Err(format!(
-            "Type mismatch: expected Integer, Float, or Null but was {}",
-            val.name()
-        )),
-        _ => unreachable!("stdev expects [value, accumulator]"),
+        _ => unreachable!("stdev expects Integer, Float, or Null (validation done before call)"),
     }
 }
 
