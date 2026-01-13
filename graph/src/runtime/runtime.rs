@@ -316,7 +316,11 @@ impl<'a> Runtime {
                 args.push(prev_value.take().unwrap_or(Value::Null));
 
                 // PHASE 5: Call the aggregation function
-                let new_value = (func.func)(self, args)?;
+                let new_value = (func.func)(self, args).inspect_err(|_e| {
+                    if let Some(v) = prev_value.take() {
+                        acc.insert(key, v);
+                    }
+                })?;
 
                 // Store result back in accumulator
                 acc.insert(key, new_value);
