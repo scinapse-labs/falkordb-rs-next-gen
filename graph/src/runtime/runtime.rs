@@ -313,7 +313,7 @@ impl<'a> Runtime {
                     return Err(e);
                 }
 
-                // PHASE 3.5: Validate domain constraints (NEW!)
+                // PHASE 4: Validate domain constraints
                 // This catches things like percentile out of [0.0, 1.0]
                 if let Err(e) = func.validate_args_domain(&args) {
                     // Restore accumulator before returning error
@@ -321,10 +321,10 @@ impl<'a> Runtime {
                     return Err(e);
                 }
 
-                // PHASE 4: Push the accumulator as the last argument (moved, not cloned!)
+                // PHASE 5: Push the accumulator as the last argument (moved, not cloned!)
                 args.push(prev_value);
 
-                // PHASE 5: Call the aggregation function
+                // PHASE 6: Call the aggregation function
                 // At this point, all validation is complete - the function should not fail
                 let new_value = (func.func)(self, args)?;
 
