@@ -1420,24 +1420,22 @@ fn avg(
             };
 
             *count += 1;
-            let overflow = *had_overflow || about_to_overflow(*sum, val);
 
-            *sum = if *had_overflow {
-                // continue incremental averaging
-                let mut total = *sum / *count as f64;
-                total *= (*count - 1) as f64;
-                total += val / *count as f64;
-                total
-            } else if overflow {
-                // switch to incremental averaging
-                let mut total = *sum / *count as f64;
-                total += val / *count as f64;
-                total
+            if *had_overflow {
+                // Continue incremental averaging - sum already stores the running mean
+                // Formula: mean_new = mean_old + (value - mean_old) / count_new
+                *sum += (val - *sum) / *count as f64;
+            } else if about_to_overflow(*sum, val) {
+                // Switch to incremental averaging
+                // Convert accumulated total to mean of previous values
+                *sum /= (*count - 1) as f64;
+                // Update mean with new value using incremental formula
+                *sum += (val - *sum) / *count as f64;
+                *had_overflow = true;
             } else {
-                *sum + val
-            };
-
-            *had_overflow = overflow;
+                // Normal accumulation - sum stores total
+                *sum += val;
+            }
 
             Ok(Value::List(vec))
         }

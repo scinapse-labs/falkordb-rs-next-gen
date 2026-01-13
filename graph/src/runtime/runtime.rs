@@ -258,7 +258,10 @@ impl<'a> Runtime {
         match ir.node(idx).data() {
             ExprIR::FuncInvocation(func) if func.is_aggregate() => {
                 let num_children = ir.node(idx).num_children();
-                if num_children == 0 {
+
+                // The last child is always the accumulator key variable
+                // Minimum valid structure: [arg, accumulator_key]
+                if num_children < 2 {
                     return Err(String::from(
                         "Aggregation function must have at least one argument",
                     ));
@@ -270,20 +273,10 @@ impl<'a> Runtime {
                     ));
                 };
 
-                // The accumulator doesn't need to be in curr - it's passed as an explicit arg
-                // OPTIMIZATION: Take ownership of accumulator (moves value, no clone)
-                let mut prev_value = Some(acc.take(key).unwrap_or(Value::Null));
+                // Take ownership of accumulator (moves value, no clone)
+                let prev_value = acc.take(key).unwrap_or(Value::Null);
 
-                // Helper closure to restore accumulator and return error
-                // Uses move semantics to avoid cloning large accumulators
-                let mut restore_and_fail = |err: String| -> Result<(), String> {
-                    if let Some(v) = prev_value.take() {
-                        acc.insert(key, v);
-                    }
-                    Err(err)
-                };
-
-                // PHASE 1: Evaluate all arguments BEFORE consuming prev_value
+                // PHASE 1: Evaluate all arguments
                 let arg_results: Result<ThinVec<Value>, String> = (0..num_children - 1)
                     .map(|i| {
                         let child = ir.node(idx).child(i);
@@ -293,34 +286,40 @@ impl<'a> Runtime {
 
                 let mut args = match arg_results {
                     Ok(a) => a,
-                    Err(e) => return restore_and_fail(e),
+                    Err(e) => {
+                        // Restore accumulator before returning error
+                        acc.insert(key, prev_value);
+                        return Err(e);
+                    }
                 };
 
                 // PHASE 2: Handle DISTINCT unpacking (if present)
                 if num_children == 2 && matches!(ir.node(idx).child(0).data(), ExprIR::Distinct) {
-                    let arg = args.remove(0); // Move the value out
+                    let arg = args.remove(0);
                     if let Value::List(mut values) = arg {
-                        values.append(&mut args); // Append remaining args
-                        args = values; // Replace args with unpacked list
+                        values.append(&mut args);
+                        args = values;
                     } else {
-                        return restore_and_fail(String::from("DISTINCT should return a list"));
+                        // Restore accumulator before returning error
+                        acc.insert(key, prev_value);
+                        return Err(String::from("DISTINCT should return a list"));
                     }
                 }
 
-                // PHASE 3: Validate argument types before consuming prev_value
+                // PHASE 3: Validate argument types
                 if let Err(e) = func.validate_args_type(&args) {
-                    return restore_and_fail(e);
+                    // Restore accumulator before returning error
+                    acc.insert(key, prev_value);
+                    return Err(e);
                 }
 
                 // PHASE 4: Push the accumulator as the last argument (moved, not cloned!)
-                args.push(prev_value.take().unwrap_or(Value::Null));
+                args.push(prev_value);
 
                 // PHASE 5: Call the aggregation function
-                let new_value = (func.func)(self, args).inspect_err(|_e| {
-                    if let Some(v) = prev_value.take() {
-                        acc.insert(key, v);
-                    }
-                })?;
+                // At this point, prev_value is consumed - we cannot restore on error
+                // This is acceptable because the function should not fail after validation
+                let new_value = (func.func)(self, args)?;
 
                 // Store result back in accumulator
                 acc.insert(key, new_value);
