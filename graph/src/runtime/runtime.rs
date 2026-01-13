@@ -296,8 +296,7 @@ impl<'a> Runtime {
                 // PHASE 2: Handle DISTINCT unpacking (if present)
                 if num_children == 2 && matches!(ir.node(idx).child(0).data(), ExprIR::Distinct) {
                     let arg = args.remove(0);
-                    if let Value::List(mut values) = arg {
-                        values.append(&mut args);
+                    if let Value::List(values) = arg {
                         args = values;
                     } else {
                         // Restore accumulator before returning error
@@ -325,7 +324,7 @@ impl<'a> Runtime {
                 args.push(prev_value);
 
                 // PHASE 6: Call the aggregation function
-                // At this point, all validation is complete - the function should not fail
+                // At this point, all validation is complete
                 let new_value = (func.func)(self, args)?;
 
                 // Store result back in accumulator
