@@ -276,7 +276,7 @@ impl<'a> Runtime {
                 // Take ownership of accumulator (moves value, no clone)
                 let prev_value = acc.take(key).unwrap_or(Value::Null);
 
-                // PHASE 1: Evaluate all arguments
+                // PHASE 1:  Evaluate all arguments
                 let arg_results: Result<ThinVec<Value>, String> = (0..num_children - 1)
                     .map(|i| {
                         let child = ir.node(idx).child(i);
@@ -313,12 +313,19 @@ impl<'a> Runtime {
                     return Err(e);
                 }
 
+                // PHASE 3.5: Validate domain constraints (NEW!)
+                // This catches things like percentile out of [0.0, 1.0]
+                if let Err(e) = func.validate_args_domain(&args) {
+                    // Restore accumulator before returning error
+                    acc.insert(key, prev_value);
+                    return Err(e);
+                }
+
                 // PHASE 4: Push the accumulator as the last argument (moved, not cloned!)
                 args.push(prev_value);
 
                 // PHASE 5: Call the aggregation function
-                // At this point, prev_value is consumed - we cannot restore on error
-                // This is acceptable because the function should not fail after validation
+                // At this point, all validation is complete - the function should not fail
                 let new_value = (func.func)(self, args)?;
 
                 // Store result back in accumulator

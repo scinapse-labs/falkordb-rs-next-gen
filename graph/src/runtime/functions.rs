@@ -229,6 +229,32 @@ impl GraphFn {
     }
 }
 
+impl GraphFn {
+    /// Validates domain constraints (e.g., percentile must be in [0.0, 1.0])
+    /// This is called AFTER type validation but BEFORE consuming the accumulator
+    pub fn validate_args_domain(
+        &self,
+        args: &[Value],
+    ) -> Result<(), String> {
+        // Only percentile functions need domain validation currently
+        if self.name.to_lowercase().starts_with("percentile") {
+            // percentile is at index 1 (after the value argument)
+            if args.len() >= 2 {
+                if args[1] == Value::Null {
+                    return Err("Type mismatch: expected Integer or Float but was Null".to_string());
+                }
+                let percentile = args[1].get_numeric();
+                if !(0.0..=1.0).contains(&percentile) {
+                    return Err(format!(
+                        "Invalid input - '{percentile}' is not a valid argument, must be a number in the range 0.0 to 1.0"
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
 #[derive(Default, Debug)]
 pub struct Functions {
     functions: HashMap<String, Arc<GraphFn>>,
@@ -1421,16 +1447,21 @@ fn avg(
 
             *count += 1;
 
-            if *had_overflow {
-                // Continue incremental averaging - sum already stores the running mean
-                // Formula: mean_new = mean_old + (value - mean_old) / count_new
-                *sum += (val - *sum) / *count as f64;
-            } else if about_to_overflow(*sum, val) {
-                // Switch to incremental averaging
-                // Convert accumulated total to mean of previous values
-                *sum /= (*count - 1) as f64;
-                // Update mean with new value using incremental formula
-                *sum += (val - *sum) / *count as f64;
+            // Check for overflow condition
+            if *had_overflow || about_to_overflow(*sum, val) {
+                // Use incremental averaging algorithm
+                // Divide the total by the new count (in-place mutation like C)
+                *sum /= *count as f64;
+
+                // If we were already in overflow mode, multiply back by previous count
+                if *had_overflow {
+                    *sum *= (*count - 1) as f64;
+                }
+
+                // Add the new value contribution
+                *sum += val / *count as f64;
+
+                // Mark that we're now in overflow mode
                 *had_overflow = true;
             } else {
                 // Normal accumulation - sum stores total
@@ -1474,18 +1505,10 @@ fn percentile(
     let val = args.remove(0);
     let percentile_val = args.remove(0);
 
-    // Check if percentile is Null and return type mismatch error
-    if matches!(percentile_val, Value::Null) {
-        return Err("Type mismatch: expected Integer or Float but was Null".to_string());
-    }
+    // Domain validation is now done in PHASE 3.5, so these checks are removed
+    // (Or kept as defensive programming - they should never fail)
 
     let percentile = percentile_val.get_numeric();
-
-    if !(0.0..=1.0).contains(&percentile) {
-        return Err(format!(
-            "Invalid input - '{percentile}' is not a valid argument, must be a number in the range 0.0 to 1.0"
-        ));
-    }
 
     let ctx = args.remove(0);
     if matches!(val, Value::Null) {
