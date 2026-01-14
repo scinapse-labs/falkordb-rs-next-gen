@@ -257,16 +257,78 @@ impl<'a> Runtime {
     ) -> Result<(), String> {
         match ir.node(idx).data() {
             ExprIR::FuncInvocation(func) if func.is_aggregate() => {
-                let ExprIR::Variable(key) =
-                    ir.node(idx).child(ir.node(idx).num_children() - 1).data()
-                else {
+                let num_children = ir.node(idx).num_children();
+
+                // The last child is always the accumulator key variable
+                // Minimum valid structure: [arg, accumulator_key]
+                if num_children < 2 {
+                    return Err(String::from(
+                        "Aggregation function must have at least one argument",
+                    ));
+                }
+
+                let ExprIR::Variable(key) = ir.node(idx).child(num_children - 1).data() else {
                     return Err(String::from(
                         "Aggregation function must end with a variable",
                     ));
                 };
 
-                curr.insert(key, acc.get(key).unwrap_or(Value::Null));
-                acc.insert(key, self.run_expr(ir, idx, curr, Some(agg_group_key))?);
+                // Take ownership of accumulator (moves value, no clone)
+                let prev_value = acc.take(key).unwrap_or(Value::Null);
+
+                // PHASE 1:  Evaluate all arguments
+                let arg_results: Result<ThinVec<Value>, String> = (0..num_children - 1)
+                    .map(|i| {
+                        let child = ir.node(idx).child(i);
+                        self.run_expr(ir, child.idx(), curr, Some(agg_group_key))
+                    })
+                    .collect();
+
+                let mut args = match arg_results {
+                    Ok(a) => a,
+                    Err(e) => {
+                        // Restore accumulator before returning error
+                        acc.insert(key, prev_value);
+                        return Err(e);
+                    }
+                };
+
+                // PHASE 2: Handle DISTINCT unpacking (if present)
+                if num_children == 2 && matches!(ir.node(idx).child(0).data(), ExprIR::Distinct) {
+                    let arg = args.remove(0);
+                    if let Value::List(values) = arg {
+                        args = values;
+                    } else {
+                        // Restore accumulator before returning error
+                        acc.insert(key, prev_value);
+                        return Err(String::from("DISTINCT should return a list"));
+                    }
+                }
+
+                // PHASE 3: Validate argument types
+                if let Err(e) = func.validate_args_type(&args) {
+                    // Restore accumulator before returning error
+                    acc.insert(key, prev_value);
+                    return Err(e);
+                }
+
+                // PHASE 4: Validate domain constraints
+                // This catches things like percentile out of [0.0, 1.0]
+                if let Err(e) = func.validate_args_domain(&args) {
+                    // Restore accumulator before returning error
+                    acc.insert(key, prev_value);
+                    return Err(e);
+                }
+
+                // PHASE 5: Push the accumulator as the last argument (moved, not cloned!)
+                args.push(prev_value);
+
+                // PHASE 6: Call the aggregation function
+                // At this point, all validation is complete
+                let new_value = (func.func)(self, args)?;
+
+                // Store result back in accumulator
+                acc.insert(key, new_value);
             }
             _ => {
                 for child in ir.node(idx).children() {
@@ -909,7 +971,7 @@ impl<'a> Runtime {
                 Ok(Box::new(once(Ok(env))))
             }
             IR::Optional(vars) => {
-                let child_idx = if self.plan.node(idx).num_children() == 1 {
+                let optional_child_idx = if self.plan.node(idx).num_children() == 1 {
                     self.plan.node(idx).child(0).idx()
                 } else {
                     self.plan.node(idx).child(1).idx()
@@ -919,7 +981,9 @@ impl<'a> Runtime {
                         for v in vars {
                             env.insert(v, Value::Null);
                         }
-                        Ok(self.run(child_idx)?.lazy_replace(move || once(Ok(env))))
+                        Ok(self
+                            .run(optional_child_idx)?
+                            .lazy_replace(move || once(Ok(env))))
                     })
                     .cond_inspect(self.inspect, move |res| {
                         self.record.borrow_mut().push((idx, res.clone()));
@@ -1002,7 +1066,7 @@ impl<'a> Runtime {
                     }))
             }
             IR::Merge(pattern, on_create_set_items, on_match_set_items) => {
-                let child_idx = if self.plan.node(idx).num_children() == 1 {
+                let merge_child_idx = if self.plan.node(idx).num_children() == 1 {
                     self.plan.node(idx).child(0).idx()
                 } else {
                     self.plan.node(idx).child(1).idx()
@@ -1011,7 +1075,7 @@ impl<'a> Runtime {
                 // Find all Argument nodes in the child tree
                 let argument_indices: Vec<NodeIdx<Dyn<IR>>> = self
                     .plan
-                    .node(child_idx)
+                    .node(merge_child_idx)
                     .indices::<Bfs>()
                     .filter(|&i| matches!(self.plan.node(i).data(), IR::Argument))
                     .collect();
@@ -1052,7 +1116,7 @@ impl<'a> Runtime {
 
                         // When all nodes are bound, we only need to check if the pattern exists
                         // (take 1 match), otherwise we return all matches
-                        let child_iter = self.run(child_idx)?;
+                        let child_iter = self.run(merge_child_idx)?;
                         let child_iter: Box<dyn Iterator<Item = Result<Env, String>> + '_> =
                             if all_nodes_bound {
                                 Box::new(child_iter.take(1))

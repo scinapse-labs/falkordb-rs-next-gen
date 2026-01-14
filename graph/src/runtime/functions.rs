@@ -12,7 +12,6 @@ use crate::{
         value::{Point, Value, ValueTypeOf},
     },
 };
-use itertools::Itertools;
 use rand::Rng;
 use std::{
     collections::HashMap,
@@ -225,6 +224,32 @@ impl GraphFn {
                 }
             }
             FnArguments::VarLength(_) => {}
+        }
+        Ok(())
+    }
+}
+
+impl GraphFn {
+    /// Validates domain constraints (e.g., percentile must be in [0.0, 1.0])
+    /// This is called AFTER type validation but BEFORE consuming the accumulator
+    pub fn validate_args_domain(
+        &self,
+        args: &[Value],
+    ) -> Result<(), String> {
+        // Only percentile functions need domain validation currently
+        if self.name.to_lowercase().starts_with("percentile") {
+            // percentile is at index 1 (after the value argument)
+            if args.len() >= 2 {
+                if args[1] == Value::Null {
+                    return Err("Type mismatch: expected Integer or Float but was Null".to_string());
+                }
+                let percentile = args[1].get_numeric();
+                if !(0.0..=1.0).contains(&percentile) {
+                    return Err(format!(
+                        "Invalid input - '{percentile}' is not a valid argument, must be a number in the range 0.0 to 1.0"
+                    ));
+                }
+            }
         }
         Ok(())
     }
@@ -1333,15 +1358,22 @@ fn sum(
     args: ThinVec<Value>,
 ) -> Result<Value, String> {
     let mut iter = args.into_iter();
-    match (iter.next(), iter.next()) {
-        (Some(Value::Null), Some(Value::Int(a))) => Ok(Value::Float(a as f64)),
-        (Some(Value::Null), Some(Value::Float(a))) => Ok(Value::Float(a)),
-        (Some(Value::Int(a)), Some(Value::Int(b))) => Ok(Value::Float((a + b) as f64)),
-        (Some(Value::Float(a)), Some(Value::Float(b))) => Ok(Value::Float(a + b)),
+    let first = iter.next();
+    let second = iter.next();
+
+    match (first, second) {
+        // Skip null values - return accumulator unchanged
+        (Some(Value::Null), Some(acc)) => Ok(acc),
+
+        // Numeric value + Int accumulator (cast before adding to avoid i64 overflow)
+        (Some(Value::Int(a)), Some(Value::Int(b))) => Ok(Value::Float(a as f64 + b as f64)),
         (Some(Value::Int(a)), Some(Value::Float(b))) => Ok(Value::Float(a as f64 + b)),
+
+        // Numeric value + Float accumulator
+        (Some(Value::Float(a)), Some(Value::Float(b))) => Ok(Value::Float(a + b)),
         (Some(Value::Float(a)), Some(Value::Int(b))) => Ok(Value::Float(a + b as f64)),
 
-        _ => unreachable!(),
+        _ => unreachable!("sum expects Integer, Float, or Null (validation done before call)"),
     }
 }
 
@@ -1398,44 +1430,47 @@ fn avg(
             // If the first value is null, return the accumulator unchanged
             Ok(ctx)
         }
-        (val, Value::List(vec)) => {
+        (val @ (Value::Int(_) | Value::Float(_)), Value::List(mut vec)) => {
             let val = val.get_numeric();
-            // Extract existing sum and count
-            let (Value::Float(sum), Value::Int(count), Value::Bool(had_overflow)) =
-                (&vec[0], &vec[1], &vec[2])
-            else {
-                unreachable!("avg accumulator should be [sum, count, overflow]");
-            };
 
-            let count = *count + 1;
+            // Use split_at_mut to get mutable references to all three elements safely
+            // vec = [sum, count, had_overflow]
+            let (first, rest) = vec.split_at_mut(1);
+            let (second, third) = rest.split_at_mut(1);
 
-            let overflow = *had_overflow || about_to_overflow(*sum, val);
-
-            let sum = {
-                if *had_overflow {
-                    // continue incremental averaging
-                    let mut total = sum / count as f64;
-                    total *= (count - 1) as f64;
-                    total += val / count as f64;
-                    total
-                } else if overflow {
-                    // switch to incremental averaging
-                    let mut total = sum / count as f64;
-                    total += val / count as f64;
-                    total
-                } else {
-                    sum + val
+            let (sum, count, had_overflow) = match (&mut first[0], &mut second[0], &mut third[0]) {
+                (Value::Float(sum), Value::Int(count), Value::Bool(had_overflow)) => {
+                    (sum, count, had_overflow)
                 }
+                _ => unreachable!("avg accumulator should be [sum, count, overflow]"),
             };
 
-            Ok(Value::List(thin_vec![
-                Value::Float(sum),
-                Value::Int(count),
-                Value::Bool(overflow),
-            ]))
-        }
+            *count += 1;
 
-        _ => unreachable!("avg expects numeric input"),
+            // Check for overflow condition
+            if *had_overflow || about_to_overflow(*sum, val) {
+                // Use incremental averaging algorithm
+                // Divide the total by the new count (in-place mutation like C)
+                *sum /= *count as f64;
+
+                // If we were already in overflow mode, multiply back by previous count
+                if *had_overflow {
+                    *sum *= (*count - 1) as f64;
+                }
+
+                // Add the new value contribution
+                *sum += val / *count as f64;
+
+                // Mark that we're now in overflow mode
+                *had_overflow = true;
+            } else {
+                // Normal accumulation - sum stores total
+                *sum += val;
+            }
+
+            Ok(Value::List(vec))
+        }
+        _ => unreachable!("avg expects Integer, Float, or Null (validation done before call)"),
     }
 }
 
@@ -1468,20 +1503,19 @@ fn percentile(
     mut args: ThinVec<Value>,
 ) -> Result<Value, String> {
     let val = args.remove(0);
-    let percentile = args.remove(0).get_numeric();
+    let percentile_val = args.remove(0);
 
-    if !(0.0..=1.0).contains(&percentile) {
-        return Err(format!(
-            "Invalid input - '{percentile}' is not a valid argument, must be a number in the range 0.0 to 1.0"
-        ));
-    }
+    // Domain validation is now done in PHASE 3.5, so these checks are removed
+    // (Or kept as defensive programming - they should never fail)
 
-    let mut ctx = args.remove(0);
+    let percentile = percentile_val.get_numeric();
+
+    let ctx = args.remove(0);
     if matches!(val, Value::Null) {
         return Ok(ctx);
     }
 
-    let Value::List(state) = &mut ctx else {
+    let Value::List(mut state) = ctx else {
         unreachable!("Context must be a List");
     };
 
@@ -1579,22 +1613,22 @@ fn stdev(
     let ctx = iter.next().unwrap();
     match (val, ctx) {
         (Value::Null, ctx) => Ok(ctx),
-        (val, Value::List(vec)) => {
+        (val @ (Value::Int(_) | Value::Float(_)), Value::List(mut vec)) => {
             let val = val.get_numeric();
-            let (Value::Float(sum), Value::List(vec)) = (&vec[0], &vec[1]) else {
-                unreachable!("stdev accumulator should be [sum, values]");
+
+            // Use split_at_mut to get mutable references to both elements safely
+            let (first, rest) = vec.split_at_mut(1);
+            let (Value::Float(sum), Value::List(values)) = (&mut first[0], &mut rest[0]) else {
+                unreachable!("stdev accumulator should be [sum, values]")
             };
 
-            let mut vec = vec.clone();
-            vec.push(Value::Float(val));
+            // Mutate in-place:  update sum and push value to list (avoids O(n²) cloning)
+            *sum += val;
+            values.push(Value::Float(val));
 
-            Ok(Value::List(thin_vec![
-                Value::Float(sum + val),
-                Value::List(vec)
-            ]))
+            Ok(Value::List(vec))
         }
-
-        _ => unreachable!(),
+        _ => unreachable!("stdev expects Integer, Float, or Null (validation done before call)"),
     }
 }
 
@@ -2029,41 +2063,108 @@ fn string_join(
     _: &Runtime,
     args: ThinVec<Value>,
 ) -> Result<Value, String> {
-    fn to_string_vec(vec: &[Value]) -> Result<Vec<Arc<String>>, String> {
-        vec.iter()
-            .map(|item| {
-                if let Value::String(s) = item {
-                    Ok(s.clone())
-                } else {
-                    Err(format!(
-                        "Type mismatch: expected String but was {}",
-                        item.name()
-                    ))
-                }
+    /// Convert Value list to Arc<String> vector, checking types
+    fn to_string_vec(values: &[Value]) -> Result<Vec<Arc<String>>, String> {
+        values
+            .iter()
+            .map(|value| match value {
+                Value::String(s) => Ok(Arc::clone(s)),
+                _ => Err(format!(
+                    "Type mismatch: expected String but was {}",
+                    value.name()
+                )),
             })
             .collect()
     }
+
+    /// Compute the total length needed, with overflow detection
+    /// Uses i32 for calculations to match C implementation behavior
+    fn compute_join_length(
+        strings: &[Arc<String>],
+        delimiter: &str,
+    ) -> Result<usize, String> {
+        if strings.is_empty() {
+            return Ok(0);
+        }
+
+        let delimiter_len =
+            i32::try_from(delimiter.len()).map_err(|_| String::from("String overflow"))?;
+        let n = i32::try_from(strings.len()).map_err(|_| String::from("String overflow"))?;
+        let mut str_len: i32 = 0;
+
+        if n >= 2 {
+            let delimiter_contribution = delimiter_len
+                .checked_mul(n - 1)
+                .ok_or_else(|| String::from("String overflow"))?;
+
+            str_len = str_len
+                .checked_add(delimiter_contribution)
+                .ok_or_else(|| String::from("String overflow"))?;
+        }
+
+        for s in strings.iter() {
+            let s_len = i32::try_from(s.len()).map_err(|_| String::from("String overflow"))?;
+
+            str_len = str_len
+                .checked_add(s_len)
+                .ok_or_else(|| String::from("String overflow"))?;
+        }
+
+        str_len = str_len
+            .checked_add(1)
+            .ok_or_else(|| String::from("String overflow"))?;
+
+        let capacity = (str_len - 1) as usize;
+        Ok(capacity)
+    }
+
+    /// Join strings with pre-allocated buffer
+    fn join_with_preallocate(
+        strings: &[Arc<String>],
+        delimiter: &str,
+        capacity: usize,
+    ) -> String {
+        if strings.is_empty() {
+            return String::new();
+        }
+
+        let mut result = String::with_capacity(capacity);
+        let mut first = true;
+
+        for s in strings {
+            if !first {
+                result.push_str(delimiter);
+            }
+            result.push_str(s.as_str());
+            first = false;
+        }
+
+        debug_assert_eq!(result.len(), capacity, "String join calculation mismatch");
+        result
+    }
+
     let mut iter = args.into_iter();
-    let first = iter.next().unwrap();
+
+    // Unwrap Arc if present (handles range() returning Arc-wrapped lists)
+    let first = match iter.next().unwrap() {
+        Value::Arc(arc) => Arc::unwrap_or_clone(arc),
+        v => v,
+    };
+
     match (first, iter.next()) {
         (Value::List(vec), Some(Value::String(s))) => {
-            let result = to_string_vec(&vec);
-            result.map(|strings| {
-                Value::String(Arc::new(
-                    strings.iter().map(|label| label.as_str()).join(s.as_str()),
-                ))
-            })
+            let strings = to_string_vec(&vec)?;
+            let size = compute_join_length(&strings, s.as_str())?;
+            let joined = join_with_preallocate(&strings, s.as_str(), size);
+            Ok(Value::String(Arc::new(joined)))
         }
         (Value::List(vec), None) => {
-            let result = to_string_vec(&vec);
-            result.map(|strings| {
-                Value::String(Arc::new(
-                    strings.iter().map(|label| label.as_str()).join(""),
-                ))
-            })
+            let strings = to_string_vec(&vec)?;
+            let size = compute_join_length(&strings, "")?;
+            let joined = join_with_preallocate(&strings, "", size);
+            Ok(Value::String(Arc::new(joined)))
         }
-        (Value::Null, _) => Ok(Value::Null),
-
+        (Value::List(_), Some(Value::Null)) | (Value::Null, _) => Ok(Value::Null),
         _ => unreachable!(),
     }
 }

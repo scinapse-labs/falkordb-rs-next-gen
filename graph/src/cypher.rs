@@ -1549,14 +1549,19 @@ impl<'a> Parser<'a> {
                                     "COUNT is the only function which can accept * as an argument",
                                 ));
                             }
-                            let mut arg = tree!(ExprIR::Variable(Arc::new(String::from(
-                                "__agg_order_by_placeholder__"
-                            ))));
+                            // Create args array like count(x) does
+                            let mut args = vec![tree!(ExprIR::Integer(1))]; // Dummy value for count(*)
+
                             if distinct {
-                                arg = tree!(ExprIR::Distinct, arg);
+                                args = vec![tree!(ExprIR:: Distinct; args)];
                             }
+
+                            args.push(tree!(ExprIR::Variable(Arc::new(String::from(
+                                "__agg_order_by_placeholder__"
+                            )))));
+
                             match_token!(self.lexer, RParen);
-                            return Ok((tree!(ExprIR::FuncInvocation(func), arg), false));
+                            return Ok((tree!(ExprIR::FuncInvocation(func); args), false));
                         }
 
                         let mut args = self.parse_expression_list(
