@@ -136,23 +136,22 @@ class testFunctionCallsFlow(FlowTestsBase):
         query = """MATCH (a) WITH a.name AS scalar RETURN scalar.name"""
         self.expect_type_error(query)
 
-    #@todo barak remove the comment it is working on the first run
-    #def test08_apply_all_function(self):
-    #    query = "MATCH () RETURN COUNT(*)"
-    #    actual_result = self.graph.query(query)
-    #    expected_result = [[4]]
-    #    self.env.assertEquals(actual_result.result_set, expected_result)
+    def test08_apply_all_function(self):
+        query = "MATCH () RETURN COUNT(*)"
+        actual_result = self.graph.query(query)
+        expected_result = [[4]]
+        self.env.assertEquals(actual_result.result_set, expected_result)
 
-    #    query = "UNWIND [1, 2] AS a RETURN COUNT(*)"
-    #    actual_result = self.graph.query(query)
-    #    expected_result = [[2]]
-    #    self.env.assertEquals(actual_result.result_set, expected_result)
+        query = "UNWIND [1, 2] AS a RETURN COUNT(*)"
+        actual_result = self.graph.query(query)
+        expected_result = [[2]]
+        self.env.assertEquals(actual_result.result_set, expected_result)
 
-    #    # COLLECT should associate false and 'false' to different groups.
-    #    query = "UNWIND [false,'false',0,'0'] AS a RETURN a, count(a) order by a"
-    #    actual_result = self.graph.query(query)
-    #    expected_result = [['0', 1], ["false", 1], [False, 1], [0, 1]]
-    #    self.env.assertEquals(actual_result.result_set, expected_result)
+        # COLLECT should associate false and 'false' to different groups.
+        query = "UNWIND [false,'false',0,'0'] AS a RETURN a, count(a) order by a"
+        actual_result = self.graph.query(query)
+        expected_result = [['0', 1], ["false", 1], [False, 1], [0, 1]]
+        self.env.assertEquals(actual_result.result_set, expected_result)
 
     def test09_static_aggregation(self):
         query = "RETURN count(*)"
