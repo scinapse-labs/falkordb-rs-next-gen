@@ -2530,14 +2530,14 @@ class testFunctionCallsFlow(FlowTestsBase):
             # expecting an empty string
             self.env.assertEquals(actual_result, "")
 
-    #def test90_size(self):
-    #    query_to_expected_result = {
-    #        "RETURN size(NULL)" : [[None]],
-    #        "RETURN size('abcd')" : [[4]],
-    #        "RETURN size('丁丂七丄丅丆万丈三上')" : [[10]]
-    #    }
-    #    for query, expected_result in query_to_expected_result.items():
-    #        self.get_res_and_assertEquals(query, expected_result)
+    def test90_size(self):
+        query_to_expected_result = {
+            "RETURN size(NULL)" : [[None]],
+            "RETURN size('abcd')" : [[4]],
+            "RETURN size('丁丂七丄丅丆万丈三上')" : [[10]]
+        }
+        for query, expected_result in query_to_expected_result.items():
+            self.get_res_and_assertEquals(query, expected_result)
 
     #def test91_MATCHREGEX(self):
     #    # NULL input should return empty list

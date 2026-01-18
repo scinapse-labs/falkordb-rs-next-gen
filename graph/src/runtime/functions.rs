@@ -1759,7 +1759,7 @@ fn size(
     args: ThinVec<Value>,
 ) -> Result<Value, String> {
     match args.into_iter().next() {
-        Some(Value::String(s)) => Ok(Value::Int(s.len() as i64)),
+        Some(Value::String(s)) => Ok(Value::Int(s.chars().count() as i64)),
         Some(Value::List(v)) => Ok(Value::Int(v.len() as i64)),
         Some(Value::Arc(v)) => {
             if let Value::List(v) = &*v {
