@@ -1709,7 +1709,25 @@ impl<'a> Parser<'a> {
                 } else if current == 9 {
                     // unary add or subtract
                     optional_match_token!(self.lexer, Plus);
-                    let res = if optional_match_token!(self.lexer, Dash) {
+                    let is_negate = optional_match_token!(self.lexer, Dash);
+
+                    // Special handling for integer overflow errors with negation
+                    if is_negate && let Token::Error(ref msg) = self.lexer.current() {
+                        if msg.starts_with("Integer overflow '") && msg.ends_with('\'') {
+                            // Extract the number from the error message
+                            let start = "Integer overflow '".len();
+                            let end = msg.len() - 1;
+                            let number = &msg[start..end];
+                            // Create new error with minus sign prepended
+                            return Err(self
+                                .lexer
+                                .format_error(&format!("Integer overflow '-{number}'")));
+                        }
+                        // For other errors, just propagate
+                        return Err(self.lexer.format_error(msg));
+                    }
+
+                    let res = if is_negate {
                         Some(tree!(ExprIR::Negate))
                     } else {
                         None
@@ -1840,9 +1858,9 @@ impl<'a> Parser<'a> {
                         parse_expr_return!(stack, res);
                         continue;
                     } else if matches!(res.root().data(), ExprIR::Integer(i64::MIN)) {
-                        return Err(self
-                            .lexer
-                            .format_error(format!("Integer overflow '{}'", i64::MAX).as_str()));
+                        // This case should not happen with proper error handling
+                        // If we got i64::MIN as a positive literal, the lexer should have returned Token::Error
+                        return Err(self.lexer.format_error("Integer overflow"));
                     }
                     parse_expr_return!(stack, res);
                 }
