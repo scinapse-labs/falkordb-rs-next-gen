@@ -639,7 +639,7 @@ pub fn init_functions() -> Result<(), Functions> {
         vec![
             Type::Union(vec![Type::String, Type::Null]),
             Type::Union(vec![Type::String, Type::Null]),
-            Type::Union(vec![Type::String, Type::Null]),
+            Type::Optional(Box::new(Type::Union(vec![Type::String, Type::Null]))),
         ],
         FnType::Function,
     );
@@ -2207,24 +2207,45 @@ fn string_replace_reg_ex(
     args: ThinVec<Value>,
 ) -> Result<Value, String> {
     let mut iter = args.into_iter();
-    match (iter.next(), iter.next(), iter.next()) {
-        (
-            Some(Value::String(text)),
-            Some(Value::String(pattern)),
-            Some(Value::String(replacement)),
-        ) => match regex::Regex::new(pattern.as_str()) {
-            Ok(re) => {
-                let replaced_text = re
-                    .replace_all(text.as_str(), replacement.as_str())
-                    .into_owned();
-                Ok(Value::String(Arc::new(replaced_text)))
-            }
-            Err(e) => Err(format!("Invalid regex, {e}")),
-        },
-        (Some(Value::Null), Some(_), Some(_))
-        | (Some(_), Some(Value::Null), Some(_))
-        | (Some(_), Some(_), Some(Value::Null)) => Ok(Value::Null),
+    let text = iter.next();
+    let pattern = iter.next();
+    let replacement = iter.next(); // May be None (optional third argument)
 
+    match (text, pattern) {
+        // NULL text or pattern returns NULL
+        (Some(Value::Null), _) | (_, Some(Value::Null)) => Ok(Value::Null),
+
+        // Valid text and pattern
+        (Some(Value::String(text)), Some(Value::String(pattern))) => {
+            // Compile the regex first (before handling replacement)
+            let re = match regex::Regex::new(pattern.as_str()) {
+                Ok(re) => re,
+                Err(e) => return Err(format!("Invalid regex, {e}")),
+            };
+
+            // Now handle replacement and perform replacement in one step
+            match replacement {
+                // No third argument provided, default to empty string
+                None => {
+                    let replaced_text = re.replace_all(text.as_str(), "").into_owned();
+                    Ok(Value::String(Arc::new(replaced_text)))
+                }
+                // NULL replacement returns NULL
+                Some(Value::Null) => Ok(Value::Null),
+                // Use provided string
+                Some(Value::String(repl)) => {
+                    let replaced_text = re.replace_all(text.as_str(), repl.as_str()).into_owned();
+                    Ok(Value::String(Arc::new(replaced_text)))
+                }
+                // All other types should have been caught by type checking
+                Some(v) => Err(format!(
+                    "Type mismatch: expected String or Null but was {}",
+                    v.name()
+                )),
+            }
+        }
+
+        // All other type combinations should have been caught by type checking
         _ => unreachable!(),
     }
 }

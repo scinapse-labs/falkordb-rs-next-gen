@@ -2641,124 +2641,124 @@ class testFunctionCallsFlow(FlowTestsBase):
         #actual_result = self.graph.query(query)
         #self.env.assertEquals(actual_result.result_set[0], expected_result)
 
-    #def test92_REPLACEREGEX(self):
-    #    # NULL input should return NULL
-    #    expected_result = [None]
-    #    query = """WITH NULL as string RETURN string.replaceRegEx(null, "bla")"""
-    #    actual_result = self.graph.query(query)
-    #    self.env.assertEquals(actual_result.result_set[0], expected_result)
+    def test92_REPLACEREGEX(self):
+        # NULL input should return NULL
+        expected_result = [None]
+        query = """WITH NULL as string RETURN string.replaceRegEx(null, "bla")"""
+        actual_result = self.graph.query(query)
+        self.env.assertEquals(actual_result.result_set[0], expected_result)
 
-    #    # NULL input should return NULL
-    #    expected_result = [None]
-    #    query = """WITH NULL as string RETURN string.replaceRegEx("bla", null)"""
-    #    actual_result = self.graph.query(query)
-    #    self.env.assertEquals(actual_result.result_set[0], expected_result)
+        # NULL input should return NULL
+        expected_result = [None]
+        query = """WITH NULL as string RETURN string.replaceRegEx("bla", null)"""
+        actual_result = self.graph.query(query)
+        self.env.assertEquals(actual_result.result_set[0], expected_result)
 
-    #    # NULL input should return NULL
-    #    expected_result = [None]
-    #    query = """WITH NULL as string RETURN string.replaceRegEx("bla", "bla", null)"""
-    #    actual_result = self.graph.query(query)
-    #    self.env.assertEquals(actual_result.result_set[0], expected_result)
+        # NULL input should return NULL
+        expected_result = [None]
+        query = """WITH NULL as string RETURN string.replaceRegEx("bla", "bla", null)"""
+        actual_result = self.graph.query(query)
+        self.env.assertEquals(actual_result.result_set[0], expected_result)
 
-    #    # test invalid regex
-    #    try:
-    #        query = """RETURN string.replaceRegEx('aa', '?')"""
-    #        actual_result = self.graph.query(query)
-    #    except ResponseError as e:
-    #        self.env.assertContains("Invalid regex", str(e))
+        # test invalid regex
+        try:
+            query = """RETURN string.replaceRegEx('aa', '?')"""
+            actual_result = self.graph.query(query)
+        except ResponseError as e:
+            self.env.assertContains("Invalid regex", str(e))
 
-    #    # 1st arg should be string
-    #    try:
-    #        self.graph.query("RETURN string.replaceRegEx(2, 'bla')")
-    #        self.env.assertTrue(False)
-    #    except ResponseError as e:
-    #        self.env.assertContains("Type mismatch: expected String or Null but was Integer", str(e))
+        # 1st arg should be string
+        try:
+            self.graph.query("RETURN string.replaceRegEx(2, 'bla')")
+            self.env.assertTrue(False)
+        except ResponseError as e:
+            self.env.assertContains("Type mismatch: expected String or Null but was Integer", str(e))
 
-    #    # 2nd arg should be string
-    #    try:
-    #        self.graph.query("RETURN string.replaceRegEx('bla', 2)")
-    #        self.env.assertTrue(False)
-    #    except ResponseError as e:
-    #        self.env.assertContains("Type mismatch: expected String or Null but was Integer", str(e))
+        # 2nd arg should be string
+        try:
+            self.graph.query("RETURN string.replaceRegEx('bla', 2)")
+            self.env.assertTrue(False)
+        except ResponseError as e:
+            self.env.assertContains("Type mismatch: expected String or Null but was Integer", str(e))
 
-    #    # 3rd arg should be string
-    #    try:
-    #        self.graph.query("RETURN string.replaceRegEx('bla', 'bla', 2)")
-    #        self.env.assertTrue(False)
-    #    except ResponseError as e:
-    #        self.env.assertContains("Type mismatch: expected String or Null but was Integer", str(e))
+        # 3rd arg should be string
+        try:
+            self.graph.query("RETURN string.replaceRegEx('bla', 'bla', 2)")
+            self.env.assertTrue(False)
+        except ResponseError as e:
+            self.env.assertContains("Type mismatch: expected String or Null but was Integer", str(e))
 
-    #    # Test without input argument
-    #    try:
-    #        query = """RETURN string.replaceRegEx()"""
-    #        self.graph.query(query)
-    #        self.env.assertTrue(False)
-    #    except ResponseError as e:
-    #        self.env.assertContains("Received 0 arguments to function 'string.replaceRegEx', expected at least 2", str(e))
+        # Test without input argument
+        try:
+            query = """RETURN string.replaceRegEx()"""
+            self.graph.query(query)
+            self.env.assertTrue(False)
+        except ResponseError as e:
+            self.env.assertContains("Received 0 arguments to function 'string.replaceRegEx', expected at least 2", str(e))
 
-    #    # Test with 4 input argument
-    #    try:
-    #        query = """RETURN string.replaceRegEx('bla', 'dsds', 'fdsf', '')"""
-    #        self.graph.query(query)
-    #        self.env.assertTrue(False)
-    #    except ResponseError as e:
-    #        self.env.assertContains("Received 4 arguments to function 'string.replaceRegEx', expected at most 3", str(e))
+        # Test with 4 input argument
+        try:
+            query = """RETURN string.replaceRegEx('bla', 'dsds', 'fdsf', '')"""
+            self.graph.query(query)
+            self.env.assertTrue(False)
+        except ResponseError as e:
+            self.env.assertContains("Received 4 arguments to function 'string.replaceRegEx', expected at most 3", str(e))
 
-    #    ### Test valid inputs ###
-    #    expected_result = ['blabla hellow']
-    #    query = """RETURN string.replaceRegEx('blabla <header h1>txt1</header>', '<header (\\w+)>(\\w+)</header>', 'hellow')"""
-    #    actual_result = self.graph.query(query)
-    #    self.env.assertEquals(actual_result.result_set[0], expected_result)
+        ### Test valid inputs ###
+        expected_result = ['blabla hellow']
+        query = """RETURN string.replaceRegEx('blabla <header h1>txt1</header>', '<header (\\w+)>(\\w+)</header>', 'hellow')"""
+        actual_result = self.graph.query(query)
+        self.env.assertEquals(actual_result.result_set[0], expected_result)
 
-    #    expected_result = ['blabla hellow blabla hellow']
-    #    query = """RETURN string.replaceRegEx('blabla <header h1>txt1</header> blabla <header h2>txt2</header>', '<header (\\w+)>(\\w+)</header>', 'hellow')"""
-    #    actual_result = self.graph.query(query)
-    #    self.env.assertEquals(actual_result.result_set[0], expected_result)
+        expected_result = ['blabla hellow blabla hellow']
+        query = """RETURN string.replaceRegEx('blabla <header h1>txt1</header> blabla <header h2>txt2</header>', '<header (\\w+)>(\\w+)</header>', 'hellow')"""
+        actual_result = self.graph.query(query)
+        self.env.assertEquals(actual_result.result_set[0], expected_result)
 
-    #    expected_result = ['m']
-    #    query = """RETURN string.replaceRegEx('?', '\\\\?', 'm')"""
-    #    actual_result = self.graph.query(query)
-    #    self.env.assertEquals(actual_result.result_set[0], expected_result)
+        expected_result = ['m']
+        query = """RETURN string.replaceRegEx('?', '\\\\?', 'm')"""
+        actual_result = self.graph.query(query)
+        self.env.assertEquals(actual_result.result_set[0], expected_result)
 
-    #    expected_result = ['ac']
-    #    query = """RETURN string.replaceRegEx('abc', '[b]')"""
-    #    actual_result = self.graph.query(query)
-    #    self.env.assertEquals(actual_result.result_set[0], expected_result)
+        expected_result = ['ac']
+        query = """RETURN string.replaceRegEx('abc', '[b]')"""
+        actual_result = self.graph.query(query)
+        self.env.assertEquals(actual_result.result_set[0], expected_result)
 
-    #    expected_result = ['a55c']
-    #    query = """RETURN string.replaceRegEx('abc', '[b]', '55')"""
-    #    actual_result = self.graph.query(query)
-    #    self.env.assertEquals(actual_result.result_set[0], expected_result)
+        expected_result = ['a55c']
+        query = """RETURN string.replaceRegEx('abc', '[b]', '55')"""
+        actual_result = self.graph.query(query)
+        self.env.assertEquals(actual_result.result_set[0], expected_result)
 
-    #    expected_result = ['ac']
-    #    query = """RETURN string.replaceRegEx('abc', '[b]', '')"""
-    #    actual_result = self.graph.query(query)
-    #    self.env.assertEquals(actual_result.result_set[0], expected_result)
+        expected_result = ['ac']
+        query = """RETURN string.replaceRegEx('abc', '[b]', '')"""
+        actual_result = self.graph.query(query)
+        self.env.assertEquals(actual_result.result_set[0], expected_result)
 
-    #    expected_result = ['ac']
-    #    query = """RETURN string.replaceRegEx('abcb', '[b]', '')"""
-    #    actual_result = self.graph.query(query)
-    #    self.env.assertEquals(actual_result.result_set[0], expected_result)
+        expected_result = ['ac']
+        query = """RETURN string.replaceRegEx('abcb', '[b]', '')"""
+        actual_result = self.graph.query(query)
+        self.env.assertEquals(actual_result.result_set[0], expected_result)
 
-    #    expected_result = ['']
-    #    query = """RETURN string.replaceRegEx('', '[b]', 'bla')"""
-    #    actual_result = self.graph.query(query)
-    #    self.env.assertEquals(actual_result.result_set[0], expected_result)
+        expected_result = ['']
+        query = """RETURN string.replaceRegEx('', '[b]', 'bla')"""
+        actual_result = self.graph.query(query)
+        self.env.assertEquals(actual_result.result_set[0], expected_result)
 
-    #    expected_result = ['']
-    #    query = """RETURN string.replaceRegEx('', '[b]', 'bla')"""
-    #    actual_result = self.graph.query(query)
-    #    self.env.assertEquals(actual_result.result_set[0], expected_result)
+        expected_result = ['']
+        query = """RETURN string.replaceRegEx('', '[b]', 'bla')"""
+        actual_result = self.graph.query(query)
+        self.env.assertEquals(actual_result.result_set[0], expected_result)
 
-    #    expected_result = ['blablala']
-    #    query = """RETURN string.replaceRegEx('bbla', '[b]', 'bla')"""
-    #    actual_result = self.graph.query(query)
-    #    self.env.assertEquals(actual_result.result_set[0], expected_result)
+        expected_result = ['blablala']
+        query = """RETURN string.replaceRegEx('bbla', '[b]', 'bla')"""
+        actual_result = self.graph.query(query)
+        self.env.assertEquals(actual_result.result_set[0], expected_result)
 
-    #    expected_result = ['bl😀a']
-    #    query = """RETURN string.replaceRegEx('bl😉a', '😉', '😀')"""
-    #    actual_result = self.graph.query(query)
-    #    self.env.assertEquals(actual_result.result_set[0], expected_result)
+        expected_result = ['bl😀a']
+        query = """RETURN string.replaceRegEx('bl😉a', '😉', '😀')"""
+        actual_result = self.graph.query(query)
+        self.env.assertEquals(actual_result.result_set[0], expected_result)
 
     #def test93_overflow(self):
     #    # Test integer overflow caused by string to long conversion
