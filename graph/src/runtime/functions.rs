@@ -2179,12 +2179,17 @@ fn string_match_reg_ex(
             match regex::Regex::new(pattern.as_str()) {
                 Ok(re) => {
                     let mut all_matches = thin_vec![];
+                    // For each match, create a sub-list containing the full match and all capture groups
                     for caps in re.captures_iter(text.as_str()) {
+                        let mut match_list = thin_vec![];
+                        // Iterate through all capture groups (0 = full match, 1+ = capture groups)
                         for i in 0..caps.len() {
                             if let Some(m) = caps.get(i) {
-                                all_matches.push(Value::String(Arc::new(String::from(m.as_str()))));
+                                match_list.push(Value::String(Arc::new(String::from(m.as_str()))));
                             }
                         }
+                        // Add this match's captures as a sub-list
+                        all_matches.push(Value::List(match_list));
                     }
                     Ok(Value::List(all_matches))
                 }
