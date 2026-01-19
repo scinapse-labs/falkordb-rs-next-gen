@@ -634,9 +634,9 @@ impl<'a> Lexer<'a> {
         i64::from_str_radix(number_str, radix).map_or_else(
             |err| match err.kind() {
                 IntErrorKind::NegOverflow | IntErrorKind::PosOverflow => {
-                    Token::Error(format!("Integer overflow '{number_str}'"))
+                    Token::Error(format!("Integer overflow '{str}'"))
                 }
-                _ => Token::Error(format!("Invalid numeric value '{number_str}'")),
+                _ => Token::Error(format!("Invalid numeric value '{str}'")),
             },
             Token::Integer,
         )
@@ -662,6 +662,9 @@ impl<'a> Lexer<'a> {
 macro_rules! match_token {
     ($lexer:expr, $token:ident) => {
         match $lexer.current() {
+            Token::Error(s) => {
+                return Err(s);
+            }
             Token::$token => {
                 $lexer.next();
             }
@@ -676,6 +679,9 @@ macro_rules! match_token {
     };
     ($lexer:expr => $token:ident) => {
         match $lexer.current() {
+            Token::Error(s) => {
+                return Err(s);
+            }
             Token::Keyword(Keyword::$token, _) => {
                 $lexer.next();
             }
@@ -1644,6 +1650,7 @@ impl<'a> Parser<'a> {
                 let expr = tree!(ExprIR::Paren);
                 Ok((expr, true))
             }
+            Token::Error(s) => Err(s),
             token => Err(self.lexer.format_error(&format!("Invalid input {token:?}"))),
         }
     }
@@ -1859,8 +1866,11 @@ impl<'a> Parser<'a> {
                         continue;
                     } else if matches!(res.root().data(), ExprIR::Integer(i64::MIN)) {
                         // This case should not happen with proper error handling
-                        // If we got i64::MIN as a positive literal, the lexer should have returned Token::Error
-                        return Err(self.lexer.format_error("Integer overflow"));
+                        // i64::MIN without negation means the literal was i64::MAX + 1
+                        return Err(format!(
+                            "Integer overflow '{}'",
+                            9_223_372_036_854_775_808_u64
+                        ));
                     }
                     parse_expr_return!(stack, res);
                 }
