@@ -2242,6 +2242,11 @@ impl<'a> Parser<'a> {
         }
 
         loop {
+            // Check for lexer errors (e.g., invalid numeric literals starting map keys)
+            if let Token::Error(s) = self.lexer.current() {
+                return Err(self.lexer.format_error(&format!("Invalid input:  {}", s)));
+            }
+
             if let Ok(key) = self.parse_ident() {
                 match_token!(self.lexer, Colon);
                 let value = self.parse_expr()?;
@@ -2251,7 +2256,7 @@ impl<'a> Parser<'a> {
                     Token::Comma => self.lexer.next(),
                     Token::RBracket => {
                         self.lexer.next();
-                        return Ok(tree!(ExprIR::Map ; attrs));
+                        return Ok(tree!(ExprIR:: Map ; attrs));
                     }
                     Token::Error(s) => return Err(s),
                     token => {
@@ -2260,7 +2265,7 @@ impl<'a> Parser<'a> {
                 }
             } else {
                 match_token!(self.lexer, RBracket);
-                return Ok(tree!(ExprIR::Map ; attrs));
+                return Ok(tree!(ExprIR:: Map ; attrs));
             }
         }
     }
