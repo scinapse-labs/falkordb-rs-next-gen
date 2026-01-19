@@ -498,17 +498,69 @@ impl<'a> Lexer<'a> {
         if current == '0' {
             let next_char = chars.next();
             match next_char {
-                Some('x') => {
+                Some('x' | 'X') => {
                     radix = 16;
                     len += 1;
+                    // Validate that at least one hex digit follows
+                    if let Some(c) = str[pos + len..].chars().next() {
+                        if !c.is_ascii_hexdigit() {
+                            let invalid_literal = str[pos..].chars().take(len).collect::<String>();
+                            return (
+                                Token::Error(format!("Invalid numeric value '{invalid_literal}'")),
+                                len,
+                            );
+                        }
+                    } else {
+                        let invalid_literal = str[pos..].chars().take(len).collect::<String>();
+                        return (
+                            Token::Error(format!("Invalid numeric value '{invalid_literal}'")),
+                            len,
+                        );
+                    }
                 }
-                Some('o' | '0'..='9') => {
+                Some('o' | 'O') => {
+                    radix = 8;
+                    len += 1;
+                    // Validate that at least one octal digit follows
+                    if let Some(c) = str[pos + len..].chars().next() {
+                        if !c.is_digit(8) {
+                            let invalid_literal = str[pos..].chars().take(len).collect::<String>();
+                            return (
+                                Token::Error(format!("Invalid numeric value '{invalid_literal}'")),
+                                len,
+                            );
+                        }
+                    } else {
+                        let invalid_literal = str[pos..].chars().take(len).collect::<String>();
+                        return (
+                            Token::Error(format!("Invalid numeric value '{invalid_literal}'")),
+                            len,
+                        );
+                    }
+                }
+                Some('0'..='9') => {
                     radix = 8;
                     len += 1;
                 }
-                Some('b') => {
+                Some('b' | 'B') => {
                     radix = 2;
                     len += 1;
+                    // Validate that at least one binary digit follows
+                    if let Some(c) = str[pos + len..].chars().next() {
+                        if !matches!(c, '0' | '1') {
+                            let invalid_literal = str[pos..].chars().take(len).collect::<String>();
+                            return (
+                                Token::Error(format!("Invalid numeric value '{invalid_literal}'")),
+                                len,
+                            );
+                        }
+                    } else {
+                        let invalid_literal = str[pos..].chars().take(len).collect::<String>();
+                        return (
+                            Token::Error(format!("Invalid numeric value '{invalid_literal}'")),
+                            len,
+                        );
+                    }
                 }
                 Some('.') => match chars.next() {
                     Some(c) if c.is_digit(radix) => {
@@ -561,7 +613,7 @@ impl<'a> Lexer<'a> {
                 } else if c.is_alphanumeric() {
                     // Invalid character in number literal - consume the rest to create a complete error token
                     len += 1;
-                    for ch in chars.by_ref() {
+                    while let Some(ch) = chars.next() {
                         if ch.is_alphanumeric() {
                             len += 1;
                         } else {
@@ -585,7 +637,7 @@ impl<'a> Lexer<'a> {
                 } else if c == 'e' || c == 'E' {
                     if is_e {
                         return (
-                            Token::Error(format!("Invalid numeric value at pos:  {pos} in {str}")),
+                            Token::Error(format!("Invalid numeric value at pos: {pos} in {str}")),
                             len,
                         );
                     }
