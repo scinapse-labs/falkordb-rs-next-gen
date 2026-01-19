@@ -546,7 +546,7 @@ impl<'a> Lexer<'a> {
                 } else if c == '.' && radix == 10 {
                     if is_float {
                         return (
-                            Token::Error(format!("Invalid numeric value at pos:  {pos} in {str}")),
+                            Token::Error(format!("Invalid numeric value at pos: {pos} in {str}")),
                             len,
                         );
                     }
