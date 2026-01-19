@@ -607,7 +607,7 @@ impl<'a> Lexer<'a> {
             return match str.parse::<f64>() {
                 Ok(f) if f.is_finite() && !f.is_subnormal() => Token::Float(f),
                 Ok(_) => Token::Error(format!("Float overflow '{str}'")),
-                Err(_) => Token::Error(format!("Invalid float: {str}")),
+                Err(_) => Token::Error(format!("Invalid input '{str}'")),
             };
         }
 
@@ -636,7 +636,7 @@ impl<'a> Lexer<'a> {
                 IntErrorKind::NegOverflow | IntErrorKind::PosOverflow => {
                     Token::Error(format!("Integer overflow '{str}'"))
                 }
-                _ => Token::Error(format!("Invalid numeric value '{str}'")),
+                _ => Token::Error(format!("Invalid input '{str}'")),
             },
             Token::Integer,
         )
