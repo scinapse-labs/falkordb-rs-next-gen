@@ -2798,8 +2798,8 @@ class testFunctionCallsFlow(FlowTestsBase):
                 "RETURN vecf32([1.2, vecf32([1])])",
         ]
 
-    #    for q in queries_with_errors:
-    #        self.expect_error(q, err_msg)
+        for q in queries_with_errors:
+            self.expect_error(q, err_msg)
 
     #def test95_prev(self):
     #    res = self.graph.query("UNWIND range(1, 5) AS x RETURN prev(x)")

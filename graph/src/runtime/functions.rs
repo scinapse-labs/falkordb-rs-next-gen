@@ -891,7 +891,7 @@ pub fn init_functions() -> Result<(), Functions> {
         vecf32,
         false,
         vec![Type::Union(vec![
-            Type::List(Box::new(Type::Float)),
+            Type::List(Box::new(Type::Any)),
             Type::Null,
         ])],
         FnType::Function,
@@ -2817,11 +2817,21 @@ fn vecf32(
 ) -> Result<Value, String> {
     let mut iter = args.into_iter();
     match iter.next() {
-        Some(Value::List(vec)) => Ok(Value::VecF32(
-            vec.into_iter().map(|v| v.get_numeric() as f32).collect(),
-        )),
-        Some(Value::Null) => Ok(Value::Null),
+        Some(Value::List(vec)) => {
+            // Validate that all elements are numeric (Int or Float)
+            // Matching C implementation:  SIArray_AllOfType(arr, SI_NUMERIC)
+            for v in &vec {
+                if !matches!(v, Value::Int(_) | Value::Float(_)) {
+                    return Err("vectorf32 expects an array of numbers".to_string());
+                }
+            }
 
+            // All elements are numeric, convert to f32 vector
+            Ok(Value::VecF32(
+                vec.into_iter().map(|v| v.get_numeric() as f32).collect(),
+            ))
+        }
+        Some(Value::Null) => Ok(Value::Null),
         _ => unreachable!(),
     }
 }
