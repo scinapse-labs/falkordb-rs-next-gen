@@ -2244,7 +2244,7 @@ impl<'a> Parser<'a> {
         loop {
             // Check for lexer errors (e.g., invalid numeric literals starting map keys)
             if let Token::Error(s) = self.lexer.current() {
-                return Err(self.lexer.format_error(&format!("Invalid input:  {}", s)));
+                return Err(self.lexer.format_error(&format!("Invalid input: {s}")));
             }
 
             if let Ok(key) = self.parse_ident() {
