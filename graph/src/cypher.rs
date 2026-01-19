@@ -528,24 +528,25 @@ impl<'a> Lexer<'a> {
         }
         if !is_float {
             while let Some(c) = chars.next() {
-                if c.is_alphanumeric() {
-                    if (c == 'e' || c == 'E') && radix == 10 {
-                        is_float = true;
-                        is_e = true;
-                        len += 1;
-                        if let Some(next_char) = str.get(pos + len..).and_then(|s| s.chars().next())
-                            && (next_char == '-' || next_char == '+')
-                        {
-                            chars.next();
-                            len += next_char.len_utf8();
-                        }
-                        break;
+                // Check for scientific notation first (only for decimal numbers)
+                if (c == 'e' || c == 'E') && radix == 10 {
+                    is_float = true;
+                    is_e = true;
+                    len += 1;
+                    if let Some(next_char) = str.get(pos + len..).and_then(|s| s.chars().next())
+                        && (next_char == '-' || next_char == '+')
+                    {
+                        chars.next();
+                        len += next_char.len_utf8();
                     }
+                    break;
+                } else if c.is_digit(radix) {
+                    // Only accept valid digits for the current radix
                     len += 1;
                 } else if c == '.' && radix == 10 {
                     if is_float {
                         return (
-                            Token::Error(format!("Invalid numeric value at pos: {pos} in {str}")),
+                            Token::Error(format!("Invalid numeric value at pos:  {pos} in {str}")),
                             len,
                         );
                     }
@@ -557,6 +558,21 @@ impl<'a> Lexer<'a> {
                     is_float = true;
                     len += 1;
                     break;
+                } else if c.is_alphanumeric() {
+                    // Invalid character in number literal - consume the rest to create a complete error token
+                    len += 1;
+                    while let Some(ch) = chars.next() {
+                        if ch.is_alphanumeric() {
+                            len += 1;
+                        } else {
+                            break;
+                        }
+                    }
+                    let invalid_literal = str[pos..].chars().take(len).collect::<String>();
+                    return (
+                        Token::Error(format!("Invalid numeric value '{invalid_literal}'")),
+                        invalid_literal.len(),
+                    );
                 } else {
                     break;
                 }
@@ -569,7 +585,7 @@ impl<'a> Lexer<'a> {
                 } else if c == 'e' || c == 'E' {
                     if is_e {
                         return (
-                            Token::Error(format!("Invalid numeric value at pos: {pos} in {str}")),
+                            Token::Error(format!("Invalid numeric value at pos:  {pos} in {str}")),
                             len,
                         );
                     }
