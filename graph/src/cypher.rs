@@ -1619,8 +1619,7 @@ impl<'a> Parser<'a> {
                         .get(&ident, &FnType::Function)
                         .or_else(|_| {
                             get_functions().get(&ident, &FnType::Aggregation(Value::Null, None))
-                        })
-                        .or_else(|_| get_functions().get(&ident, &FnType::Stateful))?;
+                        })?;
 
                     let distinct = optional_match_token!(self.lexer => Distinct);
 
