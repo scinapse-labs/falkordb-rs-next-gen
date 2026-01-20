@@ -117,6 +117,7 @@ enum Token {
     Pipe,
     RegexMatches,
     Error(String),
+    IntegerOverflow(String),
     EndOfFile,
 }
 
@@ -702,7 +703,7 @@ impl<'a> Lexer<'a> {
         i64::from_str_radix(number_str, radix).map_or_else(
             |err| match err.kind() {
                 IntErrorKind::NegOverflow | IntErrorKind::PosOverflow => {
-                    Token::Error(format!("Integer overflow '{str}'"))
+                    Token::IntegerOverflow(number_str.to_string())
                 }
                 _ => Token::Error(format!("Invalid input '{str}'")),
             },
@@ -731,7 +732,10 @@ macro_rules! match_token {
     ($lexer:expr, $token:ident) => {
         match $lexer.current() {
             Token::Error(s) => {
-                return Err(s);
+                return Err($lexer.format_error(&s));
+            }
+            Token::IntegerOverflow(s) => {
+                return Err($lexer.format_error(&format!("Integer overflow '{s}'")));
             }
             Token::$token => {
                 $lexer.next();
@@ -748,7 +752,10 @@ macro_rules! match_token {
     ($lexer:expr => $token:ident) => {
         match $lexer.current() {
             Token::Error(s) => {
-                return Err(s);
+                return Err($lexer.format_error(&s));
+            }
+            Token::IntegerOverflow(s) => {
+                return Err($lexer.format_error(&format!("Integer overflow '{s}'")));
             }
             Token::Keyword(Keyword::$token, _) => {
                 $lexer.next();
@@ -1719,7 +1726,10 @@ impl<'a> Parser<'a> {
                 let expr = tree!(ExprIR::Paren);
                 Ok((expr, true))
             }
-            Token::Error(s) => Err(s),
+            Token::Error(s) => Err(self.lexer.format_error(&s)),
+            Token::IntegerOverflow(s) => {
+                Err(self.lexer.format_error(&format!("Integer overflow '{s}'")))
+            }
             token => Err(self.lexer.format_error(&format!("Invalid input {token:?}"))),
         }
     }
@@ -1787,20 +1797,19 @@ impl<'a> Parser<'a> {
                     optional_match_token!(self.lexer, Plus);
                     let is_negate = optional_match_token!(self.lexer, Dash);
 
-                    // Special handling for integer overflow errors with negation
-                    if is_negate && let Token::Error(ref msg) = self.lexer.current() {
-                        if msg.starts_with("Integer overflow '") && msg.ends_with('\'') {
-                            // Extract the number from the error message
-                            let start = "Integer overflow '".len();
-                            let end = msg.len() - 1;
-                            let number = &msg[start..end];
-                            // Create new error with minus sign prepended
-                            return Err(self
-                                .lexer
-                                .format_error(&format!("Integer overflow '-{number}'")));
+                    // Handle integer overflow with negation
+                    if is_negate {
+                        match self.lexer.current() {
+                            Token::IntegerOverflow(ref lit) => {
+                                return Err(self
+                                    .lexer
+                                    .format_error(&format!("Integer overflow '-{lit}'")));
+                            }
+                            Token::Error(ref msg) => {
+                                return Err(self.lexer.format_error(msg));
+                            }
+                            _ => {}
                         }
-                        // For other errors, just propagate
-                        return Err(self.lexer.format_error(msg));
                     }
 
                     let res = if is_negate {
@@ -2259,7 +2268,12 @@ impl<'a> Parser<'a> {
                         self.lexer.next();
                         return Ok(tree!(ExprIR:: Map ; attrs));
                     }
-                    Token::Error(s) => return Err(s),
+                    Token::Error(s) => {
+                        return Err(self.lexer.format_error(&s));
+                    }
+                    Token::IntegerOverflow(s) => {
+                        return Err(self.lexer.format_error(&format!("Integer overflow '{s}'")));
+                    }
                     token => {
                         return Err(self.lexer.format_error(&format!("Invalid input {token:?}")));
                     }
