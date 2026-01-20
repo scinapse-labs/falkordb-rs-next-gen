@@ -11,8 +11,6 @@ use crate::{
     indexer::IndexQuery,
     planner::IR,
     runtime::{
-        ExpressionContext,
-        expression_context::ExprId,
         functions::{FnType, apply_pow},
         iter::{Aggregate, CondInspectIter, LazyReplace, TryFlatMap, TryMap},
         ordermap::OrderMap,
@@ -78,7 +76,6 @@ pub struct Runtime {
     pub deleted_relationships: RefCell<HashMap<RelationshipId, DeletedRelationship>>,
     argument_envs: RefCell<HashMap<u64, Env>>,
     merge_pattern_cache: RefCell<HashMap<u64, Env>>,
-    expr_context: RefCell<ExpressionContext>,
 }
 
 pub trait GetVariables {
@@ -207,7 +204,6 @@ impl<'a> Runtime {
             deleted_relationships: RefCell::new(HashMap::new()),
             argument_envs: RefCell::new(HashMap::new()),
             merge_pattern_cache: RefCell::new(HashMap::new()),
-            expr_context: RefCell::new(ExpressionContext::new()),
         }
     }
 
@@ -715,28 +711,6 @@ impl<'a> Runtime {
                             Some(func) => Ok((func)(acc)),
                             None => Ok(acc),
                         };
-                    }
-                    if func.is_stateful() {
-                        if let Some(stateful_func) = func.stateful_func {
-                            let args = node
-                                .children()
-                                .map(|child| self.run_expr(ir, child.idx(), env, agg_group_key))
-                                .collect::<Result<ThinVec<_>, _>>()?;
-
-                            func.validate_args_type(&args)?;
-
-                            // Use hash of NodeIdx debug representation as stable ID
-                            let mut hasher = DefaultHasher::new();
-                            format!("{idx:?}").hash(&mut hasher);
-                            let expr_id = ExprId::from(hasher.finish() as usize);
-
-                            let mut ctx = self.expr_context.borrow_mut();
-                            return stateful_func(self, &mut *ctx, expr_id, args);
-                        }
-                        return Err(format!(
-                            "Stateful function '{}' missing implementation",
-                            func.name
-                        ));
                     }
                     let mut args = node
                         .children()

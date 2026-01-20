@@ -7,8 +7,6 @@
 use crate::{
     indexer::{IndexInfo, IndexStatus, IndexType},
     runtime::{
-        ExpressionContext,
-        expression_context::ExprId,
         ordermap::OrderMap,
         runtime::Runtime,
         value::{Point, Value, ValueTypeOf},
@@ -29,11 +27,7 @@ pub enum FnType {
     Internal,
     Procedure(Vec<String>),
     Aggregation(Value, Option<Box<dyn Fn(Value) -> Value>>),
-    Stateful,
 }
-
-pub type StatefulFn =
-    fn(&Runtime, &mut ExpressionContext, ExprId, ThinVec<Value>) -> Result<Value, String>;
 
 #[cfg_attr(tarpaulin, skip)]
 impl Debug for FnType {
@@ -46,7 +40,6 @@ impl Debug for FnType {
             Self::Internal => write!(f, "Internal"),
             Self::Procedure(_) => write!(f, "Procedure"),
             Self::Aggregation(_, _) => write!(f, "Aggregation"),
-            Self::Stateful => write!(f, "Stateful"),
         }
     }
 }
@@ -62,7 +55,6 @@ impl PartialEq for FnType {
                 | (Self::Internal, Self::Internal)
                 | (Self::Procedure(_), Self::Procedure(_))
                 | (Self::Aggregation(_, _), Self::Aggregation(_, _))
-                | (Self::Stateful, Self::Stateful)
         )
     }
 }
@@ -150,7 +142,6 @@ pub struct GraphFn {
     pub write: bool,
     pub args_type: FnArguments,
     pub fn_type: FnType,
-    pub stateful_func: Option<StatefulFn>,
 }
 
 impl GraphFn {
@@ -168,43 +159,12 @@ impl GraphFn {
             write,
             args_type,
             fn_type,
-            stateful_func: None,
         }
     }
 
     #[must_use]
     pub const fn is_aggregate(&self) -> bool {
         matches!(self.fn_type, FnType::Aggregation(_, _))
-    }
-
-    #[must_use]
-    pub fn new_stateful(
-        name: &str,
-        stateful_func: StatefulFn,
-        write: bool,
-        args_type: FnArguments,
-    ) -> Self {
-        // Dummy function for non-stateful context (should not be called)
-        fn dummy_func(
-            _: &Runtime,
-            _: ThinVec<Value>,
-        ) -> Result<Value, String> {
-            Err("Stateful function called without context".to_string())
-        }
-
-        Self {
-            name: String::from(name),
-            func: dummy_func,
-            stateful_func: Some(stateful_func),
-            write,
-            args_type,
-            fn_type: FnType::Stateful,
-        }
-    }
-
-    #[must_use]
-    pub const fn is_stateful(&self) -> bool {
-        matches!(self.fn_type, FnType::Stateful)
     }
 
     pub fn validate(
@@ -356,27 +316,6 @@ impl Functions {
         self.functions.insert(name, graph_fn);
     }
 
-    pub fn add_stateful(
-        &mut self,
-        name: &str,
-        func: StatefulFn,
-        write: bool,
-        args_type: Vec<Type>,
-    ) {
-        let lower_name = name.to_lowercase();
-        assert!(
-            !self.functions.contains_key(&lower_name),
-            "Function '{name}' already exists"
-        );
-        let graph_fn = Arc::new(GraphFn::new_stateful(
-            name,
-            func,
-            write,
-            FnArguments::Fixed(args_type),
-        ));
-        self.functions.insert(lower_name, graph_fn);
-    }
-
     pub fn get(
         &self,
         name: &str,
@@ -484,7 +423,6 @@ pub fn init_functions() -> Result<(), Functions> {
         vec![Type::Union(vec![Type::Path, Type::Null])],
         FnType::Function,
     );
-    funcs.add_stateful("prev", prev, false, vec![Type::Any]);
     funcs.add(
         "tointeger",
         value_to_integer,
@@ -1366,25 +1304,6 @@ fn end_node(
 
         _ => unreachable!(),
     }
-}
-
-// prev() - Returns the previous value of an expression
-// On first invocation returns NULL, then returns the value from the previous invocation
-fn prev(
-    _runtime: &Runtime,
-    ctx: &mut ExpressionContext,
-    expr_id: ExprId,
-    args: ThinVec<Value>,
-) -> Result<Value, String> {
-    let mut iter = args.into_iter();
-    let Some(current_value) = iter.next() else {
-        return Err("prev() requires exactly one argument".to_string());
-    };
-
-    let previous_value = ctx.get_state(expr_id).cloned().unwrap_or(Value::Null);
-    ctx.set_state(expr_id, current_value);
-
-    Ok(previous_value)
 }
 
 fn length(
