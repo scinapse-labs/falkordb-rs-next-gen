@@ -767,7 +767,12 @@ impl<TVar: Eq + Hash> QueryIR<TVar> {
                 iter.next()
                     .map_or(Ok(()), |first| first.inner_validate(iter))
             }
-            Self::Remove(_items) => {
+            Self::Remove(items) => {
+                for item in items {
+                    if  matches!(item.root().data(), ExprIR::FuncInvocation(_)) && matches!(item.root().child(0).data(), ExprIR::Null) {
+                        return Err("Type mismatch: expected Node or Relationship but was Null".to_string());
+                    }
+                }
                 iter.next()
                     .map_or(Ok(()), |first| first.inner_validate(iter))
             }

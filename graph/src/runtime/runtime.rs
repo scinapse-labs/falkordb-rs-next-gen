@@ -1903,6 +1903,7 @@ impl<'a> Runtime {
                         ));
                     }
                 }
+                Value::Null => {}
                 _ => {
                     return Err(format!(
                         "Type mismatch: expected Node or Relationship but was {}",
