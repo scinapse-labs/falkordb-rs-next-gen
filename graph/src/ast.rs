@@ -492,7 +492,7 @@ pub type QueryExpr<TVar> = Arc<DynTree<ExprIR<TVar>>>;
 
 #[derive(Clone, Debug)]
 pub enum SetItem<L, TVar> {
-    Property(QueryExpr<TVar>, QueryExpr<TVar>, bool),
+    Attribute(QueryExpr<TVar>, QueryExpr<TVar>, bool),
     Label(TVar, OrderSet<L>),
 }
 
@@ -503,8 +503,8 @@ impl<L: Display + PartialEq, TVar: Display> Display for SetItem<L, TVar> {
         f: &mut std::fmt::Formatter<'_>,
     ) -> std::fmt::Result {
         match self {
-            Self::Property(target, value, strict) => {
-                let op = if *strict { "=" } else { "+=" };
+            Self::Attribute(target, value, replace) => {
+                let op = if *replace { "=" } else { "+=" };
                 write!(f, "{target} {op} {value}")
             }
             Self::Label(var, labels) => {
@@ -734,7 +734,7 @@ impl<TVar: Eq + Hash> QueryIR<TVar> {
                         "Query cannot conclude with UNWIND (must be a RETURN clause, an update clause, a procedure call or a non-returning subquery)",
                     )), |first| first.inner_validate(iter))
             }
-            Self::Merge(p, _on_create_set_items, _on_match_set_items) => {
+            Self::Merge(p, on_create_set_items, on_match_set_items) => {
                 for relationship in &p.relationships {
                     if relationship.types.len() != 1 {
                         return Err(String::from(
@@ -742,6 +742,8 @@ impl<TVar: Eq + Hash> QueryIR<TVar> {
                         ));
                     }
                 }
+                Self::validate_set_items(on_create_set_items)?;
+                Self::validate_set_items(on_match_set_items)?;
                 iter.next()
                     .map_or(Ok(()), |first| first.inner_validate(iter))
             }
@@ -760,7 +762,8 @@ impl<TVar: Eq + Hash> QueryIR<TVar> {
                 iter.next()
                     .map_or(Ok(()), |first| first.inner_validate(iter))
             }
-            Self::Set(_items) => {
+            Self::Set(items) => {
+                Self::validate_set_items(items)?;
                 iter.next()
                     .map_or(Ok(()), |first| first.inner_validate(iter))
             }
@@ -788,6 +791,24 @@ impl<TVar: Eq + Hash> QueryIR<TVar> {
                 first.inner_validate(iter)
             }
         }
+    }
+
+    fn validate_set_items(items: &Vec<SetItem<Arc<String>, TVar>>) -> Result<(), String> {
+        for item in items {
+            if let SetItem::Attribute(target, _, _) = item {
+                if let ExprIR::FuncInvocation(func) = target.root().data()
+                    && func.name == "property"
+                    && let ExprIR::Variable(_) = target.root().child(0).data()
+                {
+                } else if let ExprIR::Variable(_) = target.root().data() {
+                } else {
+                    return Err(String::from(
+                        "FalkorDB does not currently support non-alias references on the left-hand side of SET expressions",
+                    ));
+                }
+            }
+        }
+        Ok(())
     }
 }
 

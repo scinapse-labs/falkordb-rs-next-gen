@@ -526,7 +526,7 @@ impl Binder {
         let mut res = Vec::with_capacity(items.len());
         for item in items {
             match item {
-                SetItem::Property(target, value, strict) => res.push(SetItem::Property(
+                SetItem::Attribute(target, value, strict) => res.push(SetItem::Attribute(
                     self.bind_expr(&target)?,
                     self.bind_expr(&value)?,
                     strict,
