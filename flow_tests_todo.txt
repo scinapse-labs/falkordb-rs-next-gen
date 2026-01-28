@@ -2,7 +2,6 @@ test_bound_variables
 test_cache
 test_comprehension_functions
 test_distinct
-test_entity_update
 test_expand_into
 test_foreach
 test_imdb
