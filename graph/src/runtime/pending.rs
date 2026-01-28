@@ -6,7 +6,7 @@ use roaring::RoaringTreemap;
 use crate::{
     graph::{
         graph::{Graph, LabelId, NodeId, RelationshipId},
-        matrix::{Matrix, New, Set, Size},
+        matrix::{Matrix, New, Remove, Set, Size},
     },
     runtime::{
         functions::Type,
@@ -163,6 +163,13 @@ impl Pending {
         Ok(())
     }
 
+    pub fn clear_node_attributes(
+        &mut self,
+        id: NodeId,
+    ) {
+        self.set_nodes_attrs.remove(&id);
+    }
+
     #[must_use]
     pub fn get_node_attribute(
         &self,
@@ -207,6 +214,8 @@ impl Pending {
         labels: Vec<LabelId>,
     ) {
         for label in &labels {
+            self.set_node_labels
+                .remove(id.into(), usize::from(*label) as u64);
             self.remove_node_labels
                 .set(id.into(), usize::from(*label) as u64, true);
         }

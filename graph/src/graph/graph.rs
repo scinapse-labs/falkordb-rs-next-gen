@@ -253,17 +253,17 @@ impl Graph {
     }
 
     #[must_use]
-    pub const fn get_node_count(&self) -> u64 {
+    pub const fn node_count(&self) -> u64 {
         self.node_count
     }
 
     #[must_use]
-    pub const fn get_node_cap(&self) -> u64 {
+    pub const fn node_cap(&self) -> u64 {
         self.node_cap
     }
 
     #[must_use]
-    pub const fn get_labels_count(&self) -> usize {
+    pub const fn labels_count(&self) -> usize {
         self.node_labels.len()
     }
 
@@ -1121,5 +1121,9 @@ impl Graph {
         // size += self.relationship_attrs.memory_usage();
         // size += self.node_indexer.memory_usage();
         size
+    }
+
+    pub fn print(&self) {
+        println!("Deleted nodes: {:?}", self.deleted_nodes);
     }
 }

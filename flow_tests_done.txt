@@ -2,6 +2,7 @@ tests/flow/test_access_del_entity
 tests/flow/test_aggregation
 tests/flow/test_create_clause
 tests/flow/test_empty_query
+tests/flow/test_entity_update
 tests/flow/test_filters
 tests/flow/test_function_calls
 tests/flow/test_graph_create

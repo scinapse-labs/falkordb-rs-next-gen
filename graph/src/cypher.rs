@@ -2210,7 +2210,7 @@ impl<'a> Parser<'a> {
                 }
                 match_token!(self.lexer, Equal);
                 let value = Arc::new(self.parse_expr()?);
-                set_items.push(SetItem::Property(Arc::new(expr), value, false));
+                set_items.push(SetItem::Attribute(Arc::new(expr), value, false));
             } else if self.lexer.current() == Token::Colon {
                 let ExprIR::Variable(id) = expr.root().data() else {
                     return Err(self
@@ -2227,7 +2227,7 @@ impl<'a> Parser<'a> {
                     true
                 };
                 let value = Arc::new(self.parse_expr()?);
-                set_items.push(SetItem::Property(Arc::new(expr), value, !plus_equals));
+                set_items.push(SetItem::Attribute(Arc::new(expr), value, !plus_equals));
             }
 
             if !optional_match_token!(self.lexer, Comma) {
