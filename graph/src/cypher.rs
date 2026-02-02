@@ -116,8 +116,6 @@ enum Token {
     DotDot,
     Pipe,
     RegexMatches,
-    Error(String),
-    IntegerOverflow(String),
     EndOfFile,
 }
 
@@ -192,7 +190,7 @@ const MIN_I64: [&str; 5] = [
 struct Lexer<'a> {
     str: &'a str,
     pos: usize,
-    cached_current: (Token, usize),
+    cached_current: Result<(Token, usize), (String, usize)>,
 }
 
 #[derive(Debug)]
@@ -224,7 +222,7 @@ impl<'a> Lexer<'a> {
 
     fn next(&mut self) {
         self.pos += Self::read_spaces(self.str, self.pos);
-        self.pos += self.cached_current.1;
+        self.pos += self.cached_current.as_ref().map(|t| t.1).unwrap_or(0);
         let pos = self.pos + Self::read_spaces(self.str, self.pos);
         self.cached_current = Self::get_token(self.str, pos);
     }
@@ -301,13 +299,16 @@ impl<'a> Lexer<'a> {
         len
     }
 
-    fn current(&self) -> Token {
-        self.cached_current.0.clone()
+    fn current(&self) -> Result<Token, String> {
+        self.cached_current
+            .as_ref()
+            .map(|t| t.0.clone())
+            .map_err(|e| e.0.clone())
     }
 
     pub fn current_str(&self) -> &str {
         let pos = self.pos(false);
-        &self.str[pos..pos + self.cached_current.1]
+        &self.str[pos..pos + self.cached_current.as_ref().map(|t| t.1).unwrap_or(0)]
     }
 
     #[inline]
@@ -315,46 +316,46 @@ impl<'a> Lexer<'a> {
     fn get_token(
         str: &'a str,
         pos: usize,
-    ) -> (Token, usize) {
+    ) -> Result<(Token, usize), (String, usize)> {
         let mut chars = str[pos..].chars();
         if let Some(char) = chars.next() {
             return match char {
-                '[' => (Token::LBrace, 1),
-                ']' => (Token::RBrace, 1),
-                '{' => (Token::LBracket, 1),
-                '}' => (Token::RBracket, 1),
-                '(' => (Token::LParen, 1),
-                ')' => (Token::RParen, 1),
-                '%' => (Token::Modulo, 1),
-                '^' => (Token::Power, 1),
-                '*' => (Token::Star, 1),
-                '/' => (Token::Slash, 1),
+                '[' => Ok((Token::LBrace, 1)),
+                ']' => Ok((Token::RBrace, 1)),
+                '{' => Ok((Token::LBracket, 1)),
+                '}' => Ok((Token::RBracket, 1)),
+                '(' => Ok((Token::LParen, 1)),
+                ')' => Ok((Token::RParen, 1)),
+                '%' => Ok((Token::Modulo, 1)),
+                '^' => Ok((Token::Power, 1)),
+                '*' => Ok((Token::Star, 1)),
+                '/' => Ok((Token::Slash, 1)),
                 '+' => match chars.next() {
-                    Some('=') => (Token::PlusEqual, 2),
-                    _ => (Token::Plus, 1),
+                    Some('=') => Ok((Token::PlusEqual, 2)),
+                    _ => Ok((Token::Plus, 1)),
                 },
-                '-' => (Token::Dash, 1),
+                '-' => Ok((Token::Dash, 1)),
                 '=' => match chars.next() {
-                    Some('~') => (Token::RegexMatches, 2),
-                    _ => (Token::Equal, 1),
+                    Some('~') => Ok((Token::RegexMatches, 2)),
+                    _ => Ok((Token::Equal, 1)),
                 },
                 '<' => match chars.next() {
-                    Some('=') => (Token::LessThanOrEqual, 2),
-                    Some('>') => (Token::NotEqual, 2),
-                    _ => (Token::LessThan, 1),
+                    Some('=') => Ok((Token::LessThanOrEqual, 2)),
+                    Some('>') => Ok((Token::NotEqual, 2)),
+                    _ => Ok((Token::LessThan, 1)),
                 },
                 '>' => match chars.next() {
-                    Some('=') => (Token::GreaterThanOrEqual, 2),
-                    _ => (Token::GreaterThan, 1),
+                    Some('=') => Ok((Token::GreaterThanOrEqual, 2)),
+                    _ => Ok((Token::GreaterThan, 1)),
                 },
-                ',' => (Token::Comma, 1),
-                ':' => (Token::Colon, 1),
+                ',' => Ok((Token::Comma, 1)),
+                ':' => Ok((Token::Colon, 1)),
                 '.' => match chars.next() {
-                    Some('.') => (Token::DotDot, 2),
+                    Some('.') => Ok((Token::DotDot, 2)),
                     Some('0'..='9') => Self::lex_numeric(str, chars, pos, '.', 2),
-                    _ => (Token::Dot, 1),
+                    _ => Ok((Token::Dot, 1)),
                 },
-                '|' => (Token::Pipe, 1),
+                '|' => Ok((Token::Pipe, 1)),
                 '\'' => {
                     let mut len = 1;
                     let mut end = false;
@@ -365,10 +366,13 @@ impl<'a> Lexer<'a> {
                                     len += c.len_utf8();
                                 }
                                 None => {
-                                    return (
-                                        Token::Error(String::from(&str[pos + 1..pos + len])),
+                                    return Err((
+                                        format!(
+                                            "Invalid escape sequence in string at pos: {}",
+                                            pos + len
+                                        ),
                                         len + 1,
-                                    );
+                                    ));
                                 }
                             }
                         } else if c == '\'' {
@@ -378,9 +382,9 @@ impl<'a> Lexer<'a> {
                         len += c.len_utf8();
                     }
                     if !end {
-                        return (Token::Error(String::from(&str[pos..pos + len])), len);
+                        return Err((format!("Unterminated string starting at pos: {}", pos), len));
                     }
-                    unescape(&str[pos + 1..pos + len])
+                    Ok(unescape(&str[pos + 1..pos + len])
                         .decode_utf8()
                         .map_or_else(
                             |_| {
@@ -390,7 +394,7 @@ impl<'a> Lexer<'a> {
                                 )
                             },
                             |unescaped| (Token::String(Arc::new(unescaped.into_owned())), len + 1),
-                        )
+                        ))
                 }
                 '\"' => {
                     let mut len = 1;
@@ -402,10 +406,13 @@ impl<'a> Lexer<'a> {
                                     len += c.len_utf8();
                                 }
                                 None => {
-                                    return (
-                                        Token::Error(String::from(&str[pos + 1..pos + len])),
+                                    return Err((
+                                        format!(
+                                            "Invalid escape sequence in string at pos: {}",
+                                            pos + len
+                                        ),
                                         len + 1,
-                                    );
+                                    ));
                                 }
                             }
                         } else if c == '\"' {
@@ -415,9 +422,9 @@ impl<'a> Lexer<'a> {
                         len += c.len_utf8();
                     }
                     if !end {
-                        return (Token::Error(String::from(&str[pos..pos + len])), len);
+                        return Err((format!("Unterminated string starting at pos: {}", pos), len));
                     }
-                    unescape(&str[pos + 1..pos + len])
+                    Ok(unescape(&str[pos + 1..pos + len])
                         .decode_utf8()
                         .map_or_else(
                             |_| {
@@ -427,7 +434,7 @@ impl<'a> Lexer<'a> {
                                 )
                             },
                             |unescaped| (Token::String(Arc::new(unescaped.into_owned())), len + 1),
-                        )
+                        ))
                 }
                 d @ '0'..='9' => Self::lex_numeric(str, chars, pos, d, 1),
                 '$' => {
@@ -436,7 +443,7 @@ impl<'a> Lexer<'a> {
                         len += 1;
                     }
                     let token = Token::Parameter(String::from(&str[pos + 1..pos + len]));
-                    (token, len)
+                    Ok((token, len))
                 }
                 'a'..='z' | 'A'..='Z' | '_' => {
                     let mut len = 1;
@@ -456,7 +463,7 @@ impl<'a> Lexer<'a> {
                                 )
                             },
                         );
-                    (token, len)
+                    Ok((token, len))
                 }
                 '`' => {
                     let mut len = 1;
@@ -469,20 +476,17 @@ impl<'a> Lexer<'a> {
                         len += c.len_utf8();
                     }
                     if !end {
-                        return (Token::Error(String::from(&str[pos..pos + len])), len);
+                        return Err((String::from(&str[pos..pos + len]), len));
                     }
-                    (
+                    Ok((
                         Token::Ident(Arc::new(String::from(&str[pos + 1..pos + len]))),
                         len + 1,
-                    )
+                    ))
                 }
-                _ => (
-                    Token::Error(format!("Invalid input at pos: {pos} at char {char}")),
-                    0,
-                ),
+                _ => Err((format!("Invalid input at pos: {pos} at char {char}"), 0)),
             };
         }
-        (Token::EndOfFile, 0)
+        Ok((Token::EndOfFile, 0))
     }
 
     #[allow(clippy::too_many_lines)]
@@ -492,7 +496,7 @@ impl<'a> Lexer<'a> {
         pos: usize,
         current: char,
         mut len: usize,
-    ) -> (Token, usize) {
+    ) -> Result<(Token, usize), (String, usize)> {
         let mut radix = 10;
         let mut is_float = false;
         let mut is_e = false;
@@ -506,17 +510,14 @@ impl<'a> Lexer<'a> {
                     if let Some(c) = str[pos + len..].chars().next() {
                         if !c.is_ascii_hexdigit() {
                             let invalid_literal = str[pos..].chars().take(len).collect::<String>();
-                            return (
-                                Token::Error(format!("Invalid numeric value '{invalid_literal}'")),
+                            return Err((
+                                format!("Invalid numeric value '{invalid_literal}'"),
                                 len,
-                            );
+                            ));
                         }
                     } else {
                         let invalid_literal = str[pos..].chars().take(len).collect::<String>();
-                        return (
-                            Token::Error(format!("Invalid numeric value '{invalid_literal}'")),
-                            len,
-                        );
+                        return Err((format!("Invalid numeric value '{invalid_literal}'"), len));
                     }
                 }
                 Some('o' | 'O') => {
@@ -526,17 +527,14 @@ impl<'a> Lexer<'a> {
                     if let Some(c) = str[pos + len..].chars().next() {
                         if !c.is_digit(8) {
                             let invalid_literal = str[pos..].chars().take(len).collect::<String>();
-                            return (
-                                Token::Error(format!("Invalid numeric value '{invalid_literal}'")),
+                            return Err((
+                                format!("Invalid numeric value '{invalid_literal}'"),
                                 len,
-                            );
+                            ));
                         }
                     } else {
                         let invalid_literal = str[pos..].chars().take(len).collect::<String>();
-                        return (
-                            Token::Error(format!("Invalid numeric value '{invalid_literal}'")),
-                            len,
-                        );
+                        return Err((format!("Invalid numeric value '{invalid_literal}'"), len));
                     }
                 }
                 Some('0'..='9') => {
@@ -550,17 +548,14 @@ impl<'a> Lexer<'a> {
                     if let Some(c) = str[pos + len..].chars().next() {
                         if !matches!(c, '0' | '1') {
                             let invalid_literal = str[pos..].chars().take(len).collect::<String>();
-                            return (
-                                Token::Error(format!("Invalid numeric value '{invalid_literal}'")),
+                            return Err((
+                                format!("Invalid numeric value '{invalid_literal}'"),
                                 len,
-                            );
+                            ));
                         }
                     } else {
                         let invalid_literal = str[pos..].chars().take(len).collect::<String>();
-                        return (
-                            Token::Error(format!("Invalid numeric value '{invalid_literal}'")),
-                            len,
-                        );
+                        return Err((format!("Invalid numeric value '{invalid_literal}'"), len));
                     }
                 }
                 Some('.') => match chars.next() {
@@ -569,11 +564,11 @@ impl<'a> Lexer<'a> {
                         len += 2;
                     }
                     _ => {
-                        return (Token::Integer(0), len);
+                        return Ok((Token::Integer(0), len));
                     }
                 },
                 Some(_) | None => {
-                    return (Token::Integer(0), len);
+                    return Ok((Token::Integer(0), len));
                 }
             }
         } else if current == '.' {
@@ -598,10 +593,7 @@ impl<'a> Lexer<'a> {
                     len += 1;
                 } else if c == '.' && radix == 10 {
                     if is_float {
-                        return (
-                            Token::Error(format!("Invalid numeric value at pos: {pos} in {str}")),
-                            len,
-                        );
+                        return Err((format!("Invalid numeric value at pos: {pos} in {str}"), len));
                     }
                     if let Some(ch) = str[pos + len + 1..].chars().next()
                         && (ch == '.' || !ch.is_ascii_digit())
@@ -622,10 +614,10 @@ impl<'a> Lexer<'a> {
                         }
                     }
                     let invalid_literal = str[pos..].chars().take(len).collect::<String>();
-                    return (
-                        Token::Error(format!("Invalid numeric value '{invalid_literal}'")),
+                    return Err((
+                        format!("Invalid numeric value '{invalid_literal}'"),
                         invalid_literal.len(),
-                    );
+                    ));
                 } else {
                     break;
                 }
@@ -637,10 +629,7 @@ impl<'a> Lexer<'a> {
                     len += 1;
                 } else if c == 'e' || c == 'E' {
                     if is_e {
-                        return (
-                            Token::Error(format!("Invalid numeric value at pos: {pos} in {str}")),
-                            len,
-                        );
+                        return Err((format!("Invalid numeric value at pos: {pos} in {str}"), len));
                     }
                     len += 1;
                     if let Some(next_char) = str.get(pos + len..).and_then(|s| s.chars().next())
@@ -664,19 +653,19 @@ impl<'a> Lexer<'a> {
         }
         let str = str[pos..].chars().take(len).collect::<String>();
         let token = Lexer::str2number_token(&str, radix, is_float);
-        (token, str.len())
+        token.map(|t| (t, str.len())).map_err(|e| (e, str.len()))
     }
 
     fn str2number_token(
         str: &str,
         radix: u32,
         is_float: bool,
-    ) -> Token {
+    ) -> Result<Token, String> {
         if is_float {
             return match str.parse::<f64>() {
-                Ok(f) if f.is_finite() && !f.is_subnormal() => Token::Float(f),
-                Ok(_) => Token::Error(format!("Float overflow '{str}'")),
-                Err(_) => Token::Error(format!("Invalid input '{str}'")),
+                Ok(f) if f.is_finite() && !f.is_subnormal() => Ok(Token::Float(f)),
+                Ok(_) => Err(format!("Float overflow '{str}'")),
+                Err(_) => Err(format!("Invalid input '{str}'")),
             };
         }
 
@@ -686,7 +675,7 @@ impl<'a> Lexer<'a> {
             || str.eq_ignore_ascii_case(MIN_I64[3])
             || str.eq_ignore_ascii_case(MIN_I64[4])
         {
-            return Token::Integer(i64::MIN);
+            return Ok(Token::Integer(i64::MIN));
         }
 
         let mut offset = 0;
@@ -702,12 +691,11 @@ impl<'a> Lexer<'a> {
         let number_str = &str[offset..];
         i64::from_str_radix(number_str, radix).map_or_else(
             |err| match err.kind() {
-                IntErrorKind::NegOverflow | IntErrorKind::PosOverflow => {
-                    Token::IntegerOverflow(number_str.to_string())
-                }
-                _ => Token::Error(format!("Invalid input '{str}'")),
+                IntErrorKind::PosOverflow => Err(format!("Integer overflow '{number_str}'")),
+                IntErrorKind::NegOverflow => Err(format!("Integer overflow '-{number_str}'")),
+                _ => Err(format!("Invalid input '{str}'")),
             },
-            Token::Integer,
+            |i| Ok(Token::Integer(i)),
         )
     }
 
@@ -730,13 +718,7 @@ impl<'a> Lexer<'a> {
 
 macro_rules! match_token {
     ($lexer:expr, $token:ident) => {
-        match $lexer.current() {
-            Token::Error(s) => {
-                return Err($lexer.format_error(&s));
-            }
-            Token::IntegerOverflow(s) => {
-                return Err($lexer.format_error(&format!("Integer overflow '{s}'")));
-            }
+        match $lexer.current()? {
             Token::$token => {
                 $lexer.next();
             }
@@ -750,13 +732,7 @@ macro_rules! match_token {
         }
     };
     ($lexer:expr => $token:ident) => {
-        match $lexer.current() {
-            Token::Error(s) => {
-                return Err($lexer.format_error(&s));
-            }
-            Token::IntegerOverflow(s) => {
-                return Err($lexer.format_error(&format!("Integer overflow '{s}'")));
-            }
+        match $lexer.current()? {
             Token::Keyword(Keyword::$token, _) => {
                 $lexer.next();
             }
@@ -774,7 +750,7 @@ macro_rules! match_token {
 
 macro_rules! optional_match_token {
     ($lexer:expr, $token:ident) => {
-        match $lexer.current() {
+        match $lexer.current()? {
             Token::$token => {
                 $lexer.next();
                 true
@@ -783,7 +759,7 @@ macro_rules! optional_match_token {
         }
     };
     ($lexer:expr => $token:ident) => {
-        match $lexer.current() {
+        match $lexer.current()? {
             Token::Keyword(Keyword::$token, _) => {
                 $lexer.next();
                 true
@@ -812,7 +788,7 @@ macro_rules! parse_expr_return {
 #[macro_export]
 macro_rules! parse_operators {
     ($self:ident, $stack:ident, $res:ident, $current:ident, $token:pat => $expr:ident) => {
-        if let $token = $self.lexer.current() {
+        if let $token = $self.lexer.current()? {
             $self.lexer.next();
             let res = if matches!($res.root().data(), ExprIR::$expr) {
                 $res
@@ -835,7 +811,7 @@ macro_rules! parse_operators {
     };
     ($self:ident, $stack:ident, $res:ident, $current:ident, $($token:pat => $expr:ident),*) => {
         let mut res = $res;
-        $(if let $token = $self.lexer.current() {
+        $(if let $token = $self.lexer.current()? {
             $self.lexer.next();
             if matches!(res.root().data(), ExprIR::$expr) {
             } else {
@@ -891,7 +867,7 @@ impl<'a> Parser<'a> {
     pub fn parse_parameters(
         &mut self
     ) -> Result<(HashMap<String, DynTree<ExprIR<Arc<String>>>>, &'a str), String> {
-        match self.lexer.current() {
+        match self.lexer.current()? {
             Token::Ident(id) => {
                 if id.as_str() == "CYPHER" {
                     self.lexer.next();
@@ -1106,7 +1082,7 @@ impl<'a> Parser<'a> {
                 | Keyword::Call
                 | Keyword::Load,
                 _,
-            ) = self.lexer.current()
+            ) = self.lexer.current()?
             {
                 clauses.push(self.parse_reading_clasue()?);
             }
@@ -1118,7 +1094,7 @@ impl<'a> Parser<'a> {
                 | Keyword::Set
                 | Keyword::Remove,
                 _,
-            ) = self.lexer.current()
+            ) = self.lexer.current()?
             {
                 write = true;
                 clauses.push(self.parse_writing_clause()?);
@@ -1143,7 +1119,7 @@ impl<'a> Parser<'a> {
             match_token!(self.lexer => Match);
             return self.parse_match_clause(true);
         }
-        match self.lexer.current() {
+        match self.lexer.current()? {
             Token::Keyword(Keyword::Match, _) => {
                 self.lexer.next();
                 optional_match_token!(self.lexer => Match);
@@ -1183,7 +1159,7 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_writing_clause(&mut self) -> Result<RawQueryIR, String> {
-        match self.lexer.current() {
+        match self.lexer.current()? {
             Token::Keyword(Keyword::Create, _) => {
                 self.lexer.next();
                 self.parse_create_clause()
@@ -1241,7 +1217,7 @@ impl<'a> Parser<'a> {
 
     fn parse_dotted_ident(&mut self) -> Result<Arc<String>, String> {
         let mut idents = vec![self.parse_ident()?];
-        while self.lexer.current() == Token::Dot {
+        while self.lexer.current()? == Token::Dot {
             self.lexer.next();
             idents.push(self.parse_ident()?);
         }
@@ -1308,7 +1284,7 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_where(&mut self) -> Result<Option<QueryExpr<Arc<String>>>, String> {
-        if let Token::Keyword(Keyword::Where, _) = self.lexer.current() {
+        if let Token::Keyword(Keyword::Where, _) = self.lexer.current()? {
             self.lexer.next();
             return Ok(Some(Arc::new(self.parse_expr()?)));
         }
@@ -1472,7 +1448,7 @@ impl<'a> Parser<'a> {
                     query_graph.add_node(left.clone());
                 }
                 loop {
-                    if let Token::Dash | Token::LessThan = self.lexer.current() {
+                    if let Token::Dash | Token::LessThan = self.lexer.current()? {
                         let (relationship, right) =
                             self.parse_relationship_pattern(left, clause)?;
                         vars.push(relationship.alias.clone());
@@ -1500,7 +1476,7 @@ impl<'a> Parser<'a> {
                 if nodes_alias.insert(left.alias.clone()) {
                     query_graph.add_node(left.clone());
                 }
-                while let Token::Dash | Token::LessThan = self.lexer.current() {
+                while let Token::Dash | Token::LessThan = self.lexer.current()? {
                     let (relationship, right) = self.parse_relationship_pattern(left, clause)?;
                     left = right.clone();
                     if !query_graph.add_relationship(relationship.clone()) {
@@ -1527,7 +1503,7 @@ impl<'a> Parser<'a> {
                 break;
             }
 
-            match self.lexer.current() {
+            match self.lexer.current()? {
                 Token::Comma => {
                     self.lexer.next();
                 }
@@ -1548,7 +1524,7 @@ impl<'a> Parser<'a> {
     fn parse_case_expression(&mut self) -> Result<DynTree<ExprIR<Arc<String>>>, String> {
         self.lexer.next();
         let mut children = vec![];
-        if let Token::Keyword(Keyword::When, _) = self.lexer.current() {
+        if let Token::Keyword(Keyword::When, _) = self.lexer.current()? {
         } else {
             children.push(self.parse_expr()?);
         }
@@ -1574,7 +1550,7 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_quantifier_expr(&mut self) -> Result<DynTree<ExprIR<Arc<String>>>, String> {
-        let quantifier_type = match self.lexer.current() {
+        let quantifier_type = match self.lexer.current()? {
             Token::Keyword(Keyword::All, _) => {
                 self.lexer.next();
                 QuantifierType::All
@@ -1610,7 +1586,7 @@ impl<'a> Parser<'a> {
 
     #[allow(clippy::too_many_lines)]
     fn parse_primary_expr(&mut self) -> Result<(DynTree<ExprIR<Arc<String>>>, bool), String> {
-        match self.lexer.current() {
+        match self.lexer.current()? {
             Token::Ident(_) => {
                 let pos = self.lexer.pos;
                 let ident = self.parse_dotted_ident()?;
@@ -1725,10 +1701,6 @@ impl<'a> Parser<'a> {
                 let expr = tree!(ExprIR::Paren);
                 Ok((expr, true))
             }
-            Token::Error(s) => Err(self.lexer.format_error(&s)),
-            Token::IntegerOverflow(s) => {
-                Err(self.lexer.format_error(&format!("Integer overflow '{s}'")))
-            }
             token => Err(self.lexer.format_error(&format!("Invalid input {token:?}"))),
         }
     }
@@ -1780,7 +1752,7 @@ impl<'a> Parser<'a> {
                 } else if current == 3 {
                     // Not
                     let mut not_count = 0;
-                    while let Token::Keyword(Keyword::Not, _) = self.lexer.current() {
+                    while let Token::Keyword(Keyword::Not, _) = self.lexer.current()? {
                         self.lexer.next();
                         not_count += 1;
                     }
@@ -1797,18 +1769,8 @@ impl<'a> Parser<'a> {
                     let is_negate = optional_match_token!(self.lexer, Dash);
 
                     // Handle integer overflow with negation
-                    if is_negate {
-                        match self.lexer.current() {
-                            Token::IntegerOverflow(ref lit) => {
-                                return Err(self
-                                    .lexer
-                                    .format_error(&format!("Integer overflow '-{lit}'")));
-                            }
-                            Token::Error(ref msg) => {
-                                return Err(self.lexer.format_error(msg));
-                            }
-                            _ => {}
-                        }
+                    if is_negate && let Err(err) = self.lexer.current() {
+                        return Err(err.replace("Integer overflow '", "Integer overflow '-"));
                     }
 
                     let res = if is_negate {
@@ -1854,7 +1816,7 @@ impl<'a> Parser<'a> {
                 5 => {
                     // String, List, Null predicates
                     let mut res = res;
-                    match self.lexer.current() {
+                    match self.lexer.current()? {
                         Token::Keyword(Keyword::In, _) => {
                             self.lexer.next();
                             res = tree!(ExprIR::In, res);
@@ -1955,7 +1917,7 @@ impl<'a> Parser<'a> {
                     // None arithmetic operators
                     let mut res = res;
                     loop {
-                        match self.lexer.current() {
+                        match self.lexer.current()? {
                             Token::LBrace => {
                                 self.lexer.next();
                                 res = self.parse_list_operator_expression(res)?;
@@ -1967,7 +1929,7 @@ impl<'a> Parser<'a> {
                             _ => break,
                         }
                     }
-                    if self.lexer.current() == Token::Colon {
+                    if self.lexer.current()? == Token::Colon {
                         let labels = tree!(ExprIR::List; self.parse_labels()?.into_iter().map(|l| tree!(ExprIR::String(l))));
                         res = tree!(
                             ExprIR::FuncInvocation(
@@ -2004,7 +1966,7 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_ident(&mut self) -> Result<Arc<String>, String> {
-        match self.lexer.current() {
+        match self.lexer.current()? {
             Token::Ident(id) | Token::Keyword(_, id) => {
                 self.lexer.next();
                 Ok(id)
@@ -2021,7 +1983,7 @@ impl<'a> Parser<'a> {
         loop {
             let pos = self.lexer.pos(false);
             let expr = Arc::new(self.parse_expr()?);
-            if let Token::Keyword(Keyword::As, _) = self.lexer.current() {
+            if let Token::Keyword(Keyword::As, _) = self.lexer.current()? {
                 self.lexer.next();
                 let ident = self.parse_ident()?;
                 named_exprs.push((ident, expr));
@@ -2033,7 +1995,7 @@ impl<'a> Parser<'a> {
                     expr,
                 ));
             }
-            match self.lexer.current() {
+            match self.lexer.current()? {
                 Token::Comma => self.lexer.next(),
                 _ => return Ok(named_exprs),
             }
@@ -2045,16 +2007,16 @@ impl<'a> Parser<'a> {
         expression_list_type: ExpressionListType,
     ) -> Result<Vec<DynTree<ExprIR<Arc<String>>>>, String> {
         let mut exprs = Vec::new();
-        while !expression_list_type.is_end_token(&self.lexer.current()) {
+        while !expression_list_type.is_end_token(&self.lexer.current()?) {
             exprs.push(self.parse_expr()?);
-            match self.lexer.current() {
+            match self.lexer.current()? {
                 Token::Comma => self.lexer.next(),
                 _ => break,
             }
         }
 
         if let ExpressionListType::ZeroOrMoreClosedBy(token) = expression_list_type {
-            if self.lexer.current() == token {
+            if self.lexer.current()? == token {
                 self.lexer.next();
             } else {
                 return Err(self.lexer.format_error(&format!("Invalid input {token:?}")));
@@ -2123,7 +2085,7 @@ impl<'a> Parser<'a> {
             name
         };
         let labels = self.parse_labels()?;
-        let attrs = if let Token::Parameter(param) = self.lexer.current() {
+        let attrs = if let Token::Parameter(param) = self.lexer.current()? {
             self.lexer.next();
             if clause == &Keyword::Match {
                 return Err(self
@@ -2173,14 +2135,14 @@ impl<'a> Parser<'a> {
                 }
             }
             let _ = if optional_match_token!(self.lexer, Star) {
-                let start = if let Token::Integer(i) = self.lexer.current() {
+                let start = if let Token::Integer(i) = self.lexer.current()? {
                     self.lexer.next();
                     Some(i)
                 } else {
                     None
                 };
                 if optional_match_token!(self.lexer, DotDot) {
-                    let end = if let Token::Integer(i) = self.lexer.current() {
+                    let end = if let Token::Integer(i) = self.lexer.current()? {
                         self.lexer.next();
                         Some(i)
                     } else {
@@ -2193,7 +2155,7 @@ impl<'a> Parser<'a> {
             } else {
                 None
             };
-            let attrs = if let Token::Parameter(param) = self.lexer.current() {
+            let attrs = if let Token::Parameter(param) = self.lexer.current()? {
                 self.lexer.next();
                 if clause == &Keyword::Match {
                     return Err(self
@@ -2235,7 +2197,7 @@ impl<'a> Parser<'a> {
 
     fn parse_labels(&mut self) -> Result<OrderSet<Arc<String>>, String> {
         let mut labels = OrderSet::default();
-        while self.lexer.current() == Token::Colon {
+        while self.lexer.current()? == Token::Colon {
             self.lexer.next();
             labels.insert(self.parse_ident()?);
         }
@@ -2244,34 +2206,23 @@ impl<'a> Parser<'a> {
 
     fn parse_map(&mut self) -> Result<DynTree<ExprIR<Arc<String>>>, String> {
         let mut attrs = Vec::new();
-        if self.lexer.current() == Token::LBracket {
+        if self.lexer.current()? == Token::LBracket {
             self.lexer.next();
         } else {
             return Ok(tree!(ExprIR::Map));
         }
 
         loop {
-            // Check for lexer errors (e.g., invalid numeric literals starting map keys)
-            if let Token::Error(s) = self.lexer.current() {
-                return Err(self.lexer.format_error(&format!("Invalid input: {s}")));
-            }
-
             if let Ok(key) = self.parse_ident() {
                 match_token!(self.lexer, Colon);
                 let value = self.parse_expr()?;
                 attrs.push(tree!(ExprIR::String(key), value));
 
-                match self.lexer.current() {
+                match self.lexer.current()? {
                     Token::Comma => self.lexer.next(),
                     Token::RBracket => {
                         self.lexer.next();
                         return Ok(tree!(ExprIR:: Map ; attrs));
-                    }
-                    Token::Error(s) => {
-                        return Err(self.lexer.format_error(&s));
-                    }
-                    Token::IntegerOverflow(s) => {
-                        return Err(self.lexer.format_error(&format!("Integer overflow '{s}'")));
                     }
                     token => {
                         return Err(self.lexer.format_error(&format!("Invalid input {token:?}")));
@@ -2318,15 +2269,15 @@ impl<'a> Parser<'a> {
                 expr = self.parse_expr()?;
                 match_token!(self.lexer, RParen);
             }
-            if self.lexer.current() == Token::Dot {
-                while self.lexer.current() == Token::Dot {
+            if self.lexer.current()? == Token::Dot {
+                while self.lexer.current()? == Token::Dot {
                     self.lexer.next();
                     expr = self.parse_property_lookup(expr)?;
                 }
                 match_token!(self.lexer, Equal);
                 let value = Arc::new(self.parse_expr()?);
                 set_items.push(SetItem::Attribute(Arc::new(expr), value, false));
-            } else if self.lexer.current() == Token::Colon {
+            } else if self.lexer.current()? == Token::Colon {
                 let ExprIR::Variable(id) = expr.root().data() else {
                     return Err(self
                         .lexer
@@ -2359,13 +2310,13 @@ impl<'a> Parser<'a> {
                 expr = self.parse_expr()?;
                 match_token!(self.lexer, RParen);
             }
-            if self.lexer.current() == Token::Dot {
-                while self.lexer.current() == Token::Dot {
+            if self.lexer.current()? == Token::Dot {
+                while self.lexer.current()? == Token::Dot {
                     self.lexer.next();
                     expr = self.parse_property_lookup(expr)?;
                 }
                 remove_items.push(Arc::new(expr));
-            } else if self.lexer.current() == Token::Colon {
+            } else if self.lexer.current()? == Token::Colon {
                 expr = tree!(
                     ExprIR::FuncInvocation(get_functions().get("hasLabels", &FnType::Function)?),
                     expr,
