@@ -1610,7 +1610,7 @@ impl<'a> Parser<'a> {
                             let mut args = vec![tree!(ExprIR::Integer(1))]; // Dummy value for count(*)
 
                             if distinct {
-                                args = vec![tree!(ExprIR:: Distinct; args)];
+                                args = vec![tree!(ExprIR::Distinct; args)];
                             }
 
                             args.push(tree!(ExprIR::Variable(Arc::new(String::from(
@@ -1966,8 +1966,8 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_ident(&mut self) -> Result<Arc<String>, String> {
-        match self.lexer.current()? {
-            Token::Ident(id) | Token::Keyword(_, id) => {
+        match self.lexer.current() {
+            Ok(Token::Ident(id) | Token::Keyword(_, id)) => {
                 self.lexer.next();
                 Ok(id)
             }
@@ -2212,25 +2212,26 @@ impl<'a> Parser<'a> {
             return Ok(tree!(ExprIR::Map));
         }
 
-        loop {
-            if let Ok(key) = self.parse_ident() {
-                match_token!(self.lexer, Colon);
-                let value = self.parse_expr()?;
-                attrs.push(tree!(ExprIR::String(key), value));
+        if self.lexer.current() == Ok(Token::RBracket) {
+            self.lexer.next();
+            return Ok(tree!(ExprIR::Map));
+        }
 
-                match self.lexer.current()? {
-                    Token::Comma => self.lexer.next(),
-                    Token::RBracket => {
-                        self.lexer.next();
-                        return Ok(tree!(ExprIR:: Map ; attrs));
-                    }
-                    token => {
-                        return Err(self.lexer.format_error(&format!("Invalid input {token:?}")));
-                    }
+        loop {
+            let key = self.parse_ident()?;
+            match_token!(self.lexer, Colon);
+            let value = self.parse_expr()?;
+            attrs.push(tree!(ExprIR::String(key), value));
+
+            match self.lexer.current()? {
+                Token::Comma => self.lexer.next(),
+                Token::RBracket => {
+                    self.lexer.next();
+                    return Ok(tree!(ExprIR::Map ; attrs));
                 }
-            } else {
-                match_token!(self.lexer, RBracket);
-                return Ok(tree!(ExprIR:: Map ; attrs));
+                token => {
+                    return Err(self.lexer.format_error(&format!("Invalid input {token:?}")));
+                }
             }
         }
     }
