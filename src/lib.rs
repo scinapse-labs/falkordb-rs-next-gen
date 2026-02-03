@@ -734,12 +734,12 @@ fn query_mut(
 }
 
 fn process_write_queued_query(graph: &Arc<RwLock<ThreadedGraph>>) {
-    let mut graph = graph.write().unwrap();
-    if graph
-        .write_loop
+    let g = graph.read().unwrap();
+    if g.write_loop
         .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
         .is_ok()
     {
+        let mut graph = graph.write().unwrap();
         while let Ok((bc, query, compact)) = { graph.receiver.try_recv() } {
             let ctx = unsafe { raw::RedisModule_GetThreadSafeContext.unwrap()(bc.inner) };
             let ctx = Context::new(ctx);
