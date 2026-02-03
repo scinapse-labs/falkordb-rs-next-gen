@@ -95,10 +95,10 @@ unsafe impl Send for ThreadedGraph {}
 unsafe impl Sync for ThreadedGraph {}
 
 impl ThreadedGraph {
-    pub fn new() -> Self {
+    pub fn new(cache_size: usize) -> Self {
         let (sender, receiver) = channel();
         Self {
-            graph: MvccGraph::new(16384, 16384, 1024),
+            graph: MvccGraph::new(16384, 16384, cache_size),
             sender,
             receiver,
             write_loop: AtomicBool::new(false),
@@ -122,7 +122,6 @@ impl ThreadedGraph {
             .into_iter()
             .map(|(k, v)| Ok((k, evaluate_param(&v.root())?)))
             .collect::<Result<HashMap<_, _>, String>>()?;
-        let scope = CONFIGURATION_IMPORT_FOLDER.lock(ctx);
         let is_write = plan.iter().any(|n| matches!(n, IR::Commit));
         let g = if is_write {
             if !write {
@@ -134,7 +133,14 @@ impl ThreadedGraph {
         } else {
             self.graph.read()
         };
-        let mut runtime = Runtime::new(g, parameters, write, plan, false, (*scope).clone());
+        let mut runtime = Runtime::new(
+            g,
+            parameters,
+            write,
+            plan,
+            false,
+            (*CONFIGURATION_IMPORT_FOLDER.lock(ctx)).clone(),
+        );
         let mut result = runtime.query()?;
         result.stats.cached = cached;
         if compact {
@@ -161,10 +167,16 @@ impl ThreadedGraph {
             .into_iter()
             .map(|(k, v)| Ok((k, evaluate_param(&v.root())?)))
             .collect::<Result<HashMap<_, _>, String>>()?;
-        let scope = CONFIGURATION_IMPORT_FOLDER.lock(ctx);
         debug_assert!(plan.iter().any(|n| matches!(n, IR::Commit)));
         let g = self.graph.write().unwrap();
-        let mut runtime = Runtime::new(g.clone(), parameters, true, plan, false, (*scope).clone());
+        let mut runtime = Runtime::new(
+            g.clone(),
+            parameters,
+            true,
+            plan,
+            false,
+            (*CONFIGURATION_IMPORT_FOLDER.lock(ctx)).clone(),
+        );
         let mut result = runtime.query()?;
         result.stats.cached = cached;
         if compact {
@@ -877,8 +889,9 @@ fn graph_query(
     if let Some(graph) = key.get_value::<Arc<RwLock<ThreadedGraph>>>(&GRAPH_TYPE)? {
         query_mut(ctx, graph, query, compact, true, track_memory);
     } else {
-        let _scope = CONFIGURATION_CACHE_SIZE.lock(ctx);
-        let graph = Arc::new(RwLock::new(ThreadedGraph::new()));
+        let graph = Arc::new(RwLock::new(ThreadedGraph::new(
+            *CONFIGURATION_CACHE_SIZE.lock(ctx) as usize,
+        )));
         query_mut(ctx, &graph, query, compact, true, track_memory);
         key.set_value(&GRAPH_TYPE, graph)?;
     }
@@ -908,14 +921,13 @@ fn record_mut(
         .map(|(k, v)| Ok((k, evaluate_param(&v.root())?)))
         .collect::<Result<HashMap<_, _>, String>>()
         .map_err(RedisError::String)?;
-    let scope = CONFIGURATION_IMPORT_FOLDER.lock(ctx);
     let mut runtime = Runtime::new(
         graph.read().unwrap().graph.read(),
         parameters,
         true,
         plan.clone(),
         true,
-        (*scope).clone(),
+        (*CONFIGURATION_IMPORT_FOLDER.lock(ctx)).clone(),
     );
     let _ = runtime.query();
     let ids = plan.root().indices::<Bfs>().collect::<Vec<_>>();
@@ -990,8 +1002,9 @@ fn graph_record(
     if let Some(graph) = key.get_value::<Arc<RwLock<ThreadedGraph>>>(&GRAPH_TYPE)? {
         record_mut(ctx, graph, query)?;
     } else {
-        let _scope = CONFIGURATION_CACHE_SIZE.lock(ctx);
-        let graph = Arc::new(RwLock::new(ThreadedGraph::new()));
+        let graph = Arc::new(RwLock::new(ThreadedGraph::new(
+            *CONFIGURATION_CACHE_SIZE.lock(ctx) as usize,
+        )));
         record_mut(ctx, &graph, query)?;
         key.set_value(&GRAPH_TYPE, graph)?;
     }
