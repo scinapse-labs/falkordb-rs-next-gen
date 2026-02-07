@@ -1,3 +1,34 @@
+//! Query plan optimization passes.
+//!
+//! The optimizer transforms the logical execution plan to improve performance.
+//! Current optimizations include:
+//!
+//! ## Index Utilization
+//!
+//! Replaces `NodeByLabelScan` + `Filter` with `NodeByIndexScan` when:
+//! - A range index exists on the filtered property
+//! - The filter uses equality (=), less than (<), or greater than (>)
+//!
+//! Example transformation:
+//! ```text
+//! Before: NodeByLabelScan(:Person) → Filter(n.age = 30)
+//! After:  NodeByIndexScan(:Person, age, Equal(30))
+//! ```
+//!
+//! ## Node By ID Optimization
+//!
+//! Replaces label scan + ID filter with direct ID lookup:
+//! ```text
+//! Before: NodeByLabelScan(:Person) → Filter(id(n) = 42)
+//! After:  NodeByIdScan(:Person, 42)
+//! ```
+//!
+//! ## Good Practice
+//!
+//! The optimizer uses a collect-then-iterate pattern when modifying the tree
+//! to avoid issues with mutable iteration. This is a common pattern when
+//! working with tree structures that need in-place modification.
+
 use std::sync::Arc;
 
 use orx_tree::{Bfs, DynTree, NodeRef};
@@ -11,6 +42,12 @@ use crate::{
     tree,
 };
 
+/// Attempts to replace label scans with index scans where applicable.
+///
+/// Scans the plan for patterns like:
+/// `NodeByLabelScan` → `Filter(property = value)`
+///
+/// If an index exists on the filtered property, replaces with `NodeByIndexScan`.
 fn utilize_index(
     optimized_plan: &mut DynTree<IR>,
     graph: &Graph,
@@ -90,6 +127,7 @@ fn utilize_index(
     }
 }
 
+/// Replaces label scan + ID filter with direct node ID lookup.
 fn utilize_node_by_id(optimized_plan: &mut DynTree<IR>) {
     let indices = optimized_plan.root().indices::<Bfs>().collect::<Vec<_>>();
 
@@ -118,6 +156,17 @@ fn utilize_node_by_id(optimized_plan: &mut DynTree<IR>) {
     }
 }
 
+/// Optimizes a query execution plan.
+///
+/// Applies all optimization passes to the plan and returns the optimized version.
+/// The original plan is not modified.
+///
+/// # Arguments
+/// * `plan` - The unoptimized execution plan
+/// * `graph` - The graph (needed to check for index availability)
+///
+/// # Returns
+/// An optimized copy of the plan
 #[must_use]
 pub fn optimize(
     plan: &DynTree<IR>,
@@ -131,6 +180,7 @@ pub fn optimize(
     optimized_plan
 }
 
+/// Checks if a node pattern has an indexed property filter.
 fn get_index(
     graph: &Graph,
     node: &Arc<QueryNode<Arc<String>, Variable>>,

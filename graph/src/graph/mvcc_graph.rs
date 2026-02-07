@@ -1,3 +1,30 @@
+//! Multi-Version Concurrency Control for graph access.
+//!
+//! This module provides [`MvccGraph`], the top-level coordinator for concurrent
+//! graph access. It ensures:
+//!
+//! - Multiple readers can access the graph simultaneously
+//! - Only one writer at a time (serialized writes)
+//! - Writers work on a versioned copy, committing atomically
+//!
+//! ## Concurrency Model
+//!
+//! ```text
+//! MvccGraph
+//!    ├── graph: Arc<AtomicRefCell<Graph>>  (current committed version)
+//!    └── write: AtomicBool  (write lock)
+//!
+//! read()  → Clone Arc (readers see committed state)
+//! write() → Create new version (if lock acquired)
+//! commit() → Swap graph pointer, release lock
+//! rollback() → Discard version, release lock
+//! ```
+//!
+//! ## Good Practice: Lock-Free Reads
+//!
+//! Readers never block - they simply clone the Arc to the current graph.
+//! The atomic bool only serializes write acquisition, not read access.
+
 use std::sync::{
     Arc,
     atomic::{AtomicBool, Ordering},
@@ -7,8 +34,14 @@ use atomic_refcell::AtomicRefCell;
 
 use crate::graph::graph::Graph;
 
+/// MVCC coordinator for concurrent graph access.
+///
+/// Provides snapshot isolation: readers see a consistent committed state
+/// while a writer can make changes that become visible only on commit.
 pub struct MvccGraph {
+    /// Current committed graph version
     graph: Arc<AtomicRefCell<Graph>>,
+    /// Write lock (true = write in progress)
     write: AtomicBool,
 }
 

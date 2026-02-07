@@ -1,3 +1,55 @@
+//! # FalkorDB Redis Module
+//!
+//! This crate implements a Redis module that provides graph database functionality,
+//! exposing FalkorDB's graph operations as Redis commands. It serves as the entry
+//! point for the FalkorDB graph database when running as a Redis module.
+//!
+//! ## Architecture Overview
+//!
+//! The module integrates with Redis through the `redis-module` crate, registering
+//! custom commands and a native data type (`graphdata`) for storing graph instances.
+//!
+//! ```text
+//! Redis Client
+//!     │
+//!     ▼
+//! ┌─────────────────────────────────────────┐
+//! │  Redis Module Interface (this crate)    │
+//! │  - Command handlers (GRAPH.QUERY, etc.) │
+//! │  - Response serialization               │
+//! │  - Thread-safe graph access             │
+//! └─────────────────────────────────────────┘
+//!     │
+//!     ▼
+//! ┌─────────────────────────────────────────┐
+//! │  Graph Crate (graph/)                   │
+//! │  - Cypher parsing & planning            │
+//! │  - Query execution runtime              │
+//! │  - Graph data structures                │
+//! └─────────────────────────────────────────┘
+//! ```
+//!
+//! ## Supported Commands
+//!
+//! - `GRAPH.QUERY` - Execute read/write Cypher queries
+//! - `GRAPH.RO_QUERY` - Execute read-only Cypher queries
+//! - `GRAPH.DELETE` - Delete a graph
+//! - `GRAPH.EXPLAIN` - Show query execution plan without executing
+//! - `GRAPH.LIST` - List all graphs in the database
+//! - `GRAPH.MEMORY` - Get memory usage of a graph
+//! - `GRAPH.CONFIG` - Configuration operations
+//!
+//! ## Threading Model
+//!
+//! Queries are executed on a thread pool to avoid blocking Redis. Write queries
+//! are serialized through a channel to ensure consistency, while read queries
+//! can execute concurrently using MVCC (Multi-Version Concurrency Control).
+//!
+//! ## Configuration
+//!
+//! - `CACHE_SIZE` - Query plan cache size (default: 25, range: 0-1000)
+//! - `IMPORT_FOLDER` - Path for CSV imports (default: `/var/lib/FalkorDB/import/`)
+
 #![allow(clippy::cast_possible_wrap)]
 #![allow(clippy::non_std_lazy_statics)]
 
@@ -50,8 +102,17 @@ use std::{fs::File, io::Write};
 
 use crate::allocator::{current_thread_usage, disable_tracking, enable_tracking, reset_counter};
 
+/// Error returned when attempting graph operations on a non-existent key.
 const EMPTY_KEY_ERR: RedisResult = Err(RedisError::Str("ERR Invalid graph operation on empty key"));
 
+/// Redis native type definition for graph data.
+///
+/// This registers "graphdata" as a custom Redis type with callbacks for:
+/// - RDB persistence (load/save) - currently minimal implementation
+/// - Memory cleanup (free) - properly deallocates the graph when key is deleted
+///
+/// The type is used with `RedisKey::get_value` and `RedisKey::set_value` to
+/// store and retrieve `Arc<RwLock<ThreadedGraph>>` instances.
 static GRAPH_TYPE: RedisType = RedisType::new(
     "graphdata",
     0,
@@ -84,6 +145,23 @@ static GRAPH_TYPE: RedisType = RedisType::new(
     },
 );
 
+/// Thread-safe wrapper around the MVCC graph with write query serialization.
+///
+/// This struct provides concurrent read access and serialized write access to
+/// the underlying graph. It implements a producer-consumer pattern for write
+/// queries to ensure consistency.
+///
+/// # Threading Model
+///
+/// - **Read queries**: Execute concurrently on the thread pool using MVCC snapshots
+/// - **Write queries**: Queued via `sender` channel and processed serially by
+///   `process_write_queued_query` to maintain transaction ordering
+///
+/// # Fields
+///
+/// - `graph`: The MVCC-enabled graph supporting concurrent reads
+/// - `sender`/`receiver`: Channel for queuing write queries
+/// - `write_loop`: Atomic flag ensuring only one thread processes writes at a time
 struct ThreadedGraph {
     graph: MvccGraph,
     sender: Sender<(BlockedClient, Arc<String>, bool)>,
@@ -95,6 +173,12 @@ unsafe impl Send for ThreadedGraph {}
 unsafe impl Sync for ThreadedGraph {}
 
 impl ThreadedGraph {
+    /// Creates a new `ThreadedGraph` with default capacity.
+    ///
+    /// Initializes the MVCC graph with:
+    /// - 16384 initial node capacity
+    /// - 16384 initial edge capacity  
+    /// - 1024 relationship type capacity
     pub fn new() -> Self {
         let (sender, receiver) = channel();
         Self {
@@ -105,6 +189,18 @@ impl ThreadedGraph {
         }
     }
 
+    /// Executes a query, routing to read or write path based on query type.
+    ///
+    /// # Arguments
+    /// * `ctx` - Redis context for sending responses
+    /// * `query` - Cypher query string
+    /// * `compact` - If true, use compact Redis protocol format
+    /// * `write` - If true, write operations are allowed
+    ///
+    /// # Returns
+    /// * `Ok(true)` - Query contains write operations (needs write path)
+    /// * `Ok(false)` - Query executed successfully as read-only
+    /// * `Err` - Query parsing or execution failed
     fn execute_query(
         &self,
         ctx: &Context,
@@ -145,6 +241,14 @@ impl ThreadedGraph {
         Ok(is_write)
     }
 
+    /// Executes a write query with exclusive graph access.
+    ///
+    /// This method acquires write lock on the graph and executes queries that
+    /// modify graph state. Called by `process_write_queued_query` to process
+    /// serialized write operations.
+    ///
+    /// # Returns
+    /// The graph reference for commit/rollback by the caller
     fn execute_query_write(
         &self,
         ctx: &Context,
@@ -176,6 +280,9 @@ impl ThreadedGraph {
     }
 }
 
+/// RDB load callback for graph persistence (currently no-op).
+///
+/// TODO: Implement graph deserialization from RDB format.
 #[unsafe(no_mangle)]
 #[allow(clippy::missing_const_for_fn)]
 unsafe extern "C" fn graph_rdb_load(
@@ -185,6 +292,9 @@ unsafe extern "C" fn graph_rdb_load(
     null_mut()
 }
 
+/// RDB save callback for graph persistence (currently no-op).
+///
+/// TODO: Implement graph serialization to RDB format.
 #[unsafe(no_mangle)]
 #[allow(clippy::missing_const_for_fn)]
 unsafe extern "C" fn graph_rdb_save(
@@ -193,6 +303,10 @@ unsafe extern "C" fn graph_rdb_save(
 ) {
 }
 
+/// Frees graph memory when Redis key is deleted or expires.
+///
+/// Called by Redis when the key holding the graph is removed. Properly
+/// deallocates the `Arc<RwLock<ThreadedGraph>>` to release all graph resources.
 #[unsafe(no_mangle)]
 unsafe extern "C" fn graph_free(value: *mut c_void) {
     unsafe {
@@ -200,6 +314,13 @@ unsafe extern "C" fn graph_free(value: *mut c_void) {
     }
 }
 
+/// Serializes a runtime value to Redis protocol in compact format.
+///
+/// Compact format prefixes each value with a type code (integer) to enable
+/// efficient client-side parsing without string parsing. Type codes:
+/// - 1: Null, 2: String, 3: Int, 4: Bool, 5: Float
+/// - 6: List, 7: Relationship, 8: Node, 9: Path, 10: Map
+/// - 11: Point, 12: VecF32, 13: Datetime, 14: Date, 15: Time, 16: Duration
 #[allow(clippy::too_many_lines)]
 fn reply_compact_value(
     ctx: &Context,
@@ -415,6 +536,14 @@ fn reply_compact_value(
     }
 }
 
+/// Serializes a runtime value to Redis protocol in verbose (human-readable) format.
+///
+/// Unlike compact format, verbose format uses human-readable representations:
+/// - Nodes show labels as strings, not IDs
+/// - Relationships show type names, not type IDs
+/// - Dates/times show formatted strings, not timestamps
+///
+/// Used by default when `--compact` flag is not specified.
 #[allow(clippy::too_many_lines)]
 fn reply_verbose_value(
     ctx: &Context,
@@ -646,6 +775,16 @@ fn graph_delete(
     }
 }
 
+/// Handle to a Redis blocked client for asynchronous command responses.
+///
+/// When a query is executed on the thread pool, we block the Redis client
+/// and store this handle. When the query completes, we use the handle to
+/// send the response back to the waiting client.
+///
+/// # Safety
+/// Implements `Send` and `Sync` because the raw pointer is only accessed
+/// through thread-safe Redis module APIs. The `Drop` impl ensures the client
+/// is unblocked even if the query panics.
 pub struct BlockedClient {
     pub inner: *mut raw::RedisModuleBlockedClient,
 }
@@ -659,6 +798,21 @@ impl Drop for BlockedClient {
     }
 }
 
+/// Executes a query on the thread pool with non-blocking Redis response.
+///
+/// This is the main query execution entry point. It:
+/// 1. Blocks the Redis client to free the main thread
+/// 2. Spawns query execution on the thread pool
+/// 3. Routes to read or write path based on query analysis
+/// 4. Sends response via the blocked client handle
+///
+/// # Arguments
+/// * `ctx` - Redis context
+/// * `graph` - The graph to query
+/// * `query` - Cypher query string
+/// * `compact` - Use compact response format
+/// * `write` - Allow write operations
+/// * `track_mem` - Log memory allocation statistics
 #[inline]
 fn query_mut(
     ctx: &Context,
@@ -721,6 +875,18 @@ fn query_mut(
     );
 }
 
+/// Processes queued write queries in serial order.
+///
+/// This function implements the write serialization pattern:
+/// 1. Acquires write lock on the graph
+/// 2. Uses atomic compare-exchange to ensure only one thread processes writes
+/// 3. Drains the write queue, executing each query with exclusive access
+/// 4. Commits or rolls back each transaction based on success/failure
+///
+/// # Good Practice
+/// Uses compare_exchange with Acquire/Relaxed ordering for the write_loop flag.
+/// This ensures proper synchronization: Acquire prevents reordering of subsequent
+/// reads, while Relaxed is sufficient for the failure case since we just retry.
 fn process_write_queued_query(graph: &Arc<RwLock<ThreadedGraph>>) {
     let mut graph = graph.write().unwrap();
     if graph
@@ -751,6 +917,11 @@ fn process_write_queued_query(graph: &Arc<RwLock<ThreadedGraph>>) {
     }
 }
 
+/// Sends query execution statistics as part of the response.
+///
+/// Statistics include counts of modifications (nodes/edges created/deleted,
+/// properties set, labels added, indices created) plus execution metadata
+/// (cached execution flag, execution time, graph version).
 fn reply_stats(
     ctx: &Context,
     stats: &QueryStatistics,
@@ -842,6 +1013,23 @@ fn reply_stats(
 #[cfg(feature = "fuzz")]
 static mut file_id: i32 = 0;
 
+/// Handles `GRAPH.QUERY` command - executes read/write Cypher queries.
+///
+/// This is the primary command for graph operations. It:
+/// - Creates the graph if it doesn't exist (implicit graph creation)
+/// - Parses and executes the Cypher query
+/// - Supports `--compact` flag for compact response format
+/// - Supports `--track-memory` flag for allocation logging
+///
+/// # Arguments (Redis command)
+/// - `key` - The Redis key name for the graph
+/// - `query` - Cypher query string
+/// - `--compact` (optional) - Use compact response format
+/// - `--track-memory` (optional) - Log memory allocation stats
+///
+/// # Fuzz Testing
+/// When compiled with `fuzz` feature, queries are saved to corpus files
+/// for fuzz testing coverage.
 #[allow(static_mut_refs)]
 fn graph_query(
     ctx: &Context,
@@ -886,6 +1074,11 @@ fn graph_query(
     RedisResult::Ok(RedisValue::NoReply)
 }
 
+/// Records execution trace for debugging/testing purposes.
+///
+/// Executes the query in recording mode where intermediate results at each
+/// plan node are captured. Returns the execution trace along with the plan
+/// structure for debugging query execution flow.
 #[inline]
 fn record_mut(
     ctx: &Context,
@@ -977,6 +1170,10 @@ fn record_mut(
     Ok(RedisValue::NoReply)
 }
 
+/// Handles `GRAPH.RECORD` command for execution tracing.
+///
+/// Similar to GRAPH.QUERY but returns detailed execution trace data
+/// instead of query results. Used for debugging and testing.
 fn graph_record(
     ctx: &Context,
     args: Vec<RedisString>,
@@ -999,6 +1196,12 @@ fn graph_record(
     RedisResult::Ok(RedisValue::NoReply)
 }
 
+/// Formats query result in verbose (human-readable) format.
+///
+/// Response structure:
+/// 1. Column headers (array of [type_code, name] pairs)
+/// 2. Result rows (array of arrays)
+/// 3. Statistics (labels/nodes/edges created, execution time, etc.)
 fn reply_verbose(
     ctx: &Context,
     runtime: &Runtime,
@@ -1025,6 +1228,10 @@ fn reply_verbose(
     reply_stats(ctx, &result.stats, runtime.g.borrow().version);
 }
 
+/// Formats query result in compact (machine-optimized) format.
+///
+/// Similar to `reply_verbose` but values are prefixed with type codes
+/// for efficient client-side parsing without string inspection.
 fn reply_compact(
     ctx: &Context,
     runtime: &Runtime,
@@ -1139,6 +1346,13 @@ fn graph_list(
     }
 }
 
+/// Handles `GRAPH.EXPLAIN` command - shows query execution plan without executing.
+///
+/// Parses the query and returns the execution plan as a list of operations
+/// with indentation showing the tree structure. Useful for query optimization
+/// and understanding how queries are executed.
+///
+/// See: <https://docs.falkordb.com/commands/graph.explain.html>
 fn graph_explain(
     ctx: &Context,
     args: Vec<RedisString>,
@@ -1174,6 +1388,7 @@ fn graph_explain(
     )
 }
 
+/// Handles `GRAPH.MEMORY` command - returns memory usage of a graph in bytes.
 fn graph_memory(
     ctx: &Context,
     args: Vec<RedisString>,
@@ -1195,6 +1410,9 @@ fn graph_memory(
     ))
 }
 
+/// Placeholder for `GRAPH.CONFIG` command - currently returns 0.
+///
+/// TODO: Implement configuration get/set operations.
 #[allow(clippy::unnecessary_wraps)]
 fn graph_config(
     _ctx: &Context,
@@ -1203,6 +1421,18 @@ fn graph_config(
     Ok(RedisValue::Integer(0))
 }
 
+/// Module initialization callback - called when Redis loads the module.
+///
+/// Performs critical initialization:
+/// 1. Optionally starts Pyroscope profiling agent (with `pyro` feature)
+/// 2. Initializes RediSearch for full-text indexing support
+/// 3. Initializes GraphBLAS with Redis memory allocators
+/// 4. Subscribes to Redis FlushDB events
+/// 5. Initializes built-in Cypher functions
+///
+/// # Good Practice
+/// Uses Redis's memory allocators for GraphBLAS to ensure all memory
+/// is tracked by Redis and properly accounted in memory limits.
 fn graph_init(
     ctx: &Context,
     _: &Vec<RedisString>,
@@ -1243,15 +1473,25 @@ fn graph_init(
     }
 }
 
+/// Redis event ID for FlushDB event (database flush/clear).
 #[allow(non_upper_case_globals)]
 static RedisModuleEvent_FlushDB: RedisModuleEvent = RedisModuleEvent { id: 2, dataver: 1 };
 
+/// Global configuration values protected by Redis GIL.
+///
+/// These values can be set via `CONFIG SET` and are thread-safe through
+/// `RedisGILGuard` which requires holding the Redis Global Interpreter Lock.
 lazy_static! {
+    /// Path to directory where CSV files can be imported from.
     static ref CONFIGURATION_IMPORT_FOLDER: RedisGILGuard<String> =
         RedisGILGuard::new("/var/lib/FalkorDB/import/".into());
+    /// Maximum number of query plans to cache per graph.
     static ref CONFIGURATION_CACHE_SIZE: RedisGILGuard<i64> = RedisGILGuard::new(25.into());
 }
 
+/// Callback for Redis FlushDB event - currently no-op.
+///
+/// TODO: May need to handle graph cleanup on database flush.
 const unsafe extern "C" fn on_flush(
     _ctx: *mut RedisModuleCtx,
     _eid: RedisModuleEvent,
@@ -1262,6 +1502,20 @@ const unsafe extern "C" fn on_flush(
 
 //////////////////////////////////////////////////////
 
+/// Redis module registration macro.
+///
+/// This macro generates the boilerplate code required by Redis to load the module:
+/// - Module name: "falkordb"
+/// - Uses custom `ThreadCountingAllocator` for memory tracking
+/// - Registers `GRAPH_TYPE` as a native Redis data type
+/// - Registers all graph commands with their access flags:
+///   - `write` - Command may modify data
+///   - `readonly` - Command only reads data
+///   - `deny-oom` - Reject if Redis is out of memory
+///   - `deny-script` - Cannot be called from Lua scripts
+///   - `blocking` - Command blocks the client (async execution)
+///   - `allow-busy` - Can run even when Redis is busy
+/// - Exposes configuration options via Redis CONFIG command
 redis_module! {
     name: "falkordb",
     version: 1,

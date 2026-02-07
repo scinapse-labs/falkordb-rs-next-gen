@@ -1,9 +1,34 @@
+//! Block-based sparse vector storage.
+//!
+//! This module provides [`BlockVec`], a sparse vector that stores values in
+//! fixed-size blocks. This enables:
+//!
+//! - Efficient MVCC through copy-on-write at block granularity
+//! - Memory efficiency for sparse data (empty blocks aren't allocated)
+//! - Fast random access within blocks
+//!
+//! ## Structure
+//!
+//! ```text
+//! BlockVec
+//!    └── blocks: [Block0, Block1, Block2, ...]
+//!                    │
+//!                 [val, None, val, None, val, ...]  (fixed size, e.g., 1024)
+//! ```
+//!
+//! ## Usage
+//!
+//! Used by [`AttributeStore`] to store property values indexed by entity ID.
+
 use std::sync::Arc;
 
 use atomic_refcell::AtomicRefCell;
 
 use crate::graph::{cow::Cow, matrix::Dup};
 
+/// A fixed-size block of optional values.
+///
+/// Blocks are the unit of copy-on-write for MVCC support.
 #[derive(Clone)]
 struct Block<T> {
     vec: Arc<AtomicRefCell<Vec<Option<T>>>>,

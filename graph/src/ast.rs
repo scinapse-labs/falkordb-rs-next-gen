@@ -1,3 +1,28 @@
+//! Abstract Syntax Tree (AST) definitions for Cypher queries.
+//!
+//! This module defines the intermediate representation (IR) for parsed Cypher queries.
+//! The AST is produced by the parser ([`crate::cypher`]) and consumed by the binder
+//! ([`crate::binder`]) and planner ([`crate::planner`]).
+//!
+//! ## Key Types
+//!
+//! - [`Variable`]: A named or anonymous variable in a query
+//! - [`ExprIR`]: Expression nodes (literals, operators, function calls)
+//! - [`QueryIR`]: Query clause nodes (MATCH, CREATE, RETURN, etc.)
+//! - [`QueryGraph`]: Pattern graph structure with nodes, relationships, and paths
+//!
+//! ## Type Parameters
+//!
+//! AST types are generic over `TVar` (variable type) to support different stages:
+//! - `Arc<String>`: Raw AST before binding (variables are just names)
+//! - [`Variable`]: Bound AST with resolved variable IDs and types
+//!
+//! ## Expression Trees
+//!
+//! Expressions are stored as trees using `DynTree<ExprIR<TVar>>` from `orx-tree`.
+//! Operators are internal nodes with operands as children, supporting arbitrary
+//! expression nesting.
+
 use std::{collections::HashSet, fmt::Display, hash::Hash, sync::Arc};
 
 use itertools::Itertools;
@@ -11,6 +36,16 @@ use crate::{
     },
 };
 
+/// A variable in a Cypher query, either named or anonymous.
+///
+/// Variables are assigned unique IDs during binding to distinguish between
+/// variables with the same name in different scopes.
+///
+/// # Fields
+/// - `name`: The variable name as it appears in the query (None for anonymous)
+/// - `id`: Unique identifier assigned during binding
+/// - `scope_id`: The scope in which this variable was defined
+/// - `ty`: The inferred or declared type of the variable
 #[derive(Clone, Debug)]
 pub struct Variable {
     pub name: Option<Arc<String>>,
@@ -59,44 +94,96 @@ impl Variable {
     }
 }
 
+/// Expression IR nodes for the Cypher expression tree.
+///
+/// Expressions form a tree structure where operators are internal nodes and
+/// their operands are children. For example, `a + b * c` becomes:
+///
+/// ```text
+///       Add
+///      /   \
+///     a    Mul
+///         /   \
+///        b     c
+/// ```
+///
+/// # Type Parameter
+/// - `TVar`: Variable type (`Arc<String>` before binding, `Variable` after)
 #[derive(Clone, Debug)]
 pub enum ExprIR<TVar> {
+    /// NULL literal
     Null,
+    /// Boolean literal (true/false)
     Bool(bool),
+    /// Integer literal (i64)
     Integer(i64),
+    /// Floating point literal (f64)
     Float(f64),
+    /// String literal
     String(Arc<String>),
+    /// List constructor - children are list elements
     List,
+    /// Map constructor - children are key-value pairs
     Map,
+    /// Variable reference
     Variable(TVar),
+    /// Query parameter reference ($param)
     Parameter(String),
+    /// Length/size of a list or string
     Length,
+    /// Element access (list[index] or map.key)
     GetElement,
+    /// Slice access (list[start..end])
     GetElements,
+    /// Type check: is value a node?
     IsNode,
+    /// Type check: is value a relationship?
     IsRelationship,
+    /// Logical OR
     Or,
+    /// Logical XOR
     Xor,
+    /// Logical AND
     And,
+    /// Logical NOT
     Not,
+    /// Numeric negation
     Negate,
+    /// Equality comparison
     Eq,
+    /// Inequality comparison
     Neq,
+    /// Less than
     Lt,
+    /// Greater than
     Gt,
+    /// Less than or equal
     Le,
+    /// Greater than or equal
     Ge,
+    /// IN operator (element in list)
     In,
+    /// Addition or string concatenation
     Add,
+    /// Subtraction
     Sub,
+    /// Multiplication
     Mul,
+    /// Division
     Div,
+    /// Power/exponentiation
     Pow,
+    /// Modulo
     Modulo,
+    /// DISTINCT modifier for expressions
     Distinct,
+    /// Function call with function definition
     FuncInvocation(Arc<GraphFn>),
+    /// List quantifier (all/any/none/single)
     Quantifier(QuantifierType, TVar),
+    /// List comprehension [x IN list | expr]
     ListComprehension(TVar),
+    /// Parenthesized expression (for precedence)
     Paren,
 }
 
@@ -152,6 +239,7 @@ impl<TVar: Display> Display for ExprIR<TVar> {
     }
 }
 
+/// Quantifier types for list predicates (all, any, none, single).
 #[derive(Clone, Debug)]
 pub enum QuantifierType {
     All,
@@ -175,7 +263,10 @@ impl Display for QuantifierType {
     }
 }
 
+/// Trait for checking if an expression contains aggregation functions.
 pub trait SupportAggregation {
+    /// Returns true if this expression tree contains any aggregation function
+    /// (e.g., count, sum, avg, collect).
     fn is_aggregation(&self) -> bool;
 }
 
@@ -190,6 +281,12 @@ impl SupportAggregation for DynTree<ExprIR<Variable>> {
     }
 }
 
+/// A node pattern in a MATCH or CREATE clause.
+///
+/// Represents patterns like `(n:Person {name: 'Alice'})` where:
+/// - `alias` is the variable `n`
+/// - `labels` contains `Person`
+/// - `attrs` contains the property filter expression
 #[derive(Debug)]
 pub struct QueryNode<L, TVar> {
     pub alias: TVar,
@@ -225,6 +322,13 @@ impl<L, TVar> QueryNode<L, TVar> {
     }
 }
 
+/// A relationship pattern in a MATCH or CREATE clause.
+///
+/// Represents patterns like `(a)-[r:KNOWS]->(b)` where:
+/// - `alias` is the variable `r`
+/// - `types` contains `KNOWS` (can have multiple for OR: `[:A|B]`)
+/// - `from` and `to` are the connected nodes
+/// - `bidirectional` is true for undirected patterns `-[]-`
 #[derive(Debug)]
 pub struct QueryRelationship<T, L, TVar> {
     pub alias: TVar,
@@ -282,6 +386,11 @@ impl<T, L, TVar> QueryRelationship<T, L, TVar> {
     }
 }
 
+/// A named path pattern in a MATCH clause.
+///
+/// Represents patterns like `p = (a)-[*]->(b)` where:
+/// - `var` is the path variable `p`
+/// - `vars` contains all variables in the path pattern
 #[derive(Debug)]
 pub struct QueryPath<TVar> {
     pub var: TVar,
@@ -298,6 +407,13 @@ impl<TVar> QueryPath<TVar> {
     }
 }
 
+/// A graph pattern containing nodes, relationships, and paths.
+///
+/// This represents the pattern portion of MATCH, CREATE, and MERGE clauses.
+/// The graph can be decomposed into connected components for query optimization.
+///
+/// Uses `Arc` for sharing patterns between different parts of the query plan,
+/// avoiding expensive cloning of complex patterns.
 #[derive(Clone, Debug)]
 pub struct QueryGraph<T, L, TVar> {
     nodes: Vec<Arc<QueryNode<L, TVar>>>,
@@ -488,11 +604,15 @@ impl<T, L> QueryGraph<T, L, Variable> {
     }
 }
 
+/// Type alias for expression trees.
 pub type QueryExpr<TVar> = Arc<DynTree<ExprIR<TVar>>>;
 
+/// An item in a SET clause - either property assignment or label modification.
 #[derive(Clone, Debug)]
 pub enum SetItem<L, TVar> {
+    /// Property assignment: `n.prop = value` (replace=true) or `n += {props}` (replace=false)
     Attribute(QueryExpr<TVar>, QueryExpr<TVar>, bool),
+    /// Label assignment: `SET n:Label`
     Label(TVar, OrderSet<L>),
 }
 
@@ -523,35 +643,49 @@ impl<L: Display + PartialEq, TVar: Display> Display for SetItem<L, TVar> {
     }
 }
 
+/// Query clause IR - represents each clause type in a Cypher query.
+///
+/// A complete query is a sequence of these clauses. The planner converts
+/// this AST into an execution plan.
 #[derive(Debug)]
 pub enum QueryIR<TVar> {
+    /// CALL procedure(args) YIELD outputs WHERE filter
     Call(
         Arc<GraphFn>,
         Vec<QueryExpr<TVar>>,
         Vec<TVar>,
         Option<QueryExpr<TVar>>,
     ),
+    /// MATCH pattern WHERE filter (optional flag for OPTIONAL MATCH)
     Match {
         pattern: QueryGraph<Arc<String>, Arc<String>, TVar>,
         filter: Option<QueryExpr<TVar>>,
         optional: bool,
     },
+    /// UNWIND list AS var
     Unwind(QueryExpr<TVar>, TVar),
+    /// MERGE pattern ON CREATE SET ... ON MATCH SET ...
     Merge(
         QueryGraph<Arc<String>, Arc<String>, TVar>,
         Vec<SetItem<Arc<String>, TVar>>,
         Vec<SetItem<Arc<String>, TVar>>,
     ),
+    /// CREATE pattern
     Create(QueryGraph<Arc<String>, Arc<String>, TVar>),
+    /// DELETE exprs (detach flag for DETACH DELETE)
     Delete(Vec<QueryExpr<TVar>>, bool),
+    /// SET items
     Set(Vec<SetItem<Arc<String>, TVar>>),
+    /// REMOVE items (properties or labels)
     Remove(Vec<QueryExpr<TVar>>),
+    /// LOAD CSV FROM path AS var
     LoadCsv {
         file_path: QueryExpr<TVar>,
         headers: bool,
         delimiter: QueryExpr<TVar>,
         var: TVar,
     },
+    /// WITH clause for intermediate projections and aggregations
     With {
         distinct: bool,
         all: bool,
@@ -817,5 +951,8 @@ impl<TVar: Eq + Hash> QueryIR<TVar> {
     }
 }
 
+/// Type alias for unbound query IR (variables are just string names).
 pub type RawQueryIR = QueryIR<Arc<String>>;
+
+/// Type alias for bound query IR (variables have resolved IDs and types).
 pub type BoundQueryIR = QueryIR<Variable>;

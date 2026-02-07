@@ -1,3 +1,34 @@
+//! Query execution engine.
+//!
+//! This module contains the [`Runtime`] struct which executes query plans against
+//! the graph. The runtime implements a pull-based iterator model where each
+//! operator requests tuples from its children.
+//!
+//! ## Execution Model
+//!
+//! ```text
+//! Plan Tree (IR)          Runtime Execution
+//!     Return               → Iterator yielding Env tuples
+//!       │                        │
+//!     Filter               → Filters tuples via predicate
+//!       │                        │
+//!     Expand               → Traverses relationships
+//!       │                        │
+//!     NodeScan             → Scans nodes by label
+//! ```
+//!
+//! ## Key Types
+//!
+//! - [`Runtime`]: Main execution context
+//! - [`ResultSummary`]: Query result with statistics
+//! - [`QueryStatistics`]: Mutation counts and timing
+//! - [`Env`]: Tuple of variable bindings during execution
+//!
+//! ## Write Operations
+//!
+//! Write operations (CREATE, DELETE, SET) are batched in [`Pending`] and applied
+//! at the end of the query. This allows reads to see a consistent snapshot.
+
 #![allow(clippy::cast_sign_loss)]
 #![allow(clippy::cast_possible_wrap)]
 #![allow(clippy::cast_possible_truncation)]
@@ -39,11 +70,15 @@ use std::{
 };
 use thin_vec::{ThinVec, thin_vec};
 
+/// Query result containing statistics and returned tuples.
 pub struct ResultSummary {
+    /// Mutation statistics (nodes created, etc.)
     pub stats: QueryStatistics,
+    /// Result tuples, each Env contains variable bindings
     pub result: Vec<Env>,
 }
 
+/// Statistics about query execution and mutations performed.
 #[derive(Default)]
 pub struct QueryStatistics {
     pub labels_added: usize,
@@ -56,25 +91,55 @@ pub struct QueryStatistics {
     pub properties_removed: usize,
     pub indexes_created: usize,
     pub indexes_dropped: usize,
+    /// Total execution time in milliseconds
     pub execution_time: f64,
+    /// Whether the query plan was retrieved from cache
     pub cached: bool,
 }
 
+/// The query execution context.
+///
+/// Runtime holds all state needed to execute a query plan:
+/// - Graph reference and parameters
+/// - Pending mutations (for deferred writes)
+/// - Statistics tracking
+/// - Variable bindings cache
+///
+/// # Lifecycle
+/// 1. Create Runtime with graph, parameters, and plan
+/// 2. Call `run()` to execute
+/// 3. Pending mutations applied at end of execution
+/// 4. Return `ResultSummary` with results and stats
 pub struct Runtime {
+    /// Query parameters ($param syntax)
     parameters: HashMap<String, Value>,
+    /// Graph being queried (shared, thread-safe reference)
     pub g: Arc<AtomicRefCell<Graph>>,
+    /// Whether this is a write query
     write: bool,
+    /// Batched mutations (lazy-initialized)
     pending: Lazy<RefCell<Pending>>,
+    /// Execution statistics
     stats: RefCell<QueryStatistics>,
+    /// Query execution plan tree
     plan: Arc<DynTree<IR>>,
+    /// Deduplication state for DISTINCT operations
     value_dedupers: RefCell<HashMap<String, ValuesDeduper>>,
+    /// Variables to return in query results
     pub return_names: Vec<Variable>,
+    /// Debug mode: record operator execution
     inspect: bool,
+    /// Debug records of operator execution
     pub record: RefCell<Vec<(NodeIdx<Dyn<IR>>, Result<Env, String>)>>,
+    /// Folder for LOAD CSV operations
     import_folder: String,
+    /// Cache of deleted nodes for result consistency
     pub deleted_nodes: RefCell<HashMap<NodeId, DeletedNode>>,
+    /// Cache of deleted relationships for result consistency
     pub deleted_relationships: RefCell<HashMap<RelationshipId, DeletedRelationship>>,
+    /// Cached environments for CALL {} IN TRANSACTIONS
     argument_envs: RefCell<HashMap<u64, Env>>,
+    /// Cache for MERGE pattern matching
     merge_pattern_cache: RefCell<HashMap<u64, Env>>,
 }
 
