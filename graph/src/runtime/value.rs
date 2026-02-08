@@ -78,6 +78,26 @@ impl Point {
         }
     }
 
+    pub fn distance(
+        &self,
+        other: &Self,
+    ) -> f64 {
+        let lat1 = self.latitude.to_radians() as f64;
+        let lon1 = self.longitude.to_radians() as f64;
+        let lat2 = other.latitude.to_radians() as f64;
+        let lon2 = other.longitude.to_radians() as f64;
+
+        let dlat = lat2 - lat1;
+        let dlon = lon2 - lon1;
+
+        let a = (dlat / 2.0).sin().powi(2) + lat1.cos() * lat2.cos() * (dlon / 2.0).sin().powi(2);
+        let c = 2.0 * a.sqrt().atan2((1.0 - a).sqrt());
+
+        // Earth's radius in meters
+        const EARTH_RADIUS: f64 = 6378140.0;
+        EARTH_RADIUS * c
+    }
+
     /// Validates that the point coordinates are within valid ranges
     pub fn validate(&self) -> Result<(), String> {
         // Check for NaN or infinite values first
@@ -575,10 +595,10 @@ impl CompareValue for Value {
             (Self::Relationship(rel_a), Self::Relationship(rel_b)) => {
                 (rel_a.0.cmp(&rel_b.0), DisjointOrNull::None)
             }
-            (Self::Point(a), Self::Point(b)) => match a.latitude.partial_cmp(&b.latitude) {
+            (Self::Point(a), Self::Point(b)) => match a.longitude.partial_cmp(&b.longitude) {
                 Some(Ordering::Equal) => a
-                    .longitude
-                    .partial_cmp(&b.longitude)
+                    .latitude
+                    .partial_cmp(&b.latitude)
                     .map_or((Ordering::Less, DisjointOrNull::NaN), |ord| {
                         (ord, DisjointOrNull::None)
                     }),

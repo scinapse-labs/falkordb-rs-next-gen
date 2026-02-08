@@ -19,7 +19,8 @@ use crate::{
         RSRANGE_NEG_INF, RediSearch_CreateDocument2, RediSearch_CreateField,
         RediSearch_CreateIndex, RediSearch_CreateIndexOptions, RediSearch_CreateNumericNode,
         RediSearch_CreateTagNode, RediSearch_CreateTagTokenNode, RediSearch_DeleteDocument,
-        RediSearch_DocumentAddFieldNumber, RediSearch_DocumentAddFieldString, RediSearch_DropIndex,
+        RediSearch_DocumentAddFieldGeo, RediSearch_DocumentAddFieldNumber,
+        RediSearch_DocumentAddFieldString, RediSearch_DocumentAddFieldVector, RediSearch_DropIndex,
         RediSearch_FreeIndexOptions, RediSearch_GetResultsIterator, RediSearch_IndexAddDocument,
         RediSearch_IndexOptionsSetGCPolicy, RediSearch_IndexOptionsSetStopwords,
         RediSearch_QueryNodeAddChild, RediSearch_ResultsIteratorFree,
@@ -118,8 +119,24 @@ impl Document {
                     );
                 }
                 Value::List(_) => todo!(),
-                Value::VecF32(_) => todo!(),
-                Value::Point(_) => todo!(),
+                Value::VecF32(vec) => {
+                    RediSearch_DocumentAddFieldVector(
+                        self.rs_doc,
+                        field.name.as_ptr().cast::<c_char>(),
+                        vec.as_ptr().cast::<c_char>(),
+                        vec.len() as u32,
+                        vec.len() * std::mem::size_of::<f32>() as usize,
+                    );
+                }
+                Value::Point(p) => {
+                    RediSearch_DocumentAddFieldGeo(
+                        self.rs_doc,
+                        field.name.as_ptr().cast::<c_char>(),
+                        p.latitude as f64,
+                        p.longitude as f64,
+                        RSFLDTYPE_GEO,
+                    );
+                }
                 Value::Null
                 | Value::Map(_)
                 | Value::Node(_)
