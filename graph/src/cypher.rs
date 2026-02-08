@@ -675,7 +675,7 @@ impl<'a> Lexer<'a> {
                 } else if c.is_alphanumeric() {
                     // Invalid character in number literal - consume the rest to create a complete error token
                     len += 1;
-                    while let Some(ch) = chars.next() {
+                    for ch in chars.by_ref() {
                         if ch.is_alphanumeric() {
                             len += 1;
                         } else {

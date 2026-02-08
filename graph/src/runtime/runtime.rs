@@ -744,7 +744,7 @@ impl<'a> Runtime {
                 ExprIR::Pow => res.push(
                     node.children()
                         .flat_map(|child| self.run_expr(ir, child.idx(), env, agg_group_key))
-                        .reduce(|a, b| apply_pow(a, b))
+                        .reduce(apply_pow)
                         .ok_or_else(|| {
                             String::from("Pow operator requires at least one argument")
                         })?,
@@ -1703,7 +1703,7 @@ impl<'a> Runtime {
 
     fn resolve_set_items(
         &self,
-        items: &Vec<SetItem<Arc<String>, Variable>>,
+        items: &[SetItem<Arc<String>, Variable>],
     ) -> Vec<SetItem<LabelId, Variable>> {
         items
             .iter()

@@ -259,6 +259,7 @@ impl Binder {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn bind_projection(
         &mut self,
         kind: ProjectionKind,
@@ -596,6 +597,7 @@ impl Binder {
         Ok(Arc::new(self.bind_expr_node(expr, root, locals)?))
     }
 
+    #[allow(clippy::only_used_in_recursion)]
     fn bind_expr_node(
         &mut self,
         expr: &DynTree<ExprIR<Arc<String>>>,

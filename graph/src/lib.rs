@@ -1,3 +1,7 @@
+#![allow(clippy::arc_with_non_send_sync)]
+#![allow(clippy::type_complexity)]
+#![allow(clippy::module_inception)]
+
 //! # FalkorDB Graph Engine
 //!
 //! This crate contains the core graph database engine for FalkorDB.
