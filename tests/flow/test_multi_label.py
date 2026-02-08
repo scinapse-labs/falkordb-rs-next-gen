@@ -106,7 +106,7 @@ class testMultiLabel():
             for query in queries:
                 query = query.format(ls=':'.join(permutation))
                 plan = str(self.graph.explain(query))
-                self.env.assertContains("Node By Label Scan | (n:A)", plan)
+                self.env.assertContains("Node By Label Scan | (n:A:B:C)", plan)
 
     # Validate behavior of index scans on multi-labeled nodes
     def test05_index_scan(self):

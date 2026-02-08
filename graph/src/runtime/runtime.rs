@@ -138,7 +138,7 @@ pub struct Runtime {
     /// Cache of deleted relationships for result consistency
     pub deleted_relationships: RefCell<HashMap<RelationshipId, DeletedRelationship>>,
     /// Cached environments for CALL {} IN TRANSACTIONS
-    argument_envs: RefCell<HashMap<u64, Env>>,
+    argument_envs: RefCell<HashMap<NodeIdx<Dyn<IR>>, Env>>,
     /// Cache for MERGE pattern matching
     merge_pattern_cache: RefCell<HashMap<u64, Env>>,
 }
@@ -1031,10 +1031,7 @@ impl<'a> Runtime {
         match self.plan.node(idx).data() {
             IR::Empty => Ok(Box::new(empty())),
             IR::Argument => {
-                let mut hasher = DefaultHasher::new();
-                idx.hash(&mut hasher);
-                let hash = hasher.finish();
-                let env = self.argument_envs.borrow_mut().remove(&hash).unwrap();
+                let env = self.argument_envs.borrow_mut().remove(&idx).unwrap();
 
                 Ok(Box::new(once(Ok(env))))
             }
@@ -1089,9 +1086,9 @@ impl<'a> Runtime {
                     _ => unreachable!(),
                 }
             }
-            IR::Unwind(tree, name) => Ok(iter
+            IR::Unwind(list, name) => Ok(iter
                 .try_flat_map(move |vars| {
-                    let value = self.run_iter_expr(tree, tree.root().idx(), &vars)?;
+                    let value = self.run_iter_expr(list, list.root().idx(), &vars)?;
                     Ok(value.map(move |v| {
                         let mut vars = vars.clone();
                         vars.insert(name, v);
@@ -1168,10 +1165,9 @@ impl<'a> Runtime {
 
                         // Set the environment for all Argument nodes in this subtree
                         for arg_idx in &argument_indices {
-                            let mut hasher = DefaultHasher::new();
-                            arg_idx.hash(&mut hasher);
-                            let hash = hasher.finish();
-                            self.argument_envs.borrow_mut().insert(hash, vars.clone());
+                            self.argument_envs
+                                .borrow_mut()
+                                .insert(*arg_idx, vars.clone());
                         }
 
                         let resolved_pattern = resolved_pattern.clone();
