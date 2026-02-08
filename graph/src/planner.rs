@@ -4,8 +4,8 @@ use orx_tree::{DynTree, NodeRef, Side, Traversal, Traverser};
 
 use crate::{
     ast::{
-        ExprIR, QueryExpr, QueryGraph, QueryIR, QueryNode, QueryPath, QueryRelationship, SetItem,
-        SupportAggregation, Variable,
+        BoundQueryIR, ExprIR, QueryExpr, QueryGraph, QueryIR, QueryNode, QueryPath,
+        QueryRelationship, SetItem, SupportAggregation, Variable,
     },
     indexer::{EntityType, IndexQuery, IndexType},
     runtime::functions::GraphFn,
@@ -158,7 +158,8 @@ impl Planner {
         let mut vec = vec![];
         for component in pattern.connected_components() {
             let relationships = component.relationships();
-            if relationships.is_empty() {
+            let mut iter = relationships.into_iter();
+            let Some(relationship) = iter.next() else {
                 let nodes = component.nodes();
                 debug_assert_eq!(nodes.len(), 1);
                 let node = nodes[0].clone();
@@ -170,9 +171,7 @@ impl Planner {
                 }
                 vec.push(res);
                 continue;
-            }
-            let mut iter = relationships.into_iter();
-            let relationship = iter.next().unwrap();
+            };
             let mut res = if relationship.from.alias.id == relationship.to.alias.id {
                 tree!(
                     IR::ExpandInto(relationship.clone()),
@@ -330,7 +329,7 @@ impl Planner {
     #[must_use]
     pub fn plan(
         &mut self,
-        ir: QueryIR<Variable>,
+        ir: BoundQueryIR,
     ) -> DynTree<IR> {
         match ir {
             QueryIR::Call(proc, exprs, named_outputs, filter) => {

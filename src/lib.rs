@@ -736,7 +736,7 @@ fn query_mut(
 fn process_write_queued_query(graph: &Arc<RwLock<ThreadedGraph>>) {
     let g = graph.read().unwrap();
     if g.write_loop
-        .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
+        .compare_exchange(false, true, Ordering::Acquire, Ordering::Acquire)
         .is_ok()
     {
         drop(g);

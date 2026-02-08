@@ -382,7 +382,7 @@ impl<'a> Lexer<'a> {
                         len += c.len_utf8();
                     }
                     if !end {
-                        return Err((format!("Unterminated string starting at pos: {}", pos), len));
+                        return Err((format!("Unterminated string starting at pos: {pos}"), len));
                     }
                     Ok(unescape(&str[pos + 1..pos + len])
                         .decode_utf8()
@@ -439,10 +439,28 @@ impl<'a> Lexer<'a> {
                 d @ '0'..='9' => Self::lex_numeric(str, chars, pos, d, 1),
                 '$' => {
                     let mut len = 1;
-                    while let Some('a'..='z' | 'A'..='Z' | '0'..='9' | '_') = chars.next() {
+                    let Some(first) = chars.next() else {
+                        return Err((String::from("Invalid parameter at end of input"), len));
+                    };
+                    let id = if first == '`' {
                         len += 1;
-                    }
-                    let token = Token::Parameter(String::from(&str[pos + 1..pos + len]));
+                        for ch in chars {
+                            len += 1;
+                            if ch == '`' {
+                                break;
+                            }
+                        }
+                        &str[pos + 2..pos + len - 1]
+                    } else if let 'a'..='z' | 'A'..='Z' | '0'..='9' | '_' = first {
+                        len += 1;
+                        while let Some('a'..='z' | 'A'..='Z' | '0'..='9' | '_') = chars.next() {
+                            len += 1;
+                        }
+                        &str[pos + 1..pos + len]
+                    } else {
+                        return Err((format!("Invalid parameter at pos: {pos}"), len));
+                    };
+                    let token = Token::Parameter(String::from(id));
                     Ok((token, len))
                 }
                 'a'..='z' | 'A'..='Z' | '_' => {
@@ -468,7 +486,7 @@ impl<'a> Lexer<'a> {
                 '`' => {
                     let mut len = 1;
                     let mut end = false;
-                    for c in chars.by_ref() {
+                    for c in chars {
                         if c == '`' {
                             end = true;
                             break;
@@ -478,10 +496,8 @@ impl<'a> Lexer<'a> {
                     if !end {
                         return Err((String::from(&str[pos..pos + len]), len));
                     }
-                    Ok((
-                        Token::Ident(Arc::new(String::from(&str[pos + 1..pos + len]))),
-                        len + 1,
-                    ))
+                    let id = &str[pos + 1..pos + len];
+                    Ok((Token::Ident(Arc::new(String::from(id))), len + 1))
                 }
                 _ => Err((format!("Invalid input at pos: {pos} at char {char}"), 0)),
             };
@@ -867,27 +883,24 @@ impl<'a> Parser<'a> {
     pub fn parse_parameters(
         &mut self
     ) -> Result<(HashMap<String, DynTree<ExprIR<Arc<String>>>>, &'a str), String> {
-        match self.lexer.current()? {
-            Token::Ident(id) => {
-                if id.as_str() == "CYPHER" {
-                    self.lexer.next();
-                    let mut params = HashMap::new();
-                    let mut pos = self.lexer.pos;
-                    while let Ok(id) = self.parse_ident() {
-                        if !optional_match_token!(self.lexer, Equal) {
-                            self.lexer.set_pos(pos);
-                            break;
-                        }
-                        params.insert(String::from(id.as_str()), self.parse_expr()?);
-                        pos = self.lexer.pos;
+        let mut params = HashMap::new();
+        while let Ok(Token::Ident(id)) = self.lexer.current() {
+            if id.as_str() == "CYPHER" {
+                self.lexer.next();
+                let mut pos = self.lexer.pos;
+                while let Ok(id) = self.parse_ident() {
+                    if !optional_match_token!(self.lexer, Equal) {
+                        self.lexer.set_pos(pos);
+                        break;
                     }
-                    Ok((params, &self.lexer.str[self.lexer.pos..]))
-                } else {
-                    Ok((HashMap::new(), self.lexer.str))
+                    params.insert(String::from(id.as_str()), self.parse_expr()?);
+                    pos = self.lexer.pos;
                 }
+            } else {
+                break;
             }
-            _ => Ok((HashMap::new(), self.lexer.str)),
         }
+        Ok((params, &self.lexer.str[self.lexer.pos..]))
     }
 
     pub fn parse(&mut self) -> Result<RawQueryIR, String> {
