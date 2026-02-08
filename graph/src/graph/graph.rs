@@ -1,3 +1,38 @@
+//! Core graph data structure and operations.
+//!
+//! This module contains the main [`Graph`] struct which represents a property graph
+//! using sparse matrices for efficient storage and graph operations.
+//!
+//! ## Graph Model
+//!
+//! The graph supports:
+//! - **Nodes**: Identified by 64-bit IDs, can have multiple labels and properties
+//! - **Relationships**: Directed edges with a type and properties
+//! - **Properties**: Key-value pairs stored in attribute stores
+//! - **Indexes**: Range and full-text indexes on node properties
+//!
+//! ## Storage Layout
+//!
+//! ```text
+//! ┌─────────────────────────────────────────────────────────────┐
+//! │                      Graph Structure                        │
+//! ├─────────────────────────────────────────────────────────────┤
+//! │ adjacency_matrix     │ Sparse matrix: all relationships    │
+//! │ labels_matrices[i]   │ Sparse vector: nodes with label i   │
+//! │ relationship_matrices│ Tensor: edges by type (src,dst,id)  │
+//! │ node_attrs           │ Properties for each node            │
+//! │ relationship_attrs   │ Properties for each relationship    │
+//! │ node_indexer         │ Secondary indexes on properties     │
+//! │ cache                │ LRU cache for parsed query plans    │
+//! └─────────────────────────────────────────────────────────────┘
+//! ```
+//!
+//! ## Query Plan Caching
+//!
+//! The graph caches parsed and planned queries in an LRU cache. On cache hit,
+//! the plan is returned directly without reparsing. The cache key is the
+//! raw query string.
+
 use std::{
     collections::HashMap,
     hash::Hash,
@@ -31,20 +66,35 @@ use crate::{
     threadpool::spawn,
 };
 
+/// Result of query parsing and planning.
+///
+/// Contains the execution plan along with metadata about parsing performance.
 pub struct Plan {
+    /// The execution plan tree
     pub plan: Arc<DynTree<IR>>,
+    /// Whether this plan was retrieved from cache
     pub cached: bool,
+    /// Query parameters extracted from CYPHER prefix
     pub parameters: HashMap<String, DynTree<ExprIR<Arc<String>>>>,
+    /// Time spent parsing the query
     pub parse_duration: Duration,
+    /// Time spent planning/optimizing the query
     pub plan_duration: Duration,
 }
 
+/// Opaque identifier for a node label.
 #[derive(Default, Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct LabelId(pub usize);
+
+/// Opaque identifier for a relationship type.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct TypeId(usize);
+
+/// Opaque identifier for a node.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct NodeId(u64);
+
+/// Opaque identifier for a relationship (edge).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct RelationshipId(u64);
 
@@ -97,31 +147,67 @@ impl Plan {
     }
 }
 
+/// The main graph data structure.
+///
+/// Stores nodes, relationships, labels, and properties using sparse matrices
+/// for efficient graph operations. Supports:
+/// - Node and relationship creation/deletion
+/// - Label and property assignment
+/// - Index-based lookups
+/// - Query plan caching
+///
+/// # Thread Safety
+///
+/// The Graph is `Send + Sync` but not internally synchronized. Use [`MvccGraph`]
+/// for concurrent access with proper read/write isolation.
 pub struct Graph {
+    /// Maximum node capacity (for matrix sizing)
     node_cap: u64,
+    /// Maximum relationship capacity (for matrix sizing)
     relationship_cap: u64,
+    /// Number of node IDs reserved (including deleted)
     reserved_node_count: u64,
+    /// Number of relationship IDs reserved (including deleted)
     reserved_relationship_count: u64,
+    /// Current count of active nodes
     node_count: u64,
+    /// Current count of active relationships
     relationship_count: u64,
+    /// Bitmap of deleted node IDs (for ID reuse)
     deleted_nodes: RoaringTreemap,
+    /// Bitmap of deleted relationship IDs
     deleted_relationships: RoaringTreemap,
+    /// Empty matrix for operations
     zero_matrix: VersionedMatrix,
+    /// Combined adjacency matrix (all relationship types)
     adjacancy_matrix: VersionedMatrix,
+    /// Matrix mapping nodes to their labels
     node_labels_matrix: VersionedMatrix,
+    /// Matrix mapping relationships to their types
     relationship_type_matrix: VersionedMatrix,
+    /// Matrix with all nodes (for full scans)
     all_nodes_matrix: VersionedMatrix,
+    /// Per-label matrices (label ID → node membership)
     labels_matices: Vec<VersionedMatrix>,
+    /// Per-type relationship tensors (type ID → src×dst×edge_id)
     relationship_matrices: Vec<Tensor>,
+    /// Node property storage
     node_attrs: AttributeStore,
+    /// Relationship property storage
     relationship_attrs: AttributeStore,
+    /// Index manager for property indexes
     node_indexer: Indexer,
+    /// Label names (ID → name mapping)
     node_labels: Vec<Arc<String>>,
+    /// Relationship type names (ID → name mapping)
     relationship_types: Vec<Arc<String>>,
+    /// LRU cache for query plans
     cache: Arc<Mutex<LruCache<String, PlanTree>>>,
+    /// Version counter (incremented on each write transaction)
     pub version: u64,
 }
 
+/// Wrapper for plan trees to implement Send+Sync.
 struct PlanTree(DynTree<IR>);
 
 #[allow(clippy::non_send_fields_in_send_ty)]
@@ -131,6 +217,7 @@ unsafe impl Sync for PlanTree {}
 unsafe impl Send for Graph {}
 unsafe impl Sync for Graph {}
 
+/// Populates an index in the background for existing nodes.
 fn populate_index(
     label: Arc<String>,
     lm: versioned_matrix::Iter,

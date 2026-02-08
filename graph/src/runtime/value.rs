@@ -1,3 +1,27 @@
+//! Runtime value representation for Cypher expressions.
+//!
+//! This module defines the [`Value`] enum which represents all possible values
+//! in Cypher queries at runtime. Values can be:
+//!
+//! - Primitives: Null, Bool, Int, Float, String
+//! - Temporal: Datetime, Date, Time, Duration
+//! - Collections: List, Map
+//! - Graph entities: Node, Relationship, Path
+//! - Special: Point (geographic), VecF32 (vector embeddings)
+//!
+//! ## Type Coercion
+//!
+//! Values support implicit coercion in operations:
+//! - Int + Float → Float
+//! - String + anything → String concatenation
+//! - Null propagates through most operations
+//!
+//! ## Comparison Rules
+//!
+//! - Nulls compare as neither less than, equal to, nor greater than any value
+//! - Different types have a defined ordering for sorting
+//! - Nodes/Relationships compare by their IDs
+
 #![allow(clippy::cast_precision_loss)]
 
 use json_escape::escape_str;
@@ -28,6 +52,10 @@ pub trait DisplayJson {
     ) -> fmt::Result;
 }
 
+/// Snapshot of a deleted node's data for query result consistency.
+///
+/// When a node is deleted during query execution, its data is preserved
+/// here so that RETURN clauses can still access it.
 #[derive(Clone, Debug, PartialEq)]
 pub struct DeletedNode {
     pub labels: HashSet<LabelId>,
@@ -130,25 +158,46 @@ impl Point {
     }
 }
 
+/// Runtime value type representing all possible Cypher values.
+///
+/// Values are cloneable and use Arc for large data (strings, shared values)
+/// to minimize copying during query execution.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub enum Value {
+    /// Cypher NULL value - represents missing or unknown data
     #[default]
     Null,
+    /// Boolean true or false
     Bool(bool),
+    /// 64-bit signed integer
     Int(i64),
+    /// 64-bit floating point
     Float(f64),
+    /// Unicode string (shared via Arc for efficiency)
     String(Arc<String>),
+    /// Ordered list of values
     List(ThinVec<Self>),
+    /// Key-value map with string keys
     Map(OrderMap<Arc<String>, Self>),
+    /// Reference to a graph node (by ID)
     Node(NodeId),
+    /// Reference to a relationship: (edge_id, source_node, target_node)
     Relationship(Box<(RelationshipId, NodeId, NodeId)>),
+    /// A path through the graph (alternating nodes and relationships)
     Path(ThinVec<Self>),
+    /// Float32 vector (for vector similarity operations)
     VecF32(ThinVec<f32>),
+    /// Geographic point (latitude, longitude)
     Point(Point),
-    Datetime(i64), // Unix timestamp in milliseconds
-    Date(i64),     // Unix timestamp in milliseconds (midnight UTC)
-    Time(i64),     // Unix timestamp in milliseconds (time from epoch)
-    Duration(i64), // Duration length in milliseconds
+    /// DateTime as Unix timestamp in milliseconds
+    Datetime(i64),
+    /// Date as Unix timestamp in milliseconds (midnight UTC)
+    Date(i64),
+    /// Time as nanoseconds from midnight
+    Time(i64),
+    /// Duration in milliseconds
+    Duration(i64),
+    /// Shared value reference (for lazy evaluation)
     Arc(Arc<Self>),
 }
 

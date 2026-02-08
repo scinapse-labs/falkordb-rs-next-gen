@@ -1,3 +1,30 @@
+//! Sparse matrix operations using GraphBLAS.
+//!
+//! This module provides a safe Rust wrapper around GraphBLAS sparse matrices,
+//! which are used to represent graph adjacency. Each relationship type in the
+//! graph is stored as a separate sparse matrix.
+//!
+//! ## GraphBLAS Integration
+//!
+//! GraphBLAS is a C library for sparse linear algebra operations. This module:
+//! - Initializes the library with custom memory allocators (to respect Redis limits)
+//! - Wraps `GrB_Matrix` with safe Rust semantics
+//! - Provides iterator access for traversing matrix entries
+//!
+//! ## Matrix Layout
+//!
+//! - Rows and columns represent node IDs
+//! - A `true` entry at (i, j) means there's an edge from node i to node j
+//! - Boolean matrices are used (we only care about edge existence)
+//!
+//! ## Key Operations
+//!
+//! - `set(row, col)`: Create an edge
+//! - `remove(row, col)`: Delete an edge  
+//! - `mxm`: Matrix multiplication for multi-hop traversals
+//! - `eWiseAdd`: Union of edges (OR)
+//! - `eWiseMult`: Intersection of edges (AND)
+
 #![allow(clippy::doc_markdown)]
 
 use std::{
@@ -26,6 +53,9 @@ use crate::graph::GraphBLAS::{
 };
 
 /// Initializes the GraphBLAS library in non-blocking mode.
+///
+/// Custom allocators can be provided to integrate with Redis memory management.
+/// This ensures GraphBLAS memory counts toward Redis limits.
 #[allow(clippy::similar_names)]
 pub fn init(
     user_malloc_function: Option<unsafe extern "C" fn(arg1: usize) -> *mut c_void>,
@@ -46,6 +76,7 @@ pub fn init(
     }
 }
 
+/// Enable or disable GraphBLAS diagnostic output (burble mode).
 pub fn burble(burble: bool) {
     unsafe {
         GrB_Global_set_INT32(

@@ -1,7 +1,25 @@
+//! Insertion-ordered map preserving key order.
+//!
+//! This module provides [`OrderMap`], a map that maintains insertion order
+//! for iteration. Used for:
+//!
+//! - Property maps on nodes/relationships (consistent key ordering)
+//! - Query result maps (deterministic output)
+//! - Any context where iteration order must match insertion order
+//!
+//! ## Implementation
+//!
+//! Uses a `ThinVec<(K, V)>` internally with O(n) lookup. This is efficient
+//! for small maps (typical property counts) while preserving order.
+
 use std::{borrow::Borrow, hash::Hash, ops::Index};
 
 use thin_vec::{ThinVec, thin_vec};
 
+/// A map that preserves insertion order during iteration.
+///
+/// Keys are compared by equality (`PartialEq`). For small maps (< ~20 keys),
+/// this is faster than hash-based lookup due to cache locality.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct OrderMap<K, V> {
     vec: ThinVec<(K, V)>,

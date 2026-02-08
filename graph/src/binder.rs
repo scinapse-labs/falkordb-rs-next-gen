@@ -1,3 +1,30 @@
+//! Semantic analysis and name resolution for Cypher queries.
+//!
+//! The binder performs the second phase of query processing, converting a raw
+//! AST (with string variable names) into a bound AST (with resolved variable
+//! IDs and types). This phase:
+//!
+//! 1. **Resolves variable references** - Links variable uses to their definitions
+//! 2. **Manages scopes** - Handles variable visibility across clauses
+//! 3. **Infers types** - Determines types for expressions and variables
+//! 4. **Validates semantics** - Catches errors like undefined variables
+//!
+//! ## Scope Rules
+//!
+//! Cypher has specific scoping rules:
+//! - Variables defined in MATCH/CREATE are visible in subsequent clauses
+//! - WITH/RETURN create new scopes, only explicitly projected variables carry over
+//! - CALL procedures can YIELD variables into scope
+//!
+//! ## Example
+//!
+//! ```text
+//! MATCH (n:Person)     // Defines variable 'n' with id=0
+//! WHERE n.age > 18     // References variable with id=0
+//! WITH n, n.name AS name  // Creates new scope, projects n (id=1), defines name (id=2)
+//! RETURN name          // References variable with id=2
+//! ```
+
 use crate::ast::{
     BoundQueryIR, ExprIR, QueryExpr, QueryGraph, QueryIR, QueryNode, QueryPath, QueryRelationship,
     RawQueryIR, SetItem, Variable,
@@ -8,11 +35,20 @@ use orx_tree::{DynTree, NodeRef};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
+/// The binder performs semantic analysis on parsed Cypher queries.
+///
+/// It resolves variable references, manages scope, and converts the raw AST
+/// (with string names) into a bound AST (with numeric variable IDs and types).
 pub struct Binder {
+    /// Counter for generating unique variable IDs
     next_var_id: u32,
+    /// Stack of variable environments (name → Variable mapping)
     env_stack: Vec<HashMap<Arc<String>, Variable>>,
+    /// Whether to look up variables in parent scope
     use_parent_scope: bool,
+    /// Variables copied from parent scope to current scope
     parent_to_child_scope: HashMap<Arc<String>, Variable>,
+    /// Track which variables need to be copied from parent
     copy_from_parent: HashMap<Arc<String>, (Variable, Variable)>,
 }
 
@@ -28,6 +64,7 @@ impl Default for Binder {
     }
 }
 
+/// The type of projection clause (affects scope handling).
 #[derive(Clone, Copy)]
 enum ProjectionKind {
     With,
@@ -35,6 +72,9 @@ enum ProjectionKind {
 }
 
 impl Binder {
+    /// Binds a raw query IR, resolving all variable references.
+    ///
+    /// This is the main entry point for semantic analysis.
     pub fn bind(
         mut self,
         ir: RawQueryIR,
@@ -219,6 +259,7 @@ impl Binder {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn bind_projection(
         &mut self,
         kind: ProjectionKind,
@@ -556,6 +597,7 @@ impl Binder {
         Ok(Arc::new(self.bind_expr_node(expr, root, locals)?))
     }
 
+    #[allow(clippy::only_used_in_recursion)]
     fn bind_expr_node(
         &mut self,
         expr: &DynTree<ExprIR<Arc<String>>>,

@@ -1,14 +1,46 @@
+//! Tensor storage for multi-edges between node pairs.
+//!
+//! This module provides [`Tensor`], which extends the matrix model to support
+//! multiple edges between the same pair of nodes. While the adjacency matrix
+//! only records edge existence, the tensor stores individual edge IDs.
+//!
+//! ## Structure
+//!
+//! ```text
+//! Tensor
+//!    ├── m: Forward adjacency (src → dst exists?)
+//!    ├── mt: Backward adjacency (dst → src exists?)
+//!    └── me: Edge matrix ((src,dst) → edge_id)
+//! ```
+//!
+//! The `me` matrix uses a compound key `(src << 32 | dst)` as the row index,
+//! allowing multiple edge IDs to be stored for the same node pair.
+//!
+//! ## Use Case
+//!
+//! In property graphs, multiple edges of the same type can connect two nodes.
+//! For example: two "KNOWS" relationships between the same people with
+//! different "since" dates.
+
 use crate::graph::{
     matrix::{Dup, New, Remove, Set, Size},
     versioned_matrix::{self, VersionedMatrix},
 };
 
+/// Maximum GraphBLAS index value (2^60 - 1).
 #[allow(non_upper_case_globals)]
 pub const GrB_INDEX_MAX: u64 = (1u64 << 60) - 1;
 
+/// Multi-edge storage supporting multiple edges between node pairs.
+///
+/// Maintains three matrices for efficient traversal in both directions
+/// and edge ID lookup.
 pub struct Tensor {
+    /// Forward adjacency matrix (src → dst)
     m: VersionedMatrix,
+    /// Transpose/backward adjacency (dst → src)
     mt: VersionedMatrix,
+    /// Edge ID storage keyed by (src, dst) pair
     me: VersionedMatrix,
 }
 

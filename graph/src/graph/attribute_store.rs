@@ -1,3 +1,28 @@
+//! Property storage for graph entities.
+//!
+//! This module provides [`AttributeStore`], a columnar store for node and
+//! relationship properties. Each property name maps to a separate [`BlockVec`]
+//! that stores values indexed by entity ID.
+//!
+//! ## Design
+//!
+//! ```text
+//! AttributeStore
+//!    ├── attrs_name: ["name", "age", "email"]  (property name → index)
+//!    └── attributes: [BlockVec, BlockVec, BlockVec]  (one per property)
+//!                         │
+//!                    [None, "Alice", "Bob", None, "Carol"]
+//!                           ↑         ↑           ↑
+//!                        node 1    node 2      node 4
+//! ```
+//!
+//! ## Columnar vs Row Storage
+//!
+//! Columnar storage is chosen because:
+//! - Queries often access few properties across many nodes
+//! - Sparse storage is efficient when many entities lack certain properties
+//! - MVCC versioning can be done per-column
+
 use std::sync::Arc;
 
 use atomic_refcell::AtomicRefCell;
@@ -7,9 +32,15 @@ use crate::{
     runtime::{orderset::OrderSet, value::Value},
 };
 
+/// Columnar property storage for graph entities.
+///
+/// Stores properties in a column-oriented layout where each property name
+/// maps to a sparse vector of values indexed by entity ID.
 #[derive(Clone, Default)]
 pub struct AttributeStore {
+    /// Column data: one BlockVec per property, indexed by attr position
     attributes: Arc<AtomicRefCell<Vec<BlockVec<Value>>>>,
+    /// Property names in insertion order (name → column index)
     pub attrs_name: OrderSet<Arc<String>>,
 }
 
