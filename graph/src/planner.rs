@@ -1,3 +1,34 @@
+//! Query plan generation from bound AST.
+//!
+//! The planner converts a bound Cypher AST into a logical execution plan (IR tree).
+//! This phase determines the order of operations and which algorithms to use for
+//! pattern matching.
+//!
+//! ## Plan Structure
+//!
+//! The plan is a tree where:
+//! - Leaf nodes produce tuples (scans, argument)
+//! - Internal nodes transform/filter tuples from children
+//! - The root produces the final result
+//!
+//! ## Key Planning Decisions
+//!
+//! 1. **Scan selection**: Chooses between label scans, index scans, or ID lookups
+//! 2. **Join ordering**: Determines order of pattern matching for efficiency
+//! 3. **Projection placement**: Decides when to project/aggregate
+//! 4. **Filter pushdown**: Places filters as early as possible
+//!
+//! ## IR Operators
+//!
+//! - **NodeByLabelScan**: Scan all nodes with a label
+//! - **NodeByIndexScan**: Use an index for node lookup
+//! - **CondTraverse**: Traverse relationships conditionally
+//! - **ExpandInto**: Check for relationship between known nodes
+//! - **Filter**: Apply predicate to filter tuples
+//! - **Project**: Compute new values from existing
+//! - **Aggregate**: Group and aggregate tuples
+//! - **Sort/Skip/Limit**: Order and paginate results
+
 use std::{collections::HashSet, fmt::Display, sync::Arc};
 
 use orx_tree::{DynTree, NodeRef, Side, Traversal, Traverser};
@@ -12,58 +43,89 @@ use crate::{
     tree,
 };
 
+/// Intermediate Representation (IR) for execution plan operators.
+///
+/// Each variant represents a physical operation in the query execution plan.
+/// The plan forms a tree where data flows from leaves to root.
 #[derive(Clone, Debug)]
 pub enum IR {
+    /// Empty result set (used as placeholder)
     Empty,
+    /// Receives input from parent operator
     Argument,
+    /// OPTIONAL MATCH - returns nulls if no match
     Optional(Vec<Variable>),
+    /// CALL procedure with arguments, yielding outputs
     ProcedureCall(Arc<GraphFn>, Vec<QueryExpr<Variable>>, Vec<Variable>),
+    /// UNWIND list AS variable
     Unwind(QueryExpr<Variable>, Variable),
+    /// CREATE pattern
     Create(QueryGraph<Arc<String>, Arc<String>, Variable>),
+    /// MERGE pattern with ON CREATE/ON MATCH actions
     Merge(
         QueryGraph<Arc<String>, Arc<String>, Variable>,
         Vec<SetItem<Arc<String>, Variable>>,
         Vec<SetItem<Arc<String>, Variable>>,
     ),
+    /// DELETE entities (detach flag for relationships)
     Delete(Vec<QueryExpr<Variable>>, bool),
+    /// SET properties/labels
     Set(Vec<SetItem<Arc<String>, Variable>>),
+    /// REMOVE properties/labels
     Remove(Vec<QueryExpr<Variable>>),
+    /// Scan nodes by label
     NodeByLabelScan(Arc<QueryNode<Arc<String>, Variable>>),
+    /// Scan nodes using an index
     NodeByIndexScan {
         node: Arc<QueryNode<Arc<String>, Variable>>,
         index: Arc<String>,
         query: Arc<IndexQuery<QueryExpr<Variable>>>,
     },
+    /// Lookup node by ID
     NodeByIdScan {
         node: Arc<QueryNode<Arc<String>, Variable>>,
         id: QueryExpr<Variable>,
         op: ExprIR<Variable>,
     },
+    /// Traverse relationships from known nodes
     CondTraverse(Arc<QueryRelationship<Arc<String>, Arc<String>, Variable>>),
+    /// Check relationship between two known nodes
     ExpandInto(Arc<QueryRelationship<Arc<String>, Arc<String>, Variable>>),
+    /// Build path objects from matched patterns
     PathBuilder(Vec<Arc<QueryPath<Variable>>>),
+    /// Apply filter predicate
     Filter(QueryExpr<Variable>),
+    /// Cartesian product of child results
     CartesianProduct,
+    /// Load CSV file
     LoadCsv {
         file_path: QueryExpr<Variable>,
         headers: bool,
         delimiter: QueryExpr<Variable>,
         var: Variable,
     },
+    /// Sort by expressions (bool = descending)
     Sort(Vec<(QueryExpr<Variable>, bool)>),
+    /// Skip first N rows
     Skip(QueryExpr<Variable>),
+    /// Limit to N rows
     Limit(QueryExpr<Variable>),
+    /// Aggregate with grouping keys, aggregations, and projections
     Aggregate(
         Vec<Variable>,
         Vec<(Variable, QueryExpr<Variable>)>,
         Vec<(Variable, QueryExpr<Variable>)>,
     ),
+    /// Project expressions to new variables
     Project(
         Vec<(Variable, QueryExpr<Variable>)>,
         Vec<(Variable, Variable)>,
     ),
+    /// Remove duplicate rows
     Distinct,
+    /// Commit write operations to graph
     Commit,
+    /// CREATE INDEX operation
     CreateIndex {
         label: Arc<String>,
         attrs: Vec<Arc<String>>,
@@ -71,6 +133,7 @@ pub enum IR {
         entity_type: EntityType,
         options: Option<QueryExpr<Variable>>,
     },
+    /// DROP INDEX operation
     DropIndex {
         label: Arc<String>,
         attrs: Vec<Arc<String>>,

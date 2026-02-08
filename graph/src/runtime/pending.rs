@@ -1,3 +1,29 @@
+//! Deferred write operations for transactional semantics.
+//!
+//! This module provides [`Pending`], which batches write operations during
+//! query execution. This enables:
+//!
+//! - Read-your-writes within a query (created nodes visible to later clauses)
+//! - Atomic commit/rollback of all changes
+//! - Efficient bulk updates to indexes
+//!
+//! ## Batched Operations
+//!
+//! - `created_nodes`: Nodes created in this query
+//! - `deleted_nodes`: Nodes marked for deletion
+//! - `created_relationships`: Edges created in this query
+//! - `deleted_relationships`: Edges marked for deletion
+//! - `set_*_attrs`: Property updates by entity ID
+//! - `set/remove_node_labels`: Label changes
+//!
+//! ## Commit Flow
+//!
+//! ```text
+//! Query execution → accumulate in Pending → apply_all() → update Graph
+//! ```
+//!
+//! On error or ROLLBACK, the Pending is simply dropped without applying.
+
 use std::{cell::RefCell, collections::HashMap, sync::Arc};
 
 use atomic_refcell::AtomicRefCell;
@@ -17,6 +43,7 @@ use crate::{
     },
 };
 
+/// A relationship waiting to be created.
 pub struct PendingRelationship {
     pub from: NodeId,
     pub to: NodeId,
@@ -38,16 +65,30 @@ impl PendingRelationship {
     }
 }
 
+/// Accumulated write operations for deferred application.
+///
+/// All mutations during query execution are collected here and applied
+/// atomically at the end. This enables transactional semantics.
 pub struct Pending {
+    /// Nodes created in this transaction
     created_nodes: RoaringTreemap,
+    /// Relationships created (id → pending relationship data)
     created_relationships: HashMap<RelationshipId, PendingRelationship>,
+    /// Nodes to be deleted
     deleted_nodes: RoaringTreemap,
+    /// Relationships to be deleted (edge_id, src, dst)
     deleted_relationships: OrderSet<(RelationshipId, NodeId, NodeId)>,
+    /// Property updates for nodes
     set_nodes_attrs: HashMap<NodeId, OrderMap<Arc<String>, Value>>,
+    /// Property updates for relationships
     set_relationships_attrs: HashMap<RelationshipId, OrderMap<Arc<String>, Value>>,
+    /// Labels to add (node_id × label_id matrix)
     set_node_labels: Matrix,
+    /// Labels to remove
     remove_node_labels: Matrix,
+    /// Documents to add to indexes
     index_add_docs: HashMap<Arc<String>, RoaringTreemap>,
+    /// Documents to remove from indexes
     index_remove_docs: HashMap<Arc<String>, RoaringTreemap>,
 }
 

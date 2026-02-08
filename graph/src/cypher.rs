@@ -1,3 +1,56 @@
+//! Cypher query parser for FalkorDB.
+//!
+//! This module implements a hand-written recursive descent parser for the Cypher
+//! query language. It converts Cypher query strings into an Abstract Syntax Tree
+//! (AST) defined in [`crate::ast`].
+//!
+//! ## Architecture
+//!
+//! The parser consists of two main components:
+//!
+//! 1. **Lexer** (`Lexer`): Tokenizes the input string into a stream of tokens
+//!    (keywords, identifiers, literals, operators, punctuation).
+//!
+//! 2. **Parser** (`Parser`): Consumes tokens and builds the AST using recursive
+//!    descent with operator precedence parsing for expressions.
+//!
+//! ## Entry Point
+//!
+//! The main entry point is [`parse`], which takes a query string and returns
+//! a [`RawQueryIR`] (unbound AST).
+//!
+//! ```text
+//! "MATCH (n) RETURN n"
+//!         │
+//!         ▼
+//!     Lexer → [MATCH, LPAREN, IDENT("n"), RPAREN, RETURN, IDENT("n")]
+//!         │
+//!         ▼
+//!     Parser → QueryIR::Query([
+//!                  QueryIR::Match { pattern: ..., filter: None, optional: false },
+//!                  QueryIR::Return { exprs: [("n", var("n"))], ... }
+//!              ])
+//! ```
+//!
+//! ## Expression Precedence
+//!
+//! Expressions are parsed with the following precedence (lowest to highest):
+//! 1. OR
+//! 2. XOR
+//! 3. AND
+//! 4. NOT
+//! 5. Comparison (=, <>, <, >, <=, >=, IN, STARTS WITH, etc.)
+//! 6. Addition/Subtraction (+, -)
+//! 7. Multiplication/Division (*, /, %)
+//! 8. Power (^)
+//! 9. Unary minus (-)
+//! 10. Property access, indexing, function calls
+//!
+//! ## Error Handling
+//!
+//! Parse errors return `Err(String)` with a descriptive message including
+//! the position in the query where the error occurred.
+
 use crate::ast::{
     ExprIR, QuantifierType, QueryExpr, QueryGraph, QueryIR, QueryNode, QueryPath,
     QueryRelationship, RawQueryIR, SetItem,
@@ -622,7 +675,7 @@ impl<'a> Lexer<'a> {
                 } else if c.is_alphanumeric() {
                     // Invalid character in number literal - consume the rest to create a complete error token
                     len += 1;
-                    while let Some(ch) = chars.next() {
+                    for ch in chars.by_ref() {
                         if ch.is_alphanumeric() {
                             len += 1;
                         } else {
@@ -850,12 +903,24 @@ macro_rules! parse_operators {
     };
 }
 
+/// Cypher query parser.
+///
+/// The parser implements a recursive descent parser with operator precedence
+/// for expressions. It consumes tokens from the lexer and builds an AST.
+///
+/// # Usage
+/// ```ignore
+/// let mut parser = Parser::new("MATCH (n:Person) RETURN n.name");
+/// let ast = parser.parse()?;
+/// ```
 pub struct Parser<'a> {
     lexer: Lexer<'a>,
+    /// Counter for generating unique anonymous variable names
     anon_counter: u32,
 }
 
 impl<'a> Parser<'a> {
+    /// Creates a new parser for the given query string.
     #[must_use]
     pub fn new(str: &'a str) -> Self {
         Self {
@@ -880,6 +945,10 @@ impl<'a> Parser<'a> {
         false
     }
 
+    /// Parses query parameters from CYPHER prefix.
+    ///
+    /// Handles queries like: `CYPHER param1=value1 param2=value2 MATCH ...`
+    /// Returns the parameters map and the remaining query string.
     pub fn parse_parameters(
         &mut self
     ) -> Result<(HashMap<String, DynTree<ExprIR<Arc<String>>>>, &'a str), String> {
@@ -903,6 +972,13 @@ impl<'a> Parser<'a> {
         Ok((params, &self.lexer.str[self.lexer.pos..]))
     }
 
+    /// Parses a complete Cypher query.
+    ///
+    /// This is the main entry point for parsing. It first tries to parse index
+    /// operations (CREATE INDEX, DROP INDEX), then falls back to regular queries.
+    ///
+    /// # Errors
+    /// Returns an error string if the query has syntax errors.
     pub fn parse(&mut self) -> Result<RawQueryIR, String> {
         let pos = self.lexer.pos;
         if let Some(ir) = self.parse_index_ops()? {

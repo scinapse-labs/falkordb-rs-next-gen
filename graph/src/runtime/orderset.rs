@@ -1,5 +1,23 @@
+//! Insertion-ordered set preserving element order.
+//!
+//! This module provides [`OrderSet`], a set that maintains insertion order.
+//! Used for:
+//!
+//! - Label collections on nodes (consistent ordering)
+//! - Property name lists (deterministic iteration)
+//! - Any context where set order must be predictable
+//!
+//! ## Implementation
+//!
+//! Uses a `Vec<T>` internally with O(n) membership check. Efficient for
+//! small sets while guaranteeing order.
+
 use std::ops::Index;
 
+/// A set that preserves insertion order during iteration.
+///
+/// Elements are compared by equality. Duplicate insertions replace the
+/// existing element (returns the old value).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct OrderSet<T> {
     vec: Vec<T>,

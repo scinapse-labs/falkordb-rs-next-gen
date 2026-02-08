@@ -1,12 +1,42 @@
+//! MVCC-aware sparse matrix with delta tracking.
+//!
+//! This module provides [`VersionedMatrix`], which wraps a base matrix with
+//! delta matrices to track pending additions and deletions. This enables
+//! snapshot isolation for concurrent readers.
+//!
+//! ## Structure
+//!
+//! ```text
+//! VersionedMatrix
+//!    ├── m: Base matrix (committed state)
+//!    ├── dp: Delta-plus (pending additions)
+//!    └── dm: Delta-minus (pending deletions)
+//!
+//! Effective state = (m ∪ dp) - dm
+//! ```
+//!
+//! ## MVCC Semantics
+//!
+//! - Readers see the committed base matrix `m`
+//! - Writers accumulate changes in `dp` and `dm`
+//! - On commit, deltas merge into base; on rollback, deltas are discarded
+
 use crate::graph::{
     GraphBLAS::GxB_Print_Level,
     cow::Cow,
     matrix::{self, Dup, Get, MaskedElementWiseAdd, Matrix, New, Remove, Set, Size, Transpose},
 };
 
+/// A matrix with MVCC delta tracking for snapshot isolation.
+///
+/// Wraps a base matrix with separate matrices for tracking additions
+/// and deletions, enabling concurrent reads during writes.
 pub struct VersionedMatrix {
+    /// Base committed matrix
     m: Cow<Matrix>,
+    /// Delta-plus: edges added in current transaction
     dp: Cow<Matrix>,
+    /// Delta-minus: edges removed in current transaction  
     dm: Cow<Matrix>,
 }
 

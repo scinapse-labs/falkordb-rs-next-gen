@@ -1,9 +1,33 @@
+//! Custom iterator adaptors for query execution.
+//!
+//! This module provides iterator types used by the runtime to implement
+//! lazy evaluation and efficient data processing:
+//!
+//! ## Iterator Types
+//!
+//! - [`AggregateIter`]: Groups items by key and applies aggregation
+//! - [`TryMap`]: Maps with fallible function, short-circuits on error
+//! - [`TryFlatMap`]: Flat-maps with fallible function
+//! - [`LazyReplace`]: Deferred value replacement in tuples
+//! - [`CondInspectIter`]: Conditional inspection for debugging
+//! - [`Aggregate`]: Trait for aggregation operations
+//!
+//! ## Lazy Evaluation
+//!
+//! All iterators are lazy - they only compute values when polled.
+//! This enables early termination for LIMIT clauses and reduces
+//! memory usage for large result sets.
+
 use std::{
     collections::HashMap,
     hash::{DefaultHasher, Hasher},
     iter::once,
 };
 
+/// Iterator that groups items by key and aggregates values.
+///
+/// Consumes the entire input on first `next()` call, then yields
+/// grouped results one at a time.
 pub struct AggregateIter<I, K, V, F, G>
 where
     I: Iterator<Item = V>,

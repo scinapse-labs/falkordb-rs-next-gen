@@ -1,3 +1,27 @@
+//! RediSearch FFI bindings and integration.
+//!
+//! This module provides Rust bindings to the RediSearch C API, used for
+//! full-text search, numeric range indexes, and vector similarity search.
+//!
+//! ## Structure
+//!
+//! - This file: Auto-generated bindgen constants and types
+//! - `redis.rs`: Redis module context types
+//!
+//! ## Key Types
+//!
+//! - `RSIndex`: Handle to a RediSearch index
+//! - `RSDoc`: A document to be indexed
+//! - `RSQueryNode`: Query tree node for search
+//!
+//! ## Field Types
+//!
+//! - `RSFLDTYPE_FULLTEXT`: Full-text searchable field
+//! - `RSFLDTYPE_NUMERIC`: Numeric range queryable field  
+//! - `RSFLDTYPE_TAG`: Exact match tag field
+//! - `RSFLDTYPE_GEO`: Geographic point field
+//! - `RSFLDTYPE_VECTOR`: Vector embedding field
+
 #![allow(non_snake_case)]
 #![allow(non_upper_case_globals)]
 #![allow(non_camel_case_types)]

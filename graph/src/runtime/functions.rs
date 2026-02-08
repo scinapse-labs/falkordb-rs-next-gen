@@ -1,3 +1,31 @@
+//! Built-in Cypher functions and procedures.
+//!
+//! This module implements all standard Cypher functions available in queries,
+//! organized by category:
+//!
+//! ## Scalar Functions
+//! - Type conversion: `toInteger()`, `toFloat()`, `toString()`, `toBoolean()`
+//! - String: `trim()`, `toLower()`, `toUpper()`, `substring()`, `replace()`
+//! - Math: `abs()`, `ceil()`, `floor()`, `round()`, `sqrt()`, `log()`, etc.
+//! - Temporal: `date()`, `datetime()`, `time()`, `duration()`
+//!
+//! ## Aggregation Functions
+//! - `count()`, `sum()`, `avg()`, `min()`, `max()`, `collect()`
+//! - `stDev()`, `percentileCont()`, `percentileDisc()`
+//!
+//! ## List Functions
+//! - `head()`, `tail()`, `last()`, `size()`, `range()`, `reverse()`
+//! - `keys()`, `labels()`, `nodes()`, `relationships()`
+//!
+//! ## Procedures
+//! - `db.labels()`, `db.relationshipTypes()`, `db.propertyKeys()`
+//! - `db.indexes()`, `db.constraints()`
+//!
+//! ## Function Registry
+//!
+//! Functions are registered in a static `HashMap` keyed by name. The registry
+//! maps names to `(FnType, RuntimeFn)` tuples.
+
 #![allow(clippy::cast_sign_loss)]
 #![allow(clippy::unnecessary_wraps)]
 #![allow(clippy::cast_possible_wrap)]
@@ -20,12 +48,18 @@ use std::{
 };
 use thin_vec::{ThinVec, thin_vec};
 
+/// Function pointer type for runtime function implementations.
 type RuntimeFn = fn(&Runtime, ThinVec<Value>) -> Result<Value, String>;
 
+/// Classification of function types.
 pub enum FnType {
+    /// Regular scalar function (e.g., `toUpper()`)
     Function,
+    /// Internal function not exposed to users
     Internal,
+    /// Procedure that returns a result set (e.g., `db.labels()`)
     Procedure(Vec<String>),
+    /// Aggregation function with initial value and optional finalizer
     Aggregation(Value, Option<Box<dyn Fn(Value) -> Value>>),
 }
 

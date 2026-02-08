@@ -1,3 +1,15 @@
+//! Sparse vector operations using GraphBLAS.
+//!
+//! This module wraps GraphBLAS sparse vectors, used for:
+//! - Storing node membership in labels (label → vector of node IDs)
+//! - Intermediate results in graph algorithms
+//! - Filtering operations
+//!
+//! ## GraphBLAS Vectors
+//!
+//! Like matrices, vectors use sparse storage and count toward Redis memory.
+//! Boolean vectors are used to represent sets of node IDs efficiently.
+
 use std::{
     marker::PhantomData,
     mem::MaybeUninit,
@@ -11,6 +23,10 @@ use crate::graph::GraphBLAS::{
     GxB_Vector_Iterator_getIndex, GxB_Vector_Iterator_next, GxB_Vector_Iterator_seek,
 };
 
+/// A sparse vector backed by GraphBLAS.
+///
+/// Generic over element type T, though currently only bool is implemented.
+/// The vector automatically frees its GraphBLAS resources on drop.
 pub struct Vector<T> {
     v: GrB_Vector,
     phantom: PhantomData<T>,

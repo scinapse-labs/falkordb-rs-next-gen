@@ -1,3 +1,36 @@
+//! Index management for property-based lookups.
+//!
+//! This module provides indexing capabilities for graph properties using RediSearch
+//! as the underlying index engine. Supports:
+//!
+//! ## Index Types
+//!
+//! - **Range**: B-tree index for numeric comparisons (=, <, >, range queries)
+//! - **Fulltext**: Text search with tokenization and stemming
+//! - **Vector**: Vector similarity search for embeddings
+//!
+//! ## Architecture
+//!
+//! ```text
+//! Indexer
+//!    │
+//!    ├── label_fields: Map<Label, Map<Attr, Field>>
+//!    │      (Defines which properties are indexed)
+//!    │
+//!    └── rs_index: Map<Label, RSIndex>
+//!           (RediSearch index handles)
+//! ```
+//!
+//! ## Index Queries
+//!
+//! The [`IndexQuery`] enum represents different query types:
+//! - `Equal(attr, value)`: Exact match
+//! - `Range(attr, min, max)`: Range query
+//! - `Prefix(attr, prefix)`: Prefix search
+//! - `Contains(attr, substring)`: Substring search
+//! - `Fulltext(query)`: Full-text search
+//! - `VectorRange`: Vector similarity search
+
 use std::{
     collections::HashMap,
     ffi::CString,
@@ -29,19 +62,27 @@ use crate::{
     runtime::value::Value,
 };
 
+/// Type of index for a property.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum IndexType {
+    /// B-tree range index for numeric/string comparisons
     Range,
+    /// Full-text search index with tokenization
     Fulltext,
+    /// Vector similarity index
     Vector,
 }
 
+/// Entity type that can be indexed.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum EntityType {
+    /// Index on node properties
     Node,
+    /// Index on relationship properties
     Relationship,
 }
 
+/// A document to be indexed, wrapping a RediSearch document.
 #[derive(Clone)]
 pub struct Document {
     rs_doc: *mut RSDoc,
