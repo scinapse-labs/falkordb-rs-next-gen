@@ -177,9 +177,8 @@ impl ThreadedGraph {
     ///
     /// Initializes the MVCC graph with:
     /// - 16384 initial node capacity
-    /// - 16384 initial edge capacity  
+    /// - 16384 initial edge capacity
     /// - 1024 relationship type capacity
-    pub fn new() -> Self {
     pub fn new(cache_size: usize) -> Self {
         let (sender, receiver) = channel();
         Self {
