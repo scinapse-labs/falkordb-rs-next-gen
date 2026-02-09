@@ -155,6 +155,7 @@ impl Pending {
                     Type::Point,
                     Type::VecF32,
                     Type::Null,
+                    Type::Point,
                     Type::List(Box::new(Type::Union(vec![
                         Type::Bool,
                         Type::Int,
@@ -190,6 +191,7 @@ impl Pending {
                 Type::Point,
                 Type::VecF32,
                 Type::Null,
+                Type::Point,
                 Type::List(Box::new(Type::Union(vec![
                     Type::Bool,
                     Type::Int,
@@ -317,6 +319,7 @@ impl Pending {
                     Type::Float,
                     Type::String,
                     Type::Null,
+                    Type::Point,
                     Type::List(Box::new(Type::Union(vec![
                         Type::Bool,
                         Type::Int,
