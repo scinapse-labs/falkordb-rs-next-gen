@@ -72,6 +72,8 @@ pub enum IndexType {
     Fulltext,
     /// Vector similarity index
     Vector,
+    /// Point index for geographic coordinates
+    Point,
 }
 
 /// Entity type that can be indexed.
@@ -195,6 +197,7 @@ pub enum IndexQuery<T> {
     Range(Arc<String>, Option<T>, Option<T>),
     And(Vec<Self>),
     Or(Vec<Self>),
+    Point(Arc<String>, T),
 }
 
 pub struct Field {
@@ -288,6 +291,7 @@ impl Indexer {
                     IndexType::Range => Arc::new(format!("range:{attr}")),
                     IndexType::Fulltext => attr.clone(),
                     IndexType::Vector => Arc::new(format!("vector:{attr}")),
+                    IndexType::Point => Arc::new(format!("point:{attr}")),
                 };
                 let field = Arc::new(Field {
                     name: CString::new(field_name.as_str()).unwrap(),
@@ -299,6 +303,7 @@ impl Indexer {
                     IndexType::Range => Arc::new(format!("range:{attr}")),
                     IndexType::Fulltext => attr.clone(),
                     IndexType::Vector => Arc::new(format!("vector:{attr}")),
+                    IndexType::Point => Arc::new(format!("point:{attr}")),
                 };
                 let field = Arc::new(Field {
                     name: CString::new(field_name.as_str()).unwrap(),
@@ -352,6 +357,14 @@ impl Indexer {
                         );
                         // RediSearch_VectorFieldSetDim(index, field_id, field->hnsw_options.dimension);
                         // RediSearch_VectorFieldSetHNSWParams(index, field_id, IndexField_OptionsGetM(field), IndexField_OptionsGetEfConstruction(field), IndexField_OptionsGetEfRuntime(field), IndexField_OptionsGetSimFunc(field));
+                    }
+                    IndexType::Point => {
+                        let _field_id = RediSearch_CreateField(
+                            index,
+                            field.name.as_ptr(),
+                            RSFLDTYPE_GEO,
+                            RSFLDOPT_NONE,
+                        );
                     }
                 }
             }

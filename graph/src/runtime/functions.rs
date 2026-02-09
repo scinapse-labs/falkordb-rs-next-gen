@@ -3163,6 +3163,9 @@ fn db_indexes(
                                 IndexType::Vector => {
                                     types.push(Value::String(Arc::new(String::from("VECTOR"))));
                                 }
+                                IndexType::Point => {
+                                    types.push(Value::String(Arc::new(String::from("POINT"))));
+                                }
                             }
                         }
                         types_map.insert(attr, Value::List(types));
