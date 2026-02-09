@@ -40,7 +40,7 @@ use crate::{
         value::{Point, Value, ValueTypeOf},
     },
 };
-use rand::Rng;
+use rand::RngExt;
 use std::{
     collections::HashMap,
     fmt::{Debug, Display},
@@ -2397,8 +2397,6 @@ fn random_uuid(
     _: &Runtime,
     _args: ThinVec<Value>,
 ) -> Result<Value, String> {
-    use rand::Rng;
-
     // Generate 16 random bytes (128 bits)
     let mut rng = rand::rng();
     let mut bytes = [0u8; 16];
