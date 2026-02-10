@@ -48,8 +48,9 @@ use roaring::RoaringTreemap;
 use crate::{
     redisearch::{
         GC_POLICY_FORK, REDISEARCH_ADD_REPLACE, RSDoc, RSFLDOPT_NONE, RSFLDTYPE_FULLTEXT,
-        RSFLDTYPE_GEO, RSFLDTYPE_NUMERIC, RSFLDTYPE_TAG, RSFLDTYPE_VECTOR, RSIndex, RSRANGE_INF,
-        RSRANGE_NEG_INF, RediSearch_CreateDocument2, RediSearch_CreateField,
+        RSFLDTYPE_GEO, RSFLDTYPE_NUMERIC, RSFLDTYPE_TAG, RSFLDTYPE_VECTOR,
+        RSGeoDistance_RS_GEO_DISTANCE_M, RSIndex, RSRANGE_INF, RSRANGE_NEG_INF,
+        RediSearch_CreateDocument2, RediSearch_CreateField, RediSearch_CreateGeoNode,
         RediSearch_CreateIndex, RediSearch_CreateIndexOptions, RediSearch_CreateNumericNode,
         RediSearch_CreateTagNode, RediSearch_CreateTagTokenNode, RediSearch_DeleteDocument,
         RediSearch_DocumentAddFieldGeo, RediSearch_DocumentAddFieldNumber,
@@ -197,7 +198,11 @@ pub enum IndexQuery<T> {
     Range(Arc<String>, Option<T>, Option<T>),
     And(Vec<Self>),
     Or(Vec<Self>),
-    Point(Arc<String>, T),
+    Point {
+        key: Arc<String>,
+        point: T,
+        radius: T,
+    },
 }
 
 pub struct Field {
@@ -500,6 +505,25 @@ impl Indexer {
                         )
                     }
                 }
+                IndexQuery::Point {
+                    key,
+                    point: Value::Point(point),
+                    radius: Value::Float(radius),
+                } => {
+                    unsafe {
+                        let field = &index.fields.get(&key).unwrap()[0];
+                        // Create a GeoNode with the given latitude, longitude, and radius, radius type is M
+                        RediSearch_CreateGeoNode(
+                            index.rs_idx,
+                            field.name.as_ptr(),
+                            point.latitude as f64,
+                            point.longitude as f64,
+                            radius,
+                            RSGeoDistance_RS_GEO_DISTANCE_M,
+                        )
+                    }
+                }
+
                 _ => todo!(),
             };
 
