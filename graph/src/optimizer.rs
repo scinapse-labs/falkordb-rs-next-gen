@@ -34,13 +34,19 @@ use std::sync::Arc;
 use orx_tree::{Bfs, Dyn, DynTree, NodeIdx, NodeRef};
 
 use crate::{
-    ast::{ExprIR, QueryNode, Variable},
+    ast::{ExprIR, QueryExpr, QueryNode, Variable},
     graph::graph::Graph,
     indexer::IndexQuery,
     planner::IR,
     runtime::functions::{FnType, get_functions},
     tree,
 };
+
+type IndexScanResult = Option<(
+    Arc<QueryNode<Arc<String>, Variable>>,
+    Arc<String>,
+    Arc<IndexQuery<QueryExpr<Variable>>>,
+)>;
 
 fn extract_attribute_from_subtree(
     tree: &DynTree<ExprIR<Variable>>,
@@ -83,6 +89,78 @@ fn extract_attribute_and_expression_from_filter(
     }
 }
 
+/// Builds an index scan for a simple property filter (e.g. `n.age = 30`).
+fn try_property_index_scan(
+    node: &Arc<QueryNode<Arc<String>, Variable>>,
+    attr: &Arc<String>,
+    op: &ExprIR<Variable>,
+    constant_node: DynTree<ExprIR<Variable>>,
+) -> IndexScanResult {
+    match op {
+        ExprIR::Eq => Some((
+            node.clone(),
+            node.labels[0].clone(),
+            Arc::new(IndexQuery::Equal(attr.clone(), Arc::new(constant_node))),
+        )),
+        ExprIR::Gt => Some((
+            node.clone(),
+            node.labels[0].clone(),
+            Arc::new(IndexQuery::Range(
+                attr.clone(),
+                Some(Arc::new(constant_node)),
+                None,
+            )),
+        )),
+        ExprIR::Lt => Some((
+            node.clone(),
+            node.labels[0].clone(),
+            Arc::new(IndexQuery::Range(
+                attr.clone(),
+                None,
+                Some(Arc::new(constant_node)),
+            )),
+        )),
+        _ => None,
+    }
+}
+
+/// Builds an index scan for a distance filter (e.g. `distance(n.loc, point(...)) < 100`).
+fn try_distance_index_scan(
+    node: &Arc<QueryNode<Arc<String>, Variable>>,
+    attr: &Arc<String>,
+    filter: &DynTree<ExprIR<Variable>>,
+    attribute_side: usize,
+    constant_node: DynTree<ExprIR<Variable>>,
+) -> IndexScanResult {
+    let attribute_side_idx = filter.root().child(attribute_side).idx();
+    let child_0_idx = filter.node(attribute_side_idx).child(0).idx();
+    let child_1_idx = filter.node(attribute_side_idx).child(1).idx();
+    match (
+        extract_attribute_from_subtree(filter, child_0_idx),
+        extract_attribute_from_subtree(filter, child_1_idx),
+    ) {
+        (Some(_), None) => Some((
+            node.clone(),
+            node.labels[0].clone(),
+            Arc::new(IndexQuery::Point {
+                key: attr.clone(),
+                point: Arc::new(filter.node(child_1_idx).clone_as_tree()),
+                radius: Arc::new(constant_node),
+            }),
+        )),
+        (None, Some(_)) => Some((
+            node.clone(),
+            node.labels[0].clone(),
+            Arc::new(IndexQuery::Point {
+                key: attr.clone(),
+                point: Arc::new(filter.node(child_0_idx).clone_as_tree()),
+                radius: Arc::new(constant_node),
+            }),
+        )),
+        _ => None,
+    }
+}
+
 /// Attempts to replace label scans with index scans where applicable.
 ///
 /// Scans the plan for patterns like:
@@ -113,75 +191,13 @@ fn utilize_index(
             if let ExprIR::FuncInvocation(func) = filter.root().child(attribute_side).data() {
                 let constant_node = filter.root().child(1 - attribute_side).clone_as_tree();
                 match func.name.as_str() {
-                    "property" => match filter.root().data() {
-                        ExprIR::Eq => Some((
-                            node.clone(),
-                            node.labels[0].clone(),
-                            Arc::new(IndexQuery::Equal(
-                                attr.clone(),
-                                Arc::new(constant_node.clone()),
-                            )),
-                        )),
-                        ExprIR::Gt => Some((
-                            node.clone(),
-                            node.labels[0].clone(),
-                            Arc::new(IndexQuery::Range(
-                                attr.clone(),
-                                Some(Arc::new(constant_node.clone())),
-                                None,
-                            )),
-                        )),
-                        ExprIR::Lt => Some((
-                            node.clone(),
-                            node.labels[0].clone(),
-                            Arc::new(IndexQuery::Range(
-                                attr.clone(),
-                                None,
-                                Some(Arc::new(constant_node.clone())),
-                            )),
-                        )),
-                        _ => None,
-                    },
+                    "property" => {
+                        try_property_index_scan(node, &attr, filter.root().data(), constant_node)
+                    }
                     "distance" => {
-                        // We need to extract the following:
-                        // 1. The radius itself is in the constant side of the filter (non attribute)
-                        // 2. Radius is a binary function, as such we need to extract the constant point
-                        // from the non attribute side of the distance function node
-
-                        // Extract the attribute side from the distance function node
-                        let attribute_side_idx = filter.root().child(attribute_side).idx();
-                        let child_0_idx = filter.node(attribute_side_idx).child(0).idx();
-                        let child_1_idx = filter.node(attribute_side_idx).child(1).idx();
-                        match (
-                            extract_attribute_from_subtree(filter, child_0_idx),
-                            extract_attribute_from_subtree(filter, child_1_idx),
-                        ) {
-                            (Some(_), None) => Some((
-                                node.clone(),
-                                node.labels[0].clone(),
-                                Arc::new(IndexQuery::Point {
-                                    key: attr.clone(),
-                                    point: Arc::new(filter.node(child_1_idx).clone_as_tree()),
-                                    radius: Arc::new(constant_node.clone()),
-                                }),
-                            )),
-                            (None, Some(_)) => Some((
-                                node.clone(),
-                                node.labels[0].clone(),
-                                Arc::new(IndexQuery::Point {
-                                    key: attr.clone(),
-                                    point: Arc::new(filter.node(child_0_idx).clone_as_tree()),
-                                    radius: Arc::new(constant_node),
-                                }),
-                            )),
-                            _ => None,
-                        }
+                        try_distance_index_scan(node, &attr, filter, attribute_side, constant_node)
                     }
-
-                    _ => {
-                        None
-                        // Handle more complex function
-                    }
+                    _ => None,
                 }
             } else {
                 None
