@@ -385,17 +385,6 @@ pub fn init_functions() -> Result<(), Functions> {
     let mut funcs = Functions::new();
 
     funcs.add(
-        "property",
-        property,
-        false,
-        vec![
-            Type::Union(vec![Type::Node, Type::Relationship, Type::Map, Type::Null]),
-            Type::String,
-        ],
-        FnType::Internal,
-    );
-
-    funcs.add(
         "labels",
         labels,
         false,
@@ -1169,32 +1158,6 @@ pub fn get_functions() -> &'static Functions {
 ///////////////////////////////////
 ///////////// functions ///////////
 ///////////////////////////////////
-
-fn property(
-    runtime: &Runtime,
-    args: ThinVec<Value>,
-) -> Result<Value, String> {
-    let mut iter = args.into_iter();
-    match (iter.next(), iter.next()) {
-        (Some(Value::Node(id)), Some(Value::String(attr))) => runtime
-            .get_node_attribute(id, &attr)
-            .map_or(Ok(Value::Null), Ok),
-        (Some(Value::Relationship(rel)), Some(Value::String(attr))) => runtime
-            .get_relationship_attribute(rel.0, &attr)
-            .map_or(Ok(Value::Null), Ok),
-        (Some(Value::Map(map)), Some(Value::String(attr))) => {
-            Ok(map.get(&attr).cloned().unwrap_or(Value::Null))
-        }
-        (Some(Value::Point(point)), Some(Value::String(attr))) => match attr.as_str() {
-            "latitude" => Ok(Value::Float(f64::from(point.latitude))),
-            "longitude" => Ok(Value::Float(f64::from(point.longitude))),
-            "crs" => Ok(Value::String(Arc::new(String::from("wgs-84")))),
-            _ => Ok(Value::Null),
-        },
-        (Some(Value::Null), Some(Value::String(_))) => Ok(Value::Null),
-        _ => unreachable!(),
-    }
-}
 
 fn labels(
     runtime: &Runtime,

@@ -38,7 +38,6 @@ use crate::{
     graph::graph::Graph,
     indexer::IndexQuery,
     planner::IR,
-    runtime::functions::{FnType, get_functions},
     tree,
 };
 
@@ -59,9 +58,7 @@ fn utilize_index(
             && !node.labels.is_empty()
             && let IR::Filter(filter) = optimized_plan.node(idx).parent().unwrap().data()
             && matches!(filter.root().data(), ExprIR::Eq | ExprIR::Gt | ExprIR::Lt)
-            && let ExprIR::FuncInvocation(inner_func) = filter.root().child(0).data()
-            && inner_func.name == "property"
-            && let ExprIR::String(attr) = filter.root().child(0).child(1).data()
+            && let ExprIR::Property(attr) = filter.root().child(0).data()
             && graph.is_indexed(&node.labels[0], attr)
         {
             if matches!(filter.root().data(), ExprIR::Eq) {
@@ -200,11 +197,8 @@ fn get_index(
                     tree!(
                         ExprIR::Eq,
                         tree!(
-                            ExprIR::FuncInvocation(
-                                get_functions().get("property", &FnType::Internal).unwrap()
-                            ),
-                            tree!(ExprIR::Variable(node.alias.clone())),
-                            tree!(ExprIR::String(attr_str.clone()))
+                            ExprIR::Property(attr_str.clone()),
+                            tree!(ExprIR::Variable(node.alias.clone()))
                         ),
                         attr.child(0).as_cloned_subtree()
                     ),

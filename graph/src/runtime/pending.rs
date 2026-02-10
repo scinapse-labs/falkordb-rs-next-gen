@@ -507,6 +507,7 @@ impl Pending {
                 .delete_relationships(self.deleted_relationships.clone());
             self.deleted_relationships.clear();
         }
+        g.borrow_mut().commit_attrs();
         g.borrow_mut()
             .commit_index(&mut self.index_add_docs, &mut self.index_remove_docs);
     }

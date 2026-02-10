@@ -1141,3 +1141,228 @@ impl ValuesDeduper {
         }
     }
 }
+
+impl Value {
+    /// Serializes this value to a byte vector.
+    #[must_use]
+    pub fn to_bytes(&self) -> Vec<u8> {
+        let mut buf = Vec::new();
+        self.write_bytes(&mut buf);
+        buf
+    }
+
+    fn write_bytes(
+        &self,
+        buf: &mut Vec<u8>,
+    ) {
+        match self {
+            Self::Null => buf.push(0),
+            Self::Bool(b) => {
+                buf.push(1);
+                buf.push(u8::from(*b));
+            }
+            Self::Int(i) => {
+                buf.push(2);
+                buf.extend_from_slice(&i.to_be_bytes());
+            }
+            Self::Float(f) => {
+                buf.push(3);
+                buf.extend_from_slice(&f.to_be_bytes());
+            }
+            Self::String(s) => {
+                buf.push(4);
+                let bytes = s.as_bytes();
+                buf.extend_from_slice(&(bytes.len() as u32).to_be_bytes());
+                buf.extend_from_slice(bytes);
+            }
+            Self::List(list) => {
+                buf.push(5);
+                buf.extend_from_slice(&(list.len() as u32).to_be_bytes());
+                for v in list {
+                    v.write_bytes(buf);
+                }
+            }
+            Self::Map(map) => {
+                buf.push(6);
+                buf.extend_from_slice(&(map.len() as u32).to_be_bytes());
+                for (k, v) in map.iter() {
+                    let kb = k.as_bytes();
+                    buf.extend_from_slice(&(kb.len() as u32).to_be_bytes());
+                    buf.extend_from_slice(kb);
+                    v.write_bytes(buf);
+                }
+            }
+            Self::Node(id) => {
+                buf.push(7);
+                buf.extend_from_slice(&u64::from(*id).to_be_bytes());
+            }
+            Self::Relationship(r) => {
+                buf.push(8);
+                buf.extend_from_slice(&u64::from(r.0).to_be_bytes());
+                buf.extend_from_slice(&u64::from(r.1).to_be_bytes());
+                buf.extend_from_slice(&u64::from(r.2).to_be_bytes());
+            }
+            Self::Path(path) => {
+                buf.push(9);
+                buf.extend_from_slice(&(path.len() as u32).to_be_bytes());
+                for v in path {
+                    v.write_bytes(buf);
+                }
+            }
+            Self::VecF32(vec) => {
+                buf.push(10);
+                buf.extend_from_slice(&(vec.len() as u32).to_be_bytes());
+                for f in vec {
+                    buf.extend_from_slice(&f.to_be_bytes());
+                }
+            }
+            Self::Point(p) => {
+                buf.push(11);
+                buf.extend_from_slice(&p.latitude.to_be_bytes());
+                buf.extend_from_slice(&p.longitude.to_be_bytes());
+            }
+            Self::Datetime(ts) => {
+                buf.push(12);
+                buf.extend_from_slice(&ts.to_be_bytes());
+            }
+            Self::Date(ts) => {
+                buf.push(13);
+                buf.extend_from_slice(&ts.to_be_bytes());
+            }
+            Self::Time(ns) => {
+                buf.push(14);
+                buf.extend_from_slice(&ns.to_be_bytes());
+            }
+            Self::Duration(ms) => {
+                buf.push(15);
+                buf.extend_from_slice(&ms.to_be_bytes());
+            }
+            Self::Arc(inner) => {
+                buf.push(16);
+                inner.write_bytes(buf);
+            }
+        }
+    }
+
+    /// Deserializes a value from a byte slice, returning the value and bytes consumed.
+    #[must_use]
+    pub fn from_bytes(data: &[u8]) -> Option<(Self, usize)> {
+        if data.is_empty() {
+            return None;
+        }
+        let tag = data[0];
+        let rest = &data[1..];
+        match tag {
+            0 => Some((Self::Null, 1)),
+            1 => Some((Self::Bool(rest.first().copied()? != 0), 2)),
+            2 => {
+                let bytes: [u8; 8] = rest.get(..8)?.try_into().ok()?;
+                Some((Self::Int(i64::from_be_bytes(bytes)), 9))
+            }
+            3 => {
+                let bytes: [u8; 8] = rest.get(..8)?.try_into().ok()?;
+                Some((Self::Float(f64::from_be_bytes(bytes)), 9))
+            }
+            4 => {
+                let len = u32::from_be_bytes(rest.get(..4)?.try_into().ok()?) as usize;
+                let s = std::str::from_utf8(rest.get(4..4 + len)?).ok()?;
+                Some((Self::String(Arc::new(s.to_owned())), 1 + 4 + len))
+            }
+            5 => {
+                let len = u32::from_be_bytes(rest.get(..4)?.try_into().ok()?) as usize;
+                let mut list = ThinVec::with_capacity(len);
+                let mut offset = 5;
+                for _ in 0..len {
+                    let (v, consumed) = Self::from_bytes(&data[offset..])?;
+                    list.push(v);
+                    offset += consumed;
+                }
+                Some((Self::List(list), offset))
+            }
+            6 => {
+                let len = u32::from_be_bytes(rest.get(..4)?.try_into().ok()?) as usize;
+                let mut map = OrderMap::default();
+                let mut offset = 5;
+                for _ in 0..len {
+                    let klen =
+                        u32::from_be_bytes(data.get(offset..offset + 4)?.try_into().ok()?) as usize;
+                    offset += 4;
+                    let k = std::str::from_utf8(data.get(offset..offset + klen)?).ok()?;
+                    offset += klen;
+                    let (v, consumed) = Self::from_bytes(&data[offset..])?;
+                    map.insert(Arc::new(k.to_owned()), v);
+                    offset += consumed;
+                }
+                Some((Self::Map(map), offset))
+            }
+            7 => {
+                let bytes: [u8; 8] = rest.get(..8)?.try_into().ok()?;
+                Some((Self::Node(u64::from_be_bytes(bytes).into()), 9))
+            }
+            8 => {
+                let r0: [u8; 8] = rest.get(..8)?.try_into().ok()?;
+                let r1: [u8; 8] = rest.get(8..16)?.try_into().ok()?;
+                let r2: [u8; 8] = rest.get(16..24)?.try_into().ok()?;
+                Some((
+                    Self::Relationship(Box::new((
+                        u64::from_be_bytes(r0).into(),
+                        u64::from_be_bytes(r1).into(),
+                        u64::from_be_bytes(r2).into(),
+                    ))),
+                    25,
+                ))
+            }
+            9 => {
+                let len = u32::from_be_bytes(rest.get(..4)?.try_into().ok()?) as usize;
+                let mut path = ThinVec::with_capacity(len);
+                let mut offset = 5;
+                for _ in 0..len {
+                    let (v, consumed) = Self::from_bytes(&data[offset..])?;
+                    path.push(v);
+                    offset += consumed;
+                }
+                Some((Self::Path(path), offset))
+            }
+            10 => {
+                let len = u32::from_be_bytes(rest.get(..4)?.try_into().ok()?) as usize;
+                let mut vec = ThinVec::with_capacity(len);
+                let mut offset = 5;
+                for _ in 0..len {
+                    let bytes: [u8; 4] = data.get(offset..offset + 4)?.try_into().ok()?;
+                    vec.push(f32::from_be_bytes(bytes));
+                    offset += 4;
+                }
+                Some((Self::VecF32(vec), offset))
+            }
+            11 => {
+                let lat: [u8; 4] = rest.get(..4)?.try_into().ok()?;
+                let lon: [u8; 4] = rest.get(4..8)?.try_into().ok()?;
+                Some((
+                    Self::Point(Point::new(f32::from_be_bytes(lat), f32::from_be_bytes(lon))),
+                    9,
+                ))
+            }
+            12 => {
+                let bytes: [u8; 8] = rest.get(..8)?.try_into().ok()?;
+                Some((Self::Datetime(i64::from_be_bytes(bytes)), 9))
+            }
+            13 => {
+                let bytes: [u8; 8] = rest.get(..8)?.try_into().ok()?;
+                Some((Self::Date(i64::from_be_bytes(bytes)), 9))
+            }
+            14 => {
+                let bytes: [u8; 8] = rest.get(..8)?.try_into().ok()?;
+                Some((Self::Time(i64::from_be_bytes(bytes)), 9))
+            }
+            15 => {
+                let bytes: [u8; 8] = rest.get(..8)?.try_into().ok()?;
+                Some((Self::Duration(i64::from_be_bytes(bytes)), 9))
+            }
+            16 => {
+                let (v, consumed) = Self::from_bytes(rest)?;
+                Some((Self::Arc(Arc::new(v)), 1 + consumed))
+            }
+            _ => None,
+        }
+    }
+}

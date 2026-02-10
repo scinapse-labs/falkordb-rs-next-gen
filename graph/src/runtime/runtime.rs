@@ -765,6 +765,30 @@ impl<'a> Runtime {
                         res.push(Value::List(values));
                     }
                 }
+                ExprIR::Property(attr) => {
+                    let obj = self.run_expr(ir, node.child(0).idx(), env, agg_group_key)?;
+                    match obj {
+                        Value::Node(id) => {
+                            res.push(self.get_node_attribute(id, attr).unwrap_or(Value::Null));
+                        }
+                        Value::Relationship(rel) => {
+                            res.push(
+                                self.get_relationship_attribute(rel.0, attr)
+                                    .unwrap_or(Value::Null),
+                            );
+                        }
+                        Value::Map(map) => {
+                            res.push(map.get(attr).map_or(Value::Null, std::clone::Clone::clone));
+                        }
+                        Value::Null => res.push(Value::Null),
+                        v => {
+                            return Err(format!(
+                                "Type mismatch: expected Node, Relationship, Map, or Null but was {}",
+                                v.name()
+                            ));
+                        }
+                    }
+                }
                 ExprIR::FuncInvocation(func) => {
                     if agg_group_key.is_none()
                         && let FnType::Aggregation(_, finalize) = &func.fn_type
@@ -1887,16 +1911,11 @@ impl<'a> Runtime {
     ) -> Result<(), String> {
         for item in items {
             let (entity, property, labels) = match item.root().data() {
-                ExprIR::FuncInvocation(func) if func.name == "property" => {
-                    let ExprIR::String(property) = item.root().child(1).data() else {
-                        unreachable!();
-                    };
-                    (
-                        self.run_expr(item, item.root().child(0).idx(), vars, None)?,
-                        Some(property),
-                        None,
-                    )
-                }
+                ExprIR::Property(property) => (
+                    self.run_expr(item, item.root().child(0).idx(), vars, None)?,
+                    Some(property),
+                    None,
+                ),
                 ExprIR::FuncInvocation(func) if func.name == "hasLabels" => {
                     let labels = item
                         .root()
@@ -1993,15 +2012,10 @@ impl<'a> Runtime {
                                 .ok_or_else(|| format!("Variable {} not found", name.as_str()))?;
                             (entity, None)
                         }
-                        ExprIR::FuncInvocation(func) if func.name == "property" => {
-                            let ExprIR::String(property) = entity.root().child(1).data() else {
-                                unreachable!();
-                            };
-                            (
-                                self.run_expr(entity, entity.root().child(0).idx(), vars, None)?,
-                                Some(property),
-                            )
-                        }
+                        ExprIR::Property(property) => (
+                            self.run_expr(entity, entity.root().child(0).idx(), vars, None)?,
+                            Some(property),
+                        ),
                         _ => {
                             unreachable!();
                         }

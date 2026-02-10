@@ -177,6 +177,8 @@ pub enum ExprIR<TVar> {
     Modulo,
     /// DISTINCT modifier for expressions
     Distinct,
+    /// Property access (e.g., n.prop)
+    Property(Arc<String>),
     /// Function call with function definition
     FuncInvocation(Arc<GraphFn>),
     /// List quantifier (all/any/none/single)
@@ -227,6 +229,7 @@ impl<TVar: Display> Display for ExprIR<TVar> {
             Self::Pow => write!(f, "^"),
             Self::Modulo => write!(f, "%"),
             Self::Distinct => write!(f, "distinct"),
+            Self::Property(prop) => write!(f, "property({prop})"),
             Self::FuncInvocation(func) => write!(f, "{}()", func.name),
             Self::Quantifier(quantifier_type, var) => {
                 write!(f, "{quantifier_type} {var}")
@@ -903,7 +906,7 @@ impl<TVar: Eq + Hash> QueryIR<TVar> {
             }
             Self::Remove(items) => {
                 for item in items {
-                    if  matches!(item.root().data(), ExprIR::FuncInvocation(_)) && matches!(item.root().child(0).data(), ExprIR::Null) {
+                    if  matches!(item.root().data(), ExprIR::Property(_)) && matches!(item.root().child(0).data(), ExprIR::Null) {
                         return Err("Type mismatch: expected Node or Relationship but was Null".to_string());
                     }
                 }
@@ -935,8 +938,7 @@ impl<TVar: Eq + Hash> QueryIR<TVar> {
     fn validate_set_items(items: &Vec<SetItem<Arc<String>, TVar>>) -> Result<(), String> {
         for item in items {
             if let SetItem::Attribute(target, _, _) = item {
-                if let ExprIR::FuncInvocation(func) = target.root().data()
-                    && func.name == "property"
+                if let ExprIR::Property(_) = target.root().data()
                     && let ExprIR::Variable(_) = target.root().child(0).data()
                 {
                 } else if let ExprIR::Variable(_) = target.root().data() {

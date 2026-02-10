@@ -1,57 +1,101 @@
-//! Property storage for graph entities.
+//! Attribute storage for graph entities.
 //!
-//! This module provides [`AttributeStore`], a columnar store for node and
-//! relationship properties. Each property name maps to a separate [`BlockVec`]
-//! that stores values indexed by entity ID.
+//! This module provides [`AttributeStore`], a columnar key-value store backed by
+//! [`fjall`] for node and relationship attributes. Each attribute is stored
+//! separately using composite keys.
 //!
 //! ## Design
 //!
 //! ```text
-//! AttributeStore
+//! AttributeStore (fjall Keyspace with composite keys)
 //!    ├── attrs_name: ["name", "age", "email"]  (property name → index)
-//!    └── attributes: [BlockVec, BlockVec, BlockVec]  (one per property)
-//!                         │
-//!                    [None, "Alice", "Bob", None, "Carol"]
-//!                           ↑         ↑           ↑
-//!                        node 1    node 2      node 4
+//!    └── keyspace:
+//!         ├── entity_id || attr_idx(0) → Value("Alice")
+//!         ├── entity_id || attr_idx(1) → Value(25)
+//!         └── entity_id || attr_idx(2) → Value("alice@example.com")
 //! ```
 //!
-//! ## Columnar vs Row Storage
-//!
-//! Columnar storage is chosen because:
-//! - Queries often access few properties across many nodes
-//! - Sparse storage is efficient when many entities lack certain properties
-//! - MVCC versioning can be done per-column
+//! **Key format:** `entity_id (8 bytes BE) + attr_idx (2 bytes BE)`
 
 use std::sync::Arc;
 
-use atomic_refcell::AtomicRefCell;
+use fjall::{Database, Keyspace, KeyspaceCreateOptions, Readable, Snapshot};
 
-use crate::{
-    graph::block_vec::BlockVec,
-    runtime::{orderset::OrderSet, value::Value},
-};
+use crate::runtime::{orderset::OrderSet, value::Value};
 
-/// Columnar property storage for graph entities.
+/// Columnar attribute storage for graph entities backed by fjall.
 ///
-/// Stores properties in a column-oriented layout where each property name
-/// maps to a sparse vector of values indexed by entity ID.
-#[derive(Clone, Default)]
+/// Uses composite keys (entity_id + attr_idx) to store each attribute
+/// separately, enabling efficient sparse storage and direct attribute access.
+#[derive(Clone)]
 pub struct AttributeStore {
-    /// Column data: one BlockVec per property, indexed by attr position
-    attributes: Arc<AtomicRefCell<Vec<BlockVec<Value>>>>,
-    /// Property names in insertion order (name → column index)
+    database: Database,
+    snapshot: Snapshot,
+    keyspace: Keyspace,
+    /// Attribute names in insertion order (name → column index)
     pub attrs_name: OrderSet<Arc<String>>,
 }
 
+/// Create a composite key from entity ID and attribute index.
+fn make_key(
+    entity_id: u64,
+    attr_idx: u16,
+) -> [u8; 10] {
+    let mut key = [0u8; 10];
+    key[..8].copy_from_slice(&entity_id.to_be_bytes());
+    key[8..].copy_from_slice(&attr_idx.to_be_bytes());
+    key
+}
+
+/// Extract attribute index from a composite key.
+fn extract_attr_idx(key: &[u8]) -> Option<u16> {
+    if key.len() >= 10 {
+        Some(u16::from_be_bytes([key[8], key[9]]))
+    } else {
+        None
+    }
+}
+
 impl AttributeStore {
+    pub fn new(
+        database: Database,
+        keyspace: &str,
+    ) -> Self {
+        let keyspace = database
+            .keyspace(keyspace, KeyspaceCreateOptions::default)
+            .unwrap();
+        keyspace.clear().unwrap(); // Clear any existing data for a fresh start
+        Self {
+            database: database.clone(),
+            snapshot: database.snapshot(),
+            keyspace,
+            attrs_name: OrderSet::default(),
+        }
+    }
+
+    #[must_use]
+    pub fn new_version(&self) -> Self {
+        Self {
+            database: self.database.clone(),
+            snapshot: self.database.snapshot(),
+            keyspace: self.keyspace.clone(),
+            attrs_name: self.attrs_name.clone(),
+        }
+    }
+
     pub fn remove(
         &mut self,
         key: u64,
     ) {
-        for attr in self.attributes.borrow_mut().iter_mut() {
-            attr.remove(key);
+        // Remove all attributes for this entity using a batch
+        let prefix = key.to_be_bytes();
+        let mut batch = self.database.batch();
+        for entry in self.keyspace.prefix(&prefix) {
+            if let Ok(k) = entry.key() {
+                batch.remove(&self.keyspace, k);
+            }
         }
+        batch.durability(None).commit().unwrap();
     }
 
     #[must_use]
@@ -60,10 +104,13 @@ impl AttributeStore {
         key: u64,
         attr: &Arc<String>,
     ) -> Option<Value> {
-        if let Some(idx) = self.attrs_name.get_index_of(attr) {
-            return self.attributes.borrow()[idx].get(key);
+        let idx = self.attrs_name.get_index_of(attr)? as u16;
+        let composite_key = make_key(key, idx);
+
+        match self.snapshot.get(&self.keyspace, composite_key) {
+            Ok(Some(data)) => Value::from_bytes(&data).map(|(v, _)| v),
+            _ => None,
         }
-        None
     }
 
     #[must_use]
@@ -71,12 +118,11 @@ impl AttributeStore {
         &self,
         key: u64,
     ) -> bool {
-        for attr in self.attributes.borrow().iter() {
-            if attr.exists(key) {
-                return true;
-            }
-        }
-        false
+        let prefix = key.to_be_bytes();
+        self.snapshot
+            .prefix(&self.keyspace, &prefix)
+            .next()
+            .is_some()
     }
 
     #[must_use]
@@ -84,13 +130,21 @@ impl AttributeStore {
         &self,
         key: u64,
     ) -> Vec<Arc<String>> {
-        let mut ids = vec![];
-        for (i, attr) in self.attributes.borrow().iter().enumerate() {
-            if attr.exists(key) {
-                ids.push(self.attrs_name[i].clone());
+        let prefix = key.to_be_bytes();
+        let mut names = vec![];
+
+        for entry in self.snapshot.prefix(&self.keyspace, prefix) {
+            if let Ok(k) = entry.key()
+                && let Some(idx) = extract_attr_idx(&k)
+            {
+                let i = idx as usize;
+                if i < self.attrs_name.len() {
+                    names.push(self.attrs_name[i].clone());
+                }
             }
         }
-        ids
+
+        names
     }
 
     pub fn remove_attr(
@@ -98,13 +152,12 @@ impl AttributeStore {
         key: u64,
         attr: &Arc<String>,
     ) -> bool {
-        if let Some(idx) = self.attrs_name.get_index_of(attr)
-            && self.attributes.borrow_mut()[idx].remove(key).is_some()
-        {
-            true
-        } else {
-            false
+        if let Some(idx) = self.attrs_name.get_index_of(attr) {
+            let composite_key = make_key(key, idx as u16);
+            self.keyspace.remove(composite_key).unwrap();
+            return true;
         }
+        false
     }
 
     pub fn insert_attr(
@@ -113,13 +166,69 @@ impl AttributeStore {
         attr: &Arc<String>,
         value: Value,
     ) -> bool {
-        let mut attributes = self.attributes.borrow_mut();
         let idx = self.attrs_name.get_index_of(attr).unwrap_or_else(|| {
-            attributes.push(BlockVec::new(1024));
             self.attrs_name.insert(attr.clone());
-            attributes.len() - 1
-        });
-        attributes[idx].insert(key, value)
+            self.attrs_name.len() - 1
+        }) as u16;
+
+        let composite_key = make_key(key, idx);
+
+        // Check snapshot for existing value (avoids expensive live keyspace read)
+        let replaced = self
+            .snapshot
+            .contains_key(&self.keyspace, composite_key)
+            .unwrap();
+
+        self.keyspace
+            .insert(composite_key, value.to_bytes())
+            .unwrap();
+
+        replaced
+    }
+
+    /// Batch insert/update multiple attributes for an entity.
+    /// Returns the number of attributes that were replaced (vs newly added).
+    pub fn insert_attrs(
+        &mut self,
+        key: u64,
+        attrs: &crate::runtime::ordermap::OrderMap<Arc<String>, Value>,
+    ) -> usize {
+        let mut nremoved = 0;
+        let mut batch = self.database.batch();
+
+        for (attr, value) in attrs.iter() {
+            let idx = self.attrs_name.get_index_of(attr).unwrap_or_else(|| {
+                self.attrs_name.insert(attr.clone());
+                self.attrs_name.len() - 1
+            }) as u16;
+
+            let composite_key = make_key(key, idx);
+
+            if *value == Value::Null {
+                // Check snapshot for existence
+                if self
+                    .snapshot
+                    .contains_key(&self.keyspace, composite_key)
+                    .unwrap()
+                {
+                    batch.remove(&self.keyspace, composite_key);
+                    nremoved += 1;
+                }
+            } else {
+                // Check snapshot for replaced count
+                if self
+                    .snapshot
+                    .contains_key(&self.keyspace, composite_key)
+                    .unwrap()
+                {
+                    nremoved += 1;
+                }
+                batch.insert(&self.keyspace, composite_key, value.to_bytes());
+            }
+        }
+
+        batch.durability(None).commit().unwrap();
+        nremoved
     }
 
     #[must_use]
@@ -131,26 +240,12 @@ impl AttributeStore {
     }
 
     #[must_use]
-    pub fn new_version(&self) -> Self {
-        Self {
-            attributes: Arc::new(AtomicRefCell::new(
-                self.attributes
-                    .borrow()
-                    .iter()
-                    .map(BlockVec::new_version)
-                    .collect(),
-            )),
-            attrs_name: self.attrs_name.clone(),
-        }
+    pub fn memory_usage(&self) -> usize {
+        self.keyspace.disk_space() as usize
     }
 
-    #[must_use]
-    pub fn memory_usage(&self) -> usize {
-        self.attributes
-            .borrow()
-            .iter()
-            .map(BlockVec::memory_usage)
-            .sum()
+    pub fn commit(&mut self) {
+        self.snapshot = self.database.snapshot();
     }
 }
 

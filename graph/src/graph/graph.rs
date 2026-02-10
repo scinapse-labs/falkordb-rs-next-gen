@@ -41,8 +41,10 @@ use std::{
     time::{Duration, Instant},
 };
 
+use fjall::Database;
 use itertools::Itertools;
 use lru::LruCache;
+use once_cell::sync::OnceCell;
 use orx_tree::DynTree;
 use roaring::RoaringTreemap;
 
@@ -119,6 +121,12 @@ impl From<u64> for NodeId {
 impl From<NodeId> for u64 {
     fn from(value: NodeId) -> Self {
         value.0
+    }
+}
+
+impl From<u64> for RelationshipId {
+    fn from(value: u64) -> Self {
+        Self(value)
     }
 }
 
@@ -269,6 +277,8 @@ fn drop_index(
     );
 }
 
+static DATABASE: OnceCell<Database> = OnceCell::new();
+
 impl Graph {
     #[must_use]
     pub fn new(
@@ -276,7 +286,15 @@ impl Graph {
         e: u64,
         cache_size: usize,
         version: u64,
+        name: &str,
     ) -> Self {
+        let db = DATABASE.get_or_init(|| {
+            Database::builder(format!("./attrs/{}", std::process::id()))
+                .temporary(true)
+                .manual_journal_persist(true)
+                .open()
+                .unwrap()
+        });
         Self {
             node_cap: n,
             relationship_cap: e,
@@ -293,8 +311,8 @@ impl Graph {
             all_nodes_matrix: VersionedMatrix::new(n, n),
             labels_matices: Vec::new(),
             relationship_matrices: Vec::new(),
-            node_attrs: AttributeStore::default(),
-            relationship_attrs: AttributeStore::default(),
+            node_attrs: AttributeStore::new(db.clone(), &format!("{name}/nodes")),
+            relationship_attrs: AttributeStore::new(db.clone(), &format!("{name}/relationships")),
             node_indexer: Indexer::default(),
             node_labels: Vec::new(),
             relationship_types: Vec::new(),
@@ -590,17 +608,8 @@ impl Graph {
         attrs: OrderMap<Arc<String>, Value>,
         index_add_docs: &mut HashMap<Arc<String>, RoaringTreemap>,
     ) -> usize {
-        let mut nremoved = 0;
         let keys = attrs.keys().cloned().collect::<Vec<_>>();
-        for (attr, value) in attrs.into_iter() {
-            if value == Value::Null {
-                if self.node_attrs.remove_attr(id.0, &attr) {
-                    nremoved += 1;
-                }
-            } else if self.node_attrs.insert_attr(id.0, &attr, value) {
-                nremoved += 1;
-            }
-        }
+        let nremoved = self.node_attrs.insert_attrs(id.0, &attrs);
 
         if self.node_indexer.has_indices() {
             for (_, label_id) in self.node_labels_matrix.iter(id.into(), id.into()) {
@@ -844,16 +853,7 @@ impl Graph {
         id: RelationshipId,
         attrs: OrderMap<Arc<String>, Value>,
     ) -> usize {
-        let mut nremoved = 0;
-        for (attr, value) in attrs.into_iter() {
-            if value == Value::Null {
-                if self.relationship_attrs.remove_attr(id.0, &attr) {
-                    nremoved += 1;
-                }
-            } else if self.relationship_attrs.insert_attr(id.0, &attr, value) {
-                nremoved += 1;
-            }
-        }
+        let nremoved = self.relationship_attrs.insert_attrs(id.0, &attrs);
         nremoved
     }
 
@@ -1091,6 +1091,11 @@ impl Graph {
         );
     }
 
+    pub fn commit_attrs(&mut self) {
+        self.node_attrs.commit();
+        self.relationship_attrs.commit();
+    }
+
     pub fn commit_index(
         &mut self,
         index_add_docs: &mut HashMap<Arc<String>, RoaringTreemap>,
@@ -1208,9 +1213,5 @@ impl Graph {
         // size += self.relationship_attrs.memory_usage();
         // size += self.node_indexer.memory_usage();
         size
-    }
-
-    pub fn print(&self) {
-        println!("Deleted nodes: {:?}", self.deleted_nodes);
     }
 }
