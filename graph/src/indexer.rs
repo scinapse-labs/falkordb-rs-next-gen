@@ -523,6 +523,24 @@ impl Indexer {
                         )
                     }
                 }
+                IndexQuery::Point {
+                    key,
+                    point: Value::Point(point),
+                    radius: Value::Int(radius),
+                } => {
+                    unsafe {
+                        let field = &index.fields.get(&key).unwrap()[0];
+                        // Create a GeoNode with the given latitude, longitude, and radius, radius type is M
+                        RediSearch_CreateGeoNode(
+                            index.rs_idx,
+                            field.name.as_ptr(),
+                            point.latitude as f64,
+                            point.longitude as f64,
+                            radius as f64,
+                            RSGeoDistance_RS_GEO_DISTANCE_M,
+                        )
+                    }
+                }
 
                 _ => todo!(),
             };

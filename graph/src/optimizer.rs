@@ -132,6 +132,23 @@ fn try_distance_index_scan(
     attribute_side: usize,
     constant_node: DynTree<ExprIR<Variable>>,
 ) -> IndexScanResult {
+    let operand = filter.root().data();
+    // If attribute side is 0 than operand must be <
+    // else if attribute_side == 1 than operand must be >
+    // Fail in any other case
+    match operand {
+        ExprIR::Lt => {
+            if attribute_side != 0 {
+                return None;
+            }
+        }
+        ExprIR::Gt => {
+            if attribute_side != 1 {
+                return None;
+            }
+        }
+        _ => return None,
+    }
     let attribute_side_idx = filter.root().child(attribute_side).idx();
     let child_0_idx = filter.node(attribute_side_idx).child(0).idx();
     let child_1_idx = filter.node(attribute_side_idx).child(1).idx();
