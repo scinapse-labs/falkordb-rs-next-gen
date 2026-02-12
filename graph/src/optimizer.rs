@@ -38,6 +38,8 @@ use crate::{
     graph::graph::Graph,
     indexer::IndexQuery,
     planner::IR,
+    runtime::functions::{FnType, get_functions},
+    tree,
 };
 
 type IndexScanResult = Option<(
@@ -229,6 +231,25 @@ fn utilize_index(
             op.parent_mut().unwrap().take_out();
             break;
         }
+
+        let node = if let IR::NodeByLabelScan(node) = optimized_plan.node(idx).data() {
+            get_index(graph, node)
+        } else {
+            None
+        };
+        if let Some((node, attr, filter)) = node
+            && !node.labels.is_empty()
+        {
+            let mut op = optimized_plan.node_mut(idx);
+            *op.data_mut() = IR::NodeByIndexScan {
+                node: node.clone(),
+                index: node.labels[0].clone(),
+                query: Arc::new(IndexQuery::Equal(
+                    attr.clone(),
+                    Arc::new(filter.root().child(1).clone_as_tree()),
+                )),
+            };
+        }
     }
 }
 
@@ -283,4 +304,39 @@ pub fn optimize(
     utilize_node_by_id(&mut optimized_plan);
 
     optimized_plan
+}
+
+/// Checks if a node pattern has an indexed property filter.
+fn get_index(
+    graph: &Graph,
+    node: &Arc<QueryNode<Arc<String>, Variable>>,
+) -> Option<(
+    Arc<QueryNode<Arc<String>, Variable>>,
+    Arc<String>,
+    DynTree<ExprIR<Variable>>,
+)> {
+    for label in node.labels.iter() {
+        for attr in node.attrs.root().children() {
+            if let ExprIR::String(attr_str) = attr.data()
+                && graph.is_indexed(label, attr_str)
+            {
+                return Some((
+                    node.clone(),
+                    attr_str.clone(),
+                    tree!(
+                        ExprIR::Eq,
+                        tree!(
+                            ExprIR::FuncInvocation(
+                                get_functions().get("property", &FnType::Internal).unwrap()
+                            ),
+                            tree!(ExprIR::Variable(node.alias.clone())),
+                            tree!(ExprIR::String(attr_str.clone()))
+                        ),
+                        attr.child(0).as_cloned_subtree()
+                    ),
+                ));
+            }
+        }
+    }
+    None
 }
