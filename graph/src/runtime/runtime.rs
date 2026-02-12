@@ -780,6 +780,15 @@ impl<'a> Runtime {
                         Value::Map(map) => {
                             res.push(map.get(attr).map_or(Value::Null, std::clone::Clone::clone));
                         }
+                        Value::Point(p) => {
+                            if attr.as_str() == "latitude" {
+                                res.push(Value::Float(p.latitude as f64));
+                            } else if attr.as_str() == "longitude" {
+                                res.push(Value::Float(p.longitude as f64));
+                            } else {
+                                res.push(Value::Null);
+                            }
+                        }
                         Value::Null => res.push(Value::Null),
                         v => {
                             return Err(format!(
