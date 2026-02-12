@@ -28,6 +28,8 @@
 #![allow(clippy::doc_markdown)]
 #![allow(clippy::unreadable_literal)]
 
+use std::os::raw::c_char;
+
 use crate::redisearch::redis::{RedisModuleCtx, RedisModuleString};
 pub mod redis;
 
@@ -379,6 +381,15 @@ unsafe extern "C" {
         fieldName: *const ::std::os::raw::c_char,
         val: f64,
         indexAsTypes: ::std::os::raw::c_uint,
+    );
+}
+unsafe extern "C" {
+    pub fn RediSearch_DocumentAddFieldVector(
+        d: *mut RSDoc,
+        fieldName: *const ::std::os::raw::c_char,
+        vec: *const c_char,
+        dim: u32,
+        nbytes: usize,
     );
 }
 unsafe extern "C" {

@@ -31,16 +31,155 @@
 
 use std::sync::Arc;
 
-use orx_tree::{Bfs, DynTree, NodeRef};
+use orx_tree::{Bfs, Dyn, DynTree, NodeIdx, NodeRef};
 
 use crate::{
-    ast::{ExprIR, QueryNode, Variable},
+    ast::{ExprIR, QueryExpr, QueryNode, Variable},
     graph::graph::Graph,
     indexer::IndexQuery,
     planner::IR,
     runtime::functions::{FnType, get_functions},
     tree,
 };
+
+type IndexScanResult = Option<(
+    Arc<QueryNode<Arc<String>, Variable>>,
+    Arc<String>,
+    Arc<IndexQuery<QueryExpr<Variable>>>,
+)>;
+
+fn extract_attribute_from_subtree(
+    tree: &DynTree<ExprIR<Variable>>,
+    root_idx: NodeIdx<Dyn<ExprIR<Variable>>>,
+) -> Option<Arc<String>> {
+    let indices = tree.node(root_idx).indices::<Bfs>().collect::<Vec<_>>();
+    for idx in indices {
+        let node = tree.node(idx);
+        if let ExprIR::FuncInvocation(func) = node.data() {
+            if func.name == "property" {
+                if let ExprIR::String(attr) = node.child(1).data() {
+                    return Some(attr.clone());
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Extract the attribute and the expression from the filter
+///
+/// Look for single attribute (either left or right child)
+/// And a an expression that does not depends on graph entity - so we can pass it to the filter for a single query
+///
+/// Returns the attribute, the expression, and the child index of the attribute.
+fn extract_attribute_and_expression_from_filter(
+    filter: &DynTree<ExprIR<Variable>>
+) -> Option<(
+    Arc<String>,
+    NodeIdx<Dyn<ExprIR<Variable>>>,
+    NodeIdx<Dyn<ExprIR<Variable>>>,
+)> {
+    let lhs_idx = filter.root().child(0).idx();
+    let rhs_idx = filter.root().child(1).idx();
+
+    match (
+        extract_attribute_from_subtree(filter, lhs_idx),
+        extract_attribute_from_subtree(filter, rhs_idx),
+    ) {
+        (Some(_), Some(_)) => None,
+        (Some(attr), _) => Some((attr, lhs_idx, rhs_idx)),
+        (_, Some(attr)) => Some((attr, rhs_idx, lhs_idx)),
+        _ => None,
+    }
+}
+
+/// Builds an index scan for a simple property filter (e.g. `n.age = 30`).
+fn try_property_index_scan(
+    node: &Arc<QueryNode<Arc<String>, Variable>>,
+    attr: &Arc<String>,
+    op: &ExprIR<Variable>,
+    constant_node: DynTree<ExprIR<Variable>>,
+) -> IndexScanResult {
+    match op {
+        ExprIR::Eq => Some((
+            node.clone(),
+            node.labels[0].clone(),
+            Arc::new(IndexQuery::Equal(attr.clone(), Arc::new(constant_node))),
+        )),
+        ExprIR::Gt => Some((
+            node.clone(),
+            node.labels[0].clone(),
+            Arc::new(IndexQuery::Range(
+                attr.clone(),
+                Some(Arc::new(constant_node)),
+                None,
+            )),
+        )),
+        ExprIR::Lt => Some((
+            node.clone(),
+            node.labels[0].clone(),
+            Arc::new(IndexQuery::Range(
+                attr.clone(),
+                None,
+                Some(Arc::new(constant_node)),
+            )),
+        )),
+        _ => None,
+    }
+}
+
+/// Builds an index scan for a distance filter (e.g. `distance(n.loc, point(...)) < 100`).
+fn try_distance_index_scan(
+    node: &Arc<QueryNode<Arc<String>, Variable>>,
+    attr: &Arc<String>,
+    filter: &DynTree<ExprIR<Variable>>,
+    attribute_side: NodeIdx<Dyn<ExprIR<Variable>>>,
+    constant_node: DynTree<ExprIR<Variable>>,
+) -> IndexScanResult {
+    let operand = filter.root().data();
+    // If attribute side is 0 than operand must be <
+    // else if attribute_side == 1 than operand must be >
+    // Fail in any other case
+    match operand {
+        ExprIR::Lt => {
+            if filter.root().child(0).idx() != attribute_side {
+                return None;
+            }
+        }
+        ExprIR::Gt => {
+            if filter.root().child(1).idx() != attribute_side {
+                return None;
+            }
+        }
+        _ => return None,
+    }
+    let child_0_idx = filter.node(attribute_side).child(0).idx();
+    let child_1_idx = filter.node(attribute_side).child(1).idx();
+    match (
+        extract_attribute_from_subtree(filter, child_0_idx),
+        extract_attribute_from_subtree(filter, child_1_idx),
+    ) {
+        (Some(_), None) => Some((
+            node.clone(),
+            node.labels[0].clone(),
+            Arc::new(IndexQuery::Point {
+                key: attr.clone(),
+                point: Arc::new(filter.node(child_1_idx).clone_as_tree()),
+                radius: Arc::new(constant_node),
+            }),
+        )),
+        (None, Some(_)) => Some((
+            node.clone(),
+            node.labels[0].clone(),
+            Arc::new(IndexQuery::Point {
+                key: attr.clone(),
+                point: Arc::new(filter.node(child_0_idx).clone_as_tree()),
+                radius: Arc::new(constant_node),
+            }),
+        )),
+        _ => None,
+    }
+}
 
 /// Attempts to replace label scans with index scans where applicable.
 ///
@@ -55,44 +194,31 @@ fn utilize_index(
     let indices = optimized_plan.root().indices::<Bfs>().collect::<Vec<_>>();
 
     for idx in indices {
+        // Try to replace label scans with index scans where applicable.
         let node = if let IR::NodeByLabelScan(node) = optimized_plan.node(idx).data()
             && !node.labels.is_empty()
             && let IR::Filter(filter) = optimized_plan.node(idx).parent().unwrap().data()
+            // If the filter is an equality, greater than, or less than expression
             && matches!(filter.root().data(), ExprIR::Eq | ExprIR::Gt | ExprIR::Lt)
-            && let ExprIR::FuncInvocation(inner_func) = filter.root().child(0).data()
-            && inner_func.name == "property"
-            && let ExprIR::String(attr) = filter.root().child(0).child(1).data()
-            && graph.is_indexed(&node.labels[0], attr)
+            // If we managed to extract the attribute and expression from the filter
+            && let Some((attr, lhs_idx, rhs_idx)) = extract_attribute_and_expression_from_filter( filter)
+            // If the attribute is indexed
+            && graph.is_indexed(&node.labels[0], &attr)
         {
-            if matches!(filter.root().data(), ExprIR::Eq) {
-                Some((
-                    node.clone(),
-                    node.labels[0].clone(),
-                    Arc::new(IndexQuery::Equal(
-                        attr.clone(),
-                        Arc::new(filter.root().child(1).clone_as_tree()),
-                    )),
-                ))
-            } else if matches!(filter.root().data(), ExprIR::Gt) {
-                Some((
-                    node.clone(),
-                    node.labels[0].clone(),
-                    Arc::new(IndexQuery::Range(
-                        attr.clone(),
-                        Some(Arc::new(filter.root().child(1).clone_as_tree())),
-                        None,
-                    )),
-                ))
-            } else if matches!(filter.root().data(), ExprIR::Lt) {
-                Some((
-                    node.clone(),
-                    node.labels[0].clone(),
-                    Arc::new(IndexQuery::Range(
-                        attr.clone(),
-                        None,
-                        Some(Arc::new(filter.root().child(1).clone_as_tree())),
-                    )),
-                ))
+            // Check if the attribute side is a propetry function or more complexed function
+            // If it is a property function, we can handle it right away since we know everything: Attribute, expression and operation
+            // If it is a more complexed function, we need to understand which function it is and if we can apply an index scan on.
+            if let ExprIR::FuncInvocation(func) = filter.node(lhs_idx).data() {
+                let constant_node = filter.node(rhs_idx).clone_as_tree();
+                match func.name.as_str() {
+                    "property" => {
+                        try_property_index_scan(node, &attr, filter.root().data(), constant_node)
+                    }
+                    "distance" => {
+                        try_distance_index_scan(node, &attr, filter, lhs_idx, constant_node)
+                    }
+                    _ => None,
+                }
             } else {
                 None
             }

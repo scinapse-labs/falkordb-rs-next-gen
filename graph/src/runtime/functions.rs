@@ -389,7 +389,13 @@ pub fn init_functions() -> Result<(), Functions> {
         property,
         false,
         vec![
-            Type::Union(vec![Type::Node, Type::Relationship, Type::Map, Type::Null]),
+            Type::Union(vec![
+                Type::Node,
+                Type::Relationship,
+                Type::Map,
+                Type::Point,
+                Type::Null,
+            ]),
             Type::String,
         ],
         FnType::Internal,
@@ -938,6 +944,16 @@ pub fn init_functions() -> Result<(), Functions> {
         FnType::Function,
     );
     funcs.add("exists", exists, false, vec![Type::Any], FnType::Function);
+    funcs.add(
+        "distance",
+        distance,
+        false,
+        vec![
+            Type::Union(vec![Type::Point, Type::Null]),
+            Type::Union(vec![Type::Point, Type::Null]),
+        ],
+        FnType::Function,
+    );
 
     // aggregation functions
     funcs.add(
@@ -1762,7 +1778,7 @@ fn value_to_string(
         Some(Value::Float(f)) => Ok(Value::String(Arc::new(format!("{f:.6}")))),
         Some(Value::Bool(b)) => Ok(Value::String(Arc::new(b.to_string()))),
         Some(Value::Point(p)) => Ok(Value::String(Arc::new(format!(
-            "Point(latitude: {}, longitude: {})",
+            "point({{latitude: {:.6}, longitude: {:.6}}})",
             p.latitude, p.longitude
         )))),
         Some(Value::Datetime(ts)) => Ok(Value::String(Arc::new(Value::format_datetime(ts)))),
@@ -2927,6 +2943,19 @@ fn exists(
     }
 }
 
+fn distance(
+    _: &Runtime,
+    args: ThinVec<Value>,
+) -> Result<Value, String> {
+    let mut iter = args.into_iter();
+    match (iter.next(), iter.next()) {
+        (Some(Value::Point(p1)), Some(Value::Point(p2))) => Ok(Value::Float(p1.distance(&p2))),
+        (Some(Value::Null), _) | (_, Some(Value::Null)) => Ok(Value::Null),
+
+        _ => unreachable!(),
+    }
+}
+
 //
 // Internal functions
 //
@@ -3133,6 +3162,9 @@ fn db_indexes(
                                 }
                                 IndexType::Vector => {
                                     types.push(Value::String(Arc::new(String::from("VECTOR"))));
+                                }
+                                IndexType::Point => {
+                                    types.push(Value::String(Arc::new(String::from("POINT"))));
                                 }
                             }
                         }

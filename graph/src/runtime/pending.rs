@@ -152,12 +152,16 @@ impl Pending {
                     Type::Int,
                     Type::Float,
                     Type::String,
+                    Type::Point,
+                    Type::VecF32,
                     Type::Null,
                     Type::List(Box::new(Type::Union(vec![
                         Type::Bool,
                         Type::Int,
                         Type::Float,
                         Type::String,
+                        Type::Point,
+                        Type::VecF32,
                     ]))),
                 ]))
                 .is_some()
@@ -183,12 +187,16 @@ impl Pending {
                 Type::Int,
                 Type::Float,
                 Type::String,
+                Type::Point,
+                Type::VecF32,
                 Type::Null,
                 Type::List(Box::new(Type::Union(vec![
                     Type::Bool,
                     Type::Int,
                     Type::Float,
                     Type::String,
+                    Type::Point,
+                    Type::VecF32,
                 ]))),
             ]))
             .is_some()
@@ -309,6 +317,7 @@ impl Pending {
                     Type::Float,
                     Type::String,
                     Type::Null,
+                    Type::Point,
                     Type::List(Box::new(Type::Union(vec![
                         Type::Bool,
                         Type::Int,

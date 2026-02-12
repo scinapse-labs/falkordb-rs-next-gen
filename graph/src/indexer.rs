@@ -48,11 +48,13 @@ use roaring::RoaringTreemap;
 use crate::{
     redisearch::{
         GC_POLICY_FORK, REDISEARCH_ADD_REPLACE, RSDoc, RSFLDOPT_NONE, RSFLDTYPE_FULLTEXT,
-        RSFLDTYPE_GEO, RSFLDTYPE_NUMERIC, RSFLDTYPE_TAG, RSFLDTYPE_VECTOR, RSIndex, RSRANGE_INF,
-        RSRANGE_NEG_INF, RediSearch_CreateDocument2, RediSearch_CreateField,
+        RSFLDTYPE_GEO, RSFLDTYPE_NUMERIC, RSFLDTYPE_TAG, RSFLDTYPE_VECTOR,
+        RSGeoDistance_RS_GEO_DISTANCE_M, RSIndex, RSRANGE_INF, RSRANGE_NEG_INF,
+        RediSearch_CreateDocument2, RediSearch_CreateField, RediSearch_CreateGeoNode,
         RediSearch_CreateIndex, RediSearch_CreateIndexOptions, RediSearch_CreateNumericNode,
         RediSearch_CreateTagNode, RediSearch_CreateTagTokenNode, RediSearch_DeleteDocument,
-        RediSearch_DocumentAddFieldNumber, RediSearch_DocumentAddFieldString, RediSearch_DropIndex,
+        RediSearch_DocumentAddFieldGeo, RediSearch_DocumentAddFieldNumber,
+        RediSearch_DocumentAddFieldString, RediSearch_DocumentAddFieldVector, RediSearch_DropIndex,
         RediSearch_FreeIndexOptions, RediSearch_GetResultsIterator, RediSearch_IndexAddDocument,
         RediSearch_IndexOptionsSetGCPolicy, RediSearch_IndexOptionsSetStopwords,
         RediSearch_QueryNodeAddChild, RediSearch_ResultsIteratorFree,
@@ -71,6 +73,8 @@ pub enum IndexType {
     Fulltext,
     /// Vector similarity index
     Vector,
+    /// Point index for geographic coordinates
+    Point,
 }
 
 /// Entity type that can be indexed.
@@ -159,8 +163,24 @@ impl Document {
                     );
                 }
                 Value::List(_) => todo!(),
-                Value::VecF32(_) => todo!(),
-                Value::Point(_) => todo!(),
+                Value::VecF32(vec) => {
+                    RediSearch_DocumentAddFieldVector(
+                        self.rs_doc,
+                        field.name.as_ptr().cast::<c_char>(),
+                        vec.as_ptr().cast::<c_char>(),
+                        vec.len() as u32,
+                        vec.len() * std::mem::size_of::<f32>() as usize,
+                    );
+                }
+                Value::Point(p) => {
+                    RediSearch_DocumentAddFieldGeo(
+                        self.rs_doc,
+                        field.name.as_ptr().cast::<c_char>(),
+                        p.latitude as f64,
+                        p.longitude as f64,
+                        RSFLDTYPE_GEO,
+                    );
+                }
                 Value::Null
                 | Value::Map(_)
                 | Value::Node(_)
@@ -178,6 +198,11 @@ pub enum IndexQuery<T> {
     Range(Arc<String>, Option<T>, Option<T>),
     And(Vec<Self>),
     Or(Vec<Self>),
+    Point {
+        key: Arc<String>,
+        point: T,
+        radius: T,
+    },
 }
 
 pub struct Field {
@@ -271,6 +296,7 @@ impl Indexer {
                     IndexType::Range => Arc::new(format!("range:{attr}")),
                     IndexType::Fulltext => attr.clone(),
                     IndexType::Vector => Arc::new(format!("vector:{attr}")),
+                    IndexType::Point => Arc::new(format!("point:{attr}")),
                 };
                 let field = Arc::new(Field {
                     name: CString::new(field_name.as_str()).unwrap(),
@@ -282,6 +308,7 @@ impl Indexer {
                     IndexType::Range => Arc::new(format!("range:{attr}")),
                     IndexType::Fulltext => attr.clone(),
                     IndexType::Vector => Arc::new(format!("vector:{attr}")),
+                    IndexType::Point => Arc::new(format!("point:{attr}")),
                 };
                 let field = Arc::new(Field {
                     name: CString::new(field_name.as_str()).unwrap(),
@@ -335,6 +362,14 @@ impl Indexer {
                         );
                         // RediSearch_VectorFieldSetDim(index, field_id, field->hnsw_options.dimension);
                         // RediSearch_VectorFieldSetHNSWParams(index, field_id, IndexField_OptionsGetM(field), IndexField_OptionsGetEfConstruction(field), IndexField_OptionsGetEfRuntime(field), IndexField_OptionsGetSimFunc(field));
+                    }
+                    IndexType::Point => {
+                        let _field_id = RediSearch_CreateField(
+                            index,
+                            field.name.as_ptr(),
+                            RSFLDTYPE_GEO,
+                            RSFLDOPT_NONE,
+                        );
                     }
                 }
             }
@@ -470,6 +505,43 @@ impl Indexer {
                         )
                     }
                 }
+                IndexQuery::Point {
+                    key,
+                    point: Value::Point(point),
+                    radius: Value::Float(radius),
+                } => {
+                    unsafe {
+                        let field = &index.fields.get(&key).unwrap()[0];
+                        // Create a GeoNode with the given latitude, longitude, and radius, radius type is M
+                        RediSearch_CreateGeoNode(
+                            index.rs_idx,
+                            field.name.as_ptr(),
+                            point.latitude as f64,
+                            point.longitude as f64,
+                            radius,
+                            RSGeoDistance_RS_GEO_DISTANCE_M,
+                        )
+                    }
+                }
+                IndexQuery::Point {
+                    key,
+                    point: Value::Point(point),
+                    radius: Value::Int(radius),
+                } => {
+                    unsafe {
+                        let field = &index.fields.get(&key).unwrap()[0];
+                        // Create a GeoNode with the given latitude, longitude, and radius, radius type is M
+                        RediSearch_CreateGeoNode(
+                            index.rs_idx,
+                            field.name.as_ptr(),
+                            point.latitude as f64,
+                            point.longitude as f64,
+                            radius as f64,
+                            RSGeoDistance_RS_GEO_DISTANCE_M,
+                        )
+                    }
+                }
+
                 _ => todo!(),
             };
 
