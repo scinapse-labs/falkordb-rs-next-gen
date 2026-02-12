@@ -38,8 +38,6 @@ use crate::{
     graph::graph::Graph,
     indexer::IndexQuery,
     planner::IR,
-    runtime::functions::{FnType, get_functions},
-    tree,
 };
 
 type IndexScanResult = Option<(
@@ -74,7 +72,11 @@ fn extract_attribute_from_subtree(
 /// Returns the attribute, the expression, and the child index of the attribute.
 fn extract_attribute_and_expression_from_filter(
     filter: &DynTree<ExprIR<Variable>>
-) -> Option<(Arc<String>, usize)> {
+) -> Option<(
+    Arc<String>,
+    NodeIdx<Dyn<ExprIR<Variable>>>,
+    NodeIdx<Dyn<ExprIR<Variable>>>,
+)> {
     let lhs_idx = filter.root().child(0).idx();
     let rhs_idx = filter.root().child(1).idx();
 
@@ -83,8 +85,8 @@ fn extract_attribute_and_expression_from_filter(
         extract_attribute_from_subtree(filter, rhs_idx),
     ) {
         (Some(_), Some(_)) => None,
-        (Some(attr), _) => Some((attr, 0)),
-        (_, Some(attr)) => Some((attr, 1)),
+        (Some(attr), _) => Some((attr, lhs_idx, rhs_idx)),
+        (_, Some(attr)) => Some((attr, rhs_idx, lhs_idx)),
         _ => None,
     }
 }
@@ -129,7 +131,7 @@ fn try_distance_index_scan(
     node: &Arc<QueryNode<Arc<String>, Variable>>,
     attr: &Arc<String>,
     filter: &DynTree<ExprIR<Variable>>,
-    attribute_side: usize,
+    attribute_side: NodeIdx<Dyn<ExprIR<Variable>>>,
     constant_node: DynTree<ExprIR<Variable>>,
 ) -> IndexScanResult {
     let operand = filter.root().data();
@@ -138,20 +140,19 @@ fn try_distance_index_scan(
     // Fail in any other case
     match operand {
         ExprIR::Lt => {
-            if attribute_side != 0 {
+            if filter.root().child(0).idx() != attribute_side {
                 return None;
             }
         }
         ExprIR::Gt => {
-            if attribute_side != 1 {
+            if filter.root().child(1).idx() != attribute_side {
                 return None;
             }
         }
         _ => return None,
     }
-    let attribute_side_idx = filter.root().child(attribute_side).idx();
-    let child_0_idx = filter.node(attribute_side_idx).child(0).idx();
-    let child_1_idx = filter.node(attribute_side_idx).child(1).idx();
+    let child_0_idx = filter.node(attribute_side).child(0).idx();
+    let child_1_idx = filter.node(attribute_side).child(1).idx();
     match (
         extract_attribute_from_subtree(filter, child_0_idx),
         extract_attribute_from_subtree(filter, child_1_idx),
@@ -198,21 +199,21 @@ fn utilize_index(
             // If the filter is an equality, greater than, or less than expression
             && matches!(filter.root().data(), ExprIR::Eq | ExprIR::Gt | ExprIR::Lt)
             // If we managed to extract the attribute and expression from the filter
-            && let Some((attr, attribute_side)) = extract_attribute_and_expression_from_filter(&filter)
+            && let Some((attr, lhs_idx, rhs_idx)) = extract_attribute_and_expression_from_filter( filter)
             // If the attribute is indexed
             && graph.is_indexed(&node.labels[0], &attr)
         {
             // Check if the attribute side is a propetry function or more complexed function
             // If it is a property function, we can handle it right away since we know everything: Attribute, expression and operation
             // If it is a more complexed function, we need to understand which function it is and if we can apply an index scan on.
-            if let ExprIR::FuncInvocation(func) = filter.root().child(attribute_side).data() {
-                let constant_node = filter.root().child(1 - attribute_side).clone_as_tree();
+            if let ExprIR::FuncInvocation(func) = filter.node(lhs_idx).data() {
+                let constant_node = filter.node(rhs_idx).clone_as_tree();
                 match func.name.as_str() {
                     "property" => {
                         try_property_index_scan(node, &attr, filter.root().data(), constant_node)
                     }
                     "distance" => {
-                        try_distance_index_scan(node, &attr, filter, attribute_side, constant_node)
+                        try_distance_index_scan(node, &attr, filter, lhs_idx, constant_node)
                     }
                     _ => None,
                 }
@@ -227,25 +228,6 @@ fn utilize_index(
             *op.data_mut() = IR::NodeByIndexScan { node, index, query };
             op.parent_mut().unwrap().take_out();
             break;
-        }
-
-        let node = if let IR::NodeByLabelScan(node) = optimized_plan.node(idx).data() {
-            get_index(graph, node)
-        } else {
-            None
-        };
-        if let Some((node, attr, filter)) = node
-            && !node.labels.is_empty()
-        {
-            let mut op = optimized_plan.node_mut(idx);
-            *op.data_mut() = IR::NodeByIndexScan {
-                node: node.clone(),
-                index: node.labels[0].clone(),
-                query: Arc::new(IndexQuery::Equal(
-                    attr.clone(),
-                    Arc::new(filter.root().child(1).clone_as_tree()),
-                )),
-            };
         }
     }
 }
@@ -301,39 +283,4 @@ pub fn optimize(
     utilize_node_by_id(&mut optimized_plan);
 
     optimized_plan
-}
-
-/// Checks if a node pattern has an indexed property filter.
-fn get_index(
-    graph: &Graph,
-    node: &Arc<QueryNode<Arc<String>, Variable>>,
-) -> Option<(
-    Arc<QueryNode<Arc<String>, Variable>>,
-    Arc<String>,
-    DynTree<ExprIR<Variable>>,
-)> {
-    for label in node.labels.iter() {
-        for attr in node.attrs.root().children() {
-            if let ExprIR::String(attr_str) = attr.data()
-                && graph.is_indexed(label, attr_str)
-            {
-                return Some((
-                    node.clone(),
-                    attr_str.clone(),
-                    tree!(
-                        ExprIR::Eq,
-                        tree!(
-                            ExprIR::FuncInvocation(
-                                get_functions().get("property", &FnType::Internal).unwrap()
-                            ),
-                            tree!(ExprIR::Variable(node.alias.clone())),
-                            tree!(ExprIR::String(attr_str.clone()))
-                        ),
-                        attr.child(0).as_cloned_subtree()
-                    ),
-                ));
-            }
-        }
-    }
-    None
 }
