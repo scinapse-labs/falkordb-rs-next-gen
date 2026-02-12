@@ -2392,6 +2392,15 @@ impl<'a> Runtime {
                 };
                 Ok(IndexQuery::Range(key.clone(), min, max))
             }
+            IndexQuery::Point { key, point, radius } => {
+                let point = self.run_expr(point, point.root().idx(), vars, None)?;
+                let radius = self.run_expr(radius, radius.root().idx(), vars, None)?;
+                Ok(IndexQuery::Point {
+                    key: key.clone(),
+                    point,
+                    radius,
+                })
+            }
             _ => todo!(),
         }
     }
