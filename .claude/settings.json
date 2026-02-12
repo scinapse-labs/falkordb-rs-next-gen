@@ -6,14 +6,14 @@
           "tool": "Edit",
           "filePattern": "**/*.rs"
         },
-        "command": "cargo fmt --check -- $FILE 2>&1 || echo 'Format issues detected. Run: cargo fmt'"
+        "command": "rustfmt --check \"$FILE\" 2>&1 || echo 'Format issues detected. Run: cargo fmt'"
       },
       {
         "matcher": {
           "tool": "Write",
           "filePattern": "**/*.rs"
         },
-        "command": "cargo fmt --check -- $FILE 2>&1 || echo 'Format issues detected. Run: cargo fmt'"
+        "command": "rustfmt --check \"$FILE\" 2>&1 || echo 'Format issues detected. Run: cargo fmt'"
       }
     ]
   }

@@ -10,6 +10,9 @@ Run the appropriate tests based on what changed or what the user specifies.
 - `/test functions` - Run Python function tests
 - `/test mvcc` - Run MVCC tests
 - `/test concurrency` - Run concurrency tests
+- `/test tck` - Run all passing TCK tests
+- `/test tck <path>` - Run specific TCK feature tests
+- `/test flow` - Run all flow tests
 
 ## Instructions
 
@@ -39,6 +42,36 @@ When the user invokes `/test`, determine which tests to run:
    ```bash
    source venv/bin/activate && pytest tests/test_concurrency.py -vv
    ```
+
+6. **TCK tests**: Run Technology Compatibility Kit tests for Cypher language compliance
+   - **All passing TCK tests** (no path argument):
+     ```bash
+     source venv/bin/activate && TCK_DONE=tck_done.txt pytest tests/tck/test_tck.py -s
+     ```
+   - **Specific feature tests** (with path argument):
+     ```bash
+     source venv/bin/activate && TCK_INCLUDE=<path> pytest tests/tck/test_tck.py -s
+     ```
+   Common TCK paths:
+   - `tests/tck/features/expressions/list` - List expression tests
+   - `tests/tck/features/expressions/map` - Map expression tests
+   - `tests/tck/features/clauses/match` - MATCH clause tests
+   - `tests/tck/features/clauses/return` - RETURN clause tests
+
+   Notes:
+   - TCK tests verify Cypher language compliance against the openCypher spec
+   - `tck_done.txt` contains the list of passing test scenarios
+
+7. **Flow tests**: Run the flow test suite which tests query flows against the running database
+   ```bash
+   ./flow.sh
+   ```
+   **Important**: The project must be compiled in debug mode (`cargo build`) before running flow tests.
+
+   Notes:
+   - Flow tests are located in `tests/flow/` directory
+   - These tests verify complete query execution flows
+   - Progress is tracked in `flow_tests_done.txt` and `flow_tests_todo.txt`
 
 If no argument is provided, run the Rust unit tests (`cargo test -p graph`).
 

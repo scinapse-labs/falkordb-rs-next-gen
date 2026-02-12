@@ -15,7 +15,7 @@ When the user invokes `/build`:
 1. **Full build** (default, no argument):
    Run these commands in sequence:
    ```bash
-   cargo fmt --all --check
+   cargo fmt --all -- --check
    ```
    ```bash
    cargo build
@@ -31,7 +31,7 @@ When the user invokes `/build`:
 
 3. **Lint only** (`lint` argument):
    ```bash
-   cargo fmt --all --check && CXX=clang++ cargo clippy --all-targets
+   cargo fmt --all -- --check && CXX=clang++ cargo clippy --all-targets
    ```
 
 ## Notes

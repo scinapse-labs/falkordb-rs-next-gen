@@ -16,7 +16,7 @@ cargo build
 cargo build --release
 
 # Format check
-cargo fmt --all --check
+cargo fmt --all -- --check
 
 # Lint (requires clang++)
 CXX=clang++ cargo clippy --all-targets
@@ -77,7 +77,7 @@ pip install -r tests/requirements.txt
 
 ### Query Processing Pipeline
 
-```
+```text
 Cypher Query String
        │
        ▼
