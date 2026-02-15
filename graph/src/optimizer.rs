@@ -196,26 +196,28 @@ fn utilize_index(
             // If the filter is an equality, greater than, or less than expression
             && matches!(filter.root().data(), ExprIR::Eq | ExprIR::Gt | ExprIR::Lt)
             // If we managed to extract the attribute and expression from the filter
-            && let Some((attr, lhs_idx, rhs_idx)) = extract_attribute_and_expression_from_filter(filter)
+            && let Some((attr, attr_side, constant_side)) = extract_attribute_and_expression_from_filter(filter)
             // If the attribute is indexed
             && graph.is_indexed(&node.labels[0], &attr)
         {
             // Check if the attribute side is a propetry function or more complexed function
             // If it is a property function, we can handle it right away since we know everything: Attribute, expression and operation
             // If it is a more complexed function, we need to understand which function it is and if we can apply an index scan on.
-            if let ExprIR::FuncInvocation(func) = filter.node(lhs_idx).data() {
-                let constant_node = filter.node(rhs_idx).clone_as_tree();
-                match func.name.as_str() {
-                    "distance" => {
-                        try_distance_index_scan(node, &attr, filter, lhs_idx, constant_node)
+            match filter.node(attr_side).data() {
+                ExprIR::FuncInvocation(func) => {
+                    let constant_node = filter.node(constant_side).clone_as_tree();
+                    match func.name.as_str() {
+                        "distance" => {
+                            try_distance_index_scan(node, &attr, filter, attr_side, constant_node)
+                        }
+                        _ => None,
                     }
-                    _ => None,
                 }
-            } else if let ExprIR::Property(attr) = filter.node(lhs_idx).data() {
-                let constant_node = filter.node(rhs_idx).clone_as_tree();
-                try_property_index_scan(node, attr, filter.root().data(), constant_node)
-            } else {
-                None
+                ExprIR::Property(attr) => {
+                    let constant_node = filter.node(constant_side).clone_as_tree();
+                    try_property_index_scan(node, attr, filter.root().data(), constant_node)
+                }
+                _ => None,
             }
         } else {
             None
