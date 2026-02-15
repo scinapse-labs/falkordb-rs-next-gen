@@ -1644,7 +1644,7 @@ impl<'a> Runtime {
                     .collect::<Result<Vec<_>, String>>()?
                     .into_iter()
                     .map(Ok);
-                self.pending.borrow_mut().commit(&self.g, &self.stats);
+                self.pending.borrow_mut().commit(&self.g, &self.stats)?;
                 Ok(iter.cond_inspect(self.inspect, move |res| {
                     self.record.borrow_mut().push((idx, res.clone()));
                 }))

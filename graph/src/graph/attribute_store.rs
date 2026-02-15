@@ -86,16 +86,17 @@ impl AttributeStore {
     pub fn remove(
         &mut self,
         key: u64,
-    ) {
+    ) -> Result<(), String> {
         // Remove all attributes for this entity using a batch
         let prefix = key.to_be_bytes();
         let mut batch = self.database.batch();
-        for entry in self.keyspace.prefix(&prefix) {
+        for entry in self.keyspace.prefix(prefix) {
             if let Ok(k) = entry.key() {
                 batch.remove(&self.keyspace, k);
             }
         }
-        batch.durability(None).commit().unwrap();
+        batch.durability(None).commit().map_err(|e| e.to_string())?;
+        Ok(())
     }
 
     #[must_use]
@@ -151,13 +152,15 @@ impl AttributeStore {
         &mut self,
         key: u64,
         attr: &Arc<String>,
-    ) -> bool {
+    ) -> Result<bool, String> {
         if let Some(idx) = self.attrs_name.get_index_of(attr) {
             let composite_key = make_key(key, idx as u16);
-            self.keyspace.remove(composite_key).unwrap();
-            return true;
+            self.keyspace
+                .remove(composite_key)
+                .map_err(|e| e.to_string())?;
+            return Ok(true);
         }
-        false
+        Ok(false)
     }
 
     pub fn insert_attr(
@@ -165,7 +168,7 @@ impl AttributeStore {
         key: u64,
         attr: &Arc<String>,
         value: Value,
-    ) -> bool {
+    ) -> Result<bool, String> {
         let idx = self.attrs_name.get_index_of(attr).unwrap_or_else(|| {
             self.attrs_name.insert(attr.clone());
             self.attrs_name.len() - 1
@@ -177,13 +180,13 @@ impl AttributeStore {
         let replaced = self
             .snapshot
             .contains_key(&self.keyspace, composite_key)
-            .unwrap();
+            .map_err(|e| e.to_string())?;
 
         self.keyspace
             .insert(composite_key, value.to_bytes())
-            .unwrap();
+            .map_err(|e| e.to_string())?;
 
-        replaced
+        Ok(replaced)
     }
 
     /// Batch insert/update multiple attributes for an entity.
@@ -192,7 +195,7 @@ impl AttributeStore {
         &mut self,
         key: u64,
         attrs: &crate::runtime::ordermap::OrderMap<Arc<String>, Value>,
-    ) -> usize {
+    ) -> Result<usize, String> {
         let mut nremoved = 0;
         let mut batch = self.database.batch();
 
@@ -209,7 +212,7 @@ impl AttributeStore {
                 if self
                     .snapshot
                     .contains_key(&self.keyspace, composite_key)
-                    .unwrap()
+                    .map_err(|e| e.to_string())?
                 {
                     batch.remove(&self.keyspace, composite_key);
                     nremoved += 1;
@@ -219,7 +222,7 @@ impl AttributeStore {
                 if self
                     .snapshot
                     .contains_key(&self.keyspace, composite_key)
-                    .unwrap()
+                    .map_err(|e| e.to_string())?
                 {
                     nremoved += 1;
                 }
@@ -227,8 +230,8 @@ impl AttributeStore {
             }
         }
 
-        batch.durability(None).commit().unwrap();
-        nremoved
+        batch.durability(None).commit().map_err(|e| e.to_string())?;
+        Ok(nremoved)
     }
 
     #[must_use]

@@ -607,9 +607,9 @@ impl Graph {
         id: NodeId,
         attrs: OrderMap<Arc<String>, Value>,
         index_add_docs: &mut HashMap<Arc<String>, RoaringTreemap>,
-    ) -> usize {
+    ) -> Result<usize, String> {
         let keys = attrs.keys().cloned().collect::<Vec<_>>();
-        let nremoved = self.node_attrs.insert_attrs(id.0, &attrs);
+        let nremoved = self.node_attrs.insert_attrs(id.0, &attrs)?;
 
         if self.node_indexer.has_indices() {
             for (_, label_id) in self.node_labels_matrix.iter(id.into(), id.into()) {
@@ -627,7 +627,7 @@ impl Graph {
                 }
             }
         }
-        nremoved
+        Ok(nremoved)
     }
 
     pub fn set_nodes_labels(
@@ -670,7 +670,7 @@ impl Graph {
         &mut self,
         id: NodeId,
         remove_docs: &mut HashMap<Arc<String>, RoaringTreemap>,
-    ) {
+    ) -> Result<(), String> {
         self.deleted_nodes.insert(id.0);
         self.node_count -= 1;
         self.all_nodes_matrix.remove(id.0, id.0);
@@ -696,7 +696,7 @@ impl Graph {
             }
         }
 
-        self.node_attrs.remove(id.0);
+        self.node_attrs.remove(id.0)
     }
 
     pub fn get_node_relationships(
@@ -852,9 +852,9 @@ impl Graph {
         &mut self,
         id: RelationshipId,
         attrs: OrderMap<Arc<String>, Value>,
-    ) -> usize {
-        let nremoved = self.relationship_attrs.insert_attrs(id.0, &attrs);
-        nremoved
+    ) -> Result<usize, String> {
+        let nremoved = self.relationship_attrs.insert_attrs(id.0, &attrs)?;
+        Ok(nremoved)
     }
 
     #[must_use]
@@ -876,7 +876,7 @@ impl Graph {
     pub fn delete_relationships(
         &mut self,
         rels: OrderSet<(RelationshipId, NodeId, NodeId)>,
-    ) {
+    ) -> Result<(), String> {
         self.deleted_relationships
             .extend(rels.iter().map(|(id, _, _)| id.0));
         self.relationship_count -= rels.len() as u64;
@@ -896,10 +896,11 @@ impl Graph {
             let label = self.relationship_types.get(type_id.0).cloned().unwrap();
             for (id, _, _) in &rels {
                 self.relationship_type_matrix.remove(*id, type_id.0 as u64);
-                self.relationship_attrs.remove(*id);
+                self.relationship_attrs.remove(*id)?;
             }
             self.get_relationship_matrix_mut(&label).remove_all(rels);
         }
+        Ok(())
     }
 
     #[must_use]
