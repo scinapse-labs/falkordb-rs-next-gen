@@ -445,7 +445,7 @@ impl Pending {
         &mut self,
         g: &AtomicRefCell<Graph>,
         stats: &RefCell<QueryStatistics>,
-    ) {
+    ) -> Result<(), String> {
         if !self.created_nodes.is_empty() {
             stats.borrow_mut().nodes_created += self.created_nodes.len();
             g.borrow_mut().create_nodes(&self.created_nodes);
@@ -483,7 +483,7 @@ impl Pending {
             for (id, attrs) in self.set_nodes_attrs.drain() {
                 stats.borrow_mut().properties_removed +=
                     g.borrow_mut()
-                        .set_node_attributes(id, attrs, &mut self.index_add_docs);
+                        .set_node_attributes(id, attrs, &mut self.index_add_docs)?;
             }
         }
         if !self.set_relationships_attrs.is_empty() {
@@ -498,7 +498,7 @@ impl Pending {
                 .sum::<usize>();
             for (id, attrs) in self.set_relationships_attrs.drain() {
                 stats.borrow_mut().properties_removed +=
-                    g.borrow_mut().set_relationship_attributes(id, attrs);
+                    g.borrow_mut().set_relationship_attributes(id, attrs)?;
             }
             self.set_relationships_attrs.clear();
         }
@@ -506,17 +506,19 @@ impl Pending {
             stats.borrow_mut().nodes_deleted += self.deleted_nodes.len();
             for id in &self.deleted_nodes {
                 g.borrow_mut()
-                    .delete_node(NodeId::from(id), &mut self.index_remove_docs);
+                    .delete_node(NodeId::from(id), &mut self.index_remove_docs)?;
             }
             self.deleted_nodes.clear();
         }
         if !self.deleted_relationships.is_empty() {
             stats.borrow_mut().relationships_deleted += self.deleted_relationships.len();
             g.borrow_mut()
-                .delete_relationships(self.deleted_relationships.clone());
+                .delete_relationships(self.deleted_relationships.clone())?;
             self.deleted_relationships.clear();
         }
+        g.borrow_mut().commit_attrs();
         g.borrow_mut()
             .commit_index(&mut self.index_add_docs, &mut self.index_remove_docs);
+        Ok(())
     }
 }

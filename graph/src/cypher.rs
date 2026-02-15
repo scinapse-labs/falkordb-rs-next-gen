@@ -1822,11 +1822,7 @@ impl<'a> Parser<'a> {
         expr: DynTree<ExprIR<Arc<String>>>,
     ) -> Result<DynTree<ExprIR<Arc<String>>>, String> {
         let ident = self.parse_ident()?;
-        Ok(tree!(
-            ExprIR::FuncInvocation(get_functions().get("property", &FnType::Internal)?),
-            expr,
-            tree!(ExprIR::String(ident))
-        ))
+        Ok(tree!(ExprIR::Property(ident), expr))
     }
 
     #[allow(clippy::too_many_lines)]

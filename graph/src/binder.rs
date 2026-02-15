@@ -698,6 +698,7 @@ impl Binder {
                     ExprIR::Pow => ExprIR::Pow,
                     ExprIR::Modulo => ExprIR::Modulo,
                     ExprIR::Distinct => ExprIR::Distinct,
+                    ExprIR::Property(prop) => ExprIR::Property(prop),
                     ExprIR::FuncInvocation(func) => ExprIR::FuncInvocation(func),
                     ExprIR::Paren => ExprIR::Paren,
                     ExprIR::Variable(_)

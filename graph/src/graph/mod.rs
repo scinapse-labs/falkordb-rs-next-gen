@@ -8,7 +8,7 @@
 //! - [`graph::Graph`]: The main graph structure holding nodes, edges, and properties
 //! - [`matrix::Matrix`]: Sparse matrix for adjacency representation
 //! - [`vector::Vector`]: Sparse vector for label membership
-//! - [`attribute_store::AttributeStore`]: Property storage for nodes/edges
+//! - [`attribute_store::AttributeStore`]: Attribute storage for nodes/edges
 //! - [`mvcc_graph::MvccGraph`]: MVCC wrapper for concurrent access
 //!
 //! ## Storage Model
@@ -27,7 +27,6 @@
 
 pub mod GraphBLAS;
 pub mod attribute_store;
-pub mod block_vec;
 pub mod cow;
 pub mod graph;
 pub mod matrix;

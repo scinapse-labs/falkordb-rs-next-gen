@@ -179,10 +179,13 @@ impl ThreadedGraph {
     /// - 16384 initial node capacity
     /// - 16384 initial edge capacity
     /// - 1024 relationship type capacity
-    pub fn new(cache_size: usize) -> Self {
+    pub fn new(
+        cache_size: usize,
+        name: &str,
+    ) -> Self {
         let (sender, receiver) = channel();
         Self {
-            graph: MvccGraph::new(16384, 16384, cache_size),
+            graph: MvccGraph::new(16384, 16384, cache_size, name),
             sender,
             receiver,
             write_loop: AtomicBool::new(false),
@@ -1049,7 +1052,7 @@ fn graph_query(
     args: Vec<RedisString>,
 ) -> RedisResult {
     let mut args = args.into_iter().skip(1);
-    let key = args.next_arg()?;
+    let key_str = args.next_arg()?;
     let query = args.next_str()?;
 
     #[cfg(feature = "fuzz")]
@@ -1073,13 +1076,14 @@ fn graph_query(
         }
     }
 
-    let key = ctx.open_key_writable(&key);
+    let key = ctx.open_key_writable(&key_str);
 
     if let Some(graph) = key.get_value::<Arc<RwLock<ThreadedGraph>>>(&GRAPH_TYPE)? {
         query_mut(ctx, graph, query, compact, true, track_memory);
     } else {
         let graph = Arc::new(RwLock::new(ThreadedGraph::new(
             *CONFIGURATION_CACHE_SIZE.lock(ctx) as usize,
+            &key_str.to_string(),
         )));
         query_mut(ctx, &graph, query, compact, true, track_memory);
         key.set_value(&GRAPH_TYPE, graph)?;
@@ -1192,16 +1196,17 @@ fn graph_record(
     args: Vec<RedisString>,
 ) -> RedisResult {
     let mut args = args.into_iter().skip(1);
-    let key = args.next_arg()?;
+    let key_str = args.next_arg()?;
     let query = args.next_str()?;
 
-    let key = ctx.open_key_writable(&key);
+    let key = ctx.open_key_writable(&key_str);
 
     if let Some(graph) = key.get_value::<Arc<RwLock<ThreadedGraph>>>(&GRAPH_TYPE)? {
         record_mut(ctx, graph, query)?;
     } else {
         let graph = Arc::new(RwLock::new(ThreadedGraph::new(
             *CONFIGURATION_CACHE_SIZE.lock(ctx) as usize,
+            &key_str.to_string(),
         )));
         record_mut(ctx, &graph, query)?;
         key.set_value(&GRAPH_TYPE, graph)?;

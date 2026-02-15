@@ -41,8 +41,10 @@ use std::{
     time::{Duration, Instant},
 };
 
+use fjall::Database;
 use itertools::Itertools;
 use lru::LruCache;
+use once_cell::sync::OnceCell;
 use orx_tree::DynTree;
 use roaring::RoaringTreemap;
 
@@ -119,6 +121,12 @@ impl From<u64> for NodeId {
 impl From<NodeId> for u64 {
     fn from(value: NodeId) -> Self {
         value.0
+    }
+}
+
+impl From<u64> for RelationshipId {
+    fn from(value: u64) -> Self {
+        Self(value)
     }
 }
 
@@ -269,6 +277,8 @@ fn drop_index(
     );
 }
 
+static DATABASE: OnceCell<Database> = OnceCell::new();
+
 impl Graph {
     #[must_use]
     pub fn new(
@@ -276,7 +286,15 @@ impl Graph {
         e: u64,
         cache_size: usize,
         version: u64,
+        name: &str,
     ) -> Self {
+        let db = DATABASE.get_or_init(|| {
+            Database::builder(format!("./attrs/{}", std::process::id()))
+                .temporary(true)
+                .manual_journal_persist(true)
+                .open()
+                .unwrap()
+        });
         Self {
             node_cap: n,
             relationship_cap: e,
@@ -293,8 +311,8 @@ impl Graph {
             all_nodes_matrix: VersionedMatrix::new(n, n),
             labels_matices: Vec::new(),
             relationship_matrices: Vec::new(),
-            node_attrs: AttributeStore::default(),
-            relationship_attrs: AttributeStore::default(),
+            node_attrs: AttributeStore::new(db.clone(), &format!("{name}/nodes")),
+            relationship_attrs: AttributeStore::new(db.clone(), &format!("{name}/relationships")),
             node_indexer: Indexer::default(),
             node_labels: Vec::new(),
             relationship_types: Vec::new(),
@@ -589,18 +607,9 @@ impl Graph {
         id: NodeId,
         attrs: OrderMap<Arc<String>, Value>,
         index_add_docs: &mut HashMap<Arc<String>, RoaringTreemap>,
-    ) -> usize {
-        let mut nremoved = 0;
+    ) -> Result<usize, String> {
         let keys = attrs.keys().cloned().collect::<Vec<_>>();
-        for (attr, value) in attrs.into_iter() {
-            if value == Value::Null {
-                if self.node_attrs.remove_attr(id.0, &attr) {
-                    nremoved += 1;
-                }
-            } else if self.node_attrs.insert_attr(id.0, &attr, value) {
-                nremoved += 1;
-            }
-        }
+        let nremoved = self.node_attrs.insert_attrs(id.0, &attrs)?;
 
         if self.node_indexer.has_indices() {
             for (_, label_id) in self.node_labels_matrix.iter(id.into(), id.into()) {
@@ -618,7 +627,7 @@ impl Graph {
                 }
             }
         }
-        nremoved
+        Ok(nremoved)
     }
 
     pub fn set_nodes_labels(
@@ -661,7 +670,7 @@ impl Graph {
         &mut self,
         id: NodeId,
         remove_docs: &mut HashMap<Arc<String>, RoaringTreemap>,
-    ) {
+    ) -> Result<(), String> {
         self.deleted_nodes.insert(id.0);
         self.node_count -= 1;
         self.all_nodes_matrix.remove(id.0, id.0);
@@ -687,7 +696,7 @@ impl Graph {
             }
         }
 
-        self.node_attrs.remove(id.0);
+        self.node_attrs.remove(id.0)
     }
 
     pub fn get_node_relationships(
@@ -843,18 +852,9 @@ impl Graph {
         &mut self,
         id: RelationshipId,
         attrs: OrderMap<Arc<String>, Value>,
-    ) -> usize {
-        let mut nremoved = 0;
-        for (attr, value) in attrs.into_iter() {
-            if value == Value::Null {
-                if self.relationship_attrs.remove_attr(id.0, &attr) {
-                    nremoved += 1;
-                }
-            } else if self.relationship_attrs.insert_attr(id.0, &attr, value) {
-                nremoved += 1;
-            }
-        }
-        nremoved
+    ) -> Result<usize, String> {
+        let nremoved = self.relationship_attrs.insert_attrs(id.0, &attrs)?;
+        Ok(nremoved)
     }
 
     #[must_use]
@@ -876,7 +876,7 @@ impl Graph {
     pub fn delete_relationships(
         &mut self,
         rels: OrderSet<(RelationshipId, NodeId, NodeId)>,
-    ) {
+    ) -> Result<(), String> {
         self.deleted_relationships
             .extend(rels.iter().map(|(id, _, _)| id.0));
         self.relationship_count -= rels.len() as u64;
@@ -896,10 +896,11 @@ impl Graph {
             let label = self.relationship_types.get(type_id.0).cloned().unwrap();
             for (id, _, _) in &rels {
                 self.relationship_type_matrix.remove(*id, type_id.0 as u64);
-                self.relationship_attrs.remove(*id);
+                self.relationship_attrs.remove(*id)?;
             }
             self.get_relationship_matrix_mut(&label).remove_all(rels);
         }
+        Ok(())
     }
 
     #[must_use]
@@ -1091,6 +1092,11 @@ impl Graph {
         );
     }
 
+    pub fn commit_attrs(&mut self) {
+        self.node_attrs.commit();
+        self.relationship_attrs.commit();
+    }
+
     pub fn commit_index(
         &mut self,
         index_add_docs: &mut HashMap<Arc<String>, RoaringTreemap>,
@@ -1208,9 +1214,5 @@ impl Graph {
         // size += self.relationship_attrs.memory_usage();
         // size += self.node_indexer.memory_usage();
         size
-    }
-
-    pub fn print(&self) {
-        println!("Deleted nodes: {:?}", self.deleted_nodes);
     }
 }
