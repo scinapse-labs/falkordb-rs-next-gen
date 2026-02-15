@@ -25,6 +25,7 @@
 #![allow(clippy::cast_precision_loss)]
 
 use json_escape::escape_str;
+use num_enum::{IntoPrimitive, TryFromPrimitive};
 use std::{
     cell::RefCell,
     cmp::Ordering,
@@ -1162,6 +1163,25 @@ impl ValuesDeduper {
     }
 }
 
+#[derive(IntoPrimitive, TryFromPrimitive)]
+#[repr(u8)]
+enum ValueTypeTag {
+    Null = 0,
+    Bool = 1,
+    Int = 2,
+    Float = 3,
+    String = 4,
+    List = 5,
+    Map = 6,
+    VecF32 = 7,
+    Point = 8,
+    Datetime = 9,
+    Date = 10,
+    Time = 11,
+    Duration = 12,
+    Arc = 13,
+}
+
 impl Value {
     /// Serializes this value to a byte vector.
     #[must_use]
@@ -1176,34 +1196,34 @@ impl Value {
         buf: &mut Vec<u8>,
     ) {
         match self {
-            Self::Null => buf.push(0),
+            Self::Null => buf.push(ValueTypeTag::Null.into()),
             Self::Bool(b) => {
-                buf.push(1);
+                buf.push(ValueTypeTag::Bool.into());
                 buf.push(u8::from(*b));
             }
             Self::Int(i) => {
-                buf.push(2);
+                buf.push(ValueTypeTag::Int.into());
                 buf.extend_from_slice(&i.to_be_bytes());
             }
             Self::Float(f) => {
-                buf.push(3);
+                buf.push(ValueTypeTag::Float.into());
                 buf.extend_from_slice(&f.to_be_bytes());
             }
             Self::String(s) => {
-                buf.push(4);
+                buf.push(ValueTypeTag::String.into());
                 let bytes = s.as_bytes();
                 buf.extend_from_slice(&(bytes.len() as u32).to_be_bytes());
                 buf.extend_from_slice(bytes);
             }
             Self::List(list) => {
-                buf.push(5);
+                buf.push(ValueTypeTag::List.into());
                 buf.extend_from_slice(&(list.len() as u32).to_be_bytes());
                 for v in list {
                     v.write_bytes(buf);
                 }
             }
             Self::Map(map) => {
-                buf.push(6);
+                buf.push(ValueTypeTag::Map.into());
                 buf.extend_from_slice(&(map.len() as u32).to_be_bytes());
                 for (k, v) in map.iter() {
                     let kb = k.as_bytes();
@@ -1212,54 +1232,40 @@ impl Value {
                     v.write_bytes(buf);
                 }
             }
-            Self::Node(id) => {
-                buf.push(7);
-                buf.extend_from_slice(&u64::from(*id).to_be_bytes());
-            }
-            Self::Relationship(r) => {
-                buf.push(8);
-                buf.extend_from_slice(&u64::from(r.0).to_be_bytes());
-                buf.extend_from_slice(&u64::from(r.1).to_be_bytes());
-                buf.extend_from_slice(&u64::from(r.2).to_be_bytes());
-            }
-            Self::Path(path) => {
-                buf.push(9);
-                buf.extend_from_slice(&(path.len() as u32).to_be_bytes());
-                for v in path {
-                    v.write_bytes(buf);
-                }
-            }
             Self::VecF32(vec) => {
-                buf.push(10);
+                buf.push(ValueTypeTag::VecF32.into());
                 buf.extend_from_slice(&(vec.len() as u32).to_be_bytes());
                 for f in vec {
                     buf.extend_from_slice(&f.to_be_bytes());
                 }
             }
             Self::Point(p) => {
-                buf.push(11);
+                buf.push(ValueTypeTag::Point.into());
                 buf.extend_from_slice(&p.latitude.to_be_bytes());
                 buf.extend_from_slice(&p.longitude.to_be_bytes());
             }
             Self::Datetime(ts) => {
-                buf.push(12);
+                buf.push(ValueTypeTag::Datetime.into());
                 buf.extend_from_slice(&ts.to_be_bytes());
             }
             Self::Date(ts) => {
-                buf.push(13);
+                buf.push(ValueTypeTag::Date.into());
                 buf.extend_from_slice(&ts.to_be_bytes());
             }
             Self::Time(ns) => {
-                buf.push(14);
+                buf.push(ValueTypeTag::Time.into());
                 buf.extend_from_slice(&ns.to_be_bytes());
             }
             Self::Duration(ms) => {
-                buf.push(15);
+                buf.push(ValueTypeTag::Duration.into());
                 buf.extend_from_slice(&ms.to_be_bytes());
             }
             Self::Arc(inner) => {
-                buf.push(16);
+                buf.push(ValueTypeTag::Arc.into());
                 inner.write_bytes(buf);
+            }
+            _ => {
+                unreachable!()
             }
         }
     }
@@ -1272,23 +1278,23 @@ impl Value {
         }
         let tag = data[0];
         let rest = &data[1..];
-        match tag {
-            0 => Some((Self::Null, 1)),
-            1 => Some((Self::Bool(rest.first().copied()? != 0), 2)),
-            2 => {
+        match ValueTypeTag::try_from(tag).ok()? {
+            ValueTypeTag::Null => Some((Self::Null, 1)),
+            ValueTypeTag::Bool => Some((Self::Bool(rest.first().copied()? != 0), 2)),
+            ValueTypeTag::Int => {
                 let bytes: [u8; 8] = rest.get(..8)?.try_into().ok()?;
                 Some((Self::Int(i64::from_be_bytes(bytes)), 9))
             }
-            3 => {
+            ValueTypeTag::Float => {
                 let bytes: [u8; 8] = rest.get(..8)?.try_into().ok()?;
                 Some((Self::Float(f64::from_be_bytes(bytes)), 9))
             }
-            4 => {
+            ValueTypeTag::String => {
                 let len = u32::from_be_bytes(rest.get(..4)?.try_into().ok()?) as usize;
                 let s = std::str::from_utf8(rest.get(4..4 + len)?).ok()?;
                 Some((Self::String(Arc::new(s.to_owned())), 1 + 4 + len))
             }
-            5 => {
+            ValueTypeTag::List => {
                 let len = u32::from_be_bytes(rest.get(..4)?.try_into().ok()?) as usize;
                 let mut list = ThinVec::with_capacity(len);
                 let mut offset = 5;
@@ -1299,7 +1305,7 @@ impl Value {
                 }
                 Some((Self::List(list), offset))
             }
-            6 => {
+            ValueTypeTag::Map => {
                 let len = u32::from_be_bytes(rest.get(..4)?.try_into().ok()?) as usize;
                 let mut map = OrderMap::default();
                 let mut offset = 5;
@@ -1315,35 +1321,7 @@ impl Value {
                 }
                 Some((Self::Map(map), offset))
             }
-            7 => {
-                let bytes: [u8; 8] = rest.get(..8)?.try_into().ok()?;
-                Some((Self::Node(u64::from_be_bytes(bytes).into()), 9))
-            }
-            8 => {
-                let r0: [u8; 8] = rest.get(..8)?.try_into().ok()?;
-                let r1: [u8; 8] = rest.get(8..16)?.try_into().ok()?;
-                let r2: [u8; 8] = rest.get(16..24)?.try_into().ok()?;
-                Some((
-                    Self::Relationship(Box::new((
-                        u64::from_be_bytes(r0).into(),
-                        u64::from_be_bytes(r1).into(),
-                        u64::from_be_bytes(r2).into(),
-                    ))),
-                    25,
-                ))
-            }
-            9 => {
-                let len = u32::from_be_bytes(rest.get(..4)?.try_into().ok()?) as usize;
-                let mut path = ThinVec::with_capacity(len);
-                let mut offset = 5;
-                for _ in 0..len {
-                    let (v, consumed) = Self::from_bytes(&data[offset..])?;
-                    path.push(v);
-                    offset += consumed;
-                }
-                Some((Self::Path(path), offset))
-            }
-            10 => {
+            ValueTypeTag::VecF32 => {
                 let len = u32::from_be_bytes(rest.get(..4)?.try_into().ok()?) as usize;
                 let mut vec = ThinVec::with_capacity(len);
                 let mut offset = 5;
@@ -1354,7 +1332,7 @@ impl Value {
                 }
                 Some((Self::VecF32(vec), offset))
             }
-            11 => {
+            ValueTypeTag::Point => {
                 let lat: [u8; 4] = rest.get(..4)?.try_into().ok()?;
                 let lon: [u8; 4] = rest.get(4..8)?.try_into().ok()?;
                 Some((
@@ -1362,27 +1340,26 @@ impl Value {
                     9,
                 ))
             }
-            12 => {
+            ValueTypeTag::Datetime => {
                 let bytes: [u8; 8] = rest.get(..8)?.try_into().ok()?;
                 Some((Self::Datetime(i64::from_be_bytes(bytes)), 9))
             }
-            13 => {
+            ValueTypeTag::Date => {
                 let bytes: [u8; 8] = rest.get(..8)?.try_into().ok()?;
                 Some((Self::Date(i64::from_be_bytes(bytes)), 9))
             }
-            14 => {
+            ValueTypeTag::Time => {
                 let bytes: [u8; 8] = rest.get(..8)?.try_into().ok()?;
                 Some((Self::Time(i64::from_be_bytes(bytes)), 9))
             }
-            15 => {
+            ValueTypeTag::Duration => {
                 let bytes: [u8; 8] = rest.get(..8)?.try_into().ok()?;
                 Some((Self::Duration(i64::from_be_bytes(bytes)), 9))
             }
-            16 => {
+            ValueTypeTag::Arc => {
                 let (v, consumed) = Self::from_bytes(rest)?;
                 Some((Self::Arc(Arc::new(v)), 1 + consumed))
             }
-            _ => None,
         }
     }
 }
