@@ -1736,27 +1736,56 @@ fn value_to_integer(
                 return Ok(Value::Null);
             }
 
-            // First try parsing as i64 (fast path for simple integers like "123")
-            // This will fail for:
-            // - Decimal numbers: "1.5", "0.001"
-            // - Scientific notation: "1e10", "1e-13"
-            // - Invalid formats: "abc", "12abc"
-            // - Overflow values
+            // Match C behavior: strtoll() with errno == ERANGE check
+            // First try parsing as i64 for simple integers
             if let Ok(i) = s.parse::<i64>() {
                 return Ok(Value::Int(i));
             }
 
-            // Has decimal - parse as f64 then floor
-            // i64 parse failed - try parsing as f64
-            // This handles decimal points and scientific notation
-            // then floors the result to get an integer
+            // If that fails, try parsing as f64 to handle decimals and scientific notation
+            // C does: if (strchr(arg.stringval, '.') == NULL) { strtoll } else { strtod }
+            // Then: if (errno == ERANGE) return SI_NullVal();
+            // This means: return None for ANY overflow, no saturation
             match s.parse::<f64>() {
-                Ok(f) if f.is_finite() => Ok(Value::Int(f.floor() as i64)),
-                _ => Ok(Value::Null), // Parse failed or non-finite (NaN, Infinity)
+                Ok(f) if f.is_finite() => {
+                    let floored = f.floor();
+
+                    #[allow(clippy::cast_precision_loss)]
+                    let i64_max_as_f64 = i64::MAX as f64;
+                    #[allow(clippy::cast_precision_loss)]
+                    let i64_min_as_f64 = i64::MIN as f64;
+
+                    // C behavior: errno == ERANGE means return None
+                    // For string path, if value is out of i64 range, return None (no saturation)
+                    // Use >= because i64::MAX+1 rounds to same f64 as i64::MAX
+                    // Use <= because i64::MIN-1 rounds to same f64 as i64::MIN
+                    // Since exact i64::MAX/MIN were caught by parse::<i64>() above,
+                    // any value equal to the boundary must have rounded from out-of-range
+                    if floored >= i64_max_as_f64 || floored <= i64_min_as_f64 {
+                        return Ok(Value::Null);
+                    }
+
+                    #[allow(clippy::cast_possible_truncation)]
+                    Ok(Value::Int(floored as i64))
+                }
+                _ => Ok(Value::Null),
             }
         }
         Some(Value::Int(i)) => Ok(Value::Int(i)),
-        Some(Value::Float(f)) => Ok(Value::Int(f.floor() as i64)),
+        Some(Value::Float(f)) => {
+            if !f.is_finite() {
+                return Ok(Value::Null);
+            }
+
+            // Match C behavior: return SI_LongVal(floor(arg.doubleval));
+            // C does NOT check for overflow on float->int conversion
+            // This is undefined behavior in C, but typically saturates
+            // Rust's `as i64` cast has defined saturation behavior, which matches typical C behavior
+            let floored = f.floor();
+
+            #[allow(clippy::cast_possible_truncation)]
+            Ok(Value::Int(floored as i64))
+        }
         Some(Value::Bool(b)) => Ok(Value::Int(i64::from(b))),
         _ => Ok(Value::Null),
     }
