@@ -54,9 +54,10 @@ impl MvccGraph {
         n: u64,
         e: u64,
         cache_size: usize,
+        name: &str,
     ) -> Self {
         Self {
-            graph: Arc::new(AtomicRefCell::new(Graph::new(n, e, cache_size, 0))),
+            graph: Arc::new(AtomicRefCell::new(Graph::new(n, e, cache_size, 0, name))),
             write: AtomicBool::new(false),
         }
     }

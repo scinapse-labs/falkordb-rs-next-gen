@@ -22,7 +22,7 @@ fn main() {
     init_functions().expect("Failed to init functions");
     fuzz!(|data: &[u8]| {
         if let Ok(query) = std::str::from_utf8(data) {
-            let g = MvccGraph::new(1024, 1024, 25);
+            let g = MvccGraph::new(1024, 1024, 25, "fuzz_test");
             let Ok(Plan {
                 plan, parameters, ..
             }) = g.read().borrow().get_plan(query)

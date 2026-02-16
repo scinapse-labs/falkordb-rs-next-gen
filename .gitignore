@@ -31,3 +31,4 @@ redisearch
 .venv/
 .zed/
 .github/copilot-instructions.md
+attrs/

@@ -765,6 +765,39 @@ impl<'a> Runtime {
                         res.push(Value::List(values));
                     }
                 }
+                ExprIR::Property(attr) => {
+                    let obj = self.run_expr(ir, node.child(0).idx(), env, agg_group_key)?;
+                    match obj {
+                        Value::Node(id) => {
+                            res.push(self.get_node_attribute(id, attr).unwrap_or(Value::Null));
+                        }
+                        Value::Relationship(rel) => {
+                            res.push(
+                                self.get_relationship_attribute(rel.0, attr)
+                                    .unwrap_or(Value::Null),
+                            );
+                        }
+                        Value::Map(map) => {
+                            res.push(map.get(attr).map_or(Value::Null, std::clone::Clone::clone));
+                        }
+                        Value::Point(p) => {
+                            if attr.as_str() == "latitude" {
+                                res.push(Value::Float(p.latitude as f64));
+                            } else if attr.as_str() == "longitude" {
+                                res.push(Value::Float(p.longitude as f64));
+                            } else {
+                                res.push(Value::Null);
+                            }
+                        }
+                        Value::Null => res.push(Value::Null),
+                        v => {
+                            return Err(format!(
+                                "Type mismatch: expected Node, Relationship, Map, or Null but was {}",
+                                v.name()
+                            ));
+                        }
+                    }
+                }
                 ExprIR::FuncInvocation(func) => {
                     if agg_group_key.is_none()
                         && let FnType::Aggregation(_, finalize) = &func.fn_type
@@ -1611,7 +1644,7 @@ impl<'a> Runtime {
                     .collect::<Result<Vec<_>, String>>()?
                     .into_iter()
                     .map(Ok);
-                self.pending.borrow_mut().commit(&self.g, &self.stats);
+                self.pending.borrow_mut().commit(&self.g, &self.stats)?;
                 Ok(iter.cond_inspect(self.inspect, move |res| {
                     self.record.borrow_mut().push((idx, res.clone()));
                 }))
@@ -1887,16 +1920,11 @@ impl<'a> Runtime {
     ) -> Result<(), String> {
         for item in items {
             let (entity, property, labels) = match item.root().data() {
-                ExprIR::FuncInvocation(func) if func.name == "property" => {
-                    let ExprIR::String(property) = item.root().child(1).data() else {
-                        unreachable!();
-                    };
-                    (
-                        self.run_expr(item, item.root().child(0).idx(), vars, None)?,
-                        Some(property),
-                        None,
-                    )
-                }
+                ExprIR::Property(property) => (
+                    self.run_expr(item, item.root().child(0).idx(), vars, None)?,
+                    Some(property),
+                    None,
+                ),
                 ExprIR::FuncInvocation(func) if func.name == "hasLabels" => {
                     let labels = item
                         .root()
@@ -1993,15 +2021,10 @@ impl<'a> Runtime {
                                 .ok_or_else(|| format!("Variable {} not found", name.as_str()))?;
                             (entity, None)
                         }
-                        ExprIR::FuncInvocation(func) if func.name == "property" => {
-                            let ExprIR::String(property) = entity.root().child(1).data() else {
-                                unreachable!();
-                            };
-                            (
-                                self.run_expr(entity, entity.root().child(0).idx(), vars, None)?,
-                                Some(property),
-                            )
-                        }
+                        ExprIR::Property(property) => (
+                            self.run_expr(entity, entity.root().child(0).idx(), vars, None)?,
+                            Some(property),
+                        ),
                         _ => {
                             unreachable!();
                         }

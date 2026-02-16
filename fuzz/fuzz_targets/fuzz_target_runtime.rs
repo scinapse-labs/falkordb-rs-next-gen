@@ -113,7 +113,7 @@ fuzz_target!(init: {
         }
         init_functions().expect("Failed to init functions");
     },|data: &[u8]| -> Corpus {
-        let g = MvccGraph::new(1024, 1024, 25);
+        let g = MvccGraph::new(1024, 1024, 25, "fuzz_test");
     std::str::from_utf8(data).map_or(Corpus::Reject, |query| {
         let Ok(Plan {
             plan, parameters, ..
