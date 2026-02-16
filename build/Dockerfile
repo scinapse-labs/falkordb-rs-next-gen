@@ -6,19 +6,19 @@ RUN apt update -y && \
     apt install -y software-properties-common wget && \
     wget https://apt.llvm.org/llvm.sh && \
     chmod +x llvm.sh && \
-    ./llvm.sh 20 && \
+    ./llvm.sh 21 && \
     apt update -y
 
-RUN apt install -y git make cmake curl zlib1g zlib1g-dev libpolly-20-dev libomp-20-dev libc++-20-dev libc++abi-20-dev libzstd-dev python3-venv lcov
+RUN apt install -y git make cmake curl zlib1g zlib1g-dev libpolly-21-dev libomp-21-dev libc++-21-dev libc++abi-21-dev libzstd-dev python3-venv lcov
 
 RUN python3 -m venv venv
 
 RUN venv/bin/pip install behave falkordb hypothesis pytest pytest-benchmark git+https://github.com/falkordb/RLTest.git@master
 
-RUN git clone --branch v10.3.0 --single-branch https://github.com/DrTimothyAldenDavis/GraphBLAS.git
+RUN git clone --branch v10.3.1 --single-branch https://github.com/DrTimothyAldenDavis/GraphBLAS.git
 
 RUN cd GraphBLAS && \
-    make static CMAKE_OPTIONS='-DGRAPHBLAS_COMPACT=1 -DCMAKE_POSITION_INDEPENDENT_CODE=on' JOBS=2 CC=clang-20 CXX=clang++-20 && \
+    make static CMAKE_OPTIONS='-DGRAPHBLAS_COMPACT=1 -DCMAKE_POSITION_INDEPENDENT_CODE=on' JOBS=2 CC=clang-21 CXX=clang++-21 && \
     make install && \
     cd .. && \
     rm -rf GraphBLAS
@@ -31,7 +31,7 @@ RUN . /data/venv/bin/activate && \
     git clone --recurse-submodules --branch vector-low-level-api --single-branch https://github.com/FalkorDB/RediSearch.git && \
     cd RediSearch && \
     sed -i 's/-Werror//g' deps/VectorSimilarity/src/VecSim/CMakeLists.txt && \
-    make build STATIC=1 CLANG=1 CC=clang-20 CXX=clang-20
+    make build STATIC=1 CLANG=1 CC=clang-21 CXX=clang++-21
 
 RUN cd redisearch && \
     cp -r RediSearch/bin bin  && \
