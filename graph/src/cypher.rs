@@ -437,15 +437,10 @@ impl<'a> Lexer<'a> {
                     if !end {
                         return Err((format!("Unterminated string starting at pos: {pos}"), len));
                     }
-                    Ok(cypher_unescape(&str[pos + 1..pos + len]).map_or_else(
-                        |_| {
-                            (
-                                Token::String(Arc::new(String::from(&str[pos + 1..pos + len]))),
-                                len + 1,
-                            )
-                        },
-                        |unescaped| (Token::String(Arc::new(unescaped)), len + 1),
-                    ))
+                    match cypher_unescape(&str[pos + 1..pos + len]) {
+                        Ok(unescaped) => Ok((Token::String(Arc::new(unescaped)), len + 1)),
+                        Err(e) => Err((format!("{e} at pos: {pos}"), len + 1)),
+                    }
                 }
                 '\"' => {
                     let mut len = 1;
@@ -475,15 +470,10 @@ impl<'a> Lexer<'a> {
                     if !end {
                         return Err((format!("Unterminated string starting at pos: {pos}"), len));
                     }
-                    Ok(cypher_unescape(&str[pos + 1..pos + len]).map_or_else(
-                        |_| {
-                            (
-                                Token::String(Arc::new(String::from(&str[pos + 1..pos + len]))),
-                                len + 1,
-                            )
-                        },
-                        |unescaped| (Token::String(Arc::new(unescaped)), len + 1),
-                    ))
+                    match cypher_unescape(&str[pos + 1..pos + len]) {
+                        Ok(unescaped) => Ok((Token::String(Arc::new(unescaped)), len + 1)),
+                        Err(e) => Err((format!("{e} at pos: {pos}"), len + 1)),
+                    }
                 }
                 d @ '0'..='9' => Self::lex_numeric(str, chars, pos, d, 1),
                 '$' => {
