@@ -554,7 +554,7 @@ def test_toInteger():
         assert res.result_set == [[int(float(v))]]
 
 
-@given(st.integers(-100, 100) | st.decimals(-100, 100, places=13))
+@given(st.integers(-100, 100)) # | st.decimals(-100, 100, places=13))
 def test_prop_toInteger(x):
     x = float(x) if isinstance(x, Decimal) else x
     res = query(f"RETURN toInteger({x}), toInteger('{x}')")

@@ -169,15 +169,15 @@ impl Document {
                         field.name.as_ptr().cast::<c_char>(),
                         vec.as_ptr().cast::<c_char>(),
                         vec.len() as u32,
-                        vec.len() * std::mem::size_of::<f32>() as usize,
+                        vec.len() * std::mem::size_of::<f32>(),
                     );
                 }
                 Value::Point(p) => {
                     RediSearch_DocumentAddFieldGeo(
                         self.rs_doc,
                         field.name.as_ptr().cast::<c_char>(),
-                        p.latitude as f64,
-                        p.longitude as f64,
+                        f64::from(p.latitude),
+                        f64::from(p.longitude),
                         RSFLDTYPE_GEO,
                     );
                 }
