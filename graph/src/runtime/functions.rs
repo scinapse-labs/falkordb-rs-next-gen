@@ -1714,11 +1714,11 @@ fn value_to_integer(
 
                     // C behavior: errno == ERANGE means return None
                     // For string path, if value is out of i64 range, return None (no saturation)
-                    // Use >= because i64::MAX+1 rounds to same f64 as i64::MAX
-                    // Use <= because i64::MIN-1 rounds to same f64 as i64::MIN
-                    // Since exact i64::MAX/MIN were caught by parse::<i64>() above,
-                    // any value equal to the boundary must have rounded from out-of-range
-                    if floored >= i64_max_as_f64 || floored <= i64_min_as_f64 {
+                    // Upper: >= because i64::MAX as f64 rounds UP past i64::MAX (not exactly representable)
+                    //   so any float equal to that boundary was rounded from an out-of-range value
+                    // Lower: < because i64::MIN is exactly representable as f64 (it's -2^63),
+                    //   so a float equal to i64_min_as_f64 IS a valid i64 value
+                    if floored >= i64_max_as_f64 || floored < i64_min_as_f64 {
                         return Ok(Value::Null);
                     }
 
