@@ -155,7 +155,10 @@ jobs:
           CXX=clang++-21 CARGO_PROFILE_RELEASE_LTO=false cargo fuzz run fuzz_target_runtime -- -max_total_time=300
           CXX=clang++-21 CARGO_PROFILE_RELEASE_LTO=false cargo fuzz cmin fuzz_target_runtime
           CXX=clang++-21 CARGO_PROFILE_RELEASE_LTO=false cargo fuzz coverage fuzz_target_runtime
-          llvm-cov-21 export --format=lcov --instr-profile fuzz/coverage/fuzz_target_runtime/coverage.profdata target/x86_64-unknown-linux-gnu/coverage/x86_64-unknown-linux-gnu/release/fuzz_target_runtime > codecov.txt.all
+          TOOLCHAIN_LLVM_COV=$(find $(rustc --print sysroot) -name "llvm-cov" -type f | head -1)
+          echo "Using llvm-cov from: $TOOLCHAIN_LLVM_COV"
+          "$TOOLCHAIN_LLVM_COV" --version
+          "$TOOLCHAIN_LLVM_COV" export --format=lcov --instr-profile fuzz/coverage/fuzz_target_runtime/coverage.profdata target/x86_64-unknown-linux-gnu/coverage/x86_64-unknown-linux-gnu/release/fuzz_target_runtime > codecov.txt.all
           lcov --ignore-errors unused -r codecov.txt.all -o codecov.txt
       - name: Upload coverage reports to Codecov
         uses: codecov/codecov-action@671740ac38dd9b0130fbe1cec585b89eea48d3de

@@ -30,4 +30,5 @@ tests/flow/csvs
 redisearch
 .venv/
 .zed/
+.github/copilot-instructions.md
 attrs/
