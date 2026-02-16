@@ -1681,6 +1681,11 @@ impl<'a> Parser<'a> {
                                     "COUNT is the only function which can accept * as an argument",
                                 ));
                             }
+                            if distinct {
+                                return Err(self
+                                    .lexer
+                                    .format_error("COUNT(DISTINCT *) is not supported"));
+                            }
                             // Create args array like count(x) does
                             let mut args = vec![tree!(ExprIR::Integer(1))]; // Dummy value for count(*)
 

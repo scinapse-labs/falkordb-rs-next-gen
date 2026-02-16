@@ -53,57 +53,57 @@ class testQueryValidationFlow(FlowTestsBase):
        expected_result = [["single ' char", 'double " char', 'mixed \' and " chars']]
        self.env.assertEquals(actual_result.result_set, expected_result)
 
-    #def test05_invalid_entity_references(self):
-    #    try:
-    #        query = """MATCH (a) RETURN e"""
-    #        self.graph.query(query)
-    #        assert(False)
-    #    except redis.exceptions.ResponseError:
-    #        # Expecting an error.
-    #        pass
+    def test05_invalid_entity_references(self):
+        try:
+            query = """MATCH (a) RETURN e"""
+            self.graph.query(query)
+            assert(False)
+        except redis.exceptions.ResponseError:
+            # Expecting an error.
+            pass
 
-    #    try:
-    #        query = """MATCH (a) RETURN a ORDER BY e"""
-    #        self.graph.query(query)
-    #        assert(False)
-    #    except redis.exceptions.ResponseError:
-    #        # Expecting an error.
-    #        pass
+        try:
+            query = """MATCH (a) RETURN a ORDER BY e"""
+            self.graph.query(query)
+            assert(False)
+        except redis.exceptions.ResponseError:
+            # Expecting an error.
+            pass
 
-    #    try:
-    #        query = """MATCH (@anon_0) RETURN @anon_0"""
-    #        self.graph.query(query)
-    #        assert(False)
-    #    except redis.exceptions.ResponseError:
-    #        # Expecting an error.
-    #        pass
+        try:
+            query = """MATCH (@anon_0) RETURN @anon_0"""
+            self.graph.query(query)
+            assert(False)
+        except redis.exceptions.ResponseError:
+            # Expecting an error.
+            pass
 
-    #def test06_where_references(self):
-    #    try:
-    #        query = """MATCH (a) WHERE fake = true RETURN a"""
-    #        self.graph.query(query)
-    #        assert(False)
-    #    except redis.exceptions.ResponseError:
-    #        # Expecting an error.
-    #        pass
+    def test06_where_references(self):
+        try:
+            query = """MATCH (a) WHERE fake = true RETURN a"""
+            self.graph.query(query)
+            assert(False)
+        except redis.exceptions.ResponseError:
+            # Expecting an error.
+            pass
 
-    #def test07_with_references(self):
-    #    try:
-    #        query = """MATCH (a) WITH e RETURN e"""
-    #        self.graph.query(query)
-    #        assert(False)
-    #    except redis.exceptions.ResponseError:
-    #        # Expecting an error.
-    #        pass
+    def test07_with_references(self):
+        try:
+            query = """MATCH (a) WITH e RETURN e"""
+            self.graph.query(query)
+            assert(False)
+        except redis.exceptions.ResponseError:
+            # Expecting an error.
+            pass
 
-    #def test08_count_distinct_star(self):
-    #    try:
-    #        query = """MATCH (a) RETURN COUNT(DISTINCT *)"""
-    #        self.graph.query(query)
-    #        assert(False)
-    #    except redis.exceptions.ResponseError:
-    #        # Expecting an error.
-    #        pass
+    def test08_count_distinct_star(self):
+        try:
+            query = """MATCH (a) RETURN COUNT(DISTINCT *)"""
+            self.graph.query(query)
+            assert(False)
+        except redis.exceptions.ResponseError:
+            # Expecting an error.
+            pass
 
     #def test09_invalid_apply_all(self):
     #    try:
