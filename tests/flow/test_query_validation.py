@@ -105,80 +105,80 @@ class testQueryValidationFlow(FlowTestsBase):
             # Expecting an error.
             pass
 
-    #def test09_invalid_apply_all(self):
-    #    try:
-    #        query = """MATCH (a) RETURN SUM(*)"""
-    #        self.graph.query(query)
-    #        assert(False)
-    #    except redis.exceptions.ResponseError:
-    #        # Expecting an error.
-    #        pass
+    def test09_invalid_apply_all(self):
+        try:
+            query = """MATCH (a) RETURN SUM(*)"""
+            self.graph.query(query)
+            assert(False)
+        except redis.exceptions.ResponseError:
+            # Expecting an error.
+            pass
 
-    #def test10_missing_params(self):
-    #    try:
-    #        query = """MATCH (a {name:$name}) RETURN a"""
-    #        self.graph.query(query)
-    #        assert(False)
-    #    except redis.exceptions.ResponseError:
-    #        # Expecting an error.
-    #        pass
+    def test10_missing_params(self):
+        try:
+            query = """MATCH (a {name:$name}) RETURN a"""
+            self.graph.query(query)
+            assert(False)
+        except redis.exceptions.ResponseError:
+            # Expecting an error.
+            pass
     
-    #def test11_param_error(self):
-    #    try:
-    #        query = """CYPHER name=({name:'a'}) MATCH (a {name:$name}) RETURN a"""
-    #        self.graph.query(query)
-    #        assert(False)
-    #    except redis.exceptions.ResponseError:
-    #        # Expecting an error.
-    #        pass
+    def test11_param_error(self):
+        try:
+            query = """CYPHER name=({name:'a'}) MATCH (a {name:$name}) RETURN a"""
+            self.graph.query(query)
+            assert(False)
+        except redis.exceptions.ResponseError:
+            # Expecting an error.
+            pass
 
-    #def test12_invalid_query_order(self):
-    #    try:
-    #        query = """MERGE (a) MATCH (a)-[]->(b) RETURN b"""
-    #        self.graph.query(query)
-    #        assert(False)
-    #    except redis.exceptions.ResponseError:
-    #        # Expecting an error.
-    #        pass
+    def test12_invalid_query_order(self):
+        try:
+            query = """MERGE (a) MATCH (a)-[]->(b) RETURN b"""
+            self.graph.query(query)
+            assert(False)
+        except redis.exceptions.ResponseError:
+            # Expecting an error.
+            pass
 
-    #def test13_create_bound_variables(self):
-    #    try:
-    #        query = """MATCH (a)-[e]->(b) CREATE (a)-[e]->(b)"""
-    #        self.graph.query(query)
-    #        assert(False)
-    #    except redis.exceptions.ResponseError:
-    #        # Expecting an error.
-    #        pass
+    def test13_create_bound_variables(self):
+        try:
+            query = """MATCH (a)-[e]->(b) CREATE (a)-[e]->(b)"""
+            self.graph.query(query)
+            assert(False)
+        except redis.exceptions.ResponseError:
+            # Expecting an error.
+            pass
 
-    #def test14_treat_path_as_entity(self):
-    #    self.graph.query("CREATE ()-[:R]->()")
-    #    try:
-    #        query= """MATCH x=()-[]->() RETURN x.name"""
-    #        self.graph.query(query)
-    #        assert(False)
-    #    except redis.exceptions.ResponseError:
-    #        # Expecting an error.
-    #        pass
+    def test14_treat_path_as_entity(self):
+        self.graph.query("CREATE ()-[:R]->()")
+        try:
+            query= """MATCH x=()-[]->() RETURN x.name"""
+            self.graph.query(query)
+            assert(False)
+        except redis.exceptions.ResponseError:
+            # Expecting an error.
+            pass
 
-    #def test15_dont_crash_on_multiple_errors(self):
-    #    try:
-    #        query = """MATCH (a) where id(a) IN range(0) OR id(a) in range(1)"""
-    #        self.graph.query(query)
-    #        assert(False)
-    #    except redis.exceptions.ResponseError:
-    #        # Expecting an error.
-    #        pass
+    def test15_dont_crash_on_multiple_errors(self):
+        try:
+            query = """MATCH (a) where id(a) IN range(0) OR id(a) in range(1)"""
+            self.graph.query(query)
+            assert(False)
+        except redis.exceptions.ResponseError:
+            # Expecting an error.
+            pass
 
-    ## Run a query in which a parsed parameter introduces a type in an unsupported context.
-    #def test16_param_introduces_unhandled_type(self):
-    #    try:
-    #        query = """CYPHER props={a:1,b:2} CREATE (a:A $props)"""
-    #        self.graph.query(query)
-    #        assert(False)
-    #    except redis.exceptions.ResponseError as e:
-    #        # Expecting an error.
-    #        assert("Encountered unhandled type" in str(e))
-    #        pass
+    # Run a query in which a parsed parameter introduces a type in an unsupported context.
+    def test16_param_introduces_unhandled_type(self):
+        try:
+            query = """CYPHER props={a:1,b:2} CREATE (a:A $props)"""
+            self.graph.query(query)
+            assert(False)
+        except redis.exceptions.ResponseError as e:
+            # Expecting an error.
+            assert("Encountered unhandled type" in str(e))
+            pass
 
     ## Validate that the module fails properly with incorrect argument counts.
     #def test17_query_arity(self):

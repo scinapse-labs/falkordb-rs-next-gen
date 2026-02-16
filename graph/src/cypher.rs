@@ -2150,7 +2150,7 @@ impl<'a> Parser<'a> {
 
     fn parse_node_pattern(
         &mut self,
-        clause: &Keyword,
+        _clause: &Keyword,
     ) -> Result<Arc<QueryNode<Arc<String>, Arc<String>>>, String> {
         match_token!(self.lexer, LParen);
         let alias = if let Ok(id) = self.parse_ident() {
@@ -2161,14 +2161,11 @@ impl<'a> Parser<'a> {
             name
         };
         let labels = self.parse_labels()?;
-        let attrs = if let Token::Parameter(param) = self.lexer.current()? {
+        let attrs = if let Token::Parameter(_) = self.lexer.current()? {
             self.lexer.next();
-            if clause == &Keyword::Match {
-                return Err(self
-                    .lexer
-                    .format_error("Encountered unhandled type in inlined properties."));
-            }
-            tree!(ExprIR::Parameter(param))
+            return Err(self
+                .lexer
+                .format_error("Encountered unhandled type in inlined properties."));
         } else {
             self.parse_map()?
         };
@@ -2231,14 +2228,12 @@ impl<'a> Parser<'a> {
             } else {
                 None
             };
-            let attrs = if let Token::Parameter(param) = self.lexer.current()? {
+            let attrs = if let Token::Parameter(_) = self.lexer.current()? {
                 self.lexer.next();
-                if clause == &Keyword::Match {
-                    return Err(self
-                        .lexer
-                        .format_error("Encountered unhandled type in inlined properties."));
-                }
-                tree!(ExprIR::Parameter(param))
+
+                return Err(self
+                    .lexer
+                    .format_error("Encountered unhandled type in inlined properties."));
             } else {
                 self.parse_map()?
             };
