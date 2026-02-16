@@ -121,7 +121,7 @@ impl AttributeStore {
     ) -> bool {
         let prefix = key.to_be_bytes();
         self.snapshot
-            .prefix(&self.keyspace, &prefix)
+            .prefix(&self.keyspace, prefix)
             .next()
             .is_some()
     }
