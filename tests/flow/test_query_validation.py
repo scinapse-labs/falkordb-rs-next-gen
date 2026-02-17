@@ -275,79 +275,81 @@ class testQueryValidationFlow(FlowTestsBase):
             assert("Type mismatch: expected Map, Node, Edge, Datetime, Date, Time, Duration, Null, or Point but was Path" in str(e))
             pass
 
-    ## Comments should not affect query functionality.
-    #def test21_ignore_query_comments(self):
-    #    query = """MATCH (n)  // This is a comment
-    #               /* This is a block comment */
-    #               WHERE EXISTS(n.age)
-    #               RETURN n.age /* Also a block comment*/"""
-    #    actual_result = self.graph.query(query)
-    #    expected_result = [[34]]
-    #    self.env.assertEquals(actual_result.result_set, expected_result)
+    # Comments should not affect query functionality.
+    def test21_ignore_query_comments(self):
+        query = """MATCH (n)  // This is a comment
+                   /* This is a block comment */
+                   WHERE EXISTS(n.age)
+                   RETURN n.age /* Also a block comment*/"""
+        actual_result = self.graph.query(query)
+        expected_result = [[34]]
+        self.env.assertEquals(actual_result.result_set, expected_result)
 
-    #    query = """/* A block comment*/ MATCH (n)  // This is a comment
-    #            /* This is a block comment */
-    #            WHERE EXISTS(n.age)
-    #            RETURN n.age /* Also a block comment*/"""
-    #    actual_result = self.graph.query(query)
-    #    expected_result = [[34]]
-    #    self.env.assertEquals(actual_result.result_set, expected_result)
+        query = """/* A block comment*/ MATCH (n)  // This is a comment
+                /* This is a block comment */
+                WHERE EXISTS(n.age)
+                RETURN n.age /* Also a block comment*/"""
+        actual_result = self.graph.query(query)
+        expected_result = [[34]]
+        self.env.assertEquals(actual_result.result_set, expected_result)
 
-    #    query = """// This is a comment
-    #            MATCH (n)  // This is a comment
-    #            /* This is a block comment */
-    #            WHERE EXISTS(n.age)
-    #            RETURN n.age /* Also a block comment*/"""
-    #    actual_result = self.graph.query(query)
-    #    expected_result = [[34]]
-    #    self.env.assertEquals(actual_result.result_set, expected_result)
+        query = """// This is a comment
+                MATCH (n)  // This is a comment
+                /* This is a block comment */
+                WHERE EXISTS(n.age)
+                RETURN n.age /* Also a block comment*/"""
+        actual_result = self.graph.query(query)
+        expected_result = [[34]]
+        self.env.assertEquals(actual_result.result_set, expected_result)
 
-    #    query = """MATCH (n)  /* This is a block comment */ WHERE EXISTS(n.age)
-    #            RETURN n.age /* Also a block comment*/"""
-    #    actual_result = self.graph.query(query)
-    #    expected_result = [[34]]
-    #    self.env.assertEquals(actual_result.result_set, expected_result)
+        query = """MATCH (n)  /* This is a block comment */ WHERE EXISTS(n.age)
+                RETURN n.age /* Also a block comment*/"""
+        actual_result = self.graph.query(query)
+        expected_result = [[34]]
+        self.env.assertEquals(actual_result.result_set, expected_result)
 
-    ## Validate procedure call refrences and definitions
-    #def test22_procedure_validations(self):
-    #    try:
-    #        # procedure call refering to a none existing alias 'n'
-    #        query = """CALL db.idx.fulltext.queryNodes(n, 'B') YIELD node RETURN node"""
-    #        self.graph.query(query)
-    #        assert(False)
-    #    except redis.exceptions.ResponseError as e:
-    #        # Expecting an error.
-    #        assert("not defined" in str(e))
-    #        pass
+    # Validate procedure call refrences and definitions
+    def test22_procedure_validations(self):
+        try:
+            # procedure call refering to a none existing alias 'n'
+            query = """CALL db.idx.fulltext.queryNodes(n, 'B') YIELD node RETURN node"""
+            self.graph.query(query)
+            assert(False)
+        except redis.exceptions.ResponseError as e:
+            # Expecting an error.
+            assert("not defined" in str(e))
+            pass
 
-    #    # refer to procedure call original output when output is aliased.
-    #    try:
-    #        query = """CALL db.idx.fulltext.queryNodes('A', 'B') YIELD node AS n RETURN node"""
-    #        self.graph.query(query)
-    #        assert(False)
-    #    except redis.exceptions.ResponseError as e:
-    #        # Expecting an error.
-    #        assert("not defined" in str(e))
-    #        pass
+        #@todo barak implement aliasing yield	
+        # refer to procedure call original output when output is aliased.
+        #try:
+        #    query = """CALL db.idx.fulltext.queryNodes('A', 'B') YIELD node AS n RETURN node"""
+        #    self.graph.query(query)
+        #    assert(False)
+        #except redis.exceptions.ResponseError as e:
+        #    # Expecting an error.
+        #    assert("not defined" in str(e))
+        #    pass
 
-    #    # valid procedure call, no output aliasing
-    #    query = """CALL db.idx.fulltext.queryNodes('A', 'B') YIELD node RETURN node"""
-    #    self.graph.query(query)
+        # valid procedure call, no output aliasing
+        query = """CALL db.idx.fulltext.queryNodes('A', 'B') YIELD node RETURN node"""
+        self.graph.query(query)
+        
+        #@todo barak implement aliasing yield
+        # valid procedure call, output aliasing
+        #query = """CALL db.idx.fulltext.queryNodes('A', 'B') YIELD node AS n RETURN n"""
+        #self.graph.query(query)
 
-    #    # valid procedure call, output aliasing
-    #    query = """CALL db.idx.fulltext.queryNodes('A', 'B') YIELD node AS n RETURN n"""
-    #    self.graph.query(query)
-
-    ## Referencing a variable before defining it should raise a compile-time error.
-    #def test24_reference_before_definition(self):
-    #    try:
-    #        query = """MATCH ({prop: reference}) MATCH (reference) RETURN *"""
-    #        self.graph.query(query)
-    #        assert(False)
-    #    except redis.exceptions.ResponseError as e:
-    #        # Expecting an error.
-    #        assert("not defined" in str(e))
-    #        pass
+    # Referencing a variable before defining it should raise a compile-time error.
+    def test24_reference_before_definition(self):
+        try:
+            query = """MATCH ({prop: reference}) MATCH (reference) RETURN *"""
+            self.graph.query(query)
+            assert(False)
+        except redis.exceptions.ResponseError as e:
+            # Expecting an error.
+            assert("not defined" in str(e))
+            pass
 
     ## Invalid filters in cartesian products should raise errors.
     #def test25_cartesian_product_invalid_filter(self):
