@@ -351,16 +351,15 @@ class testQueryValidationFlow(FlowTestsBase):
             assert("not defined" in str(e))
             pass
 
-    ## Invalid filters in cartesian products should raise errors.
-    #def test25_cartesian_product_invalid_filter(self):
-    #    try:
-    #        query = """MATCH p1=(), (n), ({prop: p1.path_val}) RETURN *"""
-    #        self.graph.query(query)
-    #        assert(False)
-    #    except redis.exceptions.ResponseError as e:
-    #        # Expecting an error.
-    #        assert("Type mismatch: expected Map, Node, Edge, Null, or Point but was Path" in str(e))
-    #        pass
+    # Invalid filters in cartesian products should raise errors.
+    def test25_cartesian_product_invalid_filter(self):
+        try:
+            query = """MATCH p1=(), (n), ({prop: p1.path_val}) RETURN *"""
+            self.graph.query(query)
+            assert(False)
+        except redis.exceptions.ResponseError as e:
+            # Expecting an error.
+           assert("Type mismatch: expected Map, Node, Edge, Datetime, Date, Time, Duration, Null, or Point but was Path" in str(e))
 
     ## invalid predicates should raise errors.
     #def test26_invalid_filter_predicate(self):
