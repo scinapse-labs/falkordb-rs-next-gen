@@ -3040,7 +3040,9 @@ impl<'a> Runtime {
             )
             .single()
             .ok_or_else(|| {
-                format!("Invalid anchor date for duration decomposition (duration_ms={duration_ms})")
+                format!(
+                    "Invalid anchor date for duration decomposition (duration_ms={duration_ms})"
+                )
             })?;
 
         let remaining_secs = (duration_ms / 1000) - anchor.timestamp();
