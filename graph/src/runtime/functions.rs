@@ -116,6 +116,22 @@ pub enum Type {
     Optional(Box<Self>),
 }
 
+impl Type {
+    /// Returns true if this type can include a boolean value.
+    /// This mirrors `AR_EXP_ReturnsBoolean` in the C implementation:
+    /// returns true if the type is Bool, Null, Any, or a Union/Optional
+    /// containing Bool/Null/Any.
+    #[must_use]
+    pub fn can_return_boolean(&self) -> bool {
+        match self {
+            Self::Bool | Self::Null | Self::Any => true,
+            Self::Union(types) => types.iter().any(Self::can_return_boolean),
+            Self::Optional(inner) => inner.can_return_boolean(),
+            _ => false,
+        }
+    }
+}
+
 #[cfg_attr(tarpaulin, skip)]
 impl Display for Type {
     fn fmt(

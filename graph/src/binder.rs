@@ -124,6 +124,9 @@ impl Binder {
             } => {
                 let pattern = self.bind_graph(pattern, false)?;
                 let filter = filter.map(|expr| self.bind_expr(&expr)).transpose()?;
+                if let Some(ref f) = filter {
+                    Self::validate_filter_predicate(f)?;
+                }
                 Ok(QueryIR::Match {
                     pattern,
                     filter,
@@ -254,6 +257,9 @@ impl Binder {
                     bound_vars.push(self.define_name_in_scope(name, Type::Any, true)?);
                 }
                 let filter = filter.map(|expr| self.bind_expr(&expr)).transpose()?;
+                if let Some(ref f) = filter {
+                    Self::validate_filter_predicate(f)?;
+                }
                 Ok(QueryIR::Call(func, args, bound_vars, filter))
             }
         }
@@ -316,6 +322,9 @@ impl Binder {
         let skip = skip.map(|expr| self.bind_expr(&expr)).transpose()?;
         let limit = limit.map(|expr| self.bind_expr(&expr)).transpose()?;
         let filter = filter.map(|expr| self.bind_expr(&expr)).transpose()?;
+        if let Some(ref f) = filter {
+            Self::validate_filter_predicate(f)?;
+        }
 
         let copy_from_parent = self
             .copy_from_parent
@@ -648,6 +657,11 @@ impl Binder {
                     .collect::<Result<Vec<_>, _>>()?;
                 locals.pop();
 
+                // Child 1 is the WHERE condition — validate it returns boolean
+                if children.len() > 1 && !Self::expr_returns_boolean(children[1].root()) {
+                    return Err(String::from("Expected boolean predicate"));
+                }
+
                 let mut new_tree = DynTree::new(ExprIR::ListComprehension(bound_var));
                 let mut root = new_tree.root_mut();
                 for child in children {
@@ -665,7 +679,7 @@ impl Binder {
                         | ExprIR::List
                         | ExprIR::Map) = expr.data()
                         {
-                            return Err(String::from("Type mismatch: expected bool"));
+                            return Err(String::from("Expected boolean predicate"));
                         }
                     }
                 }
@@ -870,5 +884,74 @@ impl Binder {
             ));
         }
         Ok(())
+    }
+
+    /// Validates that a filter expression can return a boolean value.
+    /// This mirrors `_FilterTree_ValidExpressionNode` / `AR_EXP_ReturnsBoolean`
+    /// from the C implementation and must be called at bind time for all
+    /// WHERE predicates (Match, With, Call) and list-comprehension WHERE clauses.
+    fn validate_filter_predicate(expr: &QueryExpr<Variable>) -> Result<(), String> {
+        if !Self::expr_returns_boolean(expr.root()) {
+            return Err(String::from("Expected boolean predicate"));
+        }
+        Ok(())
+    }
+
+    /// Recursively determines whether an expression tree node can return a
+    /// boolean value at compile time. For nodes whose type cannot be
+    /// determined statically (variables, parameters, properties), returns
+    /// `true` (deferring to the runtime check).
+    #[allow(clippy::needless_pass_by_value)]
+    fn expr_returns_boolean(node: orx_tree::Node<orx_tree::Dyn<ExprIR<Variable>>>) -> bool {
+        match node.data() {
+            // Logical operators – result is boolean, but each child must
+            // also return boolean (mirrors the C recursive FilterTree_Valid)
+            ExprIR::Or | ExprIR::And | ExprIR::Xor | ExprIR::Not => {
+                node.children().all(Self::expr_returns_boolean)
+            }
+
+            // Transparent wrappers – recurse into the single child
+            ExprIR::Paren | ExprIR::Distinct => {
+                node.get_child(0).is_some_and(Self::expr_returns_boolean)
+            }
+
+            // Function calls – use the registered return type
+            ExprIR::FuncInvocation(func) => func.ret_type.can_return_boolean(),
+
+            // Non-boolean: literals, arithmetic, subscript, list comprehension
+            ExprIR::Integer(_)
+            | ExprIR::Float(_)
+            | ExprIR::String(_)
+            | ExprIR::List
+            | ExprIR::Map
+            | ExprIR::Negate
+            | ExprIR::Add
+            | ExprIR::Sub
+            | ExprIR::Mul
+            | ExprIR::Div
+            | ExprIR::Pow
+            | ExprIR::Modulo
+            | ExprIR::Length
+            | ExprIR::GetElement
+            | ExprIR::GetElements
+            | ExprIR::ListComprehension(_) => false,
+
+            // Boolean literals, comparisons, predicates, and runtime-typed nodes
+            ExprIR::Bool(_)
+            | ExprIR::Null
+            | ExprIR::Eq
+            | ExprIR::Neq
+            | ExprIR::Lt
+            | ExprIR::Gt
+            | ExprIR::Le
+            | ExprIR::Ge
+            | ExprIR::In
+            | ExprIR::IsNode
+            | ExprIR::IsRelationship
+            | ExprIR::Quantifier(_, _)
+            | ExprIR::Variable(_)
+            | ExprIR::Parameter(_)
+            | ExprIR::Property(_) => true,
+        }
     }
 }
