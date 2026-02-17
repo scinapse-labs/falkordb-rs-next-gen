@@ -3012,6 +3012,8 @@ impl<'a> Runtime {
         let mut year_diff = dt.year() - epoch_year;
         let mut month_diff = dt.month() as i32 - epoch_month as i32;
 
+        // month_diff is always >= 0 (dt.month() is 1..=12, epoch_month is 1),
+        // but we keep this branch for parity with the C duration_from_time_t_utc.
         if month_diff < 0 {
             year_diff -= 1;
             month_diff += 12;
@@ -3037,7 +3039,9 @@ impl<'a> Runtime {
                 0,
             )
             .single()
-            .unwrap_or(dt);
+            .ok_or_else(|| {
+                format!("Invalid anchor date for duration decomposition (duration_ms={duration_ms})")
+            })?;
 
         let remaining_secs = (duration_ms / 1000) - anchor.timestamp();
 
