@@ -280,7 +280,11 @@ impl Binder {
     ) -> Result<QueryIR<Variable>, String> {
         let bound_exprs = exprs
             .iter()
-            .map(|(name, expr)| Ok((name.clone(), self.bind_expr(expr)?)))
+            .map(|(name, expr)| {
+                let bound = self.bind_expr(expr)?;
+                Self::validate_boolean_operands(&bound)?;
+                Ok((name.clone(), bound))
+            })
             .collect::<Result<Vec<_>, String>>()?;
 
         let mut projected = Vec::with_capacity(bound_exprs.len());
@@ -705,19 +709,6 @@ impl Binder {
                     .children()
                     .map(|child| self.bind_expr_node_impl(expr, child, locals, allow_path_property))
                     .collect::<Result<Vec<_>, _>>()?;
-                // Validate that operands of logical operators can return boolean.
-                // This catches cases like `false AND 123` at compile time rather
-                // than relying on runtime (which may short-circuit past the bad operand).
-                if matches!(
-                    node_ref.data(),
-                    ExprIR::And | ExprIR::Or | ExprIR::Xor | ExprIR::Not
-                ) {
-                    for child in &children {
-                        if !Self::expr_returns_boolean(child.root()) {
-                            return Err(String::from("Expected boolean predicate"));
-                        }
-                    }
-                }
                 let new_data = match node_ref.data().clone() {
                     ExprIR::Null => ExprIR::Null,
                     ExprIR::Bool(b) => ExprIR::Bool(b),
@@ -925,6 +916,32 @@ impl Binder {
     fn validate_filter_predicate(expr: &QueryExpr<Variable>) -> Result<(), String> {
         if !Self::expr_returns_boolean(expr.root()) {
             return Err(String::from("Expected boolean predicate"));
+        }
+        Ok(())
+    }
+
+    /// Walks an expression tree and validates that every AND/OR/XOR/NOT node
+    /// has operands that can return boolean.  Produces a "Type mismatch"
+    /// error for non-filter contexts (e.g. RETURN expressions).
+    fn validate_boolean_operands(expr: &QueryExpr<Variable>) -> Result<(), String> {
+        Self::validate_boolean_operands_impl(expr.root())
+    }
+
+    fn validate_boolean_operands_impl(
+        node: orx_tree::Node<orx_tree::Dyn<ExprIR<Variable>>>
+    ) -> Result<(), String> {
+        if matches!(
+            node.data(),
+            ExprIR::And | ExprIR::Or | ExprIR::Xor | ExprIR::Not
+        ) {
+            for child in node.children() {
+                if !Self::expr_returns_boolean(child) {
+                    return Err(String::from("Type mismatch: expected Boolean"));
+                }
+            }
+        }
+        for child in node.children() {
+            Self::validate_boolean_operands_impl(child)?;
         }
         Ok(())
     }
