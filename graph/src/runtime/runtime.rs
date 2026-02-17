@@ -2881,11 +2881,10 @@ impl<'a> Runtime {
                 .single()
                 .ok_or_else(|| "Invalid quarter start date".to_string())?;
             (dt.date_naive() - quarter_start.date_naive()).num_days() + 1
-        } else if c.eq_ignore_ascii_case("millisecond")
-            || c.eq_ignore_ascii_case("microsecond")
-            || c.eq_ignore_ascii_case("nanosecond")
-        {
-            // sub-second precision not stored in time_t-level values
+        } else if c.eq_ignore_ascii_case("millisecond") {
+            timestamp_ms % 1000
+        } else if c.eq_ignore_ascii_case("microsecond") || c.eq_ignore_ascii_case("nanosecond") {
+            // microsecond/nanosecond precision not stored
             0
         } else {
             return Err(format!("unknown datetime component {component}"));
