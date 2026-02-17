@@ -2202,13 +2202,9 @@ impl<'a> Runtime {
                                 }
                             }
                         }
-                        Value::Null => {}
-                        _ => {
-                            return Err(format!(
-                                "Type mismatch: expected Node or Relationship but was {}",
-                                entity.name()
-                            ));
-                        }
+                        // Silently ignore SET on Null and non-entity types
+                        // (e.g. Path), matching C `FalkorDB` behavior.
+                        _ => {}
                     }
                 }
                 SetItem::Label(entity, labels) => {
