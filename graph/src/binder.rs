@@ -357,6 +357,14 @@ impl Binder {
     ) -> Result<QueryGraph<Arc<String>, Arc<String>, Variable>, String> {
         let mut bound: QueryGraph<Arc<String>, Arc<String>, Variable> = QueryGraph::default();
 
+        // Pre-register path variables in scope before binding node/relationship
+        // attrs so that references like `p1.path_val` inside inline properties
+        // can resolve `p1`. This mirrors the C implementation where the AST
+        // visitor processes named_path nodes before sibling node patterns.
+        for raw_path in graph.paths() {
+            self.define_name_in_scope(raw_path.var.clone(), Type::Path, true)?;
+        }
+
         for node in graph.nodes() {
             self.bind_expr(&node.attrs)?;
         }
@@ -698,7 +706,21 @@ impl Binder {
                     ExprIR::Pow => ExprIR::Pow,
                     ExprIR::Modulo => ExprIR::Modulo,
                     ExprIR::Distinct => ExprIR::Distinct,
-                    ExprIR::Property(prop) => ExprIR::Property(prop),
+                    ExprIR::Property(prop) => {
+                        // Property access is not valid on Path types.
+                        // Valid types: Map, Node, Edge, Datetime, Date, Time,
+                        // Duration, Null, or Point.
+                        if let Some(first_child) = children.first()
+                            && let ExprIR::Variable(var) = first_child.root().data()
+                            && var.ty == Type::Path
+                        {
+                            return Err("Type mismatch: expected Map, Node, Edge, \
+                                         Datetime, Date, Time, Duration, Null, \
+                                         or Point but was Path"
+                                .to_string());
+                        }
+                        ExprIR::Property(prop)
+                    }
                     ExprIR::FuncInvocation(func) => ExprIR::FuncInvocation(func),
                     ExprIR::Paren => ExprIR::Paren,
                     ExprIR::Variable(_)
