@@ -701,23 +701,23 @@ impl Binder {
                 Ok(new_tree)
             }
             _ => {
-                if let ExprIR::And | ExprIR::Or | ExprIR::Xor = node_ref.data() {
-                    debug_assert!(node_ref.num_children() >= 2);
-                    for expr in node_ref.children() {
-                        if let _e @ (ExprIR::Integer(_)
-                        | ExprIR::Float(_)
-                        | ExprIR::String(_)
-                        | ExprIR::List
-                        | ExprIR::Map) = expr.data()
-                        {
-                            return Err(String::from("Expected boolean predicate"));
-                        }
-                    }
-                }
                 let children = node_ref
                     .children()
                     .map(|child| self.bind_expr_node_impl(expr, child, locals, allow_path_property))
                     .collect::<Result<Vec<_>, _>>()?;
+                // Validate that operands of logical operators can return boolean.
+                // This catches cases like `false AND 123` at compile time rather
+                // than relying on runtime (which may short-circuit past the bad operand).
+                if matches!(
+                    node_ref.data(),
+                    ExprIR::And | ExprIR::Or | ExprIR::Xor | ExprIR::Not
+                ) {
+                    for child in &children {
+                        if !Self::expr_returns_boolean(child.root()) {
+                            return Err(String::from("Type mismatch: expected Boolean"));
+                        }
+                    }
+                }
                 let new_data = match node_ref.data().clone() {
                     ExprIR::Null => ExprIR::Null,
                     ExprIR::Bool(b) => ExprIR::Bool(b),
