@@ -2850,38 +2850,49 @@ impl<'a> Runtime {
             return Ok(Value::Null);
         };
 
-        let val = match component.to_ascii_lowercase().as_str() {
-            "second" => i64::from(dt.second()),
-            "minute" => i64::from(dt.minute()),
-            "hour" => i64::from(dt.hour()),
-            "day" => i64::from(dt.day()),
-            "month" => i64::from(dt.month()),
-            "year" => i64::from(dt.year()),
-            "dayofweek" => i64::from(dt.weekday().num_days_from_sunday()),
-            "weekday" => {
-                // ISO weekday: Monday=1 .. Sunday=7
-                let w = dt.weekday().num_days_from_sunday();
-                if w == 0 { 7 } else { i64::from(w) }
-            }
-            "ordinalday" => i64::from(dt.ordinal()),
-            "quarter" => i64::from((dt.month() - 1) / 3 + 1),
-            "week" => i64::from(dt.iso_week().week()),
-            "weekyear" => i64::from(dt.iso_week().year()),
-            "dayofquarter" | "quarterday" => {
-                let q = (dt.month() - 1) / 3 + 1;
-                let quarter_start_month = (q - 1) * 3 + 1;
-                let quarter_start = Utc
-                    .with_ymd_and_hms(dt.year(), quarter_start_month, 1, 0, 0, 0)
-                    .single()
-                    .ok_or_else(|| "Invalid quarter start date".to_string())?;
-                let days = (dt.date_naive() - quarter_start.date_naive()).num_days();
-                days + 1
-            }
+        let c = component;
+        let val = if c.eq_ignore_ascii_case("second") {
+            i64::from(dt.second())
+        } else if c.eq_ignore_ascii_case("minute") {
+            i64::from(dt.minute())
+        } else if c.eq_ignore_ascii_case("hour") {
+            i64::from(dt.hour())
+        } else if c.eq_ignore_ascii_case("day") {
+            i64::from(dt.day())
+        } else if c.eq_ignore_ascii_case("month") {
+            i64::from(dt.month())
+        } else if c.eq_ignore_ascii_case("year") {
+            i64::from(dt.year())
+        } else if c.eq_ignore_ascii_case("dayOfWeek") {
+            i64::from(dt.weekday().num_days_from_sunday())
+        } else if c.eq_ignore_ascii_case("weekDay") {
+            // ISO weekday: Monday=1 .. Sunday=7
+            let w = dt.weekday().num_days_from_sunday();
+            if w == 0 { 7 } else { i64::from(w) }
+        } else if c.eq_ignore_ascii_case("ordinalDay") {
+            i64::from(dt.ordinal())
+        } else if c.eq_ignore_ascii_case("quarter") {
+            i64::from((dt.month() - 1) / 3 + 1)
+        } else if c.eq_ignore_ascii_case("week") {
+            i64::from(dt.iso_week().week())
+        } else if c.eq_ignore_ascii_case("weekYear") {
+            i64::from(dt.iso_week().year())
+        } else if c.eq_ignore_ascii_case("dayOfQuarter") || c.eq_ignore_ascii_case("quarterDay") {
+            let q = (dt.month() - 1) / 3 + 1;
+            let quarter_start_month = (q - 1) * 3 + 1;
+            let quarter_start = Utc
+                .with_ymd_and_hms(dt.year(), quarter_start_month, 1, 0, 0, 0)
+                .single()
+                .ok_or_else(|| "Invalid quarter start date".to_string())?;
+            (dt.date_naive() - quarter_start.date_naive()).num_days() + 1
+        } else if c.eq_ignore_ascii_case("millisecond")
+            || c.eq_ignore_ascii_case("microsecond")
+            || c.eq_ignore_ascii_case("nanosecond")
+        {
             // sub-second precision not stored in time_t-level values
-            "millisecond" | "microsecond" | "nanosecond" => 0,
-            _ => {
-                return Err(format!("unknown datetime component {component}"));
-            }
+            0
+        } else {
+            return Err(format!("unknown datetime component {component}"));
         };
 
         Ok(Value::Int(val))
@@ -2899,32 +2910,36 @@ impl<'a> Runtime {
             return Ok(Value::Null);
         };
 
-        let val = match component.to_ascii_lowercase().as_str() {
-            "day" => i64::from(dt.day()),
-            "month" => i64::from(dt.month()),
-            "year" => i64::from(dt.year()),
-            "dayofweek" => i64::from(dt.weekday().num_days_from_sunday()),
-            "weekday" => {
-                let w = dt.weekday().num_days_from_sunday();
-                if w == 0 { 7 } else { i64::from(w) }
-            }
-            "ordinalday" => i64::from(dt.ordinal()),
-            "quarter" => i64::from((dt.month() - 1) / 3 + 1),
-            "week" => i64::from(dt.iso_week().week()),
-            "weekyear" => i64::from(dt.iso_week().year()),
-            "dayofquarter" | "quarterday" => {
-                let q = (dt.month() - 1) / 3 + 1;
-                let quarter_start_month = (q - 1) * 3 + 1;
-                let quarter_start = Utc
-                    .with_ymd_and_hms(dt.year(), quarter_start_month, 1, 0, 0, 0)
-                    .single()
-                    .ok_or_else(|| "Invalid quarter start date".to_string())?;
-                let days = (dt.date_naive() - quarter_start.date_naive()).num_days();
-                days + 1
-            }
-            _ => {
-                return Err(format!("unknown date component {component}"));
-            }
+        let c = component;
+        let val = if c.eq_ignore_ascii_case("day") {
+            i64::from(dt.day())
+        } else if c.eq_ignore_ascii_case("month") {
+            i64::from(dt.month())
+        } else if c.eq_ignore_ascii_case("year") {
+            i64::from(dt.year())
+        } else if c.eq_ignore_ascii_case("dayOfWeek") {
+            i64::from(dt.weekday().num_days_from_sunday())
+        } else if c.eq_ignore_ascii_case("weekDay") {
+            let w = dt.weekday().num_days_from_sunday();
+            if w == 0 { 7 } else { i64::from(w) }
+        } else if c.eq_ignore_ascii_case("ordinalDay") {
+            i64::from(dt.ordinal())
+        } else if c.eq_ignore_ascii_case("quarter") {
+            i64::from((dt.month() - 1) / 3 + 1)
+        } else if c.eq_ignore_ascii_case("week") {
+            i64::from(dt.iso_week().week())
+        } else if c.eq_ignore_ascii_case("weekYear") {
+            i64::from(dt.iso_week().year())
+        } else if c.eq_ignore_ascii_case("dayOfQuarter") || c.eq_ignore_ascii_case("quarterDay") {
+            let q = (dt.month() - 1) / 3 + 1;
+            let quarter_start_month = (q - 1) * 3 + 1;
+            let quarter_start = Utc
+                .with_ymd_and_hms(dt.year(), quarter_start_month, 1, 0, 0, 0)
+                .single()
+                .ok_or_else(|| "Invalid quarter start date".to_string())?;
+            (dt.date_naive() - quarter_start.date_naive()).num_days() + 1
+        } else {
+            return Err(format!("unknown date component {component}"));
         };
 
         Ok(Value::Int(val))
@@ -2943,13 +2958,15 @@ impl<'a> Runtime {
             return Ok(Value::Null);
         };
 
-        let val = match component.to_ascii_lowercase().as_str() {
-            "second" => i64::from(dt.second()),
-            "minute" => i64::from(dt.minute()),
-            "hour" => i64::from(dt.hour()),
-            _ => {
-                return Err(format!("unknown time component {component}"));
-            }
+        let c = component;
+        let val = if c.eq_ignore_ascii_case("second") {
+            i64::from(dt.second())
+        } else if c.eq_ignore_ascii_case("minute") {
+            i64::from(dt.minute())
+        } else if c.eq_ignore_ascii_case("hour") {
+            i64::from(dt.hour())
+        } else {
+            return Err(format!("unknown time component {component}"));
         };
 
         Ok(Value::Int(val))
@@ -2965,10 +2982,24 @@ impl<'a> Runtime {
     ) -> Result<Value, String> {
         use chrono::{Datelike, TimeZone, Utc};
 
-        // The C code stores durations as seconds-from-epoch and decomposes via
-        // `duration_from_time_t_utc` which converts to `struct tm` and then
-        // computes year/month differences from the epoch (1970-01-01 00:00:00).
-        // In Rust we store milliseconds, so convert to a chrono DateTime first.
+        // Fast-reject unknown components before doing any chrono work.
+        let c = component;
+        if !(c.eq_ignore_ascii_case("years")
+            || c.eq_ignore_ascii_case("months")
+            || c.eq_ignore_ascii_case("weeks")
+            || c.eq_ignore_ascii_case("days")
+            || c.eq_ignore_ascii_case("hours")
+            || c.eq_ignore_ascii_case("minutes")
+            || c.eq_ignore_ascii_case("seconds"))
+        {
+            return Err(format!("unknown duration component {component}"));
+        }
+
+        // weeks is always 0 in the C decomposition — skip chrono entirely.
+        if c.eq_ignore_ascii_case("weeks") {
+            return Ok(Value::Float(0.0));
+        }
+
         let chrono::LocalResult::Single(dt) = Utc.timestamp_millis_opt(duration_ms) else {
             return Ok(Value::Null);
         };
@@ -2984,6 +3015,14 @@ impl<'a> Runtime {
         if month_diff < 0 {
             year_diff -= 1;
             month_diff += 12;
+        }
+
+        // For years/months we already have the answer — skip the rest.
+        if c.eq_ignore_ascii_case("years") {
+            return Ok(Value::Float(f64::from(year_diff)));
+        }
+        if c.eq_ignore_ascii_case("months") {
+            return Ok(Value::Float(f64::from(month_diff)));
         }
 
         // Reconstruct an anchor date that has the same year/month offset from
@@ -3002,24 +3041,15 @@ impl<'a> Runtime {
 
         let remaining_secs = (duration_ms / 1000) - anchor.timestamp();
 
-        let days = remaining_secs / 86400;
-        let after_days = remaining_secs - days * 86400;
-        let hours = after_days / 3600;
-        let after_hours = after_days - hours * 3600;
-        let minutes = after_hours / 60;
-        let seconds = after_hours - minutes * 60;
-
-        let val: f64 = match component.to_ascii_lowercase().as_str() {
-            "years" => f64::from(year_diff),
-            "months" => f64::from(month_diff),
-            "weeks" => 0.0, // weeks always 0 in decomposition (matches C)
-            "days" => days as f64,
-            "hours" => hours as f64,
-            "minutes" => minutes as f64,
-            "seconds" => seconds as f64,
-            _ => {
-                return Err(format!("unknown duration component {component}"));
-            }
+        let val: f64 = if c.eq_ignore_ascii_case("days") {
+            (remaining_secs / 86400) as f64
+        } else if c.eq_ignore_ascii_case("hours") {
+            ((remaining_secs % 86400) / 3600) as f64
+        } else if c.eq_ignore_ascii_case("minutes") {
+            ((remaining_secs % 3600) / 60) as f64
+        } else {
+            // "seconds"
+            (remaining_secs % 60) as f64
         };
 
         Ok(Value::Float(val))
