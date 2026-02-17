@@ -714,7 +714,7 @@ impl Binder {
                 ) {
                     for child in &children {
                         if !Self::expr_returns_boolean(child.root()) {
-                            return Err(String::from("Type mismatch: expected Boolean"));
+                            return Err(String::from("Expected boolean predicate"));
                         }
                     }
                 }
