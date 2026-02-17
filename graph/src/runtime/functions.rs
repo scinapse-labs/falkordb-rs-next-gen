@@ -176,6 +176,7 @@ pub struct GraphFn {
     pub write: bool,
     pub args_type: FnArguments,
     pub fn_type: FnType,
+    pub ret_type: Type,
 }
 
 impl GraphFn {
@@ -186,6 +187,7 @@ impl GraphFn {
         write: bool,
         args_type: FnArguments,
         fn_type: FnType,
+        ret_type: Type,
     ) -> Self {
         Self {
             name: String::from(name),
@@ -193,6 +195,7 @@ impl GraphFn {
             write,
             args_type,
             fn_type,
+            ret_type,
         }
     }
 
@@ -311,6 +314,7 @@ impl Functions {
         write: bool,
         args_type: Vec<Type>,
         fn_type: FnType,
+        ret_type: Type,
     ) {
         let lower_name = name.to_lowercase();
         assert!(
@@ -323,6 +327,7 @@ impl Functions {
             write,
             FnArguments::Fixed(args_type),
             fn_type,
+            ret_type,
         ));
         self.functions.insert(lower_name, graph_fn);
     }
@@ -334,6 +339,7 @@ impl Functions {
         write: bool,
         arg_type: Type,
         fn_type: FnType,
+        ret_type: Type,
     ) {
         let name = name.to_lowercase();
         assert!(
@@ -346,6 +352,7 @@ impl Functions {
             write,
             FnArguments::VarLength(arg_type),
             fn_type,
+            ret_type,
         ));
         self.functions.insert(name, graph_fn);
     }
@@ -384,14 +391,23 @@ static FUNCTIONS: OnceLock<Functions> = OnceLock::new();
 pub fn init_functions() -> Result<(), Functions> {
     let mut funcs = Functions::new();
 
+    // Entity functions
     funcs.add(
         "labels",
         labels,
         false,
         vec![Type::Union(vec![Type::Node, Type::Null])],
         FnType::Function,
+        Type::Union(vec![Type::List(Box::new(Type::String)), Type::Null]),
     );
-    funcs.add("typeOf", type_of, false, vec![Type::Any], FnType::Function);
+    funcs.add(
+        "typeOf",
+        type_of,
+        false,
+        vec![Type::Any],
+        FnType::Function,
+        Type::String,
+    );
     funcs.add(
         "hasLabels",
         has_labels,
@@ -401,6 +417,7 @@ pub fn init_functions() -> Result<(), Functions> {
             Type::List(Box::new(Type::Any)),
         ],
         FnType::Function,
+        Type::Union(vec![Type::Bool, Type::Null]),
     );
     funcs.add(
         "id",
@@ -412,6 +429,7 @@ pub fn init_functions() -> Result<(), Functions> {
             Type::Null,
         ])],
         FnType::Function,
+        Type::Union(vec![Type::Int, Type::Null]),
     );
     funcs.add(
         "properties",
@@ -424,6 +442,7 @@ pub fn init_functions() -> Result<(), Functions> {
             Type::Null,
         ])],
         FnType::Function,
+        Type::Union(vec![Type::Map, Type::Null]),
     );
     funcs.add(
         "startnode",
@@ -431,6 +450,7 @@ pub fn init_functions() -> Result<(), Functions> {
         false,
         vec![Type::Relationship],
         FnType::Function,
+        Type::Union(vec![Type::Node, Type::Null]),
     );
     funcs.add(
         "endnode",
@@ -438,6 +458,7 @@ pub fn init_functions() -> Result<(), Functions> {
         false,
         vec![Type::Relationship],
         FnType::Function,
+        Type::Union(vec![Type::Node, Type::Null]),
     );
     funcs.add(
         "length",
@@ -445,7 +466,10 @@ pub fn init_functions() -> Result<(), Functions> {
         false,
         vec![Type::Union(vec![Type::Path, Type::Null])],
         FnType::Function,
+        Type::Union(vec![Type::Int, Type::Null]),
     );
+
+    // Type conversion functions
     funcs.add(
         "tointeger",
         value_to_integer,
@@ -458,6 +482,7 @@ pub fn init_functions() -> Result<(), Functions> {
             Type::Null,
         ])],
         FnType::Function,
+        Type::Union(vec![Type::Int, Type::Null]),
     );
     funcs.add(
         "tofloat",
@@ -470,6 +495,7 @@ pub fn init_functions() -> Result<(), Functions> {
             Type::Null,
         ])],
         FnType::Function,
+        Type::Union(vec![Type::Float, Type::Null]),
     );
     funcs.add(
         "tostring",
@@ -486,6 +512,7 @@ pub fn init_functions() -> Result<(), Functions> {
             Type::Point,
         ])],
         FnType::Function,
+        Type::Union(vec![Type::String, Type::Null]),
     );
     funcs.add(
         "tostringornull",
@@ -493,9 +520,19 @@ pub fn init_functions() -> Result<(), Functions> {
         false,
         vec![Type::Any],
         FnType::Function,
+        Type::Union(vec![Type::String, Type::Null]),
     );
 
-    funcs.add("tojson", to_json, false, vec![Type::Any], FnType::Function);
+    funcs.add(
+        "tojson",
+        to_json,
+        false,
+        vec![Type::Any],
+        FnType::Function,
+        Type::Union(vec![Type::String, Type::Null]),
+    );
+
+    // List functions
     funcs.add(
         "size",
         size,
@@ -506,6 +543,7 @@ pub fn init_functions() -> Result<(), Functions> {
             Type::Null,
         ])],
         FnType::Function,
+        Type::Union(vec![Type::Int, Type::Null]),
     );
     funcs.add(
         "head",
@@ -516,6 +554,7 @@ pub fn init_functions() -> Result<(), Functions> {
             Type::Null,
         ])],
         FnType::Function,
+        Type::Any,
     );
     funcs.add(
         "last",
@@ -526,6 +565,7 @@ pub fn init_functions() -> Result<(), Functions> {
             Type::Null,
         ])],
         FnType::Function,
+        Type::Any,
     );
     funcs.add(
         "tail",
@@ -536,6 +576,7 @@ pub fn init_functions() -> Result<(), Functions> {
             Type::Null,
         ])],
         FnType::Function,
+        Type::Any,
     );
     funcs.add(
         "reverse",
@@ -547,7 +588,14 @@ pub fn init_functions() -> Result<(), Functions> {
             Type::Null,
         ])],
         FnType::Function,
+        Type::Union(vec![
+            Type::List(Box::new(Type::Any)),
+            Type::String,
+            Type::Null,
+        ]),
     );
+
+    // String functions
     funcs.add(
         "substring",
         substring,
@@ -558,6 +606,7 @@ pub fn init_functions() -> Result<(), Functions> {
             Type::Optional(Box::new(Type::Int)),
         ],
         FnType::Function,
+        Type::Union(vec![Type::String, Type::Null]),
     );
     funcs.add(
         "split",
@@ -568,6 +617,7 @@ pub fn init_functions() -> Result<(), Functions> {
             Type::Union(vec![Type::String, Type::Null]),
         ],
         FnType::Function,
+        Type::Union(vec![Type::List(Box::new(Type::String)), Type::Null]),
     );
     funcs.add(
         "tolower",
@@ -575,6 +625,7 @@ pub fn init_functions() -> Result<(), Functions> {
         false,
         vec![Type::Union(vec![Type::String, Type::Null])],
         FnType::Function,
+        Type::Union(vec![Type::String, Type::Null]),
     );
     funcs.add(
         "toupper",
@@ -582,6 +633,7 @@ pub fn init_functions() -> Result<(), Functions> {
         false,
         vec![Type::Union(vec![Type::String, Type::Null])],
         FnType::Function,
+        Type::Union(vec![Type::String, Type::Null]),
     );
     funcs.add(
         "replace",
@@ -593,6 +645,7 @@ pub fn init_functions() -> Result<(), Functions> {
             Type::Union(vec![Type::String, Type::Null]),
         ],
         FnType::Function,
+        Type::Union(vec![Type::String, Type::Null]),
     );
     funcs.add(
         "left",
@@ -603,6 +656,7 @@ pub fn init_functions() -> Result<(), Functions> {
             Type::Union(vec![Type::Int, Type::Null]),
         ],
         FnType::Function,
+        Type::Union(vec![Type::String, Type::Null]),
     );
     funcs.add(
         "ltrim",
@@ -610,6 +664,7 @@ pub fn init_functions() -> Result<(), Functions> {
         false,
         vec![Type::Union(vec![Type::String, Type::Null])],
         FnType::Function,
+        Type::Union(vec![Type::String, Type::Null]),
     );
     funcs.add(
         "rtrim",
@@ -617,6 +672,7 @@ pub fn init_functions() -> Result<(), Functions> {
         false,
         vec![Type::Union(vec![Type::String, Type::Null])],
         FnType::Function,
+        Type::Union(vec![Type::String, Type::Null]),
     );
     funcs.add(
         "trim",
@@ -624,6 +680,7 @@ pub fn init_functions() -> Result<(), Functions> {
         false,
         vec![Type::Union(vec![Type::String, Type::Null])],
         FnType::Function,
+        Type::Union(vec![Type::String, Type::Null]),
     );
     funcs.add(
         "right",
@@ -634,6 +691,7 @@ pub fn init_functions() -> Result<(), Functions> {
             Type::Union(vec![Type::Int, Type::Null]),
         ],
         FnType::Function,
+        Type::Union(vec![Type::String, Type::Null]),
     );
     funcs.add(
         "string.join",
@@ -644,6 +702,7 @@ pub fn init_functions() -> Result<(), Functions> {
             Type::Optional(Box::new(Type::String)),
         ],
         FnType::Function,
+        Type::Union(vec![Type::String, Type::Null]),
     );
     funcs.add(
         "string.matchRegEx",
@@ -654,6 +713,7 @@ pub fn init_functions() -> Result<(), Functions> {
             Type::Union(vec![Type::String, Type::Null]),
         ],
         FnType::Function,
+        Type::Union(vec![Type::List(Box::new(Type::Any)), Type::Null]),
     );
     funcs.add(
         "string.replaceRegEx",
@@ -665,13 +725,17 @@ pub fn init_functions() -> Result<(), Functions> {
             Type::Optional(Box::new(Type::Union(vec![Type::String, Type::Null]))),
         ],
         FnType::Function,
+        Type::Union(vec![Type::String, Type::Null]),
     );
+
+    // Numeric / math functions
     funcs.add(
         "abs",
         abs,
         false,
         vec![Type::Union(vec![Type::Int, Type::Float, Type::Null])],
         FnType::Function,
+        Type::Union(vec![Type::Int, Type::Float, Type::Null]),
     );
     funcs.add(
         "ceil",
@@ -679,14 +743,16 @@ pub fn init_functions() -> Result<(), Functions> {
         false,
         vec![Type::Union(vec![Type::Int, Type::Float, Type::Null])],
         FnType::Function,
+        Type::Union(vec![Type::Int, Type::Float, Type::Null]),
     );
-    funcs.add("e", e, false, vec![], FnType::Function);
+    funcs.add("e", e, false, vec![], FnType::Function, Type::Float);
     funcs.add(
         "exp",
         exp,
         false,
         vec![Type::Union(vec![Type::Int, Type::Float, Type::Null])],
         FnType::Function,
+        Type::Union(vec![Type::Float, Type::Null]),
     );
     funcs.add(
         "floor",
@@ -694,6 +760,7 @@ pub fn init_functions() -> Result<(), Functions> {
         false,
         vec![Type::Union(vec![Type::Int, Type::Float, Type::Null])],
         FnType::Function,
+        Type::Union(vec![Type::Int, Type::Float, Type::Null]),
     );
     funcs.add(
         "log",
@@ -701,6 +768,7 @@ pub fn init_functions() -> Result<(), Functions> {
         false,
         vec![Type::Union(vec![Type::Int, Type::Float, Type::Null])],
         FnType::Function,
+        Type::Union(vec![Type::Float, Type::Null]),
     );
     funcs.add(
         "log10",
@@ -708,8 +776,16 @@ pub fn init_functions() -> Result<(), Functions> {
         false,
         vec![Type::Union(vec![Type::Int, Type::Float, Type::Null])],
         FnType::Function,
+        Type::Union(vec![Type::Float, Type::Null]),
     );
-    funcs.add("randomUUID", random_uuid, false, vec![], FnType::Function);
+    funcs.add(
+        "randomUUID",
+        random_uuid,
+        false,
+        vec![],
+        FnType::Function,
+        Type::String,
+    );
     funcs.add(
         "pow",
         pow,
@@ -719,14 +795,16 @@ pub fn init_functions() -> Result<(), Functions> {
             Type::Union(vec![Type::Int, Type::Float, Type::Null]),
         ],
         FnType::Function,
+        Type::Union(vec![Type::Float, Type::Null]),
     );
-    funcs.add("rand", rand, false, vec![], FnType::Function);
+    funcs.add("rand", rand, false, vec![], FnType::Function, Type::Float);
     funcs.add(
         "round",
         round,
         false,
         vec![Type::Union(vec![Type::Int, Type::Float, Type::Null])],
         FnType::Function,
+        Type::Union(vec![Type::Int, Type::Float, Type::Null]),
     );
     funcs.add(
         "sign",
@@ -734,6 +812,7 @@ pub fn init_functions() -> Result<(), Functions> {
         false,
         vec![Type::Union(vec![Type::Int, Type::Float, Type::Null])],
         FnType::Function,
+        Type::Union(vec![Type::Int, Type::Null]),
     );
     funcs.add(
         "sqrt",
@@ -741,6 +820,7 @@ pub fn init_functions() -> Result<(), Functions> {
         false,
         vec![Type::Union(vec![Type::Int, Type::Float, Type::Null])],
         FnType::Function,
+        Type::Union(vec![Type::Float, Type::Null]),
     );
     funcs.add(
         "range",
@@ -748,8 +828,16 @@ pub fn init_functions() -> Result<(), Functions> {
         false,
         vec![Type::Int, Type::Int, Type::Optional(Box::new(Type::Int))],
         FnType::Function,
+        Type::Union(vec![Type::List(Box::new(Type::Int)), Type::Null]),
     );
-    funcs.add_var_len("coalesce", coalesce, false, Type::Any, FnType::Function);
+    funcs.add_var_len(
+        "coalesce",
+        coalesce,
+        false,
+        Type::Any,
+        FnType::Function,
+        Type::Any,
+    );
     funcs.add(
         "keys",
         keys,
@@ -761,13 +849,17 @@ pub fn init_functions() -> Result<(), Functions> {
             Type::Null,
         ])],
         FnType::Function,
+        Type::Union(vec![Type::List(Box::new(Type::String)), Type::Null]),
     );
+
+    // Trigonometric functions
     funcs.add(
         "sin",
         sin,
         false,
         vec![Type::Union(vec![Type::Int, Type::Float, Type::Null])],
         FnType::Function,
+        Type::Union(vec![Type::Float, Type::Null]),
     );
     funcs.add(
         "cos",
@@ -775,6 +867,7 @@ pub fn init_functions() -> Result<(), Functions> {
         false,
         vec![Type::Union(vec![Type::Int, Type::Float, Type::Null])],
         FnType::Function,
+        Type::Union(vec![Type::Float, Type::Null]),
     );
     funcs.add(
         "tan",
@@ -782,6 +875,7 @@ pub fn init_functions() -> Result<(), Functions> {
         false,
         vec![Type::Union(vec![Type::Int, Type::Float, Type::Null])],
         FnType::Function,
+        Type::Union(vec![Type::Float, Type::Null]),
     );
     funcs.add(
         "cot",
@@ -789,6 +883,7 @@ pub fn init_functions() -> Result<(), Functions> {
         false,
         vec![Type::Union(vec![Type::Int, Type::Float, Type::Null])],
         FnType::Function,
+        Type::Union(vec![Type::Float, Type::Null]),
     );
     funcs.add(
         "asin",
@@ -796,6 +891,7 @@ pub fn init_functions() -> Result<(), Functions> {
         false,
         vec![Type::Union(vec![Type::Int, Type::Float, Type::Null])],
         FnType::Function,
+        Type::Union(vec![Type::Float, Type::Null]),
     );
     funcs.add(
         "acos",
@@ -803,6 +899,7 @@ pub fn init_functions() -> Result<(), Functions> {
         false,
         vec![Type::Union(vec![Type::Int, Type::Float, Type::Null])],
         FnType::Function,
+        Type::Union(vec![Type::Float, Type::Null]),
     );
     funcs.add(
         "atan",
@@ -810,6 +907,7 @@ pub fn init_functions() -> Result<(), Functions> {
         false,
         vec![Type::Union(vec![Type::Int, Type::Float, Type::Null])],
         FnType::Function,
+        Type::Union(vec![Type::Float, Type::Null]),
     );
     funcs.add(
         "atan2",
@@ -820,6 +918,7 @@ pub fn init_functions() -> Result<(), Functions> {
             Type::Union(vec![Type::Int, Type::Float, Type::Null]),
         ],
         FnType::Function,
+        Type::Union(vec![Type::Float, Type::Null]),
     );
     funcs.add(
         "degrees",
@@ -827,6 +926,7 @@ pub fn init_functions() -> Result<(), Functions> {
         false,
         vec![Type::Union(vec![Type::Int, Type::Float, Type::Null])],
         FnType::Function,
+        Type::Union(vec![Type::Float, Type::Null]),
     );
     funcs.add(
         "radians",
@@ -834,15 +934,19 @@ pub fn init_functions() -> Result<(), Functions> {
         false,
         vec![Type::Union(vec![Type::Int, Type::Float, Type::Null])],
         FnType::Function,
+        Type::Union(vec![Type::Float, Type::Null]),
     );
-    funcs.add("pi", pi, false, vec![], FnType::Function);
+    funcs.add("pi", pi, false, vec![], FnType::Function, Type::Float);
     funcs.add(
         "haversin",
         haversin,
         false,
         vec![Type::Union(vec![Type::Int, Type::Float, Type::Null])],
         FnType::Function,
+        Type::Union(vec![Type::Float, Type::Null]),
     );
+
+    // Boolean functions
     funcs.add(
         "isEmpty",
         is_empty,
@@ -854,6 +958,7 @@ pub fn init_functions() -> Result<(), Functions> {
             Type::Null,
         ])],
         FnType::Function,
+        Type::Union(vec![Type::Bool, Type::Null]),
     );
     funcs.add(
         "toBoolean",
@@ -866,6 +971,7 @@ pub fn init_functions() -> Result<(), Functions> {
             Type::Null,
         ])],
         FnType::Function,
+        Type::Union(vec![Type::Bool, Type::Null]),
     );
     funcs.add(
         "toBooleanOrNull",
@@ -873,6 +979,7 @@ pub fn init_functions() -> Result<(), Functions> {
         false,
         vec![Type::Any], // Accept ANY type, unlike toBoolean which is restricted
         FnType::Function,
+        Type::Union(vec![Type::Bool, Type::Null]),
     );
     funcs.add(
         "toFloatOrNull",
@@ -880,6 +987,7 @@ pub fn init_functions() -> Result<(), Functions> {
         false,
         vec![Type::Any], // Accept ANY type instead of restricted union
         FnType::Function,
+        Type::Union(vec![Type::Float, Type::Null]),
     );
     funcs.add(
         "toIntegerOrNull",
@@ -887,6 +995,7 @@ pub fn init_functions() -> Result<(), Functions> {
         false,
         vec![Type::Any], // Accept ANY type instead of restricted union
         FnType::Function,
+        Type::Union(vec![Type::Int, Type::Null]),
     );
     funcs.add(
         "type",
@@ -894,13 +1003,17 @@ pub fn init_functions() -> Result<(), Functions> {
         false,
         vec![Type::Union(vec![Type::Relationship, Type::Null])],
         FnType::Function,
+        Type::Union(vec![Type::String, Type::Null]),
     );
+
+    // Path functions
     funcs.add(
         "nodes",
         nodes,
         false,
         vec![Type::Union(vec![Type::Path, Type::Null])],
         FnType::Function,
+        Type::Union(vec![Type::List(Box::new(Type::Node)), Type::Null]),
     );
     funcs.add(
         "relationships",
@@ -908,7 +1021,10 @@ pub fn init_functions() -> Result<(), Functions> {
         false,
         vec![Type::Union(vec![Type::Path, Type::Null])],
         FnType::Function,
+        Type::Union(vec![Type::List(Box::new(Type::Relationship)), Type::Null]),
     );
+
+    // Vector / spatial functions
     funcs.add(
         "vecf32",
         vecf32,
@@ -918,6 +1034,7 @@ pub fn init_functions() -> Result<(), Functions> {
             Type::Null,
         ])],
         FnType::Function,
+        Type::Union(vec![Type::VecF32, Type::Null]),
     );
     funcs.add(
         "point",
@@ -925,8 +1042,16 @@ pub fn init_functions() -> Result<(), Functions> {
         false,
         vec![Type::Union(vec![Type::Map, Type::Null])],
         FnType::Function,
+        Type::Union(vec![Type::Point, Type::Null]),
     );
-    funcs.add("exists", exists, false, vec![Type::Any], FnType::Function);
+    funcs.add(
+        "exists",
+        exists,
+        false,
+        vec![Type::Any],
+        FnType::Function,
+        Type::Union(vec![Type::Bool, Type::Null]),
+    );
     funcs.add(
         "distance",
         distance,
@@ -936,15 +1061,17 @@ pub fn init_functions() -> Result<(), Functions> {
             Type::Union(vec![Type::Point, Type::Null]),
         ],
         FnType::Function,
+        Type::Union(vec![Type::Float, Type::Null]),
     );
 
-    // aggregation functions
+    // Aggregation functions
     funcs.add(
         "collect",
         collect,
         false,
         vec![Type::Any],
         FnType::Aggregation(Value::List(thin_vec![]), None),
+        Type::Union(vec![Type::List(Box::new(Type::Any)), Type::Null]),
     );
     funcs.add(
         "count",
@@ -952,6 +1079,7 @@ pub fn init_functions() -> Result<(), Functions> {
         false,
         vec![Type::Any],
         FnType::Aggregation(Value::Int(0), None),
+        Type::Int,
     );
     funcs.add(
         "sum",
@@ -959,6 +1087,7 @@ pub fn init_functions() -> Result<(), Functions> {
         false,
         vec![Type::Union(vec![Type::Int, Type::Float, Type::Null])],
         FnType::Aggregation(Value::Float(0.0), None),
+        Type::Union(vec![Type::Float, Type::Null]),
     );
     funcs.add(
         "max",
@@ -966,6 +1095,7 @@ pub fn init_functions() -> Result<(), Functions> {
         false,
         vec![Type::Any],
         FnType::Aggregation(Value::Null, None),
+        Type::Any,
     );
     funcs.add(
         "min",
@@ -973,6 +1103,7 @@ pub fn init_functions() -> Result<(), Functions> {
         false,
         vec![Type::Any],
         FnType::Aggregation(Value::Null, None),
+        Type::Any,
     );
     funcs.add(
         "avg",
@@ -987,6 +1118,7 @@ pub fn init_functions() -> Result<(), Functions> {
             ]),
             Some(Box::new(finalize_avg)),
         ),
+        Type::Union(vec![Type::Float, Type::Null]),
     );
     funcs.add(
         "percentileDisc",
@@ -1000,6 +1132,7 @@ pub fn init_functions() -> Result<(), Functions> {
             Value::List(thin_vec![Value::Float(0.0), Value::List(thin_vec![])]),
             Some(Box::new(finalize_percentile_disc)),
         ),
+        Type::Union(vec![Type::Float, Type::Null]),
     );
     funcs.add(
         "percentileCont",
@@ -1013,6 +1146,7 @@ pub fn init_functions() -> Result<(), Functions> {
             Value::List(thin_vec![Value::Float(0.0), Value::List(thin_vec![])]),
             Some(Box::new(finalize_percentile_cont)),
         ),
+        Type::Union(vec![Type::Float, Type::Null]),
     );
     funcs.add(
         "stDev",
@@ -1023,6 +1157,7 @@ pub fn init_functions() -> Result<(), Functions> {
             Value::List(thin_vec![Value::Float(0.0), Value::List(thin_vec![])]),
             Some(Box::new(finalize_stdev)),
         ),
+        Type::Union(vec![Type::Float, Type::Null]),
     );
     funcs.add(
         "stDevP",
@@ -1033,6 +1168,7 @@ pub fn init_functions() -> Result<(), Functions> {
             Value::List(thin_vec![Value::Float(0.0), Value::List(thin_vec![])]),
             Some(Box::new(finalize_stdevp)),
         ),
+        Type::Union(vec![Type::Float, Type::Null]),
     );
 
     // Internal functions
@@ -1045,6 +1181,7 @@ pub fn init_functions() -> Result<(), Functions> {
             Type::Union(vec![Type::String, Type::Null]),
         ],
         FnType::Internal,
+        Type::Union(vec![Type::Bool, Type::Null]),
     );
     funcs.add(
         "ends_with",
@@ -1055,6 +1192,7 @@ pub fn init_functions() -> Result<(), Functions> {
             Type::Union(vec![Type::String, Type::Null]),
         ],
         FnType::Internal,
+        Type::Union(vec![Type::Bool, Type::Null]),
     );
     funcs.add(
         "contains",
@@ -1065,6 +1203,7 @@ pub fn init_functions() -> Result<(), Functions> {
             Type::Union(vec![Type::String, Type::Null]),
         ],
         FnType::Internal,
+        Type::Union(vec![Type::Bool, Type::Null]),
     );
     funcs.add(
         "is_null",
@@ -1072,6 +1211,7 @@ pub fn init_functions() -> Result<(), Functions> {
         false,
         vec![Type::Union(vec![Type::Bool]), Type::Any],
         FnType::Internal,
+        Type::Union(vec![Type::Bool, Type::Null]),
     );
     funcs.add(
         "regex_matches",
@@ -1082,6 +1222,7 @@ pub fn init_functions() -> Result<(), Functions> {
             Type::Union(vec![Type::String, Type::Null]),
         ],
         FnType::Internal,
+        Type::Union(vec![Type::Bool, Type::Null]),
     );
     funcs.add(
         "case",
@@ -1093,6 +1234,7 @@ pub fn init_functions() -> Result<(), Functions> {
             Type::Optional(Box::new(Type::Any)),
         ],
         FnType::Internal,
+        Type::Any,
     );
 
     // Procedures
@@ -1102,6 +1244,7 @@ pub fn init_functions() -> Result<(), Functions> {
         false,
         vec![],
         FnType::Procedure(vec![String::from("label")]),
+        Type::Any,
     );
     funcs.add(
         "db.relationshiptypes",
@@ -1109,6 +1252,7 @@ pub fn init_functions() -> Result<(), Functions> {
         false,
         vec![],
         FnType::Procedure(vec![String::from("relationshipType")]),
+        Type::Any,
     );
     funcs.add(
         "db.propertykeys",
@@ -1116,6 +1260,7 @@ pub fn init_functions() -> Result<(), Functions> {
         false,
         vec![],
         FnType::Procedure(vec![String::from("propertyKey")]),
+        Type::Any,
     );
     funcs.add(
         "db.indexes",
@@ -1133,6 +1278,7 @@ pub fn init_functions() -> Result<(), Functions> {
             String::from("status"),
             String::from("info"),
         ]),
+        Type::Any,
     );
 
     funcs.add(
@@ -1141,6 +1287,7 @@ pub fn init_functions() -> Result<(), Functions> {
         true,
         vec![Type::Map],
         FnType::Procedure(vec![]),
+        Type::Any,
     );
     funcs.add(
         "db.idx.fulltext.drop",
@@ -1148,6 +1295,7 @@ pub fn init_functions() -> Result<(), Functions> {
         true,
         vec![],
         FnType::Procedure(vec![]),
+        Type::Any,
     );
 
     funcs.add(
@@ -1156,6 +1304,7 @@ pub fn init_functions() -> Result<(), Functions> {
         false,
         vec![Type::Map],
         FnType::Procedure(vec![String::from("node"), String::from("score")]),
+        Type::Any,
     );
 
     FUNCTIONS.set(funcs)
