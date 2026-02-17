@@ -180,100 +180,100 @@ class testQueryValidationFlow(FlowTestsBase):
             assert("Encountered unhandled type" in str(e))
             pass
 
-    ## Validate that the module fails properly with incorrect argument counts.
-    #def test17_query_arity(self):
-    #    # Call GRAPH.QUERY with a missing query argument.
-    #    try:
-    #        res = self.redis_con.execute_command("GRAPH.QUERY", "G")
-    #        assert(False)
-    #    except redis.exceptions.ResponseError as e:
-    #        # Expecting an error.
-    #        assert("wrong number of arguments" in str(e))
-    #        pass
+    # Validate that the module fails properly with incorrect argument counts.
+    def test17_query_arity(self):
+        # Call GRAPH.QUERY with a missing query argument.
+        try:
+            res = self.redis_con.execute_command("GRAPH.QUERY", "G")
+            assert(False)
+        except redis.exceptions.ResponseError as e:
+            # Expecting an error.
+            assert("wrong number of arguments" in str(e))
+            pass
 
-    ## Run queries in which compile-time variables are accessed but not defined.
-    #def test18_undefined_variable_access(self):
-    #    try:
-    #        query = """CREATE (:person{name:bar[1]})"""
-    #        self.graph.query(query)
-    #        assert(False)
-    #    except redis.exceptions.ResponseError as e:
-    #        # Expecting an error.
-    #        assert("not defined" in str(e))
-    #        pass
+    # Run queries in which compile-time variables are accessed but not defined.
+    def test18_undefined_variable_access(self):
+        try:
+            query = """CREATE (:person{name:bar[1]})"""
+            self.graph.query(query)
+            assert(False)
+        except redis.exceptions.ResponseError as e:
+            # Expecting an error.
+            assert("not defined" in str(e))
+            pass
 
-    #    try:
-    #        query = """MATCH (a {val: undeclared}) RETURN a"""
-    #        self.graph.query(query)
-    #        assert(False)
-    #    except redis.exceptions.ResponseError as e:
-    #        # Expecting an error.
-    #        assert("not defined" in str(e))
-    #        pass
+        try:
+            query = """MATCH (a {val: undeclared}) RETURN a"""
+            self.graph.query(query)
+            assert(False)
+        except redis.exceptions.ResponseError as e:
+            # Expecting an error.
+            assert("not defined" in str(e))
+            pass
 
-    #    try:
-    #        query = """UNWIND [fake] AS ref RETURN ref"""
-    #        self.graph.query(query)
-    #        assert(False)
-    #    except redis.exceptions.ResponseError as e:
-    #        # Expecting an error.
-    #        assert("not defined" in str(e))
-    #        pass
+        try:
+            query = """UNWIND [fake] AS ref RETURN ref"""
+            self.graph.query(query)
+            assert(False)
+        except redis.exceptions.ResponseError as e:
+            # Expecting an error.
+            assert("not defined" in str(e))
+            pass
 
-    #def test19_invalid_cypher_options(self):
-    #    query = "EXPLAIN MATCH (p:president)-[:born]->(:state {name:'Hawaii'}) RETURN p"
-    #    try:
-    #        self.graph.query(query)
-    #        assert(False)
-    #    except:
-    #        # Expecting an error.
-    #        pass
+    def test19_invalid_cypher_options(self):
+        query = "EXPLAIN MATCH (p:president)-[:born]->(:state {name:'Hawaii'}) RETURN p"
+        try:
+            self.graph.query(query)
+            assert(False)
+        except:
+            # Expecting an error.
+            pass
 
-    #    query = "PROFILE MATCH (p:president)-[:born]->(:state {name:'Hawaii'}) RETURN p"
-    #    try:
-    #        self.graph.query(query)
-    #        assert(False)
-    #    except:
-    #        # Expecting an error.
-    #        pass
+        query = "PROFILE MATCH (p:president)-[:born]->(:state {name:'Hawaii'}) RETURN p"
+        try:
+            self.graph.query(query)
+            assert(False)
+        except:
+            # Expecting an error.
+            pass
 
-    #    query = "CYPHER val=1 EXPLAIN MATCH (p:president)-[:born]->(:state {name:'Hawaii'}) RETURN p"
-    #    try:
-    #        self.graph.query(query)
-    #        assert(False)
-    #    except:
-    #        # Expecting an error.
-    #        pass
+        query = "CYPHER val=1 EXPLAIN MATCH (p:president)-[:born]->(:state {name:'Hawaii'}) RETURN p"
+        try:
+            self.graph.query(query)
+            assert(False)
+        except:
+            # Expecting an error.
+            pass
 
-    #    query = "CYPHER val=1 PROFILE MATCH (p:president)-[:born]->(:state {name:'Hawaii'}) RETURN p"
-    #    try:
-    #        self.graph.query(query)
-    #        assert(False)
-    #    except:
-    #        # Expecting an error.
-    #        pass
+        query = "CYPHER val=1 PROFILE MATCH (p:president)-[:born]->(:state {name:'Hawaii'}) RETURN p"
+        try:
+            self.graph.query(query)
+            assert(False)
+        except:
+            # Expecting an error.
+            pass
 
-    ## Undirected edges are not allowed in CREATE clauses.
-    #def test20_undirected_edge_creation(self):
-    #    try:
-    #        query = """CREATE (:Endpoint)-[:R]-(:Endpoint)"""
-    #        self.graph.query(query)
-    #        assert(False)
-    #    except redis.exceptions.ResponseError as e:
-    #        # Expecting an error.
-    #        assert("Only directed relationships" in str(e))
-    #        pass
+    # Undirected edges are not allowed in CREATE clauses.
+    def test20_undirected_edge_creation(self):
+        try:
+            query = """CREATE (:Endpoint)-[:R]-(:Endpoint)"""
+            self.graph.query(query)
+            assert(False)
+        except redis.exceptions.ResponseError as e:
+            # Expecting an error.
+            assert("Only directed relationships" in str(e))
+            pass
 
-    ## Applying a filter for non existing entity.
-    #def test20_non_existing_graph_entity(self):
-    #    try:
-    #        query = """MATCH p=() WHERE p.name='value' RETURN p"""
-    #        self.graph.query(query)
-    #        assert(False)
-    #    except redis.exceptions.ResponseError as e:
-    #        # Expecting an error.
-    #        assert("Type mismatch: expected Map, Node, Edge, Null, or Point but was Path" in str(e))
-    #        pass
+    # Applying a filter for non existing entity.
+    def test20_non_existing_graph_entity(self):
+        try:
+            query = """MATCH p=() WHERE p.name='value' RETURN p"""
+            self.graph.query(query)
+            assert(False)
+        except redis.exceptions.ResponseError as e:
+            # Expecting an error.
+            assert("Type mismatch: expected Map, Node, Edge, Datetime, Date, Time, Duration, Null, or Point but was Path" in str(e))
+            pass
 
     ## Comments should not affect query functionality.
     #def test21_ignore_query_comments(self):

@@ -789,10 +789,22 @@ impl<'a> Runtime {
                                 res.push(Value::Null);
                             }
                         }
+                        Value::Datetime(ts) => {
+                            res.push(Self::get_datetime_component(ts, attr)?);
+                        }
+                        Value::Date(ts) => {
+                            res.push(Self::get_date_component(ts, attr)?);
+                        }
+                        Value::Time(ts) => {
+                            res.push(Self::get_time_component(ts, attr)?);
+                        }
+                        Value::Duration(dur) => {
+                            res.push(Self::get_duration_component(dur, attr)?);
+                        }
                         Value::Null => res.push(Value::Null),
                         v => {
                             return Err(format!(
-                                "Type mismatch: expected Node, Relationship, Map, or Null but was {}",
+                                "Type mismatch: expected Map, Node, Edge, Datetime, Date, Time, Duration, Null, or Point but was {}",
                                 v.name()
                             ));
                         }
@@ -2824,6 +2836,193 @@ impl<'a> Runtime {
         self.g
             .borrow()
             .get_type(self.g.borrow().get_relationship_type_id(id))
+    }
+
+    /// Extract a component from a datetime value (stored as milliseconds since
+    /// epoch).  Mirrors the C `DateTime_getComponent` in `datetime.c`.
+    fn get_datetime_component(
+        timestamp_ms: i64,
+        component: &str,
+    ) -> Result<Value, String> {
+        use chrono::{Datelike, TimeZone, Timelike, Utc};
+
+        let chrono::LocalResult::Single(dt) = Utc.timestamp_millis_opt(timestamp_ms) else {
+            return Ok(Value::Null);
+        };
+
+        let val = match component.to_ascii_lowercase().as_str() {
+            "second" => i64::from(dt.second()),
+            "minute" => i64::from(dt.minute()),
+            "hour" => i64::from(dt.hour()),
+            "day" => i64::from(dt.day()),
+            "month" => i64::from(dt.month()),
+            "year" => i64::from(dt.year()),
+            "dayofweek" => i64::from(dt.weekday().num_days_from_sunday()),
+            "weekday" => {
+                // ISO weekday: Monday=1 .. Sunday=7
+                let w = dt.weekday().num_days_from_sunday();
+                if w == 0 { 7 } else { i64::from(w) }
+            }
+            "ordinalday" => i64::from(dt.ordinal()),
+            "quarter" => i64::from((dt.month() - 1) / 3 + 1),
+            "week" => i64::from(dt.iso_week().week()),
+            "weekyear" => i64::from(dt.iso_week().year()),
+            "dayofquarter" | "quarterday" => {
+                let q = (dt.month() - 1) / 3 + 1;
+                let quarter_start_month = (q - 1) * 3 + 1;
+                let quarter_start = Utc
+                    .with_ymd_and_hms(dt.year(), quarter_start_month, 1, 0, 0, 0)
+                    .single()
+                    .ok_or_else(|| "Invalid quarter start date".to_string())?;
+                let days = (dt.date_naive() - quarter_start.date_naive()).num_days();
+                days + 1
+            }
+            // sub-second precision not stored in time_t-level values
+            "millisecond" | "microsecond" | "nanosecond" => 0,
+            _ => {
+                return Err(format!("unknown datetime component {component}"));
+            }
+        };
+
+        Ok(Value::Int(val))
+    }
+
+    /// Extract a component from a date value (stored as milliseconds since
+    /// epoch at midnight UTC).  Mirrors the C `Date_getComponent` in `date.c`.
+    fn get_date_component(
+        timestamp_ms: i64,
+        component: &str,
+    ) -> Result<Value, String> {
+        use chrono::{Datelike, TimeZone, Utc};
+
+        let chrono::LocalResult::Single(dt) = Utc.timestamp_millis_opt(timestamp_ms) else {
+            return Ok(Value::Null);
+        };
+
+        let val = match component.to_ascii_lowercase().as_str() {
+            "day" => i64::from(dt.day()),
+            "month" => i64::from(dt.month()),
+            "year" => i64::from(dt.year()),
+            "dayofweek" => i64::from(dt.weekday().num_days_from_sunday()),
+            "weekday" => {
+                let w = dt.weekday().num_days_from_sunday();
+                if w == 0 { 7 } else { i64::from(w) }
+            }
+            "ordinalday" => i64::from(dt.ordinal()),
+            "quarter" => i64::from((dt.month() - 1) / 3 + 1),
+            "week" => i64::from(dt.iso_week().week()),
+            "weekyear" => i64::from(dt.iso_week().year()),
+            "dayofquarter" | "quarterday" => {
+                let q = (dt.month() - 1) / 3 + 1;
+                let quarter_start_month = (q - 1) * 3 + 1;
+                let quarter_start = Utc
+                    .with_ymd_and_hms(dt.year(), quarter_start_month, 1, 0, 0, 0)
+                    .single()
+                    .ok_or_else(|| "Invalid quarter start date".to_string())?;
+                let days = (dt.date_naive() - quarter_start.date_naive()).num_days();
+                days + 1
+            }
+            _ => {
+                return Err(format!("unknown date component {component}"));
+            }
+        };
+
+        Ok(Value::Int(val))
+    }
+
+    /// Extract a component from a time value (stored as milliseconds since
+    /// epoch with a fixed base date).  Mirrors the C `Time_getComponent` in
+    /// `time.c`.
+    fn get_time_component(
+        timestamp_ms: i64,
+        component: &str,
+    ) -> Result<Value, String> {
+        use chrono::{TimeZone, Timelike, Utc};
+
+        let chrono::LocalResult::Single(dt) = Utc.timestamp_millis_opt(timestamp_ms) else {
+            return Ok(Value::Null);
+        };
+
+        let val = match component.to_ascii_lowercase().as_str() {
+            "second" => i64::from(dt.second()),
+            "minute" => i64::from(dt.minute()),
+            "hour" => i64::from(dt.hour()),
+            _ => {
+                return Err(format!("unknown time component {component}"));
+            }
+        };
+
+        Ok(Value::Int(val))
+    }
+
+    /// Extract a component from a duration value (stored as milliseconds from
+    /// epoch).  Mirrors the C `Duration_getComponent` in `duration.c` which
+    /// calls `duration_from_time_t_utc` to decompose the raw value back into
+    /// calendar / clock fields.
+    fn get_duration_component(
+        duration_ms: i64,
+        component: &str,
+    ) -> Result<Value, String> {
+        use chrono::{Datelike, TimeZone, Utc};
+
+        // The C code stores durations as seconds-from-epoch and decomposes via
+        // `duration_from_time_t_utc` which converts to `struct tm` and then
+        // computes year/month differences from the epoch (1970-01-01 00:00:00).
+        // In Rust we store milliseconds, so convert to a chrono DateTime first.
+        let chrono::LocalResult::Single(dt) = Utc.timestamp_millis_opt(duration_ms) else {
+            return Ok(Value::Null);
+        };
+
+        // Decompose into years/months from epoch (1970-01-01) – mirrors the C
+        // logic in duration_from_time_t_utc.
+        let epoch_year: i32 = 1970;
+        let epoch_month: u32 = 1; // January
+
+        let mut year_diff = dt.year() - epoch_year;
+        let mut month_diff = dt.month() as i32 - epoch_month as i32;
+
+        if month_diff < 0 {
+            year_diff -= 1;
+            month_diff += 12;
+        }
+
+        // Reconstruct an anchor date that has the same year/month offset from
+        // epoch but day=1, midnight – so the remainder gives us days + time.
+        let anchor = Utc
+            .with_ymd_and_hms(
+                epoch_year + year_diff,
+                (epoch_month as i32 + month_diff) as u32,
+                1,
+                0,
+                0,
+                0,
+            )
+            .single()
+            .unwrap_or(dt);
+
+        let remaining_secs = (duration_ms / 1000) - anchor.timestamp();
+
+        let days = remaining_secs / 86400;
+        let after_days = remaining_secs - days * 86400;
+        let hours = after_days / 3600;
+        let after_hours = after_days - hours * 3600;
+        let minutes = after_hours / 60;
+        let seconds = after_hours - minutes * 60;
+
+        let val: f64 = match component.to_ascii_lowercase().as_str() {
+            "years" => f64::from(year_diff),
+            "months" => f64::from(month_diff),
+            "weeks" => 0.0, // weeks always 0 in decomposition (matches C)
+            "days" => days as f64,
+            "hours" => hours as f64,
+            "minutes" => minutes as f64,
+            "seconds" => seconds as f64,
+            _ => {
+                return Err(format!("unknown duration component {component}"));
+            }
+        };
+
+        Ok(Value::Float(val))
     }
 }
 
