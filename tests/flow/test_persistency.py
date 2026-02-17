@@ -57,7 +57,7 @@ class testGraphPersistency():
         graph.create_node_range_index("person", "name", "height")
         graph.create_node_range_index("country", "name", "population")
         graph.create_edge_range_index("visit", "purpose")
-        graph.query("CALL db.idx.fulltext.createNodeIndex({label: 'person', stopwords: ['A', 'B'], language: 'english'}, { field: 'text', nostem: true, weight: 2, phonetic: 'dm:en' })")
+        graph.query("CREATE FULLTEXT INDEX FOR (n:person) ON (n.text) OPTIONS {stopwords: ['A', 'B'], language: 'english', nostem: true, weight: 2, phonetic: 'dm:en'}")
         create_node_vector_index(graph, "person", 'embedding1', dim=128, m=64, efConstruction=10, efRuntime=10)
         create_node_vector_index(graph, "person", 'embedding2', dim=256, similarity_function='cosine', m=32, efConstruction=20, efRuntime=20)
         wait_for_indices_to_sync(graph)

@@ -317,7 +317,7 @@ class testProcedures(FlowTestsBase):
         actual_resultset = self.graph.call_procedure("dbms.procedures").result_set
 
         # The following two procedure are a part of the expected results
-        expected_result = [["db.labels", "READ"], ["db.idx.fulltext.createNodeIndex", "WRITE"],
+        expected_result = [["db.labels", "READ"],
                            ["db.propertyKeys", "READ"], ["dbms.procedures", "READ"], ["db.relationshipTypes", "READ"],
                            ["algo.BFS", "READ"], ["algo.pageRank", "READ"], ["db.idx.fulltext.queryNodes", "READ"],
                            ["db.idx.fulltext.drop", "WRITE"]]
@@ -370,7 +370,6 @@ class testProcedures(FlowTestsBase):
                            ["READ",  "algo.labelPropagation"],
                            ["READ",  "algo.pageRank"],
                            ['READ',  "db.constraints"],
-                           ["WRITE", "db.idx.fulltext.createNodeIndex"],
                            ["WRITE", "db.idx.fulltext.drop"],
                            ["READ",  "db.idx.fulltext.queryNodes"],
                            ["READ",  "db.idx.fulltext.queryRelationships"],

@@ -56,6 +56,6 @@ def populate_graph(db, graph):
     nodes_str = [str(n) for n in actors.values()] + [str(n) for n in movies.values()]
     graph.query(f"CREATE {','.join(nodes_str + edges_str)}")
 
-    graph.create_node_fulltext_index("actor", "name")
+    graph.query("CREATE FULLTEXT INDEX FOR (n:actor) ON (n.name)")
 
     return (actors, movies)
