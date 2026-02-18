@@ -744,15 +744,21 @@ impl Binder {
                         // Property access is not valid on Path types in read
                         // contexts. In SET targets, path property access is
                         // allowed and silently ignored at runtime.
-                        if !allow_path_property
-                            && let Some(first_child) = children.first()
-                            && let ExprIR::Variable(var) = first_child.root().data()
-                            && var.ty == Type::Path
-                        {
-                            return Err("Type mismatch: expected Map, Node, Edge, \
-                                         Datetime, Date, Time, Duration, Null, \
-                                         or Point but was Path"
-                                .to_string());
+                        if !allow_path_property && let Some(first_child) = children.first() {
+                            let root = first_child.root();
+                            let inner = if matches!(root.data(), ExprIR::Paren) {
+                                root.get_child(0)
+                            } else {
+                                Some(root)
+                            };
+                            if inner.is_some_and(
+                                |n| matches!(n.data(), ExprIR::Variable(v) if v.ty == Type::Path),
+                            ) {
+                                return Err("Type mismatch: expected Map, Node, Edge, \
+                                             Datetime, Date, Time, Duration, Null, \
+                                             or Point but was Path"
+                                    .to_string());
+                            }
                         }
                         ExprIR::Property(prop)
                     }
