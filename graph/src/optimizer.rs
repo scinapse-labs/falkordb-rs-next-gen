@@ -335,7 +335,6 @@ fn push_filters_down(optimized_plan: &mut DynTree<IR>) {
     loop {
         let mut changed = false;
         let indices = optimized_plan.root().indices::<Bfs>().collect::<Vec<_>>();
-        println!("{}", optimized_plan);
         for idx in indices {
             let IR::Filter(filter) = optimized_plan.node(idx).data() else {
                 continue;

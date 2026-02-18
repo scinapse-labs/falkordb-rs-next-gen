@@ -604,6 +604,9 @@ impl Graph {
 
     #[must_use]
     pub fn max_node_id(&self) -> u64 {
+        if self.node_count == 0 {
+            return 0;
+        }
         self.node_count + self.deleted_nodes.len() - 1
     }
 
