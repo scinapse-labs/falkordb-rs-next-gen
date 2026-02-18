@@ -2882,7 +2882,7 @@ impl<'a> Runtime {
                 .ok_or_else(|| "Invalid quarter start date".to_string())?;
             (dt.date_naive() - quarter_start.date_naive()).num_days() + 1
         } else if c.eq_ignore_ascii_case("millisecond") {
-            timestamp_ms % 1000
+            timestamp_ms.rem_euclid(1000)
         } else if c.eq_ignore_ascii_case("microsecond") || c.eq_ignore_ascii_case("nanosecond") {
             // microsecond/nanosecond precision not stored
             0
