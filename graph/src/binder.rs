@@ -370,10 +370,8 @@ impl Binder {
     ) -> Result<QueryGraph<Arc<String>, Arc<String>, Variable>, String> {
         let mut bound: QueryGraph<Arc<String>, Arc<String>, Variable> = QueryGraph::default();
 
-        // Pre-register path variables in scope before binding node/relationship
-        // attrs so that references like `p1.path_val` inside inline properties
-        // can resolve `p1`. This mirrors the C implementation where the AST
-        // visitor processes named_path nodes before sibling node patterns.
+        // Pre-register path variables in scope so they can be resolved
+        // when binding node/relationship inline properties below.
         for raw_path in graph.paths() {
             self.define_name_in_scope(raw_path.var.clone(), Type::Path, true)?;
         }
