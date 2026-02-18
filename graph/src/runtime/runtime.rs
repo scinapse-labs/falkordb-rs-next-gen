@@ -57,6 +57,7 @@ use atomic_refcell::AtomicRefCell;
 use once_cell::{sync::OnceCell, unsync::Lazy};
 use orx_tree::{Bfs, Dyn, DynNode, DynTree, NodeIdx, NodeRef};
 use reqwest::blocking::get;
+use roaring::RoaringTreemap;
 use std::{
     cell::RefCell,
     cmp::Ordering,
@@ -184,7 +185,8 @@ impl GetVariables for DynNode<'_, IR> {
                 | IR::DropIndex { .. } => {}
                 IR::NodeByLabelScan(node)
                 | IR::NodeByIndexScan { node, .. }
-                | IR::NodeByIdScan { node, .. } => {
+                | IR::NodeByLabelAndIdScan { node, .. }
+                | IR::NodeByIdSeek { node, .. } => {
                     vars.push(node.alias.clone());
                 }
                 IR::CondTraverse(query_relationship) => {
@@ -1351,13 +1353,18 @@ impl<'a> Runtime {
                 .cond_inspect(self.inspect, move |res| {
                     self.record.borrow_mut().push((idx, res.clone()));
                 })),
-            IR::NodeByIndexScan { node, index, query } => Ok(iter
-                .try_flat_map(move |vars| self.node_by_index_scan(node, index, query, vars))
+            IR::NodeByLabelAndIdScan { node, filter } => Ok(iter
+                .try_flat_map(move |vars| self.node_by_label_and_id_scan(node, filter, vars))
                 .cond_inspect(self.inspect, move |res| {
                     self.record.borrow_mut().push((idx, res.clone()));
                 })),
-            IR::NodeByIdScan { node, id, op } => Ok(iter
-                .try_flat_map(move |vars| self.node_by_id_scan(node, id, op, vars))
+            IR::NodeByIdSeek { node, filter } => Ok(iter
+                .try_flat_map(move |vars| self.node_by_id_seek(node, filter, vars))
+                .cond_inspect(self.inspect, move |res| {
+                    self.record.borrow_mut().push((idx, res.clone()));
+                })),
+            IR::NodeByIndexScan { node, index, query } => Ok(iter
+                .try_flat_map(move |vars| self.node_by_index_scan(node, index, query, vars))
                 .cond_inspect(self.inspect, move |res| {
                     self.record.borrow_mut().push((idx, res.clone()));
                 })),
@@ -2457,61 +2464,101 @@ impl<'a> Runtime {
         ))
     }
 
-    fn node_by_id_scan(
-        &'a self,
-        node_pattern: &'a QueryNode<Arc<String>, Variable>,
-        id: &QueryExpr<Variable>,
-        op: &ExprIR<Variable>,
-        mut vars: Env,
-    ) -> Result<Box<dyn Iterator<Item = Result<Env, String>> + 'a>, String> {
-        let id = self.run_expr(id, id.root().idx(), &vars, None)?;
-        let id = match id {
-            Value::Int(id) => NodeId::from(id as u64),
-            _ => {
-                return Err(String::from("Node ID must be an integer"));
-            }
-        };
-        let g = self.g.borrow();
-        match op {
-            ExprIR::Eq => {
-                let node_labels = g.get_node_labels(id).collect::<OrderSet<Arc<String>>>();
-                if node_pattern
-                    .labels
-                    .iter()
-                    .all(|label| node_labels.contains(label))
-                {
-                    vars.insert(&node_pattern.alias, Value::Node(id));
-                    Ok(Box::new(std::iter::once(Ok(vars))))
-                } else {
-                    Ok(Box::new(empty()))
+    fn evaluate_filter(
+        &self,
+        filter: &Vec<(QueryExpr<Variable>, ExprIR<Variable>)>,
+        vars: &Env,
+    ) -> Result<RoaringTreemap, String> {
+        let mut min = 0u64;
+        let mut max = self.g.borrow().max_node_id();
+        for (expr, op) in filter {
+            let value = self.run_expr(expr, expr.root().idx(), vars, None)?;
+            let id = match value {
+                Value::Int(id) => id as u64,
+                _ => {
+                    return Err(String::from("Node ID must be an integer"));
+                }
+            };
+            match op {
+                ExprIR::Eq => {
+                    if id < min || id > max {
+                        return Ok(RoaringTreemap::new());
+                    }
+                    min = id;
+                    max = id;
+                }
+                ExprIR::Gt => {
+                    if id >= max {
+                        return Ok(RoaringTreemap::new());
+                    }
+                    min = std::cmp::max(min, id + 1);
+                }
+                ExprIR::Ge => {
+                    if id > max {
+                        return Ok(RoaringTreemap::new());
+                    }
+                    min = std::cmp::max(min, id);
+                }
+                ExprIR::Lt => {
+                    if id <= min {
+                        return Ok(RoaringTreemap::new());
+                    }
+                    max = std::cmp::min(max, id - 1);
+                }
+                ExprIR::Le => {
+                    if id < min {
+                        return Ok(RoaringTreemap::new());
+                    }
+                    max = std::cmp::min(max, id);
+                }
+                _ => {
+                    unreachable!()
                 }
             }
-            ExprIR::Gt => Ok(Box::new(g.get_nodes(&node_pattern.labels).filter_map(
-                move |nid| {
-                    if nid > id {
-                        let mut vars = vars.clone();
-                        vars.insert(&node_pattern.alias, Value::Node(nid));
-                        Some(Ok(vars))
-                    } else {
-                        None
-                    }
-                },
-            ))),
-            ExprIR::Lt => Ok(Box::new(g.get_nodes(&node_pattern.labels).filter_map(
-                move |nid| {
-                    if nid < id {
-                        let mut vars = vars.clone();
-                        vars.insert(&node_pattern.alias, Value::Node(nid));
-                        Some(Ok(vars))
-                    } else {
-                        None
-                    }
-                },
-            ))),
-            _ => {
-                unreachable!()
-            }
         }
+        let mut result = RoaringTreemap::new();
+        result.insert_range(min..=max);
+        Ok(result)
+    }
+
+    fn node_by_label_and_id_scan(
+        &'a self,
+        node_pattern: &'a QueryNode<Arc<String>, Variable>,
+        filter: &Vec<(QueryExpr<Variable>, ExprIR<Variable>)>,
+        vars: Env,
+    ) -> Result<Box<dyn Iterator<Item = Result<Env, String>> + 'a>, String> {
+        let range = self.evaluate_filter(filter, &vars)?;
+        let g = self.g.borrow();
+        Ok(Box::new(g.get_nodes(&node_pattern.labels).filter_map(
+            move |nid| {
+                if range.contains(u64::from(nid)) {
+                    let mut vars = vars.clone();
+                    vars.insert(&node_pattern.alias, Value::Node(nid));
+                    Some(Ok(vars))
+                } else {
+                    None
+                }
+            },
+        )))
+    }
+
+    fn node_by_id_seek(
+        &'a self,
+        node_pattern: &'a QueryNode<Arc<String>, Variable>,
+        filter: &Vec<(QueryExpr<Variable>, ExprIR<Variable>)>,
+        vars: Env,
+    ) -> Result<Box<dyn Iterator<Item = Result<Env, String>> + 'a>, String> {
+        let range = self.evaluate_filter(filter, &vars)?;
+        let g = self.g.borrow();
+        Ok(Box::new(range.into_iter().filter_map(move |nid| {
+            if g.is_node_deleted(NodeId::from(nid)) {
+                None
+            } else {
+                let mut vars = vars.clone();
+                vars.insert(&node_pattern.alias, Value::Node(NodeId::from(nid)));
+                Some(Ok(vars))
+            }
+        })))
     }
 
     fn delete(

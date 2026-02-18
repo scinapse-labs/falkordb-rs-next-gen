@@ -602,6 +602,11 @@ impl Graph {
         }
     }
 
+    #[must_use]
+    pub fn max_node_id(&self) -> u64 {
+        self.node_count + self.deleted_nodes.len() - 1
+    }
+
     pub fn set_node_attributes(
         &mut self,
         id: NodeId,
