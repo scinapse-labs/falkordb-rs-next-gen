@@ -389,7 +389,6 @@ impl Binder {
         for node in graph.nodes() {
             let alias = self.define_name_in_scope(node.alias.clone(), Type::Node, !is_create)?;
             let attrs = self.bind_expr(&node.attrs)?;
-            Self::validate_inlined_properties(&attrs)?;
 
             let bound_node = Arc::new(QueryNode::new(alias.clone(), node.labels.clone(), attrs));
             bound.add_node(bound_node);
@@ -403,7 +402,6 @@ impl Binder {
                 !is_create,
             )?;
             let attrs = self.bind_expr(&relationship.attrs)?;
-            Self::validate_inlined_properties(&attrs)?;
 
             // Resolve 'from' node by alias, binding if missing and merging labels if present
             let from_bound = if let Some(bound_node) = bound
@@ -419,7 +417,6 @@ impl Binder {
                     !is_create,
                 )?;
                 let from_attrs = self.bind_expr(&relationship.from.attrs)?;
-                Self::validate_inlined_properties(&from_attrs)?;
                 let bound_node = Arc::new(QueryNode::new(
                     from_alias.clone(),
                     relationship.from.labels.clone(),
@@ -443,7 +440,6 @@ impl Binder {
                     !is_create,
                 )?;
                 let to_attrs = self.bind_expr(&relationship.to.attrs)?;
-                Self::validate_inlined_properties(&to_attrs)?;
                 let bound_node = Arc::new(QueryNode::new(
                     to_alias.clone(),
                     relationship.to.labels.clone(),
@@ -908,17 +904,6 @@ impl Binder {
             return Err(format!(
                 "The alias '{}' was specified for both a node and a relationship.",
                 existing.as_str()
-            ));
-        }
-        Ok(())
-    }
-
-    /// Validates that inlined properties in node/relationship patterns are maps.
-    /// Mirrors `_ValidateInlinedProperties` in the C `ast_validations.c`.
-    fn validate_inlined_properties(attrs: &QueryExpr<Variable>) -> Result<(), String> {
-        if !matches!(attrs.root().data(), ExprIR::Map) {
-            return Err(String::from(
-                "Encountered unhandled type in inlined properties.",
             ));
         }
         Ok(())
