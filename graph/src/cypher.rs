@@ -1052,7 +1052,7 @@ impl<'a> Parser<'a> {
             } else {
                 IndexType::Range
             };
-            let options = if vector && optional_match_token!(self.lexer => Options) {
+            let options = if (vector || fulltext) && optional_match_token!(self.lexer => Options) {
                 Some(Arc::new(self.parse_map()?))
             } else {
                 None

@@ -418,33 +418,6 @@ impl Planner {
                         entity_type: EntityType::Node,
                     });
                 }
-                if proc.name == "db.idx.fulltext.createNodeIndex" {
-                    let label = match exprs[0].root().data() {
-                        ExprIR::String(label) => label.clone(),
-                        ExprIR::Map => {
-                            let mut ret = None;
-                            for child in exprs[0].root().children() {
-                                if let ExprIR::String(label) = child.data()
-                                    && label.as_str() == "label"
-                                {
-                                    ret = Some(label.clone());
-                                    break;
-                                }
-                            }
-                            ret.unwrap_or_else(|| {
-                                unreachable!();
-                            })
-                        }
-                        _ => unreachable!(),
-                    };
-                    return tree!(IR::CreateIndex {
-                        label,
-                        attrs: vec![],
-                        index_type: IndexType::Fulltext,
-                        entity_type: EntityType::Node,
-                        options: None,
-                    });
-                }
                 tree!(IR::ProcedureCall(proc, exprs, named_outputs))
             }
             QueryIR::Match {

@@ -61,7 +61,7 @@ use crate::{
         tensor::Tensor,
         versioned_matrix::{self, VersionedMatrix},
     },
-    indexer::{Document, EntityType, IndexInfo, IndexQuery, IndexType, Indexer},
+    indexer::{Document, EntityType, IndexInfo, IndexOptions, IndexQuery, IndexType, Indexer},
     optimizer::optimize,
     planner::{IR, Planner},
     runtime::{ordermap::OrderMap, orderset::OrderSet, pending::PendingRelationship, value::Value},
@@ -1116,13 +1116,19 @@ impl Graph {
         entity_type: &EntityType,
         label: &Arc<String>,
         attrs: &Vec<Arc<String>>,
+        options: Option<IndexOptions>,
     ) -> Result<(), String> {
         match entity_type {
             EntityType::Node => {
                 let len = self.get_label_matrix_mut(label).nvals();
                 {
-                    self.node_indexer
-                        .create_index(index_type, label.clone(), attrs, len)?;
+                    self.node_indexer.create_index(
+                        index_type,
+                        label.clone(),
+                        attrs,
+                        len,
+                        options,
+                    )?;
                 }
                 self.populate_index(label);
             }

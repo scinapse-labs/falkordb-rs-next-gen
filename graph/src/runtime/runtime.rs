@@ -39,7 +39,7 @@ use crate::{
         Variable,
     },
     graph::graph::{Graph, LabelId, NodeId, RelationshipId},
-    indexer::IndexQuery,
+    indexer::{IndexOptions, IndexQuery, IndexType, TextIndexOptions},
     planner::IR,
     runtime::{
         functions::{FnType, apply_pow},
@@ -1669,17 +1669,31 @@ impl<'a> Runtime {
                 attrs,
                 index_type,
                 entity_type,
-                options: _,
+                options,
             } => {
                 if !self.write {
                     return Err(String::from(
                         "graph.RO_QUERY is to be executed only on read-only queries",
                     ));
                 }
+                let index_options = match options {
+                    Some(expr) => {
+                        let val = self.run_expr(expr, expr.root().idx(), &Env::default(), None)?;
+                        match val {
+                            Value::Map(map) => map_to_index_options(index_type, &map)?,
+                            _ => return Err("Index options must be a map".into()),
+                        }
+                    }
+                    None => None,
+                };
+                self.g.borrow_mut().create_index(
+                    index_type,
+                    entity_type,
+                    label,
+                    attrs,
+                    index_options,
+                )?;
                 self.stats.borrow_mut().indexes_created += attrs.len();
-                self.g
-                    .borrow_mut()
-                    .create_index(index_type, entity_type, label, attrs)?;
                 Ok(Box::new(empty()))
             }
             IR::DropIndex {
@@ -2998,6 +3012,66 @@ impl<'a> Runtime {
         self.g
             .borrow()
             .get_type(self.g.borrow().get_relationship_type_id(id))
+    }
+}
+
+fn map_to_index_options(
+    index_type: &IndexType,
+    kv_map: &OrderMap<Arc<String>, Value>,
+) -> Result<Option<IndexOptions>, String> {
+    let get = |key: &str| -> Option<&Value> {
+        kv_map
+            .iter()
+            .find_map(|(k, v)| if k.as_str() == key { Some(v) } else { None })
+    };
+    match index_type {
+        IndexType::Fulltext => {
+            let weight = match get("weight") {
+                Some(Value::Float(f)) => Some(*f),
+                Some(Value::Int(i)) => Some(*i as f64),
+                None => None,
+                _ => return Err("Invalid 'weight' option: expected a number".into()),
+            };
+            let nostem = match get("nostem") {
+                Some(Value::Bool(b)) => Some(*b),
+                None => None,
+                _ => return Err("Invalid 'nostem' option: expected a boolean".into()),
+            };
+            let phonetic = match get("phonetic") {
+                Some(Value::Bool(b)) => Some(*b),
+                None => None,
+                _ => return Err("Invalid 'phonetic' option: expected a boolean".into()),
+            };
+            let language = match get("language") {
+                Some(Value::String(s)) => Some(s.clone()),
+                None => None,
+                _ => return Err("Invalid 'language' option: expected a string".into()),
+            };
+            let stopwords = match get("stop_words") {
+                Some(Value::List(list)) => {
+                    let mut words = Vec::with_capacity(list.len());
+                    for v in list.iter() {
+                        match v {
+                            Value::String(s) => words.push(s.clone()),
+                            _ => {
+                                return Err(
+                                    "Invalid 'stop_words' option: expected a list of strings"
+                                        .into(),
+                                );
+                            }
+                        }
+                    }
+                    Some(words)
+                }
+                None => None,
+                _ => return Err("Invalid 'stop_words' option: expected a list".into()),
+            };
+            let options = IndexOptions::Text(TextIndexOptions::new(
+                weight, nostem, phonetic, language, stopwords,
+            ));
+            Ok(Some(options))
+        }
+        _ => Ok(None),
     }
 }
 

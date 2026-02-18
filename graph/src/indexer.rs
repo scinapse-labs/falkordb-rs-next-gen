@@ -47,29 +47,31 @@ use roaring::RoaringTreemap;
 
 use crate::{
     redisearch::{
-        GC_POLICY_FORK, REDISEARCH_ADD_REPLACE, RSDoc, RSFLDOPT_NONE, RSFLDTYPE_FULLTEXT,
-        RSFLDTYPE_GEO, RSFLDTYPE_NUMERIC, RSFLDTYPE_TAG, RSFLDTYPE_VECTOR,
-        RSGeoDistance_RS_GEO_DISTANCE_M, RSIndex, RSRANGE_INF, RSRANGE_NEG_INF,
+        GC_POLICY_FORK, REDISEARCH_ADD_REPLACE, RSDoc, RSFLDOPT_NONE, RSFLDOPT_TXTNOSTEM,
+        RSFLDOPT_TXTPHONETIC, RSFLDTYPE_FULLTEXT, RSFLDTYPE_GEO, RSFLDTYPE_NUMERIC, RSFLDTYPE_TAG,
+        RSFLDTYPE_VECTOR, RSGeoDistance_RS_GEO_DISTANCE_M, RSIndex, RSRANGE_INF, RSRANGE_NEG_INF,
         RediSearch_CreateDocument2, RediSearch_CreateField, RediSearch_CreateGeoNode,
         RediSearch_CreateIndex, RediSearch_CreateIndexOptions, RediSearch_CreateNumericNode,
         RediSearch_CreateTagNode, RediSearch_CreateTagTokenNode, RediSearch_DeleteDocument,
         RediSearch_DocumentAddFieldGeo, RediSearch_DocumentAddFieldNumber,
         RediSearch_DocumentAddFieldString, RediSearch_DocumentAddFieldVector, RediSearch_DropIndex,
         RediSearch_FreeIndexOptions, RediSearch_GetResultsIterator, RediSearch_IndexAddDocument,
-        RediSearch_IndexOptionsSetGCPolicy, RediSearch_IndexOptionsSetStopwords,
-        RediSearch_QueryNodeAddChild, RediSearch_ResultsIteratorFree,
-        RediSearch_ResultsIteratorNext, RediSearch_TagFieldSetCaseSensitive,
-        RediSearch_TagFieldSetSeparator, RediSearch_TextFieldSetWeight,
+        RediSearch_IndexOptionsSetGCPolicy, RediSearch_IndexOptionsSetLanguage,
+        RediSearch_IndexOptionsSetStopwords, RediSearch_QueryNodeAddChild,
+        RediSearch_ResultsIteratorFree, RediSearch_ResultsIteratorNext,
+        RediSearch_TagFieldSetCaseSensitive, RediSearch_TagFieldSetSeparator,
+        RediSearch_TextFieldSetWeight,
     },
     runtime::value::Value,
 };
 
 /// Type of index for a property.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Default)]
 pub enum IndexType {
     /// B-tree range index for numeric/string comparisons
     Range,
     /// Full-text search index with tokenization
+    #[default]
     Fulltext,
     /// Vector similarity index
     Vector,
@@ -205,9 +207,11 @@ pub enum IndexQuery<T> {
     },
 }
 
+#[derive(Debug, Default)]
 pub struct Field {
     pub name: CString,
     pub ty: IndexType,
+    options: Option<TextIndexOptions>,
 }
 
 impl PartialEq for Field {
@@ -230,17 +234,95 @@ impl Hash for Field {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug, Default)]
 pub enum IndexStatus {
+    #[default]
     Operational,
     UnderConstruction(u64, u64),
 }
 
+#[derive(Debug, Default, Clone)]
+pub struct TextIndexOptions {
+    weight: Option<f64>,
+    nostem: Option<bool>,
+    phonetic: Option<bool>,
+    language: Option<Arc<String>>,
+    stopwords: Option<Vec<Arc<String>>>,
+}
+
+impl TextIndexOptions {
+    pub fn new(
+        weight: Option<f64>,
+        nostem: Option<bool>,
+        phonetic: Option<bool>,
+        language: Option<Arc<String>>,
+        stopwords: Option<Vec<Arc<String>>>,
+    ) -> Self {
+        Self {
+            weight,
+            nostem,
+            phonetic,
+            language,
+            stopwords,
+        }
+    }
+
+    pub fn language(&self) -> &Option<Arc<String>> {
+        &self.language
+    }
+
+    pub fn stopwords(&self) -> &Option<Vec<Arc<String>>> {
+        &self.stopwords
+    }
+}
+
+pub enum IndexOptions {
+    Text(TextIndexOptions),
+}
+
+impl IndexOptions {
+    /// Extract language from the options (only applicable for Text index options).
+    pub fn language(&self) -> &Option<Arc<String>> {
+        match self {
+            IndexOptions::Text(opts) => opts.language(),
+        }
+    }
+
+    /// Extract stopwords from the options (only applicable for Text index options).
+    pub fn stopwords(&self) -> &Option<Vec<Arc<String>>> {
+        match self {
+            IndexOptions::Text(opts) => opts.stopwords(),
+        }
+    }
+
+    /// Extract per-field text options (weight, nostem, phonetic).
+    pub fn field_options(&self) -> Option<TextIndexOptions> {
+        match self {
+            IndexOptions::Text(opts) => {
+                if opts.weight.is_some() || opts.nostem.is_some() || opts.phonetic.is_some() {
+                    Some(TextIndexOptions {
+                        weight: opts.weight,
+                        nostem: opts.nostem,
+                        phonetic: opts.phonetic,
+                        language: None,
+                        stopwords: None,
+                    })
+                } else {
+                    None
+                }
+            }
+        }
+    }
+}
+
+#[derive(Debug, Default)]
 struct Index {
     rs_idx: *mut RSIndex,
     fields: HashMap<Arc<String>, Vec<Arc<Field>>>,
     status: IndexStatus,
     pending_changes: AtomicI32,
+    language: Option<Arc<String>>,
+    stopwords: Option<Vec<Arc<String>>>,
 }
 
 pub struct IndexInfo {
@@ -277,57 +359,117 @@ impl Indexer {
         label: Arc<String>,
         attrs: &Vec<Arc<String>>,
         total: u64,
+        options: Option<IndexOptions>,
     ) -> Result<(), String> {
         let mut fields = HashMap::new();
         let mut index = self.index.write().unwrap();
-        let a = index.entry(label.clone()).or_insert_with(|| Index {
-            rs_idx: std::ptr::null_mut(),
-            fields: HashMap::new(),
-            status: IndexStatus::Operational,
-            pending_changes: AtomicI32::new(0),
-        });
+        let label_indexes = index
+            .entry(label.clone())
+            .or_insert_with(|| Index::default());
+
+        let (language, stopwords, field_options) = match options {
+            Some(IndexOptions::Text(text_opts)) => {
+                let language = text_opts.language.clone();
+                let stopwords = text_opts.stopwords.clone();
+                (language, stopwords, Some(text_opts))
+            }
+            None => (None, None, None),
+        };
+
+        // Validate language/stopwords are not already set for existing fulltext indexes
+        let has_fulltext = label_indexes
+            .fields
+            .values()
+            .any(|fields| fields.iter().any(|f| f.ty == IndexType::Fulltext));
+
+        if has_fulltext {
+            if language.is_some() {
+                return Err(format!(
+                    "Can not override index configuration: Language is already set for label '{label}'"
+                ));
+            }
+
+            if stopwords.is_some() {
+                return Err(format!(
+                    "Can not override index configuration: Stopwords are already set for label '{label}'"
+                ));
+            }
+        }
+
+        // For now, field_options is match against full text indexes only
+        if field_options.is_some() && *index_type != IndexType::Fulltext {
+            return Err("Text index options are only valid for fulltext indexes".into());
+        }
 
         for attr in attrs {
-            if let Some(f) = a.fields.get_mut(attr) {
+            let field_name = match index_type {
+                IndexType::Range => Arc::new(format!("range:{attr}")),
+                IndexType::Fulltext => attr.clone(),
+                IndexType::Vector => Arc::new(format!("vector:{attr}")),
+                IndexType::Point => Arc::new(format!("point:{attr}")),
+            };
+
+            if let Some(f) = label_indexes.fields.get_mut(attr) {
+                // We found an existing field with the same name, check if it's already indexed
+                // with the same type
                 if f.iter().any(|f| f.ty == *index_type) {
                     return Err(format!("Attribute '{attr}' is already indexed"));
                 }
-                let field_name = match index_type {
-                    IndexType::Range => Arc::new(format!("range:{attr}")),
-                    IndexType::Fulltext => attr.clone(),
-                    IndexType::Vector => Arc::new(format!("vector:{attr}")),
-                    IndexType::Point => Arc::new(format!("point:{attr}")),
-                };
+                // It is already indexed, but with different type
                 let field = Arc::new(Field {
-                    name: CString::new(field_name.as_str()).unwrap(),
+                    name: CString::new(field_name.as_str()).map_err(|e| e.to_string())?,
                     ty: index_type.clone(),
+                    options: field_options.clone(),
                 });
                 f.push(field);
             } else {
-                let field_name = match index_type {
-                    IndexType::Range => Arc::new(format!("range:{attr}")),
-                    IndexType::Fulltext => attr.clone(),
-                    IndexType::Vector => Arc::new(format!("vector:{attr}")),
-                    IndexType::Point => Arc::new(format!("point:{attr}")),
-                };
+                // Attribute is not indexed at all, create a new field
                 let field = Arc::new(Field {
-                    name: CString::new(field_name.as_str()).unwrap(),
+                    name: CString::new(field_name.as_str()).map_err(|e| e.to_string())?,
                     ty: index_type.clone(),
+                    options: field_options.clone(),
                 });
-                a.fields.insert(attr.clone(), vec![field]);
+                label_indexes.fields.insert(attr.clone(), vec![field]);
             }
         }
-        fields.clone_from(&a.fields);
+        fields.clone_from(&label_indexes.fields);
 
         unsafe {
-            let options = RediSearch_CreateIndexOptions();
-            // RediSearch_IndexOptionsSetLanguage(options, idx->language);
-            RediSearch_IndexOptionsSetGCPolicy(options, GC_POLICY_FORK as _);
-            RediSearch_IndexOptionsSetStopwords(options, null_mut(), 0);
+            if label_indexes.rs_idx.is_null() {
+                let options = RediSearch_CreateIndexOptions();
+                RediSearch_IndexOptionsSetGCPolicy(options, GC_POLICY_FORK as _);
 
-            let clabel = CString::new(label.as_str()).unwrap();
-            let index = RediSearch_CreateIndex(clabel.as_ptr().cast::<c_char>(), options);
-            RediSearch_FreeIndexOptions(options);
+                let effective_stopwords = stopwords.as_ref().or(label_indexes.stopwords.as_ref());
+                if let Some(stop_words) = effective_stopwords {
+                    let c_stopwords: Vec<CString> = stop_words
+                        .iter()
+                        .map(|s| CString::new(s.as_str()).map_err(|e| e.to_string()))
+                        .collect::<Result<Vec<_>, _>>()?;
+                    let mut ptrs: Vec<*const c_char> =
+                        c_stopwords.iter().map(|cs| cs.as_ptr()).collect();
+                    RediSearch_IndexOptionsSetStopwords(
+                        options,
+                        ptrs.as_mut_ptr(),
+                        ptrs.len() as c_int,
+                    );
+                } else {
+                    RediSearch_IndexOptionsSetStopwords(options, null_mut(), 0);
+                }
+
+                let effective_language = language.as_ref().or(label_indexes.language.as_ref());
+                if let Some(lang) = effective_language {
+                    let c_lang = CString::new(lang.as_str()).map_err(|e| e.to_string())?;
+                    RediSearch_IndexOptionsSetLanguage(options, c_lang.as_ptr());
+                } else {
+                    RediSearch_IndexOptionsSetLanguage(options, null_mut());
+                }
+
+                let clabel = CString::new(label.as_str()).map_err(|e| e.to_string())?;
+                let index = RediSearch_CreateIndex(clabel.as_ptr().cast::<c_char>(), options);
+                RediSearch_FreeIndexOptions(options);
+                label_indexes.rs_idx = index;
+            }
+            let index = label_indexes.rs_idx;
 
             for field in fields.values().flat_map(|f| f.iter()) {
                 match field.ty {
@@ -344,14 +486,26 @@ impl Indexer {
                         RediSearch_TagFieldSetCaseSensitive(index, field_id, 1);
                     }
                     IndexType::Fulltext => {
+                        let mut field_options_flag = RSFLDOPT_NONE;
+                        let mut weight = 1.0;
+                        if let Some(ref options) = field_options {
+                            weight = options.weight.unwrap_or(1.0);
+                            if options.nostem.unwrap_or(false) {
+                                field_options_flag |= RSFLDOPT_TXTNOSTEM;
+                            }
+                            if options.phonetic.unwrap_or(false) {
+                                field_options_flag |= RSFLDOPT_TXTPHONETIC;
+                            }
+                        }
+
                         let field_id = RediSearch_CreateField(
                             index,
                             field.name.as_ptr(),
                             RSFLDTYPE_FULLTEXT,
-                            RSFLDOPT_NONE,
+                            field_options_flag,
                         );
 
-                        RediSearch_TextFieldSetWeight(index, field_id, 1.0);
+                        RediSearch_TextFieldSetWeight(index, field_id, weight);
                     }
                     IndexType::Vector => {
                         let _field_id = RediSearch_CreateField(
@@ -374,9 +528,17 @@ impl Indexer {
                 }
             }
 
-            a.rs_idx = index;
-            a.status = IndexStatus::UnderConstruction(0, total);
-            a.pending_changes.fetch_add(1, Ordering::SeqCst);
+            // Finally update the label indexes with global settings
+            if language.is_some() {
+                label_indexes.language = language;
+            }
+            if stopwords.is_some() {
+                label_indexes.stopwords = stopwords;
+            }
+
+            label_indexes.rs_idx = index;
+            label_indexes.status = IndexStatus::UnderConstruction(0, total);
+            label_indexes.pending_changes.fetch_add(1, Ordering::SeqCst);
         }
         Ok(())
     }
