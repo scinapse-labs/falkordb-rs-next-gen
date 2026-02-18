@@ -29,15 +29,17 @@
 //! to avoid issues with mutable iteration. This is a common pattern when
 //! working with tree structures that need in-place modification.
 
+use std::collections::HashSet;
 use std::sync::Arc;
 
-use orx_tree::{Bfs, Dyn, DynNode, DynTree, NodeIdx, NodeRef};
+use orx_tree::{Bfs, Dyn, DynNode, DynTree, NodeIdx, NodeRef, Side};
 
 use crate::{
     ast::{ExprIR, QueryExpr, QueryNode, Variable},
     graph::graph::Graph,
     indexer::IndexQuery,
     planner::IR,
+    runtime::runtime::GetVariables,
     tree,
 };
 
@@ -288,6 +290,172 @@ fn get_id_filter(
     }
 }
 
+/// Collects all variable IDs referenced in an expression tree.
+fn collect_expr_variables(expr: &DynTree<ExprIR<Variable>>) -> HashSet<u32> {
+    let mut vars = HashSet::new();
+    for idx in expr.root().indices::<Bfs>() {
+        if let ExprIR::Variable(var) = expr.node(idx).data() {
+            vars.insert(var.id);
+        }
+    }
+    vars
+}
+
+/// Collects all variable IDs provided by a plan subtree.
+fn collect_subtree_variables(node: &DynNode<IR>) -> HashSet<u32> {
+    let mut vars = HashSet::new();
+    for var in node.get_variables() {
+        vars.insert(var.id);
+    }
+    vars
+}
+
+/// Pushes filter conjuncts down through nodes.
+///
+/// Transforms:
+/// ```text
+/// Filter(AND(cond_a, cond_b))
+///   └─ CartesianProduct
+///        ├─ ChildA
+///        └─ ChildB
+/// ```
+/// Into:
+/// ```text
+/// CartesianProduct
+///   ├─ Filter(cond_a)
+///   │    └─ ChildA
+///   └─ Filter(cond_b)
+///        └─ ChildB
+/// ```
+///
+/// Each conjunct is routed to the child whose variables fully cover the
+/// conjunct's referenced variables. Conjuncts that span multiple children
+/// remain at the current level.
+fn push_filters_down(optimized_plan: &mut DynTree<IR>) {
+    loop {
+        let mut changed = false;
+        let indices = optimized_plan.root().indices::<Bfs>().collect::<Vec<_>>();
+        println!("{}", optimized_plan);
+        for idx in indices {
+            let IR::Filter(filter) = optimized_plan.node(idx).data() else {
+                continue;
+            };
+            if !optimized_plan
+                .node(idx)
+                .children()
+                .any(|c| c.num_children() > 0)
+            {
+                continue; // Skip if filter already is downstream
+            }
+            let filter = filter.clone();
+
+            // Split filter into individual conjuncts
+            let conjuncts: Vec<DynTree<ExprIR<Variable>>> =
+                if matches!(filter.root().data(), ExprIR::And) {
+                    filter
+                        .root()
+                        .children()
+                        .map(|c| c.clone_as_tree())
+                        .collect()
+                } else {
+                    vec![(*filter).clone()]
+                };
+
+            // Collect children and the variables they provide
+            let children: Vec<_> = optimized_plan
+                .node(idx)
+                .children()
+                .filter(|c| c.num_children() > 0)
+                .flat_map(|c| c.children().collect::<Vec<_>>())
+                .map(|c| (c.idx(), collect_subtree_variables(&c)))
+                .collect();
+
+            // Route each conjunct to the child that provides all its variables
+            let mut child_conjuncts: Vec<Vec<DynTree<ExprIR<Variable>>>> =
+                vec![vec![]; children.len()];
+            let mut remaining: Vec<DynTree<ExprIR<Variable>>> = vec![];
+
+            for conjunct in conjuncts {
+                let conj_vars = collect_expr_variables(&conjunct);
+                let matched_child = children
+                    .iter()
+                    .enumerate()
+                    .find(|(_, (_, child_vars))| conj_vars.iter().all(|v| child_vars.contains(v)))
+                    .map(|(i, _)| i);
+                if let Some(i) = matched_child {
+                    child_conjuncts[i].push(conjunct);
+                } else {
+                    remaining.push(conjunct);
+                }
+            }
+
+            // Skip if nothing can be pushed down
+            if child_conjuncts.iter().all(Vec::is_empty) {
+                continue;
+            }
+
+            // For each child with matching conjuncts: add a Filter-wrapped
+            // clone as a sibling, then record the original for removal.
+            let mut to_remove: Vec<Vec<NodeIdx<Dyn<IR>>>> = vec![];
+
+            for (i, conjuncts) in child_conjuncts.into_iter().enumerate() {
+                if conjuncts.is_empty() {
+                    continue;
+                }
+
+                let child_idx = children[i].0;
+
+                // Build the filter expression for this child
+                let filter_expr: QueryExpr<Variable> = if conjuncts.len() == 1 {
+                    Arc::new(conjuncts.into_iter().next().unwrap())
+                } else {
+                    Arc::new(tree!(ExprIR::And; conjuncts))
+                };
+
+                // Clone the child subtree and wrap it in a Filter
+                let child_subtree: DynTree<IR> = optimized_plan.node(child_idx).clone_as_tree();
+                let filter_tree = tree!(IR::Filter(filter_expr), child_subtree);
+
+                // Add the wrapped version as a sibling of the original child
+                optimized_plan
+                    .node_mut(child_idx)
+                    .push_sibling_tree(Side::Right, filter_tree);
+
+                // Record the original subtree nodes for removal (BFS order)
+                let subtree_indices: Vec<_> =
+                    optimized_plan.node(child_idx).indices::<Bfs>().collect();
+                to_remove.push(subtree_indices);
+            }
+
+            // Remove original children by taking out nodes in reverse BFS
+            // order (leaves first, so each take_out operates on a leaf).
+            for subtree_indices in to_remove {
+                for node_idx in subtree_indices.into_iter().rev() {
+                    optimized_plan.node_mut(node_idx).take_out();
+                }
+            }
+
+            // Update or remove the original Filter
+            if remaining.is_empty() {
+                optimized_plan.node_mut(idx).take_out();
+            } else if remaining.len() == 1 {
+                *optimized_plan.node_mut(idx).data_mut() =
+                    IR::Filter(Arc::new(remaining.into_iter().next().unwrap()));
+            } else {
+                *optimized_plan.node_mut(idx).data_mut() =
+                    IR::Filter(Arc::new(tree!(ExprIR::And; remaining)));
+            }
+
+            changed = true;
+            break; // Restart traversal after structural modification
+        }
+
+        if !changed {
+            break;
+        }
+    }
+}
+
 /// Replaces label scan + ID filter with direct node ID lookup.
 fn utilize_node_by_id(optimized_plan: &mut DynTree<IR>) {
     let indices = optimized_plan.root().indices::<Bfs>().collect::<Vec<_>>();
@@ -348,6 +516,7 @@ pub fn optimize(
 ) -> DynTree<IR> {
     let mut optimized_plan = plan.clone();
 
+    push_filters_down(&mut optimized_plan);
     utilize_index(&mut optimized_plan, graph);
     utilize_node_by_id(&mut optimized_plan);
 
