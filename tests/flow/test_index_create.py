@@ -142,7 +142,7 @@ class testIndexCreationFlow:
             # create an index over L3:v1 with phonetic of type bool should failed
             # phonetic must be a string
             result = self.graph.query(
-                "CREATE FULLTEXT INDEX FOR (n:L3) ON (n.v1) OPTIONS {phonetic: true}"
+                "CREATE FULLTEXT INDEX FOR (n:L3) ON (n.v1) OPTIONS {phonetic: 'true'}"
             )
             assert False
         except ResponseError as e:
@@ -450,13 +450,8 @@ class testIndexCreationFlow:
         # create a fulltext index
         # -----------------------------------------------------------------------
 
-<<<<<<< HEAD
         res = self.graph.create_node_fulltext_index('L', 'h')
         self.env.assertEqual(res.indices_created, 1)
-=======
-        res = self.graph.create_node_fulltext_index("L", "h")
-        self.env.assertEquals(res.indices_created, 1)
->>>>>>> df1d796 (remove procedure call for creating index from tests)
 
         # -----------------------------------------------------------------------
         # validate index is being populated
@@ -524,7 +519,6 @@ class testIndexCreationFlow:
 
         for uid in uids_to_match:
             q = "CALL db.idx.fulltext.queryNodes('L', $uid) YIELD node RETURN count(node)"
-<<<<<<< HEAD
             res = self.graph.query(q, {'uid': uid}).result_set
             self.env.assertEqual(res[0][0], 1)
 
@@ -532,15 +526,6 @@ class testIndexCreationFlow:
             q = "CALL db.idx.fulltext.queryNodes('L', $uid) YIELD node RETURN count(node)"
             res = self.graph.query(q, {'uid': uid}).result_set
             self.env.assertEqual(res[0][0], 0)
-=======
-            res = self.graph.query(q, {"uid": uid}).result_set
-            self.env.assertEquals(res[0][0], 1)
-
-        for uid in uids_to_unmatch:
-            q = "CALL db.idx.fulltext.queryNodes('L', $uid) YIELD node RETURN count(node)"
-            res = self.graph.query(q, {"uid": uid}).result_set
-            self.env.assertEquals(res[0][0], 0)
->>>>>>> df1d796 (remove procedure call for creating index from tests)
 
     def test10_delete_interrupt_async_index_creation(self):
         # 1. create a large graph
@@ -564,13 +549,8 @@ class testIndexCreationFlow:
         # create an index
         # -----------------------------------------------------------------------
 
-<<<<<<< HEAD
         res = self.graph.create_node_range_index('L', 'v')
         self.env.assertEqual(res.indices_created, 1)
-=======
-        res = self.graph.create_node_range_index("L", "v")
-        self.env.assertEquals(res.indices_created, 1)
->>>>>>> df1d796 (remove procedure call for creating index from tests)
 
         # -----------------------------------------------------------------------
         # validate index is being populated
@@ -611,13 +591,8 @@ class testIndexCreationFlow:
         # create an index
         # -----------------------------------------------------------------------
 
-<<<<<<< HEAD
         res = self.graph.create_node_fulltext_index('L', 'v')
         self.env.assertEqual(res.indices_created, 1)
-=======
-        res = self.graph.create_node_fulltext_index("L", "v")
-        self.env.assertEquals(res.indices_created, 1)
->>>>>>> df1d796 (remove procedure call for creating index from tests)
 
         # -----------------------------------------------------------------------
         # validate index is being populated
@@ -661,13 +636,8 @@ class testIndexCreationFlow:
         # determine how much time does it take to construct our index
         start = time()
 
-<<<<<<< HEAD
         res = create_node_range_index(self.graph, 'L', 'v', sync=True)
         self.env.assertEqual(res.indices_created, 1)
-=======
-        res = create_node_range_index(self.graph, "L", "v", sync=True)
-        self.env.assertEquals(res.indices_created, 1)
->>>>>>> df1d796 (remove procedure call for creating index from tests)
 
         # total index creation time
         elapsed = time() - start
