@@ -41,52 +41,52 @@ class testFulltextIndexQuery():
         expected_result = self.graph.query("MATCH (n:L1) RETURN n")
         # fulltext query L1 for hello 
         result = self.graph.query("CALL db.idx.fulltext.queryNodes('L1', 'hello')")
-        self.env.assertEquals(result.result_set[0][0], expected_result.result_set[0][0])
+        self.env.assertEqual(result.result_set[0][0], expected_result.result_set[0][0])
 
         # fulltext query L1 for redis 
         result = self.graph.query("CALL db.idx.fulltext.queryNodes('L1', 'redis')")
-        self.env.assertEquals(result.result_set[0][0], expected_result.result_set[0][0])
+        self.env.assertEqual(result.result_set[0][0], expected_result.result_set[0][0])
 
         # fulltext query L1 for world 
         result = self.graph.query("CALL db.idx.fulltext.queryNodes('L1', 'world')")
-        self.env.assertEquals(result.result_set[0][0], expected_result.result_set[0][0])
+        self.env.assertEqual(result.result_set[0][0], expected_result.result_set[0][0])
 
         expected_result = self.graph.query("MATCH (n:L2) RETURN n")
 
         # fulltext query L2 for hello 
         result = self.graph.query("CALL db.idx.fulltext.queryNodes('L2', 'hello')")
-        self.env.assertEquals(result.result_set[0][0], expected_result.result_set[0][0])
+        self.env.assertEqual(result.result_set[0][0], expected_result.result_set[0][0])
 
         # fulltext query L2 for redis 
         result = self.graph.query("CALL db.idx.fulltext.queryNodes('L2', 'redis')")
-        self.env.assertEquals(result.result_set, [])
+        self.env.assertEqual(result.result_set, [])
 
         # fulltext query L2 for world 
         result = self.graph.query("CALL db.idx.fulltext.queryNodes('L2', 'world')")
-        self.env.assertEquals(result.result_set, [])
+        self.env.assertEqual(result.result_set, [])
 
         # fulltext query L3 for redis and document that contains redis in v2 is scored higher than document contains redis in v1
         result = self.graph.query("CALL db.idx.fulltext.queryNodes('L3', 'redis') YIELD node, score RETURN node, score ORDER BY score DESC")
-        self.env.assertEquals(result.result_set[0][0].properties["v2"], "hello redis")
-        self.env.assertEquals(result.result_set[1][0].properties["v1"], "hello redis")
+        self.env.assertEqual(result.result_set[0][0].properties["v2"], "hello redis")
+        self.env.assertEqual(result.result_set[1][0].properties["v1"], "hello redis")
         self.env.assertGreater(result.result_set[0][1], result.result_set[1][1])
 
         expected_result = self.graph.query("MATCH (n:L4 {v:'felix'}) RETURN n")
 
         # fulltext query L4 for phelix
         result = self.graph.query("CALL db.idx.fulltext.queryNodes('L4', 'phelix')")
-        self.env.assertEquals(result.result_set[0][0], expected_result.result_set[0][0])
+        self.env.assertEqual(result.result_set[0][0], expected_result.result_set[0][0])
 
         expected_result = self.graph.query("MATCH (n:L5) RETURN n")
 
         # fulltext query L5 for 'words' which exists in the document
         result = self.graph.query("CALL db.idx.fulltext.queryNodes('L5', 'words')")
-        self.env.assertEquals(result.result_set[0][0], expected_result.result_set[0][0])
+        self.env.assertEqual(result.result_set[0][0], expected_result.result_set[0][0])
 
         # fulltext query L5 for 'word' nostem did not removed 's' from 'words'
         # as such no results are expected
         result = self.graph.query("CALL db.idx.fulltext.queryNodes('L5', 'word')")
-        self.env.assertEquals(result.result_set, [])
+        self.env.assertEqual(result.result_set, [])
 
     # test full-text query on edges
     def test02_fulltext_edge_query(self):
@@ -94,7 +94,7 @@ class testFulltextIndexQuery():
         result = self.graph.query(
             "CALL db.idx.fulltext.queryRelationships('E1', 'please')"
         )
-        self.env.assertEquals(result.result_set, [])
+        self.env.assertEqual(result.result_set, [])
 
         # full-text query on a relationship E (indexed) 'nice' appears in two relationships
         result = self.graph.query("""
@@ -104,17 +104,17 @@ class testFulltextIndexQuery():
             ORDER BY r.name""")
 
         # expecting two relationships with 'nice' in their name
-        self.env.assertEquals(len(result.result_set), 2)
+        self.env.assertEqual(len(result.result_set), 2)
         actual = [row[0] for row in result.result_set]
 
         expected = ["a nice place to be", "just another nice relationship"]
-        self.env.assertEquals(actual, expected)
+        self.env.assertEqual(actual, expected)
 
         # full-text query on an indexed relationship-type that does not return any match
         result = self.graph.query(
             """CALL db.idx.fulltext.queryRelationships('E', 'nonexistent')"""
         )
-        self.env.assertEquals(result.result_set, [])
+        self.env.assertEqual(result.result_set, [])
 
         # full-text query on an indexed relationship-type that returns only
         # a single match
@@ -123,8 +123,8 @@ class testFulltextIndexQuery():
             YIELD relationship AS r
             RETURN r.name"""
         )
-        self.env.assertEquals(len(result.result_set), 1)
-        self.env.assertEquals(result.result_set[0][0], "a nice place to be")
+        self.env.assertEqual(len(result.result_set), 1)
+        self.env.assertEqual(result.result_set[0][0], "a nice place to be")
 
     def test03_fulltext_edge_query_with_crud(self):
         # this test make sure the index returns valid results
@@ -145,8 +145,8 @@ class testFulltextIndexQuery():
         )
 
         # verify only one correct result
-        self.env.assertEquals(len(result.result_set), 1)
-        self.env.assertEquals(result.result_set[0][0], "e0")
+        self.env.assertEqual(len(result.result_set), 1)
+        self.env.assertEqual(result.result_set[0][0], "e0")
         
         # 2. adding a new indexed edge
         self.graph.query(
@@ -162,8 +162,8 @@ class testFulltextIndexQuery():
         )
 
         # verify only one correct result
-        self.env.assertEquals(len(result.result_set), 1)
-        self.env.assertEquals(result.result_set[0][0], "new edge")
+        self.env.assertEqual(len(result.result_set), 1)
+        self.env.assertEqual(result.result_set[0][0], "new edge")
         
         # 3. deleting an indexed edge
         self.graph.query("MATCH ()-[e:E {name:'new edge'}]-() DELETE e")
@@ -174,5 +174,5 @@ class testFulltextIndexQuery():
         )
 
         # verify no results
-        self.env.assertEquals(result.result_set, [])
+        self.env.assertEqual(result.result_set, [])
     

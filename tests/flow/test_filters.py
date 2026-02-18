@@ -89,7 +89,7 @@ class testFilters():
 
     def test02_filter_with_nan(self):
         res = self.g.query("WITH 1 AS x WHERE 0.0 / 0.0 = 0.0 / 0.0 RETURN x")
-        self.env.assertEquals(res.result_set, [])
+        self.env.assertEqual(res.result_set, [])
 
         res = self.g.query("WITH 1 AS x WHERE 0.0 / 0.0 <> 0.0 / 0.0 RETURN x")
-        self.env.assertEquals(res.result_set, [[1]])
+        self.env.assertEqual(res.result_set, [[1]])

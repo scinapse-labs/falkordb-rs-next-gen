@@ -18,11 +18,11 @@ class testHashJoin(FlowTestsBase):
         plan = str(graph.explain(q))
 
         # Make sure plan contains 2 Value Hash Join operations
-        self.env.assertEquals(plan.count("Value Hash Join"), 2)
+        self.env.assertEqual(plan.count("Value Hash Join"), 2)
 
         # Validate results
         expected_result = [[1,2,3]]
         actual_result = graph.query(q)
 
-        self.env.assertEquals(actual_result.result_set, expected_result)
+        self.env.assertEqual(actual_result.result_set, expected_result)
 

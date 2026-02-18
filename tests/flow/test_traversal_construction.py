@@ -17,32 +17,32 @@ class testTraversalConstruction():
         # perform an AllNodeScan from the source node.
         query = """MATCH (a)-[]->(b) RETURN a, b"""
         plan = str(self.graph.explain(query))
-        self.env.assertIn("All Node Scan | (a)", plan)
+        self.env.assertContains("All Node Scan | (a)", plan)
 
         # Destination is labeled, perform a LabelScan from the destination node.
         query = """MATCH (a)-[]->(b:B) RETURN a, b"""
         plan = str(self.graph.explain(query))
-        self.env.assertIn("Node By Label Scan | (b:B)", plan)
+        self.env.assertContains("Node By Label Scan | (b:B)", plan)
 
         # Destination is filtered, perform an AllNodeScan from the destination node.
         query = """MATCH (a)-[]->(b) WHERE b.v = 2 RETURN a, b"""
         plan = str(self.graph.explain(query))
-        self.env.assertIn("All Node Scan | (b)", plan)
+        self.env.assertContains("All Node Scan | (b)", plan)
 
         # Destination is labeled but source is filtered, perform an AllNodeScan from the source node.
         query = """MATCH (a)-[]->(b:B) WHERE a.v = 1 OR a.v = 3 RETURN a, b"""
         plan = str(self.graph.explain(query))
-        self.env.assertIn("All Node Scan | (a)", plan)
+        self.env.assertContains("All Node Scan | (a)", plan)
 
         # Both are labeled and source is filtered, perform a LabelScan from the source node.
         query = """MATCH (a:A)-[]->(b:B) WHERE a.v = 3 RETURN a, b"""
         plan = str(self.graph.explain(query))
-        self.env.assertIn("Node By Label Scan | (a:A)", plan)
+        self.env.assertContains("Node By Label Scan | (a:A)", plan)
 
         # Both are labeled and dest is filtered, perform a LabelScan from the dest node.
         query = """MATCH (a:A)-[]->(b:B) WHERE b.v = 2 RETURN a, b"""
         plan = str(self.graph.explain(query))
-        self.env.assertIn("Node By Label Scan | (b:B)", plan)
+        self.env.assertContains("Node By Label Scan | (b:B)", plan)
 
     # make sure traversal begins with labeled entity
     def test_start_with_label(self):
@@ -240,7 +240,7 @@ class testTraversalConstruction():
         # create a multi label node
         q = "CREATE (:X:Y)"
         result = self.graph.query(q)
-        self.env.assertEquals(result.nodes_created, 1)
+        self.env.assertEqual(result.nodes_created, 1)
 
         # traverse from a multi label node 'a' to itself using a 0 length edge
         q1 = """MATCH (a:X)-[*0]->(b:Y) RETURN a, b"""

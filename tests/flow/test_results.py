@@ -39,9 +39,9 @@ class testResultSetFlow(FlowTestsBase):
                            ['Ailon', 2],
                            ['Boaz', 3]]
 
-        self.env.assertEquals(len(result.result_set), 4)
-        self.env.assertEquals(len(result.header), 2) # 2 columns in result set
-        self.env.assertEquals(result.result_set, expected_result)
+        self.env.assertEqual(len(result.result_set), 4)
+        self.env.assertEqual(len(result.header), 2) # 2 columns in result set
+        self.env.assertEqual(result.result_set, expected_result)
 
     # Verify that full node returns function properly
     def test02_return_nodes(self):
@@ -49,8 +49,8 @@ class testResultSetFlow(FlowTestsBase):
         result = self.graph.query(query)
 
         # TODO add more assertions after updated client format is defined
-        self.env.assertEquals(len(result.result_set), 4)
-        self.env.assertEquals(len(result.header), 1) # 1 column in result set
+        self.env.assertEqual(len(result.result_set), 4)
+        self.env.assertEqual(len(result.header), 1) # 1 column in result set
 
     # Verify that full edge returns function properly
     def test03_return_edges(self):
@@ -58,32 +58,32 @@ class testResultSetFlow(FlowTestsBase):
         result = self.graph.query(query)
 
         # TODO add more assertions after updated client format is defined
-        self.env.assertEquals(len(result.result_set), 12) # 12 relations (fully connected graph)
-        self.env.assertEquals(len(result.header), 1) # 1 column in result set
+        self.env.assertEqual(len(result.result_set), 12) # 12 relations (fully connected graph)
+        self.env.assertEqual(len(result.header), 1) # 1 column in result set
 
     def test04_mixed_returns(self):
         query = """MATCH (a)-[e]->() RETURN a.name, a, e ORDER BY a.val"""
         result = self.graph.query(query)
 
         # TODO add more assertions after updated client format is defined
-        self.env.assertEquals(len(result.result_set), 12) # 12 relations (fully connected graph)
-        self.env.assertEquals(len(result.header), 3) # 3 columns in result set
+        self.env.assertEqual(len(result.result_set), 12) # 12 relations (fully connected graph)
+        self.env.assertEqual(len(result.header), 3) # 3 columns in result set
 
     # Verify that the DISTINCT operator works with full entity returns
     def test05_distinct_full_entities(self):
         graph2 = self.db.select_graph("H")
         query = """CREATE (a)-[:e]->(), (a)-[:e]->()"""
         result = graph2.query(query)
-        self.env.assertEquals(result.nodes_created, 3)
-        self.env.assertEquals(result.relationships_created, 2)
+        self.env.assertEqual(result.nodes_created, 3)
+        self.env.assertEqual(result.relationships_created, 2)
 
         query = """MATCH (a)-[]->() RETURN a"""
         non_distinct = graph2.query(query)
         query = """MATCH (a)-[]->() RETURN DISTINCT a"""
         distinct = graph2.query(query)
 
-        self.env.assertEquals(len(non_distinct.result_set), 2)
-        self.env.assertEquals(len(distinct.result_set), 1)
+        self.env.assertEqual(len(non_distinct.result_set), 2)
+        self.env.assertEqual(len(distinct.result_set), 1)
 
     # Verify that RETURN * projections include all user-defined aliases.
     def test06_return_all(self):

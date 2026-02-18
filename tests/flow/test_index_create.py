@@ -20,76 +20,76 @@ class testIndexCreationFlow():
     def test01_fulltext_index_creation(self):
         # create an index over L:v0
         result = create_node_fulltext_index(self.graph, 'L', 'v0')
-        self.env.assertEquals(result.indices_created, 1)
+        self.env.assertEqual(result.indices_created, 1)
 
         # create an index over L:v1 and L:v2
         result = create_node_fulltext_index(self.graph, 'L', 'v1', 'v2')
-        self.env.assertEquals(result.indices_created, 2)
+        self.env.assertEqual(result.indices_created, 2)
 
         # create an index over L:v3, L:v4, L:v5 and L:v6
         result = create_node_fulltext_index(self.graph, 'L', 'v3', 'v4', 'v5', 'v6', sync=True)
-        self.env.assertEquals(result.indices_created, 4)
+        self.env.assertEqual(result.indices_created, 4)
 
     def test02_fulltext_index_creation_label_config(self):
         # create an index over L1:v1
         result = self.graph.create_node_fulltext_index('L1', 'v1')
-        self.env.assertEquals(result.indices_created, 1)
+        self.env.assertEqual(result.indices_created, 1)
 
         # create an index over L1:v2, v3
         result = self.graph.create_node_fulltext_index('L1', 'v2', 'v3')
-        self.env.assertEquals(result.indices_created, 2)
+        self.env.assertEqual(result.indices_created, 2)
 
         # create an index over L2:v1 with stopwords
         result = self.graph.query("CALL db.idx.fulltext.createNodeIndex({ label: 'L2', stopwords: ['The'] }, 'v1')")
-        self.env.assertEquals(result.indices_created, 1)
+        self.env.assertEqual(result.indices_created, 1)
 
         # create an index over L2:v2
         result = self.graph.create_node_fulltext_index('L2', 'v2')
-        self.env.assertEquals(result.indices_created, 1)
+        self.env.assertEqual(result.indices_created, 1)
 
         try:
             # try to create an index, without specifying the label
             result = self.graph.query("CALL db.idx.fulltext.createNodeIndex({ stopwords: ['The'] }, 'v4')")
             assert(False)
         except ResponseError as e:
-            self.env.assertIn("Label is missing", str(e))
+            self.env.assertContains("Label is missing", str(e))
 
         # create an index over L1:v4 with stopwords
         result = self.graph.query("CALL db.idx.fulltext.createNodeIndex({ label: 'L1', stopwords: ['The'] }, 'v4')")
-        self.env.assertEquals(result.indices_created, 1)
+        self.env.assertEqual(result.indices_created, 1)
 
         # try to update L1 index stopwords should failed
         try:
             result = self.graph.query("CALL db.idx.fulltext.createNodeIndex({ label: 'L1', stopwords: ['The'] }, 'v5')")
             assert(False)
         except ResponseError as e:
-            self.env.assertIn("Can not override index configuration", str(e))
+            self.env.assertContains("Can not override index configuration", str(e))
 
         # create an index over L1:v5 with language
         result = self.graph.query("CALL db.idx.fulltext.createNodeIndex({ label: 'L1', language: 'english' }, 'v5')")
-        self.env.assertEquals(result.indices_created, 1)
+        self.env.assertEqual(result.indices_created, 1)
 
         # try to update L1 index language should failed
         try:
             result = self.graph.query("CALL db.idx.fulltext.createNodeIndex({ label: 'L1', language: 'italian' }, 'v6')")
             assert(False)
         except ResponseError as e:
-            self.env.assertIn("Can not override index configuration", str(e))
+            self.env.assertContains("Can not override index configuration", str(e))
 
         # drop L1 index
         result = self.graph.query("CALL db.idx.fulltext.drop('L1')")
-        self.env.assertEquals(result.indices_deleted, 5)
+        self.env.assertEqual(result.indices_deleted, 5)
 
         try:
             # create an index over L2:v4 with an unsupported language, expecting to failed
             result = self.graph.query("CALL db.idx.fulltext.createNodeIndex({ label: 'L2', language: 'x' }, 'v4')")
             assert(False)
         except ResponseError as e:
-            self.env.assertIn("Language is not supported", str(e))
+            self.env.assertContains("Language is not supported", str(e))
 
         # create an index over L1:v4 with language
         result = self.graph.query("CALL db.idx.fulltext.createNodeIndex({ label: 'L1', language: 'english' }, 'v4')")
-        self.env.assertEquals(result.indices_created, 1)
+        self.env.assertEqual(result.indices_created, 1)
 
         try:
             # create an index over L3:v1 with stopwords should failed
@@ -97,7 +97,7 @@ class testIndexCreationFlow():
             result = self.graph.query("CALL db.idx.fulltext.createNodeIndex({ label: 'L3', stopwords: 'The' }, 'v1')")
             assert(False)
         except ResponseError as e:
-            self.env.assertIn("Stopwords must be array", str(e))
+            self.env.assertContains("Stopwords must be array", str(e))
 
         try:
             # create an index over L3:v1 with language should failed
@@ -105,14 +105,14 @@ class testIndexCreationFlow():
             result = self.graph.query("CALL db.idx.fulltext.createNodeIndex({ label: 'L3', language: ['english'] }, 'v1')")
             assert(False)
         except ResponseError as e:
-            self.env.assertIn("Language must be string", str(e))
+            self.env.assertContains("Language must be string", str(e))
 
         try:
             # create an index over L3 should failed, missing field(s)
             result = self.graph.query("CALL db.idx.fulltext.createNodeIndex('L3', { })")
             assert(False)
         except ResponseError as e:
-            self.env.assertIn("Field is missing", str(e))
+            self.env.assertContains("Field is missing", str(e))
 
         try:
             # create an index over L3:v1 with weight of type string should failed
@@ -120,7 +120,7 @@ class testIndexCreationFlow():
             result = self.graph.query("CALL db.idx.fulltext.createNodeIndex('L3', { field: 'v1', weight: '1' })")
             assert(False)
         except ResponseError as e:
-            self.env.assertIn("Weight must be numeric", str(e))
+            self.env.assertContains("Weight must be numeric", str(e))
 
         try:
             # create an index over L3:v1 with nostem of type string should failed
@@ -128,7 +128,7 @@ class testIndexCreationFlow():
             result = self.graph.query("CALL db.idx.fulltext.createNodeIndex('L3', { field: 'v1', nostem: 'true' })")
             assert(False)
         except ResponseError as e:
-            self.env.assertIn("Nostem must be bool", str(e))
+            self.env.assertContains("Nostem must be bool", str(e))
         
         try:
             # create an index over L3:v1 with phonetic of type bool should failed
@@ -136,26 +136,26 @@ class testIndexCreationFlow():
             result = self.graph.query("CALL db.idx.fulltext.createNodeIndex('L3', { field: 'v1', phonetic: true })")
             assert(False)
         except ResponseError as e:
-            self.env.assertIn("Phonetic must be string", str(e))
+            self.env.assertContains("Phonetic must be string", str(e))
 
     def test03_multi_prop_index_creation(self):
         # create an index over person:age and person:name
         result = self.graph.query("CREATE INDEX ON :person(age, name)")
-        self.env.assertEquals(result.indices_created, 2)
+        self.env.assertEqual(result.indices_created, 2)
 
         # try to create an index over person:age and person:name, index shouldn't be created as it already exist
         try:
             result = self.graph.query("CREATE INDEX ON :person(age, name)")
             assert(False)
         except ResponseError as e:
-            self.env.assertIn("Attribute 'age' is already indexed", str(e))
+            self.env.assertContains("Attribute 'age' is already indexed", str(e))
 
         # try to create an index over person:name and person:age, index shouldn't be created as it already exist
         try:
             result = self.graph.query("CREATE INDEX ON :person(name, age)")
             assert(False)
         except ResponseError as e:
-            self.env.assertIn("Attribute 'name' is already indexed", str(e))
+            self.env.assertContains("Attribute 'name' is already indexed", str(e))
 
         # try to create an index over person: age, name height,
         # operation should fail as 'age' and 'name' are already indexed
@@ -163,7 +163,7 @@ class testIndexCreationFlow():
             result = self.graph.query("CREATE INDEX ON :person(age, name, height)")
             assert(False)
         except ResponseError as e:
-            self.env.assertIn("Attribute 'age' is already indexed", str(e))
+            self.env.assertContains("Attribute 'age' is already indexed", str(e))
 
         # try to create an index over person: gender, name and height
         # operation should fail as 'name' is already indexed
@@ -171,23 +171,23 @@ class testIndexCreationFlow():
             result = self.graph.query("CREATE INDEX ON :person(gender, name, height)")
             assert(False)
         except ResponseError as e:
-            self.env.assertIn("Attribute 'name' is already indexed", str(e))
+            self.env.assertContains("Attribute 'name' is already indexed", str(e))
 
         # try to create an index with a duplicated field
         try:
             result = self.graph.query("CREATE INDEX ON :person(height, height)")
             assert(False)
         except ResponseError as e:
-            self.env.assertIn("Attribute 'height' is already indexed", str(e))
+            self.env.assertContains("Attribute 'height' is already indexed", str(e))
 
     def test04_index_creation_pattern_syntax(self):
         # create an index over user:age and user:name
         result = self.graph.query("CREATE INDEX FOR (p:user) ON (p.age, p.name)")
-        self.env.assertEquals(result.indices_created, 2)
+        self.env.assertEqual(result.indices_created, 2)
 
         # create an index over follow:prop1 and follow:prop2
         result = self.graph.query("CREATE INDEX FOR ()-[r:follow]-() ON (r.prop1, r.prop2)")
-        self.env.assertEquals(result.indices_created, 2)
+        self.env.assertEqual(result.indices_created, 2)
 
     def test05_index_delete(self):
         async def create_drop_index(g):
@@ -323,7 +323,7 @@ class testIndexCreationFlow():
         #-----------------------------------------------------------------------
 
         res = create_node_range_index(g, 'L', 'v', sync=False)
-        self.env.assertEquals(res.indices_created, 1)
+        self.env.assertEqual(res.indices_created, 1)
 
         #-----------------------------------------------------------------------
         # validate index is being populated
@@ -340,7 +340,7 @@ class testIndexCreationFlow():
 
         q = "MATCH (n:L) WHERE n.v = 41 RETURN n.v LIMIT 1"
         res = g.query(q)
-        self.env.assertEquals(res.result_set[0][0], 41)
+        self.env.assertEqual(res.result_set[0][0], 41)
 
         plan = g.explain(q)
         self.env.assertIsNone(locate_operation(plan.structured_plan, "Node By Index Scan"))
@@ -386,23 +386,23 @@ class testIndexCreationFlow():
         # find newly created node
         q = "MATCH (n:L {v:$v}) RETURN count(n)"
         res = g.query(q, {'v': max_node_v + 10}).result_set
-        self.env.assertEquals(res[0][0], 1)
+        self.env.assertEqual(res[0][0], 1)
 
         # find updated nodes
         q = "MATCH (n:L) WHERE n.v = $new_v RETURN count(n)"
         res = g.query(q, {'new_v': -max_node_v}).result_set
-        self.env.assertEquals(res[0][0], 1)
+        self.env.assertEqual(res[0][0], 1)
 
         # find updated node
         res = g.query(q, {'new_v': -1}).result_set
-        self.env.assertEquals(len(res), 1)
+        self.env.assertEqual(len(res), 1)
 
         # make sure deleted nodes aren't found 
         q = "MATCH (n:L) WHERE n.v = $id RETURN count(n)"
         res = g.query(q, {'id': max_node_v - 9}).result_set
-        self.env.assertEquals(res[0][0], 0)
+        self.env.assertEqual(res[0][0], 0)
         res = g.query(q, {'id': 2}).result_set
-        self.env.assertEquals(res[0][0], 0)
+        self.env.assertEqual(res[0][0], 0)
 
     def test09_async_fulltext_index_creation(self):
         # 1. create a large graph
@@ -428,7 +428,7 @@ class testIndexCreationFlow():
         #-----------------------------------------------------------------------
 
         res = self.graph.create_node_fulltext_index('L', 'h')
-        self.env.assertEquals(res.indices_created, 1)
+        self.env.assertEqual(res.indices_created, 1)
 
         #-----------------------------------------------------------------------
         # validate index is being populated
@@ -445,7 +445,7 @@ class testIndexCreationFlow():
 
         q = "RETURN 1"
         res = self.graph.query(q)
-        self.env.assertEquals(res.result_set[0][0], 1)
+        self.env.assertEqual(res.result_set[0][0], 1)
 
         #-----------------------------------------------------------------------
         # write while index is being constructed
@@ -497,12 +497,12 @@ class testIndexCreationFlow():
         for uid in uids_to_match:
             q = "CALL db.idx.fulltext.queryNodes('L', $uid) YIELD node RETURN count(node)"
             res = self.graph.query(q, {'uid': uid}).result_set
-            self.env.assertEquals(res[0][0], 1)
+            self.env.assertEqual(res[0][0], 1)
 
         for uid in uids_to_unmatch:
             q = "CALL db.idx.fulltext.queryNodes('L', $uid) YIELD node RETURN count(node)"
             res = self.graph.query(q, {'uid': uid}).result_set
-            self.env.assertEquals(res[0][0], 0)
+            self.env.assertEqual(res[0][0], 0)
 
     def test10_delete_interrupt_async_index_creation(self):
         # 1. create a large graph
@@ -527,7 +527,7 @@ class testIndexCreationFlow():
         #-----------------------------------------------------------------------
 
         res = self.graph.create_node_range_index('L', 'v')
-        self.env.assertEquals(res.indices_created, 1)
+        self.env.assertEqual(res.indices_created, 1)
 
         #-----------------------------------------------------------------------
         # validate index is being populated
@@ -569,7 +569,7 @@ class testIndexCreationFlow():
         #-----------------------------------------------------------------------
 
         res = self.graph.create_node_fulltext_index('L', 'v')
-        self.env.assertEquals(res.indices_created, 1)
+        self.env.assertEqual(res.indices_created, 1)
 
         #-----------------------------------------------------------------------
         # validate index is being populated
@@ -614,7 +614,7 @@ class testIndexCreationFlow():
         start = time()
 
         res = create_node_range_index(self.graph, 'L', 'v', sync=True)
-        self.env.assertEquals(res.indices_created, 1)
+        self.env.assertEqual(res.indices_created, 1)
 
         # total index creation time
         elapsed = time() - start
@@ -625,7 +625,7 @@ class testIndexCreationFlow():
 
         q = "DROP INDEX ON :L(v)"
         res = self.graph.query(q)
-        self.env.assertEquals(res.indices_deleted, 1)
+        self.env.assertEqual(res.indices_deleted, 1)
 
         # recreate the index, but this time introduce additionl fields
         # while the index is being populated
@@ -634,20 +634,20 @@ class testIndexCreationFlow():
 
         # introduce a new field
         res = self.graph.create_node_range_index('L', 'a')
-        self.env.assertEquals(res.indices_created, 1)
+        self.env.assertEqual(res.indices_created, 1)
 
         # introduce a new field
         res = self.graph.create_node_range_index('L', 'b')
-        self.env.assertEquals(res.indices_created, 1)
+        self.env.assertEqual(res.indices_created, 1)
 
         # remove field
         q = "DROP INDEX ON :L(a)"
         res = self.graph.query(q)
-        self.env.assertEquals(res.indices_deleted, 1)
+        self.env.assertEqual(res.indices_deleted, 1)
 
         # introduce a new field
         res = self.graph.create_node_range_index('L', 'v')
-        self.env.assertEquals(res.indices_created, 1)
+        self.env.assertEqual(res.indices_created, 1)
 
         # wait for index to become operational
         wait_for_indices_to_sync(self.graph)
@@ -684,7 +684,7 @@ class testIndexCreationFlow():
         #-----------------------------------------------------------------------
 
         res = create_node_fulltext_index(self.graph, 'L', 'v', sync=True)
-        self.env.assertEquals(res.indices_created, 1)
+        self.env.assertEqual(res.indices_created, 1)
 
         #-----------------------------------------------------------------------
         # drop the index
@@ -692,27 +692,27 @@ class testIndexCreationFlow():
 
         q = "CALL db.idx.fulltext.drop('L')"
         res = self.graph.query(q)
-        self.env.assertEquals(res.indices_deleted, 1)
+        self.env.assertEqual(res.indices_deleted, 1)
 
         # recreate the index, but this time introduce additionl fields
         # while the index is being populated
 
         # introduce a new field
         res = self.graph.create_node_fulltext_index('L', 'a')
-        self.env.assertEquals(res.indices_created, 1)
+        self.env.assertEqual(res.indices_created, 1)
 
         # introduce a new field
         res = self.graph.create_node_fulltext_index('L', 'b')
-        self.env.assertEquals(res.indices_created, 1)
+        self.env.assertEqual(res.indices_created, 1)
 
         # remove index
         q = "CALL db.idx.fulltext.drop('L')"
         res = self.graph.query(q)
-        self.env.assertEquals(res.indices_deleted, 2)
+        self.env.assertEqual(res.indices_deleted, 2)
 
         # introduce a new field
         res = self.graph.create_node_fulltext_index('L', 'v')
-        self.env.assertEquals(res.indices_created, 1)
+        self.env.assertEqual(res.indices_created, 1)
 
         # wait for index to become operational
         wait_for_indices_to_sync(self.graph)
@@ -760,9 +760,9 @@ class testIndexCreationFlow():
         # validate
         #-----------------------------------------------------------------------
 
-        self.env.assertEquals(label, 'L')
+        self.env.assertEqual(label, 'L')
 
-        self.env.assertEquals(properties, ['a', 'b', 'c', 'd', 'e', 'f', 'g'])
+        self.env.assertEqual(properties, ['a', 'b', 'c', 'd', 'e', 'f', 'g'])
 
         expected_types = OrderedDict(
                 [
@@ -776,9 +776,9 @@ class testIndexCreationFlow():
                 ]
             )
 
-        self.env.assertEquals(types, expected_types)
-        self.env.assertEquals(language, 'english')
-        self.env.assertEquals(entitytype, 'NODE')
+        self.env.assertEqual(types, expected_types)
+        self.env.assertEqual(language, 'english')
+        self.env.assertEqual(entitytype, 'NODE')
 
     def test15_index_progress_report(self):
         # create a relatively large graph

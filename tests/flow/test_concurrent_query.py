@@ -119,7 +119,7 @@ class testConcurrentQueryFlow(FlowTestsBase):
             results = await asyncio.gather(*tasks, return_exceptions=True)
 
             # Exactly one thread should have successfully deleted the graph.
-            self.env.assertEquals(len(results) - sum(isinstance(res, ResponseError) for res in results), 1)
+            self.env.assertEqual(len(results) - sum(isinstance(res, ResponseError) for res in results), 1)
 
             # close the connection pool
             await pool.aclose()
@@ -159,7 +159,7 @@ class testConcurrentQueryFlow(FlowTestsBase):
 
             # Make sure Graph is empty, e.g. graph was deleted.
             resultset = self.graph.query("MATCH (n) RETURN count(n)").result_set
-            self.env.assertEquals(resultset[0][0], 0)
+            self.env.assertEqual(resultset[0][0], 0)
 
             #-------------------------------------------------------------------
             # Delete graph via GRAPH.DELETE.
@@ -183,7 +183,7 @@ class testConcurrentQueryFlow(FlowTestsBase):
 
             # Make sure Graph is empty, e.g. graph was deleted.
             resultset = self.graph.query("MATCH (n) RETURN count(n)").result_set
-            self.env.assertEquals(resultset[0][0], 0)
+            self.env.assertEqual(resultset[0][0], 0)
 
             # Close the connection
             await async_conn.close()
@@ -216,9 +216,9 @@ class testConcurrentQueryFlow(FlowTestsBase):
             if type(result) is ResponseError:
                 possible_exceptions = ["Encountered different graph value when opened key " + GRAPH_ID,
                                        "Encountered an empty key when opened key " + GRAPH_ID]
-                self.env.assertIn(str(result), possible_exceptions)
+                self.env.assertContains(str(result), possible_exceptions)
             else:
-                self.env.assertEquals(1000000, result.result_set[0][0])
+                self.env.assertEqual(1000000, result.result_set[0][0])
 
             # close the connection pool
             await pool.aclose()
@@ -267,9 +267,9 @@ class testConcurrentQueryFlow(FlowTestsBase):
             if type(result) is ResponseError:
                 possible_exceptions = ["Encountered different graph value when opened key " + GRAPH_ID,
                                        "Encountered an empty key when opened key " + new_graph]
-                self.env.assertIn(str(result), possible_exceptions)
+                self.env.assertContains(str(result), possible_exceptions)
             else:
-                self.env.assertEquals(1000000, result.result_set[0][0])
+                self.env.assertEqual(1000000, result.result_set[0][0])
 
             # close the connection pool
             await pool.aclose()
@@ -304,9 +304,9 @@ class testConcurrentQueryFlow(FlowTestsBase):
             if type(result) is ResponseError:
                 possible_exceptions = ["Encountered a non-graph value type when opened key " + GRAPH_ID,
                                        "WRONGTYPE Operation against a key holding the wrong kind of value"]
-                self.env.assertIn(str(result), possible_exceptions)
+                self.env.assertContains(str(result), possible_exceptions)
             else:
-                self.env.assertEquals(1000000, result.result_set[0][0])
+                self.env.assertEqual(1000000, result.result_set[0][0])
 
             # close the connection pool
             await pool.aclose()
@@ -328,7 +328,7 @@ class testConcurrentQueryFlow(FlowTestsBase):
         results = self.run_queries_concurrently(queries)
 
         for result in results:
-            self.env.assertEquals(1000, result.result_set[0][0])
+            self.env.assertEqual(1000, result.result_set[0][0])
 
     def test_10_write_starvation(self):
         # make sure write query do not starve
