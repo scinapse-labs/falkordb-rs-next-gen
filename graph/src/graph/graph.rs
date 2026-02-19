@@ -674,37 +674,36 @@ impl Graph {
         }
     }
 
-    pub fn delete_node(
+    pub fn delete_nodes(
         &mut self,
-        id: NodeId,
+        deleted_nodes: &RoaringTreemap,
         remove_docs: &mut HashMap<Arc<String>, RoaringTreemap>,
     ) -> Result<(), String> {
-        self.deleted_nodes.insert(id.0);
-        self.node_count -= 1;
-        self.all_nodes_matrix.remove(id.0, id.0);
+        self.deleted_nodes |= deleted_nodes;
+        self.node_count -= deleted_nodes.len();
 
-        for label_matrix in &mut self.labels_matices {
-            label_matrix.remove(id.0, id.0);
-        }
-        for label_id in 0..self.labels_matices.len() {
-            let label = self.node_labels[label_id].clone();
-            self.node_labels_matrix.remove(id.0, label_id as _);
-            let mut indexed = false;
-            for attr in self.node_attrs.get_attrs(id.0) {
-                if self.node_indexer.is_attr_indexed(label.clone(), attr) {
-                    indexed = true;
-                    break;
+        for id in deleted_nodes {
+            self.all_nodes_matrix.remove(id, id);
+
+            for (_, label_id) in self.node_labels_matrix.iter(id, id) {
+                let label = self.node_labels[label_id as usize].clone();
+                self.labels_matices[label_id as usize].remove(id, id);
+                if self.node_indexer.is_label_indexed(label.clone()) {
+                    for attr in self.node_attrs.get_attrs(id) {
+                        if self.node_indexer.is_attr_indexed(label.clone(), attr) {
+                            remove_docs.entry(label.clone()).or_default().insert(id);
+                            break;
+                        }
+                    }
                 }
             }
-            if indexed {
-                remove_docs
-                    .entry(label.clone())
-                    .or_default()
-                    .insert(u64::from(id));
+
+            for label_id in 0..self.labels_matices.len() {
+                self.node_labels_matrix.remove(id, label_id as _);
             }
         }
-
-        self.node_attrs.remove(id.0)
+        self.node_attrs.remove_all(deleted_nodes)?;
+        Ok(())
     }
 
     pub fn get_node_relationships(
@@ -1057,12 +1056,30 @@ impl Graph {
         self.node_attrs.get_attrs(id.0)
     }
 
+    /// Get all attribute names and values for a node in a single storage pass.
+    #[must_use]
+    pub fn get_node_all_attrs(
+        &self,
+        id: NodeId,
+    ) -> OrderMap<Arc<String>, Value> {
+        self.node_attrs.get_all_attrs(id.0)
+    }
+
     #[must_use]
     pub fn get_relationship_attrs(
         &self,
         id: RelationshipId,
     ) -> Vec<Arc<String>> {
         self.relationship_attrs.get_attrs(id.0)
+    }
+
+    /// Get all attribute names and values for a relationship in a single storage pass.
+    #[must_use]
+    pub fn get_relationship_all_attrs(
+        &self,
+        id: RelationshipId,
+    ) -> OrderMap<Arc<String>, Value> {
+        self.relationship_attrs.get_all_attrs(id.0)
     }
 
     pub fn create_index(
