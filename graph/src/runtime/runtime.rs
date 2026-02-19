@@ -1707,10 +1707,17 @@ impl<'a> Runtime {
                         "graph.RO_QUERY is to be executed only on read-only queries",
                     ));
                 }
-                self.stats.borrow_mut().indexes_dropped += attrs.len();
-                self.g
+
+                let res = self
+                    .g
                     .borrow_mut()
-                    .drop_index(index_type, entity_type, label, attrs);
+                    .drop_index(index_type, entity_type, label, attrs)?;
+                match res {
+                    Some((before, after)) => {
+                        self.stats.borrow_mut().indexes_dropped += before - after;
+                    }
+                    None => {}
+                }
                 Ok(Box::new(empty()))
             }
         }
