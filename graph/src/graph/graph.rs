@@ -735,7 +735,11 @@ impl Graph {
         }
         if labels.len() == 1 {
             if let Some(label_matrix) = self.get_label_matrix(&labels[0]) {
-                return Box::new(label_matrix.iter(min_row, u64::MAX).map(|(id, _)| NodeId(id)));
+                return Box::new(
+                    label_matrix
+                        .iter(min_row, u64::MAX)
+                        .map(|(id, _)| NodeId(id)),
+                );
             }
             return Box::new(std::iter::empty());
         }
