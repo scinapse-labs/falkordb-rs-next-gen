@@ -2357,7 +2357,7 @@ impl<'a> Runtime {
             &vars,
             None,
         )?;
-        let iter = self.g.borrow().get_nodes(&node_pattern.labels);
+        let iter = self.g.borrow().get_nodes(&node_pattern.labels, 0);
         Ok(Box::new(iter.filter_map(move |v| {
             if let Value::Map(attrs) = &attrs
                 && !attrs.is_empty()
@@ -2464,16 +2464,15 @@ impl<'a> Runtime {
         ))
     }
 
-    fn evaluate_filter(
+    fn evaluate_id_filter(
         &self,
         filter: &Vec<(QueryExpr<Variable>, ExprIR<Variable>)>,
         vars: &Env,
-    ) -> Result<RoaringTreemap, String> {
+    ) -> Result<Option<RoaringTreemap>, String> {
         let mut min = 0u64;
         let mut max = self.g.borrow().max_node_id();
         for (expr, op) in filter {
-            let value = self.run_expr(expr, expr.root().idx(), vars, None)?;
-            let id = match value {
+            let id = match self.run_expr(expr, expr.root().idx(), vars, None)? {
                 Value::Int(id) => id as u64,
                 _ => {
                     return Err(String::from("Node ID must be an integer"));
@@ -2482,32 +2481,32 @@ impl<'a> Runtime {
             match op {
                 ExprIR::Eq => {
                     if id < min || id > max {
-                        return Ok(RoaringTreemap::new());
+                        return Ok(None);
                     }
                     min = id;
                     max = id;
                 }
                 ExprIR::Gt => {
                     if id >= max {
-                        return Ok(RoaringTreemap::new());
+                        return Ok(None);
                     }
                     min = std::cmp::max(min, id + 1);
                 }
                 ExprIR::Ge => {
                     if id > max {
-                        return Ok(RoaringTreemap::new());
+                        return Ok(None);
                     }
                     min = std::cmp::max(min, id);
                 }
                 ExprIR::Lt => {
                     if id <= min {
-                        return Ok(RoaringTreemap::new());
+                        return Ok(None);
                     }
                     max = std::cmp::min(max, id - 1);
                 }
                 ExprIR::Le => {
                     if id < min {
-                        return Ok(RoaringTreemap::new());
+                        return Ok(None);
                     }
                     max = std::cmp::min(max, id);
                 }
@@ -2518,7 +2517,7 @@ impl<'a> Runtime {
         }
         let mut result = RoaringTreemap::new();
         result.insert_range(min..=max);
-        Ok(result)
+        Ok(Some(result))
     }
 
     fn node_by_label_and_id_scan(
@@ -2527,19 +2526,26 @@ impl<'a> Runtime {
         filter: &Vec<(QueryExpr<Variable>, ExprIR<Variable>)>,
         vars: Env,
     ) -> Result<Box<dyn Iterator<Item = Result<Env, String>> + 'a>, String> {
-        let range = self.evaluate_filter(filter, &vars)?;
-        let g = self.g.borrow();
-        Ok(Box::new(g.get_nodes(&node_pattern.labels).filter_map(
-            move |nid| {
-                if range.contains(u64::from(nid)) {
-                    let mut vars = vars.clone();
-                    vars.insert(&node_pattern.alias, Value::Node(nid));
-                    Some(Ok(vars))
-                } else {
-                    None
-                }
-            },
-        )))
+        match self.evaluate_id_filter(filter, &vars)? {
+            Some(range) => {
+                let g = self.g.borrow();
+                Ok(Box::new(
+                    g.get_nodes(&node_pattern.labels, range.min().unwrap())
+                        .filter_map(move |nid| {
+                            if range.contains(u64::from(nid)) {
+                                let mut vars = vars.clone();
+                                vars.insert(&node_pattern.alias, Value::Node(nid));
+                                Some(Ok(vars))
+                            } else {
+                                None
+                            }
+                        }),
+                ))
+            }
+            None => {
+                return Ok(Box::new(std::iter::empty()));
+            }
+        }
     }
 
     fn node_by_id_seek(
@@ -2548,17 +2554,23 @@ impl<'a> Runtime {
         filter: &Vec<(QueryExpr<Variable>, ExprIR<Variable>)>,
         vars: Env,
     ) -> Result<Box<dyn Iterator<Item = Result<Env, String>> + 'a>, String> {
-        let range = self.evaluate_filter(filter, &vars)?;
-        let g = self.g.borrow();
-        Ok(Box::new(range.into_iter().filter_map(move |nid| {
-            if g.is_node_deleted(NodeId::from(nid)) {
-                None
-            } else {
-                let mut vars = vars.clone();
-                vars.insert(&node_pattern.alias, Value::Node(NodeId::from(nid)));
-                Some(Ok(vars))
+        match self.evaluate_id_filter(filter, &vars)? {
+            Some(range) => {
+                let g = self.g.borrow();
+                Ok(Box::new(range.into_iter().filter_map(move |nid| {
+                    if g.is_node_deleted(NodeId::from(nid)) {
+                        None
+                    } else {
+                        let mut vars = vars.clone();
+                        vars.insert(&node_pattern.alias, Value::Node(NodeId::from(nid)));
+                        Some(Ok(vars))
+                    }
+                })))
             }
-        })))
+            None => {
+                return Ok(Box::new(std::iter::empty()));
+            }
+        }
     }
 
     fn delete(

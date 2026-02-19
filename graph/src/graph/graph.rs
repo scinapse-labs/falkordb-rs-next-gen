@@ -724,17 +724,18 @@ impl Graph {
     pub fn get_nodes(
         &self,
         labels: &OrderSet<Arc<String>>,
+        min_row: u64,
     ) -> Box<dyn Iterator<Item = NodeId>> {
         if labels.is_empty() {
             return Box::new(
                 self.all_nodes_matrix
-                    .iter(0, u64::MAX)
+                    .iter(min_row, u64::MAX)
                     .map(|(id, _)| NodeId(id)),
             );
         }
         if labels.len() == 1 {
             if let Some(label_matrix) = self.get_label_matrix(&labels[0]) {
-                return Box::new(label_matrix.iter(0, u64::MAX).map(|(id, _)| NodeId(id)));
+                return Box::new(label_matrix.iter(min_row, u64::MAX).map(|(id, _)| NodeId(id)));
             }
             return Box::new(std::iter::empty());
         }
@@ -745,7 +746,7 @@ impl Graph {
         Box::new(
             matrices
                 .map_or_else(
-                    || self.zero_matrix.to_matrix().iter(0, u64::MAX),
+                    || self.zero_matrix.to_matrix().iter(min_row, u64::MAX),
                     |mut matrices| {
                         let mut iter = matrices.iter_mut();
                         let mut m = iter.next().unwrap().to_matrix();
@@ -757,7 +758,7 @@ impl Graph {
                                 None,
                             );
                         }
-                        m.iter(0, u64::MAX)
+                        m.iter(min_row, u64::MAX)
                     },
                 )
                 .map(|(id, _)| NodeId(id)),
