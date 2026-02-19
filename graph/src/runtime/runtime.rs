@@ -1576,7 +1576,7 @@ impl<'a> Runtime {
                     let mut return_vars = Env::default();
                     for (old_var, new_var) in copy_from_parent {
                         if let Some(value) = vars.get(old_var) {
-                            return_vars.insert(new_var, value.clone());
+                            return_vars.insert(new_var, value);
                         }
                     }
                     for (name, tree) in trees {
@@ -2234,14 +2234,14 @@ impl<'a> Runtime {
             &relationship_pattern.to.labels,
         );
         Ok(Box::new(iter.flat_map(move |(src, dst)| {
-            let vars = vars.clone();
-            let filter_attrs = filter_attrs.clone();
             if from_id.is_some() && from_id.unwrap() != src {
                 return Box::new(empty()) as Box<dyn Iterator<Item = Result<Env, String>>>;
             }
             if to_id.is_some() && to_id.unwrap() != dst {
                 return Box::new(empty()) as Box<dyn Iterator<Item = Result<Env, String>>>;
             }
+            let vars = vars.clone();
+            let filter_attrs = filter_attrs.clone();
             Box::new(
                 self.g
                     .borrow()
@@ -2332,7 +2332,6 @@ impl<'a> Runtime {
         )?;
         let iter = self.g.borrow().get_nodes(&node_pattern.labels);
         Ok(Box::new(iter.filter_map(move |v| {
-            let mut vars = vars.clone();
             if let Value::Map(attrs) = &attrs
                 && !attrs.is_empty()
             {
@@ -2347,6 +2346,7 @@ impl<'a> Runtime {
                     return None;
                 }
             }
+            let mut vars = vars.clone();
             vars.insert(&node_pattern.alias, Value::Node(v));
             Some(Ok(vars))
         })))
@@ -2560,8 +2560,12 @@ impl<'a> Runtime {
     ) -> Result<(), String> {
         for node in pattern.nodes() {
             let id = self.g.borrow_mut().reserve_node();
-            self.pending.borrow_mut().created_node(id);
-            self.pending.borrow_mut().set_node_labels(id, &node.labels);
+            {
+                let mut pending = self.pending.borrow_mut();
+                pending.created_node(id);
+                pending.set_node_labels(id, &node.labels);
+            }
+
             let attrs = self.run_expr(&node.attrs, node.attrs.root().idx(), vars, None)?;
             match attrs {
                 Value::Map(attrs) => {
@@ -2588,16 +2592,18 @@ impl<'a> Runtime {
                 (from_id, to_id)
             };
 
-            if (self.g.borrow().is_node_deleted(from_id)
-                && !self.pending.borrow().is_node_created(from_id))
-                || self.pending.borrow().is_node_deleted(from_id)
-                || (self.g.borrow().is_node_deleted(to_id)
-                    && !self.pending.borrow().is_node_created(to_id))
-                || self.pending.borrow().is_node_deleted(to_id)
             {
-                return Err(String::from(
-                    "Failed to create relationship; endpoint was not found.",
-                ));
+                let g = self.g.borrow();
+                let pending = self.pending.borrow();
+                if (g.is_node_deleted(from_id) && !pending.is_node_created(from_id))
+                    || pending.is_node_deleted(from_id)
+                    || (g.is_node_deleted(to_id) && !pending.is_node_created(to_id))
+                    || pending.is_node_deleted(to_id)
+                {
+                    return Err(String::from(
+                        "Failed to create relationship; endpoint was not found.",
+                    ));
+                }
             }
             let id = self.g.borrow_mut().reserve_relationship();
             self.pending.borrow_mut().created_relationship(
@@ -2757,12 +2763,7 @@ impl<'a> Runtime {
         if let Some(dn) = self.deleted_nodes.borrow().get(&id) {
             return dn.attrs.clone();
         }
-        let g = self.g.borrow();
-        let mut actual = g
-            .get_node_attrs(id)
-            .iter()
-            .map(|attr| (attr.clone(), g.get_node_attribute(id, attr).unwrap()))
-            .collect();
+        let mut actual = self.g.borrow().get_node_all_attrs(id);
         self.pending.borrow().update_node_attrs(id, &mut actual);
         actual
     }
@@ -2774,17 +2775,7 @@ impl<'a> Runtime {
         if let Some(dr) = self.deleted_relationships.borrow().get(&id) {
             return dr.attrs.clone();
         }
-        let g = self.g.borrow();
-        let mut actual = g
-            .get_relationship_attrs(id)
-            .iter()
-            .map(|attr| {
-                (
-                    attr.clone(),
-                    g.get_relationship_attribute(id, attr).unwrap(),
-                )
-            })
-            .collect();
+        let mut actual = self.g.borrow().get_relationship_all_attrs(id);
         self.pending
             .borrow()
             .update_relationship_attrs(id, &mut actual);

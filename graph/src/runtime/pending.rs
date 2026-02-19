@@ -504,10 +504,8 @@ impl Pending {
         }
         if !self.deleted_nodes.is_empty() {
             stats.borrow_mut().nodes_deleted += self.deleted_nodes.len();
-            for id in &self.deleted_nodes {
-                g.borrow_mut()
-                    .delete_node(NodeId::from(id), &mut self.index_remove_docs)?;
-            }
+            g.borrow_mut()
+                .delete_nodes(&self.deleted_nodes, &mut self.index_remove_docs)?;
             self.deleted_nodes.clear();
         }
         if !self.deleted_relationships.is_empty() {
