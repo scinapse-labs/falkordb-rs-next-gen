@@ -20,8 +20,9 @@
 use std::sync::Arc;
 
 use fjall::{Database, Keyspace, KeyspaceCreateOptions, Readable, Snapshot};
+use roaring::RoaringTreemap;
 
-use crate::runtime::{orderset::OrderSet, value::Value};
+use crate::runtime::{ordermap::OrderMap, orderset::OrderSet, value::Value};
 
 /// Columnar attribute storage for graph entities backed by fjall.
 ///
@@ -148,6 +149,30 @@ impl AttributeStore {
         names
     }
 
+    #[must_use]
+    pub fn get_all_attrs(
+        &self,
+        key: u64,
+    ) -> OrderMap<Arc<String>, Value> {
+        let prefix = key.to_be_bytes();
+        let mut attrs = OrderMap::default();
+
+        for entry in self.snapshot.prefix(&self.keyspace, prefix) {
+            if let Ok((k, data)) = entry.into_inner()
+                && let Some(idx) = extract_attr_idx(&k)
+            {
+                let i = idx as usize;
+                if i < self.attrs_name.len() {
+                    if let Some((value, _)) = Value::from_bytes(&data) {
+                        attrs.insert(self.attrs_name[i].clone(), value);
+                    }
+                }
+            }
+        }
+
+        attrs
+    }
+
     pub fn remove_attr(
         &mut self,
         key: u64,
@@ -161,6 +186,23 @@ impl AttributeStore {
             return Ok(true);
         }
         Ok(false)
+    }
+
+    pub fn remove_all(
+        &mut self,
+        keys: &RoaringTreemap,
+    ) -> Result<(), String> {
+        let mut batch = self.database.batch();
+        for key in keys {
+            let prefix = key.to_be_bytes();
+            for entry in self.keyspace.prefix(prefix) {
+                if let Ok(k) = entry.key() {
+                    batch.remove(&self.keyspace, k);
+                }
+            }
+        }
+        batch.durability(None).commit().map_err(|e| e.to_string())?;
+        Ok(())
     }
 
     pub fn insert_attr(
