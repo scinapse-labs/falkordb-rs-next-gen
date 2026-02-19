@@ -1097,14 +1097,14 @@ impl<'a> Parser<'a> {
             match_token!(self.lexer => On);
             match_token!(self.lexer, LParen);
             let key = self.parse_ident_as(IdentContext::Identifier)?;
-            match_token!(self.lexer, Dot);
+            self.match_dot_property_separator()?;
             if nkey.as_str() != key.as_str() {
                 return Err(self.lexer.format_error(&format!("'{key}' not defined")));
             }
             let mut attrs = vec![self.parse_ident_as(IdentContext::PropertyName)?];
             while optional_match_token!(self.lexer, Comma) {
                 let key = self.parse_ident_as(IdentContext::Identifier)?;
-                match_token!(self.lexer, Dot);
+                self.match_dot_property_separator()?;
                 if nkey.as_str() != key.as_str() {
                     return Err(self.lexer.format_error(&format!("'{key}' not defined")));
                 }
@@ -1188,14 +1188,14 @@ impl<'a> Parser<'a> {
             match_token!(self.lexer => On);
             match_token!(self.lexer, LParen);
             let key = self.parse_ident_as(IdentContext::Identifier)?;
-            match_token!(self.lexer, Dot);
+            self.match_dot_property_separator()?;
             if nkey.as_str() != key.as_str() {
                 return Err(self.lexer.format_error(&format!("'{key}' not defined")));
             }
             let mut attrs = vec![self.parse_ident_as(IdentContext::PropertyName)?];
             while optional_match_token!(self.lexer, Comma) {
                 let key = self.parse_ident_as(IdentContext::Identifier)?;
-                match_token!(self.lexer, Dot);
+                self.match_dot_property_separator()?;
                 if nkey.as_str() != key.as_str() {
                     return Err(self.lexer.format_error(&format!("'{key}' not defined")));
                 }
@@ -2228,6 +2228,29 @@ impl<'a> Parser<'a> {
             }
         }
         unreachable!()
+    }
+
+    /// Match a dot separator in index property references (e.g. `n.prop`).
+    /// Handles the edge case where `.1` is lexed as a float token instead of
+    /// dot + integer, producing "expected a property name" in that case.
+    fn match_dot_property_separator(&mut self) -> Result<(), String> {
+        match self.lexer.current()? {
+            Token::Dot => {
+                self.lexer.next();
+                Ok(())
+            }
+            Token::Float(_) if self.lexer.current_str().starts_with('.') => {
+                Err(self.lexer.format_error(&format!(
+                    "Invalid input '{}': expected {}",
+                    &self.lexer.current_str()[1..],
+                    IdentContext::PropertyName
+                )))
+            }
+            _ => Err(self.lexer.format_error(&format!(
+                "Invalid input '{}': expected '.'",
+                self.lexer.current_str(),
+            ))),
+        }
     }
 
     fn parse_ident_as(
