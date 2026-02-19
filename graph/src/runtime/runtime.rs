@@ -55,7 +55,7 @@ use crate::{
 };
 use atomic_refcell::AtomicRefCell;
 use once_cell::{sync::OnceCell, unsync::Lazy};
-use orx_tree::{Bfs, Dyn, DynNode, DynTree, NodeIdx, NodeRef};
+use orx_tree::{Bfs, Dyn, DynNode, DynTree, MemoryPolicy, NodeIdx, NodeRef};
 use reqwest::blocking::get;
 use roaring::RoaringTreemap;
 use std::{
@@ -148,7 +148,7 @@ pub trait GetVariables {
     fn get_variables(&self) -> Vec<Variable>;
 }
 
-impl GetVariables for DynNode<'_, IR> {
+impl<T: MemoryPolicy> GetVariables for DynNode<'_, IR, T> {
     fn get_variables(&self) -> Vec<Variable> {
         let mut vars = vec![];
         for node in self.walk::<Bfs>() {
