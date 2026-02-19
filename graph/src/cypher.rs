@@ -173,6 +173,65 @@ enum Token {
     EndOfFile,
 }
 
+impl std::fmt::Display for Token {
+    fn fmt(
+        &self,
+        f: &mut std::fmt::Formatter,
+    ) -> std::fmt::Result {
+        match self {
+            Token::Ident(s) => write!(f, "'{s}'"),
+            Token::Keyword(_, s) => write!(f, "'{s}'"),
+            Token::Parameter(s) => write!(f, "${s}"),
+            Token::Integer(i) => write!(f, "{i}"),
+            Token::Float(fl) => write!(f, "{fl}"),
+            Token::String(s) => write!(f, "\"{s}\""),
+            Token::LBrace => write!(f, "'{{'"),
+            Token::RBrace => write!(f, "'}}'"),
+            Token::LBracket => write!(f, "'['"),
+            Token::RBracket => write!(f, "']'"),
+            Token::LParen => write!(f, "'('"),
+            Token::RParen => write!(f, "')'"),
+            Token::Modulo => write!(f, "'%'"),
+            Token::Power => write!(f, "'^'"),
+            Token::Star => write!(f, "'*'"),
+            Token::Slash => write!(f, "'/'"),
+            Token::Plus => write!(f, "'+'"),
+            Token::Dash => write!(f, "'-'"),
+            Token::Equal => write!(f, "'='"),
+            Token::PlusEqual => write!(f, "'+='"),
+            Token::NotEqual => write!(f, "'<>'"),
+            Token::LessThan => write!(f, "'<'"),
+            Token::LessThanOrEqual => write!(f, "'<='"),
+            Token::GreaterThan => write!(f, "'>'"),
+            Token::GreaterThanOrEqual => write!(f, "'>='"),
+            Token::Comma => write!(f, "','"),
+            Token::Colon => write!(f, "':'"),
+            Token::Dot => write!(f, "'.'"),
+            Token::DotDot => write!(f, "'..'"),
+            Token::Pipe => write!(f, "'|'"),
+            Token::RegexMatches => write!(f, "'=~'"),
+            Token::EndOfFile => write!(f, "end of input"),
+        }
+    }
+}
+
+enum IdentContext {
+    Identifier,
+    PropertyName,
+}
+
+impl std::fmt::Display for IdentContext {
+    fn fmt(
+        &self,
+        f: &mut std::fmt::Formatter,
+    ) -> std::fmt::Result {
+        match self {
+            IdentContext::Identifier => write!(f, "an identifier"),
+            IdentContext::PropertyName => write!(f, "a property name"),
+        }
+    }
+}
+
 const KEYWORDS: &[(&str, Keyword)] = &[
     ("CALL", Keyword::Call),
     ("YIELD", Keyword::Yield),
@@ -781,7 +840,8 @@ macro_rules! match_token {
             }
             _ => {
                 return Err($lexer.format_error(&format!(
-                    "Invalid input '{}': expected {:?}",
+                    // Return the display in error
+                    "Invalid input '{}': expected {}",
                     $lexer.current_str(),
                     Token::$token
                 )));
@@ -945,7 +1005,7 @@ impl<'a> Parser<'a> {
             if id.as_str() == "CYPHER" {
                 self.lexer.next();
                 let mut pos = self.lexer.pos;
-                while let Ok(id) = self.parse_ident() {
+                while let Ok(id) = self.parse_ident_as(IdentContext::Identifier) {
                     if !optional_match_token!(self.lexer, Equal) {
                         self.lexer.set_pos(pos);
                         break;
@@ -989,11 +1049,11 @@ impl<'a> Parser<'a> {
             }
             if !fulltext && !vector && optional_match_token!(self.lexer => On) {
                 match_token!(self.lexer, Colon);
-                let label = self.parse_ident()?;
+                let label = self.parse_ident_as(IdentContext::Identifier)?;
                 match_token!(self.lexer, LParen);
-                let mut attrs = vec![self.parse_ident()?];
+                let mut attrs = vec![self.parse_ident_as(IdentContext::Identifier)?];
                 while optional_match_token!(self.lexer, Comma) {
-                    attrs.push(self.parse_ident()?);
+                    attrs.push(self.parse_ident_as(IdentContext::Identifier)?);
                 }
                 match_token!(self.lexer, RParen);
                 match_token!(self.lexer, EndOfFile);
@@ -1012,9 +1072,9 @@ impl<'a> Parser<'a> {
             let (nkey, label, entity_type) = if optional_match_token!(self.lexer, RParen) {
                 match_token!(self.lexer, Dash);
                 match_token!(self.lexer, LBrace);
-                let nkey = self.parse_ident()?;
+                let nkey = self.parse_ident_as(IdentContext::Identifier)?;
                 match_token!(self.lexer, Colon);
-                let label = self.parse_ident()?;
+                let label = self.parse_ident_as(IdentContext::Identifier)?;
                 match_token!(self.lexer, RBrace);
                 match_token!(self.lexer, Dash);
                 optional_match_token!(self.lexer, GreaterThan);
@@ -1022,27 +1082,33 @@ impl<'a> Parser<'a> {
                 match_token!(self.lexer, RParen);
                 (nkey, label, EntityType::Relationship)
             } else {
-                let nkey = self.parse_ident()?;
-                match_token!(self.lexer, Colon);
-                let label = self.parse_ident()?;
+                let nkey = self.parse_ident_as(IdentContext::Identifier)?;
+                if !matches!(self.lexer.current()?, Token::Colon) {
+                    return Err(self.lexer.format_error(&format!(
+                        "Invalid input '{}': expected a label",
+                        self.lexer.current_str()
+                    )));
+                }
+                self.lexer.next();
+                let label = self.parse_ident_as(IdentContext::Identifier)?;
                 match_token!(self.lexer, RParen);
                 (nkey, label, EntityType::Node)
             };
             match_token!(self.lexer => On);
             match_token!(self.lexer, LParen);
-            let key = self.parse_ident()?;
+            let key = self.parse_ident_as(IdentContext::Identifier)?;
+            match_token!(self.lexer, Dot);
             if nkey.as_str() != key.as_str() {
                 return Err(self.lexer.format_error(&format!("'{key}' not defined")));
             }
-            match_token!(self.lexer, Dot);
-            let mut attrs = vec![self.parse_ident()?];
+            let mut attrs = vec![self.parse_ident_as(IdentContext::PropertyName)?];
             while optional_match_token!(self.lexer, Comma) {
-                let key = self.parse_ident()?;
+                let key = self.parse_ident_as(IdentContext::Identifier)?;
+                match_token!(self.lexer, Dot);
                 if nkey.as_str() != key.as_str() {
                     return Err(self.lexer.format_error(&format!("'{key}' not defined")));
                 }
-                match_token!(self.lexer, Dot);
-                attrs.push(self.parse_ident()?);
+                attrs.push(self.parse_ident_as(IdentContext::PropertyName)?);
             }
             match_token!(self.lexer, RParen);
             let index_type = if fulltext {
@@ -1075,11 +1141,11 @@ impl<'a> Parser<'a> {
             }
             if !fulltext && !vector && optional_match_token!(self.lexer => On) {
                 match_token!(self.lexer, Colon);
-                let label = self.parse_ident()?;
+                let label = self.parse_ident_as(IdentContext::Identifier)?;
                 match_token!(self.lexer, LParen);
-                let mut attrs = vec![self.parse_ident()?];
+                let mut attrs = vec![self.parse_ident_as(IdentContext::Identifier)?];
                 while optional_match_token!(self.lexer, Comma) {
-                    attrs.push(self.parse_ident()?);
+                    attrs.push(self.parse_ident_as(IdentContext::Identifier)?);
                 }
                 match_token!(self.lexer, RParen);
                 match_token!(self.lexer, EndOfFile);
@@ -1097,9 +1163,9 @@ impl<'a> Parser<'a> {
             let (nkey, label, entity_type) = if optional_match_token!(self.lexer, RParen) {
                 match_token!(self.lexer, Dash);
                 match_token!(self.lexer, LBrace);
-                let nkey = self.parse_ident()?;
+                let nkey = self.parse_ident_as(IdentContext::Identifier)?;
                 match_token!(self.lexer, Colon);
-                let label = self.parse_ident()?;
+                let label = self.parse_ident_as(IdentContext::Identifier)?;
                 match_token!(self.lexer, RBrace);
                 match_token!(self.lexer, Dash);
                 optional_match_token!(self.lexer, GreaterThan);
@@ -1107,27 +1173,33 @@ impl<'a> Parser<'a> {
                 match_token!(self.lexer, RParen);
                 (nkey, label, EntityType::Relationship)
             } else {
-                let nkey = self.parse_ident()?;
-                match_token!(self.lexer, Colon);
-                let label = self.parse_ident()?;
+                let nkey = self.parse_ident_as(IdentContext::Identifier)?;
+                if !matches!(self.lexer.current()?, Token::Colon) {
+                    return Err(self.lexer.format_error(&format!(
+                        "Invalid input '{}': expected a label",
+                        self.lexer.current_str()
+                    )));
+                }
+                self.lexer.next();
+                let label = self.parse_ident_as(IdentContext::Identifier)?;
                 match_token!(self.lexer, RParen);
                 (nkey, label, EntityType::Node)
             };
             match_token!(self.lexer => On);
             match_token!(self.lexer, LParen);
-            let key = self.parse_ident()?;
+            let key = self.parse_ident_as(IdentContext::Identifier)?;
+            match_token!(self.lexer, Dot);
             if nkey.as_str() != key.as_str() {
                 return Err(self.lexer.format_error(&format!("'{key}' not defined")));
             }
-            match_token!(self.lexer, Dot);
-            let mut attrs = vec![self.parse_ident()?];
+            let mut attrs = vec![self.parse_ident_as(IdentContext::PropertyName)?];
             while optional_match_token!(self.lexer, Comma) {
-                let key = self.parse_ident()?;
+                let key = self.parse_ident_as(IdentContext::Identifier)?;
+                match_token!(self.lexer, Dot);
                 if nkey.as_str() != key.as_str() {
                     return Err(self.lexer.format_error(&format!("'{key}' not defined")));
                 }
-                match_token!(self.lexer, Dot);
-                attrs.push(self.parse_ident()?);
+                attrs.push(self.parse_ident_as(IdentContext::PropertyName)?);
             }
             match_token!(self.lexer, RParen);
             match_token!(self.lexer, EndOfFile);
@@ -1266,7 +1338,7 @@ impl<'a> Parser<'a> {
                 match_token!(self.lexer => From);
                 let file_path = Arc::new(self.parse_expr()?);
                 match_token!(self.lexer => As);
-                let ident = self.parse_ident()?;
+                let ident = self.parse_ident_as(IdentContext::Identifier)?;
                 Ok(QueryIR::LoadCsv {
                     file_path,
                     headers,
@@ -1316,10 +1388,10 @@ impl<'a> Parser<'a> {
             .collect();
         let mut named_outputs = vec![];
         let filter = if optional_match_token!(self.lexer => Yield) {
-            let ident = self.parse_ident()?;
+            let ident = self.parse_ident_as(IdentContext::Identifier)?;
             named_outputs.push(ident);
             while optional_match_token!(self.lexer, Comma) {
-                let ident = self.parse_ident()?;
+                let ident = self.parse_ident_as(IdentContext::Identifier)?;
                 named_outputs.push(ident);
             }
             self.parse_where()?
@@ -1336,10 +1408,10 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_dotted_ident(&mut self) -> Result<Arc<String>, String> {
-        let mut idents = vec![self.parse_ident()?];
+        let mut idents = vec![self.parse_ident_as(IdentContext::Identifier)?];
         while self.lexer.current()? == Token::Dot {
             self.lexer.next();
-            idents.push(self.parse_ident()?);
+            idents.push(self.parse_ident_as(IdentContext::Identifier)?);
         }
         Ok(Arc::new(
             idents.iter().map(|label| label.as_str()).join("."),
@@ -1360,7 +1432,7 @@ impl<'a> Parser<'a> {
     fn parse_unwind_clause(&mut self) -> Result<RawQueryIR, String> {
         let list = Arc::new(self.parse_expr()?);
         match_token!(self.lexer => As);
-        let ident = self.parse_ident()?;
+        let ident = self.parse_ident_as(IdentContext::Identifier)?;
         Ok(QueryIR::Unwind(list, ident))
     }
 
@@ -1559,7 +1631,7 @@ impl<'a> Parser<'a> {
         let mut query_graph = QueryGraph::default();
         let mut nodes_alias = HashSet::new();
         loop {
-            if let Ok(ident) = self.parse_ident() {
+            if let Ok(ident) = self.parse_ident_as(IdentContext::Identifier) {
                 match_token!(self.lexer, Equal);
                 let mut vars = vec![];
                 let mut left = self.parse_node_pattern()?;
@@ -1691,7 +1763,7 @@ impl<'a> Parser<'a> {
         };
 
         match_token!(self.lexer, LParen);
-        let var = self.parse_ident()?;
+        let var = self.parse_ident_as(IdentContext::Identifier)?;
         match_token!(self.lexer => In);
         let expr = self.parse_expr()?;
         match_token!(self.lexer => Where);
@@ -1780,7 +1852,7 @@ impl<'a> Parser<'a> {
                     return Ok((tree!(ExprIR::FuncInvocation(func); args), false));
                 }
                 self.lexer.set_pos(pos);
-                let ident = self.parse_ident()?;
+                let ident = self.parse_ident_as(IdentContext::Identifier)?;
                 Ok((tree!(ExprIR::Variable(ident)), false))
             }
             Token::Parameter(param) => {
@@ -1857,7 +1929,7 @@ impl<'a> Parser<'a> {
         &mut self,
         expr: DynTree<ExprIR<Arc<String>>>,
     ) -> Result<DynTree<ExprIR<Arc<String>>>, String> {
-        let ident = self.parse_ident()?;
+        let ident = self.parse_ident_as(IdentContext::Identifier)?;
         Ok(tree!(ExprIR::Property(ident), expr))
     }
 
@@ -2158,15 +2230,19 @@ impl<'a> Parser<'a> {
         unreachable!()
     }
 
-    fn parse_ident(&mut self) -> Result<Arc<String>, String> {
+    fn parse_ident_as(
+        &mut self,
+        context: IdentContext,
+    ) -> Result<Arc<String>, String> {
         match self.lexer.current() {
             Ok(Token::Ident(id) | Token::Keyword(_, id)) => {
                 self.lexer.next();
                 Ok(id)
             }
             _ => Err(self.lexer.format_error(&format!(
-                "Invalid input '{}': expected an identifier",
-                self.lexer.current_str()
+                "Invalid input '{}': expected {}",
+                self.lexer.current_str(),
+                context
             ))),
         }
     }
@@ -2178,7 +2254,7 @@ impl<'a> Parser<'a> {
             let expr = Arc::new(self.parse_expr()?);
             if let Token::Keyword(Keyword::As, _) = self.lexer.current()? {
                 self.lexer.next();
-                let ident = self.parse_ident()?;
+                let ident = self.parse_ident_as(IdentContext::Identifier)?;
                 named_exprs.push((ident, expr));
             } else if let ExprIR::Variable(id) = expr.root().data() {
                 named_exprs.push((id.clone(), expr));
@@ -2223,7 +2299,7 @@ impl<'a> Parser<'a> {
     ) -> Result<(DynTree<ExprIR<Arc<String>>>, bool), String> {
         // Check if the second token is 'IN' for list comprehension
         let pos = self.lexer.pos;
-        if let Ok(var) = self.parse_ident()
+        if let Ok(var) = self.parse_ident_as(IdentContext::Identifier)
             && optional_match_token!(self.lexer => In)
         {
             return Ok((self.parse_list_comprehension(var)?, false));
@@ -2267,7 +2343,7 @@ impl<'a> Parser<'a> {
 
     fn parse_node_pattern(&mut self) -> Result<Arc<QueryNode<Arc<String>, Arc<String>>>, String> {
         match_token!(self.lexer, LParen);
-        let alias = if let Ok(id) = self.parse_ident() {
+        let alias = if let Ok(id) = self.parse_ident_as(IdentContext::Identifier) {
             id
         } else {
             let name = Arc::new(format!("_anon_{}", self.anon_counter));
@@ -2303,7 +2379,7 @@ impl<'a> Parser<'a> {
         match_token!(self.lexer, Dash);
         let has_details = optional_match_token!(self.lexer, LBrace);
         let (alias, types, attrs) = if has_details {
-            let alias = if let Ok(id) = self.parse_ident() {
+            let alias = if let Ok(id) = self.parse_ident_as(IdentContext::Identifier) {
                 id
             } else {
                 let name = Arc::new(format!("_anon_{}", self.anon_counter));
@@ -2313,7 +2389,7 @@ impl<'a> Parser<'a> {
             let mut types = HashSet::new();
             if optional_match_token!(self.lexer, Colon) {
                 loop {
-                    types.insert(self.parse_ident()?);
+                    types.insert(self.parse_ident_as(IdentContext::Identifier)?);
                     let pipe = optional_match_token!(self.lexer, Pipe);
                     let colon = optional_match_token!(self.lexer, Colon);
                     if pipe || colon {
@@ -2386,7 +2462,7 @@ impl<'a> Parser<'a> {
         let mut labels = OrderSet::default();
         while self.lexer.current()? == Token::Colon {
             self.lexer.next();
-            labels.insert(self.parse_ident()?);
+            labels.insert(self.parse_ident_as(IdentContext::Identifier)?);
         }
         Ok(labels)
     }
@@ -2405,7 +2481,7 @@ impl<'a> Parser<'a> {
         }
 
         loop {
-            let key = self.parse_ident()?;
+            let key = self.parse_ident_as(IdentContext::Identifier)?;
             match_token!(self.lexer, Colon);
             let value = self.parse_expr()?;
             attrs.push(tree!(ExprIR::String(key), value));
