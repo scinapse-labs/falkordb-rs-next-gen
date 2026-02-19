@@ -215,7 +215,11 @@ class testIndexCreationFlow:
     def test04_index_creation_pattern_syntax(self):
         # create an index over user:age and user:name
         result = self.graph.query("CREATE INDEX FOR (p:user) ON (p.age, p.name)")
+<<<<<<< HEAD
         self.env.assertEqual(result.indices_created, 2)
+=======
+        self.env.assertEquals(result.indices_created, 2)
+>>>>>>> 54244b4 (uncomment)
 
         # create an index over follow:prop1 and follow:prop2
         result = self.graph.query(
@@ -430,6 +434,7 @@ class testIndexCreationFlow:
 
         # find newly created node
         q = "MATCH (n:L {v:$v}) RETURN count(n)"
+<<<<<<< HEAD
         res = g.query(q, {'v': max_node_v + 10}).result_set
         self.env.assertEqual(res[0][0], 1)
 
@@ -448,414 +453,434 @@ class testIndexCreationFlow:
         self.env.assertEqual(res[0][0], 0)
         res = g.query(q, {'id': 2}).result_set
         self.env.assertEqual(res[0][0], 0)
+=======
+        res = g.query(q, {"v": max_node_v + 10}).result_set
+        self.env.assertEquals(res[0][0], 1)
+
+        # find updated nodes
+        q = "MATCH (n:L) WHERE n.v = $new_v RETURN count(n)"
+        res = g.query(q, {"new_v": -max_node_v}).result_set
+        self.env.assertEquals(res[0][0], 1)
+
+        # find updated node
+        res = g.query(q, {"new_v": -1}).result_set
+        self.env.assertEquals(len(res), 1)
+
+        # make sure deleted nodes aren't found
+        q = "MATCH (n:L) WHERE n.v = $id RETURN count(n)"
+        res = g.query(q, {"id": max_node_v - 9}).result_set
+        self.env.assertEquals(res[0][0], 0)
+        res = g.query(q, {"id": 2}).result_set
+        self.env.assertEquals(res[0][0], 0)
+>>>>>>> 54244b4 (uncomment)
+
+    def test09_async_fulltext_index_creation(self):
+        # 1. create a large graph
+        # 2. create an index
+        # 3. while the index is being constructed make sure:
+        # 3.a. we're able to write to the graph
+        # 3.b. we're able to read
+        # 3.c. queries aren't utilizing the index while it is being constructed
+
+        min_node_v = 0
+        max_node_v = 1000000
+        self.graph.delete()
+
+        # -----------------------------------------------------------------------
+        # create a large graph
+        # -----------------------------------------------------------------------
+
+        q = "UNWIND range($min_v, $max_v) AS x CREATE (:L {h:toString(x)})"
+        self.graph.query(q, {"min_v": min_node_v, "max_v": max_node_v})
+
+        # -----------------------------------------------------------------------
+        # create a fulltext index
+        # -----------------------------------------------------------------------
+
+        res = self.graph.create_node_fulltext_index("L", "h")
+        self.env.assertEquals(res.indices_created, 1)
+
+        # -----------------------------------------------------------------------
+        # validate index is being populated
+        # -----------------------------------------------------------------------
+
+        self.env.assertTrue(index_under_construction(self.graph, "L"))
 
-    # def test09_async_fulltext_index_creation(self):
-    #     # 1. create a large graph
-    #     # 2. create an index
-    #     # 3. while the index is being constructed make sure:
-    #     # 3.a. we're able to write to the graph
-    #     # 3.b. we're able to read
-    #     # 3.c. queries aren't utilizing the index while it is being constructed
+        # while the index is being constructed
+        # perform CRUD operations
+
+        # -----------------------------------------------------------------------
+        # read while index is being constructed
+        # -----------------------------------------------------------------------
 
-    #     min_node_v = 0
-    #     max_node_v = 1000000
-    #     self.graph.delete()
+        q = "RETURN 1"
+        res = self.graph.query(q)
+        self.env.assertEquals(res.result_set[0][0], 1)
 
-    #     # -----------------------------------------------------------------------
-    #     # create a large graph
-    #     # -----------------------------------------------------------------------
+        # -----------------------------------------------------------------------
+        # write while index is being constructed
+        # -----------------------------------------------------------------------
 
-    #     q = "UNWIND range($min_v, $max_v) AS x CREATE (:L {h:toString(x)})"
-    #     self.graph.query(q, {"min_v": min_node_v, "max_v": max_node_v})
+        uids_to_match = []
+        uids_to_unmatch = []
 
-    #     # -----------------------------------------------------------------------
-    #     # create a fulltext index
-    #     # -----------------------------------------------------------------------
+        # create a new node
+        q = "CREATE (n:L {h:toString($v)}) RETURN n.h"
+        res = self.graph.query(q, {"v": max_node_v + 10})
+        uids_to_match.append(res.result_set[0][0])
 
-    #     res = self.graph.create_node_fulltext_index("L", "h")
-    #     self.env.assertEquals(res.indices_created, 1)
+        # update a node which had yet to be indexed
+        q = "MATCH (n:L) WHERE ID(n) = $id WITH n LIMIT 1 SET n.h = toString($new_v) RETURN n.h"
+        res = self.graph.query(q, {"id": max_node_v - 10, "new_v": max_node_v + 15})
+        uids_to_match.append(res.result_set[0][0])
 
-    #     # -----------------------------------------------------------------------
-    #     # validate index is being populated
-    #     # -----------------------------------------------------------------------
+        # update a node which is already indexed
+        res = self.graph.query(q, {"id": 1, "new_v": max_node_v + 17})
+        uids_to_match.append(res.result_set[0][0])
 
-    #     self.env.assertTrue(index_under_construction(self.graph, "L"))
+        # delete a node which had yet to be indexed
+        q = "MATCH (n:L) WHERE ID(n) = $id RETURN n.h"
+        res = self.graph.query(q, {"id": max_node_v - 9})
+        uids_to_unmatch.append(res.result_set[0][0])
 
-    #     # while the index is being constructed
-    #     # perform CRUD operations
+        q = "MATCH (n:L) WHERE ID(n) = $id WITH n LIMIT 1 DELETE n"
+        self.graph.query(q, {"id": max_node_v - 9})
 
-    #     # -----------------------------------------------------------------------
-    #     # read while index is being constructed
-    #     # -----------------------------------------------------------------------
+        # delete an indexed node
+        q = "MATCH (n:L) WHERE ID(n) = $id RETURN n.h"
+        res = self.graph.query(q, {"id": 2})
+        uids_to_unmatch.append(res.result_set[0][0])
 
-    #     q = "RETURN 1"
-    #     res = self.graph.query(q)
-    #     self.env.assertEquals(res.result_set[0][0], 1)
+        q = "MATCH (n:L) WHERE ID(n) = $id WITH n LIMIT 1 DELETE n"
+        self.graph.query(q, {"id": 2})
 
-    #     # -----------------------------------------------------------------------
-    #     # write while index is being constructed
-    #     # -----------------------------------------------------------------------
+        # wait for index to become operational
+        wait_for_indices_to_sync(self.graph)
 
-    #     uids_to_match = []
-    #     uids_to_unmatch = []
+        # index should be operational
+        self.env.assertFalse(index_under_construction(self.graph, "L"))
 
-    #     # create a new node
-    #     q = "CREATE (n:L {h:toString($v)}) RETURN n.h"
-    #     res = self.graph.query(q, {"v": max_node_v + 10})
-    #     uids_to_match.append(res.result_set[0][0])
+        # -----------------------------------------------------------------------
+        # validate index results
+        # -----------------------------------------------------------------------
 
-    #     # update a node which had yet to be indexed
-    #     q = "MATCH (n:L) WHERE ID(n) = $id WITH n LIMIT 1 SET n.h = toString($new_v) RETURN n.h"
-    #     res = self.graph.query(q, {"id": max_node_v - 10, "new_v": max_node_v + 15})
-    #     uids_to_match.append(res.result_set[0][0])
+        for uid in uids_to_match:
+            q = "CALL db.idx.fulltext.queryNodes('L', $uid) YIELD node RETURN count(node)"
+            res = self.graph.query(q, {"uid": uid}).result_set
+            self.env.assertEquals(res[0][0], 1)
 
-    #     # update a node which is already indexed
-    #     res = self.graph.query(q, {"id": 1, "new_v": max_node_v + 17})
-    #     uids_to_match.append(res.result_set[0][0])
+        for uid in uids_to_unmatch:
+            q = "CALL db.idx.fulltext.queryNodes('L', $uid) YIELD node RETURN count(node)"
+            res = self.graph.query(q, {"uid": uid}).result_set
+            self.env.assertEquals(res[0][0], 0)
 
-    #     # delete a node which had yet to be indexed
-    #     q = "MATCH (n:L) WHERE ID(n) = $id RETURN n.h"
-    #     res = self.graph.query(q, {"id": max_node_v - 9})
-    #     uids_to_unmatch.append(res.result_set[0][0])
+    def test10_delete_interrupt_async_index_creation(self):
+        # 1. create a large graph
+        # 2. create an index
+        # 3. delete the graph while the index is being constructed
 
-    #     q = "MATCH (n:L) WHERE ID(n) = $id WITH n LIMIT 1 DELETE n"
-    #     self.graph.query(q, {"id": max_node_v - 9})
+        min_node_v = 0
+        max_node_v = 1000000
 
-    #     # delete an indexed node
-    #     q = "MATCH (n:L) WHERE ID(n) = $id RETURN n.h"
-    #     res = self.graph.query(q, {"id": 2})
-    #     uids_to_unmatch.append(res.result_set[0][0])
+        # clear DB
+        self.graph.delete()
 
-    #     q = "MATCH (n:L) WHERE ID(n) = $id WITH n LIMIT 1 DELETE n"
-    #     self.graph.query(q, {"id": 2})
+        # -----------------------------------------------------------------------
+        # create a large graph
+        # -----------------------------------------------------------------------
 
-    #     # wait for index to become operational
-    #     wait_for_indices_to_sync(self.graph)
+        q = "UNWIND range($min_v, $max_v) AS x CREATE (:L {v:x})"
+        self.graph.query(q, {"min_v": min_node_v, "max_v": max_node_v})
 
-    #     # index should be operational
-    #     self.env.assertFalse(index_under_construction(self.graph, "L"))
+        # -----------------------------------------------------------------------
+        # create an index
+        # -----------------------------------------------------------------------
 
-    #     # -----------------------------------------------------------------------
-    #     # validate index results
-    #     # -----------------------------------------------------------------------
+        res = self.graph.create_node_range_index("L", "v")
+        self.env.assertEquals(res.indices_created, 1)
 
-    #     for uid in uids_to_match:
-    #         q = "CALL db.idx.fulltext.queryNodes('L', $uid) YIELD node RETURN count(node)"
-    #         res = self.graph.query(q, {"uid": uid}).result_set
-    #         self.env.assertEquals(res[0][0], 1)
+        # -----------------------------------------------------------------------
+        # validate index is being populated
+        # -----------------------------------------------------------------------
 
-    #     for uid in uids_to_unmatch:
-    #         q = "CALL db.idx.fulltext.queryNodes('L', $uid) YIELD node RETURN count(node)"
-    #         res = self.graph.query(q, {"uid": uid}).result_set
-    #         self.env.assertEquals(res[0][0], 0)
+        self.env.assertTrue(index_under_construction(self.graph, "L"))
 
-    # def test10_delete_interrupt_async_index_creation(self):
-    #     # 1. create a large graph
-    #     # 2. create an index
-    #     # 3. delete the graph while the index is being constructed
+        # -----------------------------------------------------------------------
+        # delete graph while the index is being constructed
+        # -----------------------------------------------------------------------
 
-    #     min_node_v = 0
-    #     max_node_v = 1000000
+        self.graph.delete()
 
-    #     # clear DB
-    #     self.graph.delete()
+        # graph key should be removed, index creation should run to completion
+        conn = self.env.getConnection()
+        self.env.assertFalse(conn.exists(GRAPH_ID))
 
-    #     # -----------------------------------------------------------------------
-    #     # create a large graph
-    #     # -----------------------------------------------------------------------
+        # at the moment there's no way of checking index status once its graph
+        # key had been removed
 
-    #     q = "UNWIND range($min_v, $max_v) AS x CREATE (:L {v:x})"
-    #     self.graph.query(q, {"min_v": min_node_v, "max_v": max_node_v})
+    def test11_delete_interrupt_async_fulltext_index_creation(self):
+        # 1. create a large graph
+        # 2. create an index
+        # 3. delete the graph while the index is being constructed
 
-    #     # -----------------------------------------------------------------------
-    #     # create an index
-    #     # -----------------------------------------------------------------------
+        min_node_v = 0
+        max_node_v = 1000000
+        conn = self.env.getConnection()
 
-    #     res = self.graph.create_node_range_index("L", "v")
-    #     self.env.assertEquals(res.indices_created, 1)
+        # -----------------------------------------------------------------------
+        # create a large graph
+        # -----------------------------------------------------------------------
 
-    #     # -----------------------------------------------------------------------
-    #     # validate index is being populated
-    #     # -----------------------------------------------------------------------
+        q = "UNWIND range($min_v, $max_v) AS x CREATE (:L {v:toString(x)})"
+        self.graph.query(q, {"min_v": min_node_v, "max_v": max_node_v})
 
-    #     self.env.assertTrue(index_under_construction(self.graph, "L"))
+        # -----------------------------------------------------------------------
+        # create an index
+        # -----------------------------------------------------------------------
 
-    #     # -----------------------------------------------------------------------
-    #     # delete graph while the index is being constructed
-    #     # -----------------------------------------------------------------------
+        res = self.graph.create_node_fulltext_index("L", "v")
+        self.env.assertEquals(res.indices_created, 1)
 
-    #     self.graph.delete()
+        # -----------------------------------------------------------------------
+        # validate index is being populated
+        # -----------------------------------------------------------------------
 
-    #     # graph key should be removed, index creation should run to completion
-    #     conn = self.env.getConnection()
-    #     self.env.assertFalse(conn.exists(GRAPH_ID))
+        self.env.assertTrue(index_under_construction(self.graph, "L"))
 
-    #     # at the moment there's no way of checking index status once its graph
-    #     # key had been removed
+        # -----------------------------------------------------------------------
+        # delete graph while the index is being constructed
+        # -----------------------------------------------------------------------
 
-    # def test11_delete_interrupt_async_fulltext_index_creation(self):
-    #     # 1. create a large graph
-    #     # 2. create an index
-    #     # 3. delete the graph while the index is being constructed
+        self.graph.delete()
 
-    #     min_node_v = 0
-    #     max_node_v = 1000000
-    #     conn = self.env.getConnection()
+        # graph key should be removed, index creation should run to completion
+        self.env.assertFalse(conn.exists(GRAPH_ID))
 
-    #     # -----------------------------------------------------------------------
-    #     # create a large graph
-    #     # -----------------------------------------------------------------------
+        # at the moment there's no way of checking index status once its graph
+        # key had been removed
 
-    #     q = "UNWIND range($min_v, $max_v) AS x CREATE (:L {v:toString(x)})"
-    #     self.graph.query(q, {"min_v": min_node_v, "max_v": max_node_v})
+    def test12_multi_index_creation(self):
+        # interrupt index creation by adding/removing fields
+        #
+        # 1. create a large graph
+        # 2. create an index
+        # 3. modify the index while it is being populated
 
-    #     # -----------------------------------------------------------------------
-    #     # create an index
-    #     # -----------------------------------------------------------------------
+        min_node_v = 0
+        max_node_v = 500000
 
-    #     res = self.graph.create_node_fulltext_index("L", "v")
-    #     self.env.assertEquals(res.indices_created, 1)
+        # -----------------------------------------------------------------------
+        # create a large graph
+        # -----------------------------------------------------------------------
 
-    #     # -----------------------------------------------------------------------
-    #     # validate index is being populated
-    #     # -----------------------------------------------------------------------
+        q = "UNWIND range($min_v, $max_v) AS x CREATE (:L {v:x, a:x, b:x})"
+        self.graph.query(q, {"min_v": min_node_v, "max_v": max_node_v})
 
-    #     self.env.assertTrue(index_under_construction(self.graph, "L"))
+        # -----------------------------------------------------------------------
+        # create an index
+        # -----------------------------------------------------------------------
 
-    #     # -----------------------------------------------------------------------
-    #     # delete graph while the index is being constructed
-    #     # -----------------------------------------------------------------------
+        # determine how much time does it take to construct our index
+        start = time()
 
-    #     self.graph.delete()
+        res = create_node_range_index(self.graph, "L", "v", sync=True)
+        self.env.assertEquals(res.indices_created, 1)
 
-    #     # graph key should be removed, index creation should run to completion
-    #     self.env.assertFalse(conn.exists(GRAPH_ID))
+        # total index creation time
+        elapsed = time() - start
 
-    #     # at the moment there's no way of checking index status once its graph
-    #     # key had been removed
+        # -----------------------------------------------------------------------
+        # drop the index
+        # -----------------------------------------------------------------------
 
-    # def test12_multi_index_creation(self):
-    #     # interrupt index creation by adding/removing fields
-    #     #
-    #     # 1. create a large graph
-    #     # 2. create an index
-    #     # 3. modify the index while it is being populated
+        q = "DROP INDEX ON :L(v)"
+        res = self.graph.query(q)
+        self.env.assertEquals(res.indices_deleted, 1)
 
-    #     min_node_v = 0
-    #     max_node_v = 500000
+        # recreate the index, but this time introduce additionl fields
+        # while the index is being populated
 
-    #     # -----------------------------------------------------------------------
-    #     # create a large graph
-    #     # -----------------------------------------------------------------------
+        start = time()
 
-    #     q = "UNWIND range($min_v, $max_v) AS x CREATE (:L {v:x, a:x, b:x})"
-    #     self.graph.query(q, {"min_v": min_node_v, "max_v": max_node_v})
+        # introduce a new field
+        res = self.graph.create_node_range_index("L", "a")
+        self.env.assertEquals(res.indices_created, 1)
 
-    #     # -----------------------------------------------------------------------
-    #     # create an index
-    #     # -----------------------------------------------------------------------
+        # introduce a new field
+        res = self.graph.create_node_range_index("L", "b")
+        self.env.assertEquals(res.indices_created, 1)
 
-    #     # determine how much time does it take to construct our index
-    #     start = time()
+        # remove field
+        q = "DROP INDEX ON :L(a)"
+        res = self.graph.query(q)
+        self.env.assertEquals(res.indices_deleted, 1)
 
-    #     res = create_node_range_index(self.graph, "L", "v", sync=True)
-    #     self.env.assertEquals(res.indices_created, 1)
+        # introduce a new field
+        res = self.graph.create_node_range_index("L", "v")
+        self.env.assertEquals(res.indices_created, 1)
 
-    #     # total index creation time
-    #     elapsed = time() - start
+        # wait for index to become operational
+        wait_for_indices_to_sync(self.graph)
 
-    #     # -----------------------------------------------------------------------
-    #     # drop the index
-    #     # -----------------------------------------------------------------------
+        elapsed_2 = time() - start
 
-    #     q = "DROP INDEX ON :L(v)"
-    #     res = self.graph.query(q)
-    #     self.env.assertEquals(res.indices_deleted, 1)
+        # although we've constructed a larger index
+        # new index includes 2 fields (b,v) while the former index included just
+        # one (v) we're expecting thier overall construction time to be similar
+        self.env.assertTrue(elapsed_2 < elapsed * 2)
 
-    #     # recreate the index, but this time introduce additionl fields
-    #     # while the index is being populated
+    def test13_multi_fulltext_index_creation(self):
+        # interrupt index creation by adding/removing fields
+        #
+        # 1. create a large graph
+        # 2. create an index
+        # 3. modify the index while it is being populated
 
-    #     start = time()
+        min_node_v = 0
+        max_node_v = 500000
 
-    #     # introduce a new field
-    #     res = self.graph.create_node_range_index("L", "a")
-    #     self.env.assertEquals(res.indices_created, 1)
+        # clear DB
+        self.graph.delete()
 
-    #     # introduce a new field
-    #     res = self.graph.create_node_range_index("L", "b")
-    #     self.env.assertEquals(res.indices_created, 1)
+        # -----------------------------------------------------------------------
+        # create a large graph
+        # -----------------------------------------------------------------------
 
-    #     # remove field
-    #     q = "DROP INDEX ON :L(a)"
-    #     res = self.graph.query(q)
-    #     self.env.assertEquals(res.indices_deleted, 1)
+        q = "UNWIND range($min_v, $max_v) AS x CREATE (:L {v:toString(x), a:toString(x), b:toString(x)})"
+        self.graph.query(q, {"min_v": min_node_v, "max_v": max_node_v})
 
-    #     # introduce a new field
-    #     res = self.graph.create_node_range_index("L", "v")
-    #     self.env.assertEquals(res.indices_created, 1)
+        # -----------------------------------------------------------------------
+        # create an index
+        # -----------------------------------------------------------------------
 
-    #     # wait for index to become operational
-    #     wait_for_indices_to_sync(self.graph)
+        res = create_node_fulltext_index(self.graph, "L", "v", sync=True)
+        self.env.assertEquals(res.indices_created, 1)
 
-    #     elapsed_2 = time() - start
+        # -----------------------------------------------------------------------
+        # drop the index
+        # -----------------------------------------------------------------------
 
-    #     # although we've constructed a larger index
-    #     # new index includes 2 fields (b,v) while the former index included just
-    #     # one (v) we're expecting thier overall construction time to be similar
-    #     self.env.assertTrue(elapsed_2 < elapsed * 2)
+        q = "CALL db.idx.fulltext.drop('L')"
+        res = self.graph.query(q)
+        self.env.assertEquals(res.indices_deleted, 1)
 
-    # def test13_multi_fulltext_index_creation(self):
-    #     # interrupt index creation by adding/removing fields
-    #     #
-    #     # 1. create a large graph
-    #     # 2. create an index
-    #     # 3. modify the index while it is being populated
+        # recreate the index, but this time introduce additionl fields
+        # while the index is being populated
 
-    #     min_node_v = 0
-    #     max_node_v = 500000
+        # introduce a new field
+        res = self.graph.create_node_fulltext_index("L", "a")
+        self.env.assertEquals(res.indices_created, 1)
 
-    #     # clear DB
-    #     self.graph.delete()
+        # introduce a new field
+        res = self.graph.create_node_fulltext_index("L", "b")
+        self.env.assertEquals(res.indices_created, 1)
 
-    #     # -----------------------------------------------------------------------
-    #     # create a large graph
-    #     # -----------------------------------------------------------------------
+        # remove index
+        q = "CALL db.idx.fulltext.drop('L')"
+        res = self.graph.query(q)
+        self.env.assertEquals(res.indices_deleted, 2)
 
-    #     q = "UNWIND range($min_v, $max_v) AS x CREATE (:L {v:toString(x), a:toString(x), b:toString(x)})"
-    #     self.graph.query(q, {"min_v": min_node_v, "max_v": max_node_v})
+        # introduce a new field
+        res = self.graph.create_node_fulltext_index("L", "v")
+        self.env.assertEquals(res.indices_created, 1)
 
-    #     # -----------------------------------------------------------------------
-    #     # create an index
-    #     # -----------------------------------------------------------------------
+        # wait for index to become operational
+        wait_for_indices_to_sync(self.graph)
 
-    #     res = create_node_fulltext_index(self.graph, "L", "v", sync=True)
-    #     self.env.assertEquals(res.indices_created, 1)
+    def test14_multi_type_index_listing(self):
+        # clear DB
+        self.graph.delete()
 
-    #     # -----------------------------------------------------------------------
-    #     # drop the index
-    #     # -----------------------------------------------------------------------
+        # create index of multiple types
+        # Label | Attributes | Types
+        # --------------------------------------------
+        # L     | a          | range
+        # L     | b          | vector
+        # L     | c          | fulltext
+        # L     | d          | range, vector
+        # L     | e          | range, fulltext
+        # L     | f          | fulltext, vector
+        # L     | g          | vector, range, fulltext
 
-    #     q = "CALL db.idx.fulltext.drop('L')"
-    #     res = self.graph.query(q)
-    #     self.env.assertEquals(res.indices_deleted, 1)
+        self.graph.create_node_range_index("L", "a", "d", "e", "g")
+        self.graph.create_node_fulltext_index("L", "c", "e", "f", "g")
+        self.graph.create_node_vector_index("L", "b", "d", "f", "g")
 
-    #     # recreate the index, but this time introduce additionl fields
-    #     # while the index is being populated
+        # list all indices
+        res = list_indicies(self.graph).result_set
 
-    #     # introduce a new field
-    #     res = self.graph.create_node_fulltext_index("L", "a")
-    #     self.env.assertEquals(res.indices_created, 1)
+        label = res[0][0]
+        properties = res[0][1]
+        types = res[0][2]
+        language = res[0][3]
+        stopwords = res[0][4]
+        entitytype = res[0][5]
 
-    #     # introduce a new field
-    #     res = self.graph.create_node_fulltext_index("L", "b")
-    #     self.env.assertEquals(res.indices_created, 1)
+        # sort
+        properties.sort()
 
-    #     # remove index
-    #     q = "CALL db.idx.fulltext.drop('L')"
-    #     res = self.graph.query(q)
-    #     self.env.assertEquals(res.indices_deleted, 2)
+        # sort by key
+        types = OrderedDict(sorted(types.items(), key=lambda t: t[0]))
 
-    #     # introduce a new field
-    #     res = self.graph.create_node_fulltext_index("L", "v")
-    #     self.env.assertEquals(res.indices_created, 1)
+        # sort values
+        for k, v in types.items():
+            types[k].sort()
 
-    #     # wait for index to become operational
-    #     wait_for_indices_to_sync(self.graph)
+        # -----------------------------------------------------------------------
+        # validate
+        # -----------------------------------------------------------------------
 
-    # def test14_multi_type_index_listing(self):
-    #     # clear DB
-    #     self.graph.delete()
+        self.env.assertEquals(label, "L")
 
-    #     # create index of multiple types
-    #     # Label | Attributes | Types
-    #     # --------------------------------------------
-    #     # L     | a          | range
-    #     # L     | b          | vector
-    #     # L     | c          | fulltext
-    #     # L     | d          | range, vector
-    #     # L     | e          | range, fulltext
-    #     # L     | f          | fulltext, vector
-    #     # L     | g          | vector, range, fulltext
+        self.env.assertEquals(properties, ["a", "b", "c", "d", "e", "f", "g"])
 
-    #     self.graph.create_node_range_index("L", "a", "d", "e", "g")
-    #     self.graph.create_node_fulltext_index("L", "c", "e", "f", "g")
-    #     self.graph.create_node_vector_index("L", "b", "d", "f", "g")
+        expected_types = OrderedDict(
+            [
+                ("a", ["RANGE"]),
+                ("b", ["VECTOR"]),
+                ("c", ["FULLTEXT"]),
+                ("d", ["RANGE", "VECTOR"]),
+                ("e", ["FULLTEXT", "RANGE"]),
+                ("f", ["FULLTEXT", "VECTOR"]),
+                ("g", ["FULLTEXT", "RANGE", "VECTOR"]),
+            ]
+        )
 
-    #     # list all indices
-    #     res = list_indicies(self.graph).result_set
+        self.env.assertEquals(types, expected_types)
+        self.env.assertEquals(language, "english")
+        self.env.assertEquals(entitytype, "NODE")
 
-    #     label = res[0][0]
-    #     properties = res[0][1]
-    #     types = res[0][2]
-    #     language = res[0][3]
-    #     stopwords = res[0][4]
-    #     entitytype = res[0][5]
+    def test15_index_progress_report(self):
+        # create a relatively large graph
+        node_count = 200000
+        q = "UNWIND range(1, $node_count) AS x CREATE (:P {v:x})"
+        self.graph.query(q, {"node_count": node_count})
 
-    #     # sort
-    #     properties.sort()
+        # create index over P.v
+        self.graph.create_node_range_index("P", "v")
 
-    #     # sort by key
-    #     types = OrderedDict(sorted(types.items(), key=lambda t: t[0]))
+        # pull index status
+        status = self.graph.query("CALL db.indexes() yield status").result_set[0][0]
 
-    #     # sort values
-    #     for k, v in types.items():
-    #         types[k].sort()
+        # index is operational
+        if "OPERATIONAL" in status:
+            return
 
-    #     # -----------------------------------------------------------------------
-    #     # validate
-    #     # -----------------------------------------------------------------------
+        self.env.assertTrue("UNDER CONSTRUCTION" in status)
+        while "UNDER CONSTRUCTION" in status:
+            # extract progress n/m
+            # "UNDER CONSTRUCTION 8000001/7537358"
+            # "[Indexing] 800001/742387462: UNDER CONSTRUCTION"
+            status = status[len("[Indexing] ") :]
+            status = status[: -len(": UNDER CONSTRUCTION")]
+            n, m = status.split("/")
+            n = int(n)
+            m = int(m)
 
-    #     self.env.assertEquals(label, "L")
+            self.env.assertGreaterEqual(m, n)  # m >= n
+            self.env.assertEqual(m, node_count)  # m == node_count
 
-    #     self.env.assertEquals(properties, ["a", "b", "c", "d", "e", "f", "g"])
+            sleep(0.1)
 
-    #     expected_types = OrderedDict(
-    #         [
-    #             ("a", ["RANGE"]),
-    #             ("b", ["VECTOR"]),
-    #             ("c", ["FULLTEXT"]),
-    #             ("d", ["RANGE", "VECTOR"]),
-    #             ("e", ["FULLTEXT", "RANGE"]),
-    #             ("f", ["FULLTEXT", "VECTOR"]),
-    #             ("g", ["FULLTEXT", "RANGE", "VECTOR"]),
-    #         ]
-    #     )
-
-    #     self.env.assertEquals(types, expected_types)
-    #     self.env.assertEquals(language, "english")
-    #     self.env.assertEquals(entitytype, "NODE")
-
-    # def test15_index_progress_report(self):
-    #     # create a relatively large graph
-    #     node_count = 200000
-    #     q = "UNWIND range(1, $node_count) AS x CREATE (:P {v:x})"
-    #     self.graph.query(q, {"node_count": node_count})
-
-    #     # create index over P.v
-    #     self.graph.create_node_range_index("P", "v")
-
-    #     # pull index status
-    #     status = self.graph.query("CALL db.indexes() yield status").result_set[0][0]
-
-    #     # index is operational
-    #     if "OPERATIONAL" in status:
-    #         return
-
-    #     self.env.assertTrue("UNDER CONSTRUCTION" in status)
-    #     while "UNDER CONSTRUCTION" in status:
-    #         # extract progress n/m
-    #         # "UNDER CONSTRUCTION 8000001/7537358"
-    #         # "[Indexing] 800001/742387462: UNDER CONSTRUCTION"
-    #         status = status[len("[Indexing] ") :]
-    #         status = status[: -len(": UNDER CONSTRUCTION")]
-    #         n, m = status.split("/")
-    #         n = int(n)
-    #         m = int(m)
-
-    #         self.env.assertGreaterEqual(m, n)  # m >= n
-    #         self.env.assertEqual(m, node_count)  # m == node_count
-
-    #         sleep(0.1)
-
-    #         # re-pull index status
-    #         status = self.graph.query("CALL db.indexes() yield status").result_set[0][0]
+            # re-pull index status
+            status = self.graph.query("CALL db.indexes() yield status").result_set[0][0]
