@@ -3047,7 +3047,7 @@ fn map_to_index_options(
                 None => None,
                 _ => return Err("Invalid 'language' option: expected a string".into()),
             };
-            let stopwords = match get("stop_words") {
+            let stopwords = match get("stopwords") {
                 Some(Value::List(list)) => {
                     let mut words = Vec::with_capacity(list.len());
                     for v in list.iter() {

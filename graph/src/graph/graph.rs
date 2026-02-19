@@ -1191,31 +1191,10 @@ impl Graph {
     ) {
         match entity_type {
             EntityType::Node => {
-                let all_attrs = self
-                    .node_indexer
-                    .get_fields(label.clone())
-                    .iter()
-                    .filter_map(|(k, fields)| {
-                        if fields.iter().any(|f| f.ty == IndexType::Fulltext) {
-                            Some(k.clone())
-                        } else {
-                            None
-                        }
-                    })
-                    .collect::<Vec<_>>();
                 let total = self.get_label_matrix(label).unwrap().nvals();
                 let reindex = self
                     .node_indexer
-                    .drop_index(
-                        label.clone(),
-                        if index_type == &IndexType::Fulltext {
-                            &all_attrs
-                        } else {
-                            attrs
-                        },
-                        index_type,
-                        total,
-                    )
+                    .drop_index(label.clone(), attrs, index_type, total)
                     .is_some();
                 self.node_indexer.disable(label.clone());
 

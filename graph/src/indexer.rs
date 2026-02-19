@@ -325,6 +325,20 @@ struct Index {
     stopwords: Option<Vec<Arc<String>>>,
 }
 
+// Clones only the index definition
+impl Clone for Index {
+    fn clone(&self) -> Self {
+        Index {
+            rs_idx: null_mut(),
+            fields: self.fields.clone(),
+            status: self.status.clone(),
+            pending_changes: AtomicI32::new(0),
+            language: self.language.clone(),
+            stopwords: self.stopwords.clone(),
+        }
+    }
+}
+
 pub struct IndexInfo {
     pub label: Arc<String>,
     pub status: IndexStatus,
@@ -334,7 +348,9 @@ pub struct IndexInfo {
 impl Drop for Index {
     fn drop(&mut self) {
         unsafe {
-            RediSearch_DropIndex(self.rs_idx);
+            if self.rs_idx != null_mut() {
+                RediSearch_DropIndex(self.rs_idx);
+            }
         }
     }
 }
@@ -459,7 +475,9 @@ impl Indexer {
                 let effective_language = language.as_ref().or(label_indexes.language.as_ref());
                 if let Some(lang) = effective_language {
                     let c_lang = CString::new(lang.as_str()).map_err(|e| e.to_string())?;
-                    RediSearch_IndexOptionsSetLanguage(options, c_lang.as_ptr());
+                    if RediSearch_IndexOptionsSetLanguage(options, c_lang.as_ptr()) != 0 {
+                        return Err(format!("Language is not supported: {}", lang));
+                    }
                 } else {
                     RediSearch_IndexOptionsSetLanguage(options, null_mut());
                 }
@@ -569,6 +587,7 @@ impl Indexer {
                     }
                 }
             }
+            // All lanels were removed
             if index.fields.is_empty() {
                 index.status = IndexStatus::UnderConstruction(0, 0);
                 index.pending_changes.fetch_add(1, Ordering::SeqCst);
