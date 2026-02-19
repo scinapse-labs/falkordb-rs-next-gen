@@ -7,6 +7,7 @@ from execution_plan_util import locate_operation
 from falkordb.asyncio import FalkorDB
 from index_utils import *
 from redis.asyncio import BlockingConnectionPool
+from redis.typing import FieldT
 
 GRAPH_ID = "index_create"
 
@@ -33,140 +34,137 @@ class testIndexCreationFlow:
         self.env.assertEquals(result.indices_created, 4)
 
     def test02_fulltext_index_creation_label_config(self):
-        # create an index over L1:v1
-        result = self.graph.query("CREATE FULLTEXT INDEX FOR (n:L1) ON (n.v1)")
+        # create an index over L1:p1
+        result = self.graph.query("CREATE FULLTEXT INDEX FOR (n:L1) ON (n.p1)")
         self.env.assertEquals(result.indices_created, 1)
 
-        # create an index over L1:v2, v3
-        result = self.graph.query("CREATE FULLTEXT INDEX FOR (n:L1) ON (n.v2, n.v3)")
+        # create an index over L1:p2, L1:p3
+        result = self.graph.query("CREATE FULLTEXT INDEX FOR (n:L1) ON (n.p2, n.p3)")
         self.env.assertEquals(result.indices_created, 2)
 
-        # create an index over L2:v1 with stopwords
+        # create an index over L2:p1 with stopwords
         result = self.graph.query(
-            "CREATE FULLTEXT INDEX FOR (n:L2) ON (n.v1) OPTIONS {stopwords: ['The']}"
+            "CREATE FULLTEXT INDEX FOR (n:L2) ON (n.p1) OPTIONS {stopwords: ['The']}"
         )
         self.env.assertEquals(result.indices_created, 1)
 
-        # create an index over L2:v2
-        result = self.graph.query("CREATE FULLTEXT INDEX FOR (n:L2) ON (n.v2)")
+        # add property p2 to L2 (no new stopwords, should succeed)
+        result = self.graph.query("CREATE FULLTEXT INDEX FOR (n:L2) ON (n.p2)")
         self.env.assertEquals(result.indices_created, 1)
 
         try:
-            # create an index over L1:v4 with stopwords
+            # try to add stopwords to L1 which already has fulltext fields - should fail
             result = self.graph.query(
-                "CREATE FULLTEXT INDEX FOR (n:L1) ON (n.v4) OPTIONS {stopwords: ['The']}"
+                "CREATE FULLTEXT INDEX FOR (n:L1) ON (n.p4) OPTIONS {stopwords: ['The']}"
             )
-            self.env.assertEquals(result.indices_created, 1)
+            assert False
+        except ResponseError as e:
+            self.env.assertContains("Can not override index configuration", str(e))
+
+        # create an index over L3:p1 with stopwords on a fresh label
+        result = self.graph.query(
+            "CREATE FULLTEXT INDEX FOR (n:L3) ON (n.p1) OPTIONS {stopwords: ['The']}"
+        )
+        self.env.assertEquals(result.indices_created, 1)
+
+        # try to add stopwords to L1 again - should fail
+        try:
+            result = self.graph.query(
+                "CREATE FULLTEXT INDEX FOR (n:L1) ON (n.p5) OPTIONS {stopwords: ['The']}"
+            )
+            assert False
+        except ResponseError as e:
+            self.env.assertContains("Can not override index configuration", str(e))
+
+        # create an index over L4:p1 with language on a fresh label
+        result = self.graph.query(
+            "CREATE FULLTEXT INDEX FOR (n:L4) ON (n.p1) OPTIONS {language: 'english'}"
+        )
+        self.env.assertEquals(result.indices_created, 1)
+
+        # try to add language to L1 which already has fulltext fields - should fail
+        try:
+            result = self.graph.query(
+                "CREATE FULLTEXT INDEX FOR (n:L1) ON (n.p6) OPTIONS {language: 'italian'}"
+            )
+            assert False
         except ResponseError as e:
             self.env.assertIn("Can not override index configuration", str(e))
 
-        # create an index over L1:v4 with stopwords
-        result = self.graph.query(
-            "CREATE FULLTEXT INDEX FOR (n:L4) ON (n.v4) OPTIONS {stopwords: ['The']}"
-        )
-        self.env.assertEquals(result.indices_created, 1)
-
-        # try to update L1 index stopwords should failed
-        try:
-            result = self.graph.query(
-                "CREATE FULLTEXT INDEX FOR (n:L1) ON (n.v5) OPTIONS {stopwords: ['The']}"
-            )
-            assert False
-        except ResponseError as e:
-            self.env.assertContains("Can not override index configuration", str(e))
-
-        # create an index over L1:v5 with language
-        result = self.graph.query(
-            "CREATE FULLTEXT INDEX FOR (n:L5) ON (n.v5) OPTIONS {language: 'english'}"
-        )
-        self.env.assertEquals(result.indices_created, 1)
-
-        # try to update L1 index language should failed
-        try:
-            result = self.graph.query(
-                "CREATE FULLTEXT INDEX FOR (n:L1) ON (n.v6) OPTIONS {language: 'italian'}"
-            )
-            assert False
-        except ResponseError as e:
-            self.env.assertContains("Can not override index configuration", str(e))
-
-        # drop L1 index for attribute v6 - is not indexed so indiced_deleted should be 0
-        result = self.graph.query("DROP FULLTEXT INDEX FOR (n:L1) ON (n.v6)")
+        # drop L1:p6 - not indexed, so indices_deleted should be 0
+        result = self.graph.query("DROP FULLTEXT INDEX FOR (n:L1) ON (n.p6)")
         self.env.assertEquals(result.indices_deleted, 0)
 
-        # drop L1 index for attribute v1 - is indexed so indiced_deleted should be 1
-        result = self.graph.query("DROP FULLTEXT INDEX FOR (n:L1) ON (n.v1)")
+        # drop L1:p1 - is indexed, so indices_deleted should be 1
+        result = self.graph.query("DROP FULLTEXT INDEX FOR (n:L1) ON (n.p1)")
         self.env.assertEquals(result.indices_deleted, 1)
 
         try:
-            # create an index over L2:v4 with an unsupported language, expecting to failed
+            # create an index over L5:p1 with unsupported language - should fail
             result = self.graph.query(
-                "CREATE FULLTEXT INDEX FOR (n:L7) ON (n.v4) OPTIONS {language: 'x'}"
+                "CREATE FULLTEXT INDEX FOR (n:L5) ON (n.p1) OPTIONS {language: 'x'}"
             )
             assert False
         except ResponseError as e:
             self.env.assertContains("Language is not supported", str(e))
 
         try:
-            # create an index over L1:v4 with language
+            # try to add language to L1 which still has fulltext fields - should fail
             result = self.graph.query(
-                "CREATE FULLTEXT INDEX FOR (n:L1) ON (n.v4) OPTIONS {language: 'english'}"
+                "CREATE FULLTEXT INDEX FOR (n:L1) ON (n.p4) OPTIONS {language: 'english'}"
             )
             assert False
         except ResponseError as e:
             self.env.assertIn("Language is already set", str(e))
 
-        # create an index over L4:v4 with language
+        # create an index over L6:p1 with language on a fresh label
         result = self.graph.query(
-            "CREATE FULLTEXT INDEX FOR (n:L4) ON (n.v4) OPTIONS {language: 'english'}"
+            "CREATE FULLTEXT INDEX FOR (n:L6) ON (n.p1) OPTIONS {language: 'english'}"
         )
         self.env.assertEquals(result.indices_created, 1)
 
+        # --- Type validation errors (all on fresh label L7) ---
+
         try:
-            # create an index over L3:v1 with stopwords should failed
-            # stopwords must be provided as an array of strings
+            # stopwords must be provided as an array
             result = self.graph.query(
-                "CREATE FULLTEXT INDEX FOR (n:L3) ON (n.v1) OPTIONS {stopwords: 'The'}"
+                "CREATE FULLTEXT INDEX FOR (n:L7) ON (n.p1) OPTIONS {stopwords: 'The'}"
             )
             assert False
         except ResponseError as e:
             self.env.assertContains("Stopwords must be array", str(e))
 
         try:
-            # create an index over L3:v1 with language should failed
             # language must be provided as a string
             result = self.graph.query(
-                "CREATE FULLTEXT INDEX FOR (n:L3) ON (n.v1) OPTIONS {language: ['english']}"
+                "CREATE FULLTEXT INDEX FOR (n:L7) ON (n.p1) OPTIONS {language: ['english']}"
             )
             assert False
         except ResponseError as e:
             self.env.assertContains("Language must be string", str(e))
 
         try:
-            # create an index over L3:v1 with weight of type string should failed
             # weight must be provided as numeric
             result = self.graph.query(
-                "CREATE FULLTEXT INDEX FOR (n:L3) ON (n.v1) OPTIONS {weight: '1'}"
+                "CREATE FULLTEXT INDEX FOR (n:L7) ON (n.p1) OPTIONS {weight: '1'}"
             )
             assert False
         except ResponseError as e:
             self.env.assertContains("Weight must be numeric", str(e))
 
         try:
-            # create an index over L3:v1 with nostem of type string should failed
             # nostem must be boolean
             result = self.graph.query(
-                "CREATE FULLTEXT INDEX FOR (n:L3) ON (n.v1) OPTIONS {nostem: 'true'}"
+                "CREATE FULLTEXT INDEX FOR (n:L7) ON (n.p1) OPTIONS {nostem: 'true'}"
             )
             assert False
         except ResponseError as e:
             self.env.assertContains("Nostem must be bool", str(e))
         
         try:
-            # create an index over L3:v1 with phonetic of type bool should failed
-            # phonetic must be a string
+            # phonetic must be boolean
             result = self.graph.query(
-                "CREATE FULLTEXT INDEX FOR (n:L3) ON (n.v1) OPTIONS {phonetic: 'true'}"
+                "CREATE FULLTEXT INDEX FOR (n:L7) ON (n.p1) OPTIONS {phonetic: 'true'}"
             )
             assert False
         except ResponseError as e:

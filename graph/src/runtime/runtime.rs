@@ -3037,22 +3037,22 @@ fn map_to_index_options(
                 Some(Value::Float(f)) => Some(*f),
                 Some(Value::Int(i)) => Some(*i as f64),
                 None => None,
-                _ => return Err("Invalid 'weight' option: expected a number".into()),
+                _ => return Err("Weight must be numeric".into()),
             };
             let nostem = match get("nostem") {
                 Some(Value::Bool(b)) => Some(*b),
                 None => None,
-                _ => return Err("Invalid 'nostem' option: expected a boolean".into()),
+                _ => return Err("Nostem must be bool".into()),
             };
             let phonetic = match get("phonetic") {
                 Some(Value::Bool(b)) => Some(*b),
                 None => None,
-                _ => return Err("Invalid 'phonetic' option: expected a boolean".into()),
+                _ => return Err("Phonetic must be bool".into()),
             };
             let language = match get("language") {
                 Some(Value::String(s)) => Some(s.clone()),
                 None => None,
-                _ => return Err("Invalid 'language' option: expected a string".into()),
+                _ => return Err("Language must be string".into()),
             };
             let stopwords = match get("stopwords") {
                 Some(Value::List(list)) => {
@@ -3061,17 +3061,14 @@ fn map_to_index_options(
                         match v {
                             Value::String(s) => words.push(s.clone()),
                             _ => {
-                                return Err(
-                                    "Invalid 'stop_words' option: expected a list of strings"
-                                        .into(),
-                                );
+                                return Err("Stopwords must be an array of strings".into());
                             }
                         }
                     }
                     Some(words)
                 }
                 None => None,
-                _ => return Err("Invalid 'stop_words' option: expected a list".into()),
+                _ => return Err("Stopwords must be array".into()),
             };
             let options = IndexOptions::Text(TextIndexOptions::new(
                 weight, nostem, phonetic, language, stopwords,
