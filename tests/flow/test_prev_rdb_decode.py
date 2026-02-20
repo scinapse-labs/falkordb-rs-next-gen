@@ -127,7 +127,7 @@ class test_prev_rdb_decode():
         self.env.assertEqual(results.result_set, [[node0, edge01, node1]])
 
         plan = str(graph.explain("MATCH (n:L1 {val:1}) RETURN n"))
-        self.env.assertIn("Index Scan", plan)
+        self.env.assertContains("Index Scan", plan)
 
         results = graph.query("MATCH (n:L1 {val:1}) RETURN n")
         self.env.assertEqual(results.result_set, [[node0]])
@@ -153,7 +153,7 @@ class test_prev_rdb_decode():
         self.env.assertEqual(results.result_set, [[node0, edge01, node1]])
 
         plan = str(graph.explain("MATCH (n:L1 {val:1}) RETURN n"))
-        self.env.assertIn("Index Scan", plan)
+        self.env.assertContains("Index Scan", plan)
 
         results = graph.query("MATCH (n:L1 {val:1}) RETURN n")
         self.env.assertEqual(results.result_set, [[node0]])
@@ -179,7 +179,7 @@ class test_prev_rdb_decode():
         self.env.assertEqual(results.result_set, [[node0, edge01, node1]])
 
         plan = str(graph.explain("MATCH (n:L1 {val:1}) RETURN n"))
-        self.env.assertIn("Index Scan", plan)
+        self.env.assertContains("Index Scan", plan)
 
         results = graph.query("MATCH (n:L1 {val:1}) RETURN n")
         self.env.assertEqual(results.result_set, [[node0]])
@@ -205,7 +205,7 @@ class test_prev_rdb_decode():
         self.env.assertEqual(results.result_set, [[node0, edge01, node1]])
 
         plan = str(graph.explain("MATCH (n:L1 {val:1}) RETURN n"))
-        self.env.assertIn("Index Scan", plan)
+        self.env.assertContains("Index Scan", plan)
 
         results = graph.query("MATCH (n:L1 {val:1}) RETURN n")
         self.env.assertEqual(results.result_set, [[node0]])
@@ -231,7 +231,7 @@ class test_prev_rdb_decode():
         self.env.assertEqual(results.result_set, [[node0, edge01, node1]])
 
         plan = str(graph.explain("MATCH (n:L1 {val:1}) RETURN n"))
-        self.env.assertIn("Index Scan", plan)
+        self.env.assertContains("Index Scan", plan)
 
         results = graph.query("MATCH (n:L1 {val:1}) RETURN n")
         self.env.assertEqual(results.result_set, [[node0]])
@@ -257,7 +257,7 @@ class test_prev_rdb_decode():
         self.env.assertEqual(results.result_set, [[node0, edge01, node1]])
 
         plan = str(graph.explain("MATCH (n:L1 {val:1}) RETURN n"))
-        self.env.assertIn("Index Scan", plan)
+        self.env.assertContains("Index Scan", plan)
 
         results = graph.query("MATCH (n:L1 {val:1}) RETURN n")
         self.env.assertEqual(results.result_set, [[node0]])

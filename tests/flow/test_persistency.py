@@ -101,29 +101,29 @@ class testGraphPersistency():
                 query = """MATCH (p:person) RETURN COUNT(p)"""
                 actual_result = graph.query(query)
                 nodeCount = actual_result.result_set[0][0]
-                self.env.assertEquals(nodeCount, 5)
+                self.env.assertEqual(nodeCount, 5)
 
                 query = """MATCH (p:person) WHERE p.name='Alon' RETURN COUNT(p)"""
                 actual_result = graph.query(query)
                 nodeCount = actual_result.result_set[0][0]
-                self.env.assertEquals(nodeCount, 1)
+                self.env.assertEqual(nodeCount, 1)
 
                 # Expecting 3 country entities.
                 query = """MATCH (c:country) RETURN COUNT(c)"""
                 actual_result = graph.query(query)
                 nodeCount = actual_result.result_set[0][0]
-                self.env.assertEquals(nodeCount, 3)
+                self.env.assertEqual(nodeCount, 3)
 
                 query = """MATCH (c:country) WHERE c.name = 'Israel' RETURN COUNT(c)"""
                 actual_result = graph.query(query)
                 nodeCount = actual_result.result_set[0][0]
-                self.env.assertEquals(nodeCount, 1)
+                self.env.assertEqual(nodeCount, 1)
 
                 # Expecting 2 visit edges.
                 query = """MATCH (n:person)-[e:visit]->(c:country) WHERE e.purpose='pleasure' RETURN COUNT(e)"""
                 actual_result = graph.query(query)
                 edgeCount = actual_result.result_set[0][0]
-                self.env.assertEquals(edgeCount, 2)
+                self.env.assertEqual(edgeCount, 2)
 
                 # Verify indices exists
                 indices = graph.query("""CALL db.indexes()""").result_set
@@ -133,10 +133,10 @@ class testGraphPersistency():
                         'visit': [['purpose'], 'english', [], 'RELATIONSHIP']
                 }
 
-                self.env.assertEquals(len(indices), len(expected_indices))
+                self.env.assertEqual(len(indices), len(expected_indices))
                 for index in indices:
                     for expected_index in expected_indices[index[0]]:
-                        self.env.assertIn(expected_index, index)
+                        self.env.assertContains(expected_index, index)
 
     # Verify that edges are not modified after entity deletion
     def test02_deleted_entity_migration(self):
@@ -146,7 +146,7 @@ class testGraphPersistency():
 
             query = """MATCH (p) WHERE ID(p) = 0 OR ID(p) = 3 OR ID(p) = 7 OR ID(p) = 9 DELETE p"""
             actual_result = graph.query(query)
-            self.env.assertEquals(actual_result.nodes_deleted, 4)
+            self.env.assertEqual(actual_result.nodes_deleted, 4)
 
             query = """MATCH (p)-[]->(q) RETURN p.val, q.val ORDER BY p.val, q.val"""
             first_result = graph.query(query)
@@ -155,7 +155,7 @@ class testGraphPersistency():
             self.env.dumpAndReload()
 
             second_result = graph.query(query)
-            self.env.assertEquals(first_result.result_set,
+            self.env.assertEqual(first_result.result_set,
                                   second_result.result_set)
 
     # Strings, numerics, booleans, array, and point properties should be properly serialized and reloaded
@@ -168,8 +168,8 @@ class testGraphPersistency():
             result = graph.query(query)
 
             # Verify that node was created correctly
-            self.env.assertEquals(result.nodes_created, 1)
-            self.env.assertEquals(result.properties_set, 5)
+            self.env.assertEqual(result.nodes_created, 1)
+            self.env.assertEqual(result.properties_set, 5)
 
             # Save RDB & Load from RDB
             self.env.dumpAndReload()
@@ -179,7 +179,7 @@ class testGraphPersistency():
 
             # Verify that the properties are loaded correctly.
             expected_result = [[True, 5.5, 'str', [1, 2, 3], {"latitude": 5.5, "longitude": 6.0}]]
-            self.env.assertEquals(actual_result.result_set, expected_result)
+            self.env.assertEqual(actual_result.result_set, expected_result)
 
     # Verify multiple edges of the same relation between nodes A and B
     # are saved and restored correctly.
@@ -196,14 +196,14 @@ class testGraphPersistency():
 
             expected_result = [[1, 'src', 'dest'], [2, 'src', 'dest']]
 
-            self.env.assertEquals(actual_result.result_set, expected_result)
+            self.env.assertEqual(actual_result.result_set, expected_result)
 
             # Save RDB & Load from RDB
             self.env.dumpAndReload()
 
             # Verify that the latest edge was properly saved and loaded
             actual_result = graph.query(q)
-            self.env.assertEquals(actual_result.result_set, expected_result)
+            self.env.assertEqual(actual_result.result_set, expected_result)
 
     # Verify that graphs larger than the
     # default capacity are persisted correctly.
@@ -212,8 +212,8 @@ class testGraphPersistency():
         graph = self.db.select_graph(graph_name)
         q = """UNWIND range(1, 50000) AS v CREATE (:L)-[:R {v: v}]->(:L)"""
         actual_result = graph.query(q)
-        self.env.assertEquals(actual_result.nodes_created, 100_000)
-        self.env.assertEquals(actual_result.relationships_created, 50_000)
+        self.env.assertEqual(actual_result.nodes_created, 100_000)
+        self.env.assertEqual(actual_result.relationships_created, 50_000)
 
         # Save RDB & Load from RDB
         self.env.dumpAndReload()
@@ -228,7 +228,7 @@ class testGraphPersistency():
 
         for q in queries:
             actual_result = graph.query(q)
-            self.env.assertEquals(actual_result.result_set, expected_result)
+            self.env.assertEqual(actual_result.result_set, expected_result)
 
     # Verify that graphs created using the GRAPH.BULK endpoint are persisted correctly
     def test06_bulk_insert(self):
@@ -246,9 +246,9 @@ class testGraphPersistency():
                                           graphname])
 
         # The script should report 27 node creations and 56 edge creations
-        self.env.assertEquals(res.exit_code, 0)
-        self.env.assertIn('27 nodes created', res.output)
-        self.env.assertIn('56 relations created', res.output)
+        self.env.assertEqual(res.exit_code, 0)
+        self.env.assertContains('27 nodes created', res.output)
+        self.env.assertContains('56 relations created', res.output)
 
         # Restart the server
         self.env.dumpAndReload()
@@ -277,7 +277,7 @@ class testGraphPersistency():
                 ['Tal Doron',            32,     'male',    'single',   6],
                 ['Valerie Abigail Arad', 31,     'female',  'married',  10]
                 ]
-        self.env.assertEquals(query_result.result_set, expected_result)
+        self.env.assertEqual(query_result.result_set, expected_result)
 
         # Verify that the Country label exists, has the correct attributes, and is properly populated
         query_result = graph.query('MATCH (c:Country) RETURN c.name, ID(c) ORDER BY c.name')
@@ -296,7 +296,7 @@ class testGraphPersistency():
                 ['Thailand',     26],
                 ['USA',          14]
         ]
-        self.env.assertEquals(query_result.result_set, expected_result)
+        self.env.assertEqual(query_result.result_set, expected_result)
 
         # Validate that the expected relations and properties have been constructed
         query_result = graph.query('MATCH (a)-[e:KNOWS]->(b) RETURN a.name, e.relation, b.name ORDER BY e.relation, a.name, b.name')
@@ -316,7 +316,7 @@ class testGraphPersistency():
                 ['Alon Fital',   'married',  'Lucy Yanfital'],
                 ['Ori Laslo',    'married',  'Shelly Laslo Rooz']
         ]
-        self.env.assertEquals(query_result.result_set, expected_result)
+        self.env.assertEqual(query_result.result_set, expected_result)
 
         query_result = graph.query('MATCH (a)-[e:VISITED]->(b) RETURN a.name, e.purpose, b.name ORDER BY e.purpose, a.name, b.name')
 
@@ -365,7 +365,7 @@ class testGraphPersistency():
                 ['Valerie Abigail Arad', 'pleasure',  'Netherlands'],
                 ['Valerie Abigail Arad', 'pleasure',  'Russia']
                 ]
-        self.env.assertEquals(query_result.result_set, expected_result)
+        self.env.assertEqual(query_result.result_set, expected_result)
 
     # Verify that nodes with multiple labels are saved and restored correctly.
     def test07_persist_multiple_labels(self):
@@ -373,21 +373,21 @@ class testGraphPersistency():
         g = self.db.select_graph(graph_id)
         q = "CREATE (a:L0:L1:L2)"
         actual_result = g.query(q)
-        self.env.assertEquals(actual_result.nodes_created, 1)
-        self.env.assertEquals(actual_result.labels_added, 3)
+        self.env.assertEqual(actual_result.nodes_created, 1)
+        self.env.assertEqual(actual_result.labels_added, 3)
 
         # Verify the new node
         q = "MATCH (a) RETURN LABELS(a)"
         actual_result = g.query(q)
         expected_result = [[["L0", "L1", "L2"]]]
-        self.env.assertEquals(actual_result.result_set, expected_result)
+        self.env.assertEqual(actual_result.result_set, expected_result)
 
         # Save RDB & Load from RDB
         self.env.dumpAndReload()
 
         # Verify that the graph was properly saved and loaded
         actual_result = g.query(q)
-        self.env.assertEquals(actual_result.result_set, expected_result)
+        self.env.assertEqual(actual_result.result_set, expected_result)
 
         queries = [
                 "MATCH (a:L0) RETURN count(a)",
@@ -406,4 +406,4 @@ class testGraphPersistency():
 
         for q in queries:
             actual_result = g.query(q)
-            self.env.assertEquals(actual_result.result_set[0], [1])
+            self.env.assertEqual(actual_result.result_set[0], [1])

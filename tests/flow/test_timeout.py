@@ -43,12 +43,12 @@ class testQueryTimeout():
     def test02_configured_timeout(self):
         # Verify that the module-level timeout is set to the default of 0
         timeout = self.db.config_get("timeout")
-        self.env.assertEquals(timeout, 1000)
+        self.env.assertEqual(timeout, 1000)
 
         # Set a default timeout of 1 millisecond
         self.db.config_set("timeout", 1)
         timeout = self.db.config_get("timeout")
-        self.env.assertEquals(timeout, 1)
+        self.env.assertEqual(timeout, 1)
 
         # Validate that a read query times out
         query = "UNWIND range(0,1000000) AS x WITH x AS x WHERE x = 10000 RETURN x"
@@ -142,8 +142,8 @@ class testQueryTimeout():
         max_timeout = self.db.config_get("TIMEOUT_MAX")
         default_timeout = self.db.config_get("TIMEOUT_DEFAULT")
 
-        self.env.assertEquals(max_timeout, 10)
-        self.env.assertEquals(default_timeout, 10)
+        self.env.assertEqual(max_timeout, 10)
+        self.env.assertEqual(default_timeout, 10)
 
         # try to set default-timeout to a higher value than max-timeout
         try:
@@ -270,11 +270,11 @@ class testQueryTimeout():
             self.env.assertTrue(False)
         except redis.exceptions.ResponseError as e:
             # expecting to get a timeout error
-            self.env.assertIn("Query timed out", str(e))
+            self.env.assertContains("Query timed out", str(e))
 
         # make sure no pending result exists
         res = self.graph.query("RETURN 1")
-        self.env.assertEquals(res.result_set[0][0], 1)
+        self.env.assertEqual(res.result_set[0][0], 1)
 
     def test12_concurrent_timeout(self):
         self.env.stop()

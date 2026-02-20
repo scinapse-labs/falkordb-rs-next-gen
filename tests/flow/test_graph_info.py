@@ -81,7 +81,7 @@ class testGraphInfo(FlowTestsBase):
         while t == 'none':
             t = self.conn.type(stream)
 
-        self.env.assertEquals(t, "stream")
+        self.env.assertEqual(t, "stream")
 
         # convert stream events to LoggedQueries
         logged_queries = []
@@ -115,8 +115,8 @@ class testGraphInfo(FlowTestsBase):
 
     def assertLoggedQuery(self, logged_query, query, utilized_cache):
         # validate event values
-        self.env.assertEquals(logged_query.Query, query)
-        self.env.assertEquals(logged_query.UtilizedCache, utilized_cache)
+        self.env.assertEqual(logged_query.Query, query)
+        self.env.assertEqual(logged_query.UtilizedCache, utilized_cache)
 
     def test01_read_logged_queries(self):
         """issue a number of queries
@@ -135,7 +135,7 @@ class testGraphInfo(FlowTestsBase):
         logged_queries = self.consumeStream(StreamName(self.graph), n_items=3)
 
         # validate events
-        self.env.assertEquals(len(logged_queries), 3)
+        self.env.assertEqual(len(logged_queries), 3)
         utilized_cache = False # first time executing queies, no cache
         self.assertLoggedQuery(logged_queries[0], q2, utilized_cache)
         self.assertLoggedQuery(logged_queries[1], q1, utilized_cache)
@@ -153,7 +153,7 @@ class testGraphInfo(FlowTestsBase):
         logged_queries = self.consumeStream(StreamName(self.graph), n_items=6)
 
         # validate events
-        self.env.assertEquals(len(logged_queries), 6)
+        self.env.assertEqual(len(logged_queries), 6)
         utilized_cache = True # second time executing queies
         self.assertLoggedQuery(logged_queries[0], q2, utilized_cache)
         self.assertLoggedQuery(logged_queries[1], q1, utilized_cache)
@@ -212,14 +212,14 @@ class testGraphInfo(FlowTestsBase):
 
         logged_query = logged_queries[0]
 
-        self.env.assertEquals(logged_query.Query, q)
+        self.env.assertEqual(logged_query.Query, q)
 
     def test04_delete_graph(self):
         """make sure reporting stream is deleted when graph is deleted"""
 
         # validate that stream exists
         stream_name = StreamName(self.graph)
-        self.env.assertEquals(self.conn.type(stream_name), "stream")
+        self.env.assertEqual(self.conn.type(stream_name), "stream")
 
         # make sure graph is deleted synchronously
         self.db.config_set("ASYNC_DELETE", "no")
@@ -228,7 +228,7 @@ class testGraphInfo(FlowTestsBase):
         self.graph.delete()
 
         # validate that stream was deleted
-        self.env.assertEquals(self.conn.type(stream_name), "none")
+        self.env.assertEqual(self.conn.type(stream_name), "none")
 
         # restore ASYNC_DELETE
         self.db.config_set("ASYNC_DELETE", "yes")
@@ -246,10 +246,10 @@ class testGraphInfo(FlowTestsBase):
 
         # wait for stream to be created
         logged_queries = self.consumeStream(StreamName(old_graph), drop=False)
-        self.env.assertEquals(len(logged_queries), 1)
+        self.env.assertEqual(len(logged_queries), 1)
 
         # validate that stream exists
-        self.env.assertEquals(self.conn.type(StreamName(old_graph)), "stream")
+        self.env.assertEqual(self.conn.type(StreamName(old_graph)), "stream")
 
         # rename graph
         self.conn.rename(old_name, new_name)
@@ -259,11 +259,11 @@ class testGraphInfo(FlowTestsBase):
 
         # wait for stream to be created
         logged_queries = self.consumeStream(StreamName(new_graph), drop=False)
-        self.env.assertEquals(len(logged_queries), 1)
+        self.env.assertEqual(len(logged_queries), 1)
 
         # validate that stream was renamed
-        self.env.assertEquals(self.conn.type(StreamName(old_graph)), "none")
-        self.env.assertEquals(self.conn.type(StreamName(new_graph)), "stream")
+        self.env.assertEqual(self.conn.type(StreamName(old_graph)), "none")
+        self.env.assertEqual(self.conn.type(StreamName(new_graph)), "stream")
 
     def test06_multiple_streams(self):
         """test a more realistic example for how logged-queries streams
@@ -380,26 +380,26 @@ class testGraphInfo(FlowTestsBase):
         res = self.conn.execute_command("GRAPH.INFO", "RunningQueries", "WaitingQueries")
         while True:
             # validate response structure
-            self.env.assertEquals(len(res), 4)
-            self.env.assertEquals(res[0], "# Running queries")
-            self.env.assertEquals(res[2], "# Waiting queries")
+            self.env.assertEqual(len(res), 4)
+            self.env.assertEqual(res[0], "# Running queries")
+            self.env.assertEqual(res[2], "# Waiting queries")
             if len(res[1]) > 0:
                 break
             res = self.conn.execute_command("GRAPH.INFO", "RunningQueries", "WaitingQueries")
 
         running_queries = res[1]
         running_query = running_queries[0]
-        self.env.assertEquals(running_query[0], "Received at")
-        self.env.assertEquals(running_query[2], "Graph name")
-        self.env.assertEquals(running_query[4], "Query")
-        self.env.assertEquals(running_query[6], "Execution duration")
-        self.env.assertEquals(running_query[8], "Replicated command")
+        self.env.assertEqual(running_query[0], "Received at")
+        self.env.assertEqual(running_query[2], "Graph name")
+        self.env.assertEqual(running_query[4], "Query")
+        self.env.assertEqual(running_query[6], "Execution duration")
+        self.env.assertEqual(running_query[8], "Replicated command")
 
-        self.env.assertEquals(running_query[3], GRAPH_ID)
+        self.env.assertEqual(running_query[3], GRAPH_ID)
         self.env.assertTrue(running_query[5] == read_query or
                             running_query[5] == write_query1 or
                             running_query[5] == write_query2)
-        self.env.assertEquals(running_query[9], False)
+        self.env.assertEqual(running_query[9], False)
 
         #-----------------------------------------------------------------------
         # validate waiting queries
@@ -408,21 +408,21 @@ class testGraphInfo(FlowTestsBase):
         res = self.conn.execute_command("GRAPH.INFO", "RunningQueries", "WaitingQueries")
         while True:
             # validate response structure
-            self.env.assertEquals(len(res), 4)
-            self.env.assertEquals(res[0], "# Running queries")
-            self.env.assertEquals(res[2], "# Waiting queries")
+            self.env.assertEqual(len(res), 4)
+            self.env.assertEqual(res[0], "# Running queries")
+            self.env.assertEqual(res[2], "# Waiting queries")
             if len(res[3]) > 0:
                 break
             res = self.conn.execute_command("GRAPH.INFO", "RunningQueries", "WaitingQueries")
 
         waiting_queries = res[3]
         waiting_query = waiting_queries[0]
-        self.env.assertEquals(waiting_query[0], "Received at")
-        self.env.assertEquals(waiting_query[2], "Graph name")
-        self.env.assertEquals(waiting_query[4], "Query")
-        self.env.assertEquals(waiting_query[6], "Wait duration")
+        self.env.assertEqual(waiting_query[0], "Received at")
+        self.env.assertEqual(waiting_query[2], "Graph name")
+        self.env.assertEqual(waiting_query[4], "Query")
+        self.env.assertEqual(waiting_query[6], "Wait duration")
 
-        self.env.assertEquals(waiting_query[3], GRAPH_ID)
+        self.env.assertEqual(waiting_query[3], GRAPH_ID)
         self.env.assertTrue(waiting_query[5] == read_query or
                             waiting_query[5] == write_query1 or
                             waiting_query[5] == write_query2)

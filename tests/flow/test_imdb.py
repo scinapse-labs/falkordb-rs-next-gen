@@ -49,7 +49,7 @@ class testImdbFlow(FlowTestsBase):
 
         q = self.imdb.actors_over_85_index_scan.query
         execution_plan = str(self.graph.explain(q))
-        self.env.assertIn('Index Scan', execution_plan)
+        self.env.assertContains('Index Scan', execution_plan)
 
         actual_result = self.graph.query(q)
 
@@ -70,7 +70,7 @@ class testImdbFlow(FlowTestsBase):
 
         q = self.imdb.eighties_movies_index_scan.query
         execution_plan = str(self.graph.explain(q))
-        self.env.assertIn('Index Scan', execution_plan)
+        self.env.assertContains('Index Scan', execution_plan)
 
         actual_result = self.graph.query(q)
 

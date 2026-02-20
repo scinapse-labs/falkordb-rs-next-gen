@@ -39,7 +39,7 @@ class testSlowLog():
         try:
             slowlog = self.redis_con.execute_command("GRAPH.SLOWLOG", "NONE_EXISTING_GRAPH")
         except ResponseError as e:
-            self.env.assertIn("Invalid graph operation on empty key", str(e))
+            self.env.assertContains("Invalid graph operation on empty key", str(e))
 
         # Issue create query twice.
         self.graph.query("""CREATE ()""")
@@ -47,7 +47,7 @@ class testSlowLog():
 
         # Slow log should contain a single entry, no duplicates.
         slowlog = self.graph.slowlog()
-        self.env.assertEquals(len(slowlog), 1)
+        self.env.assertEqual(len(slowlog), 1)
 
         # Saturate slowlog.
         self.populate_slowlog(128)
@@ -55,7 +55,7 @@ class testSlowLog():
         B = self.graph.slowlog()
 
         # Calling slowlog multiple times should preduce the same result.
-        self.env.assertEquals(A, B)
+        self.env.assertEqual(A, B)
 
         server = self.redis_con.info("Server")
         if StrictVersion(server["redis_version"]) < StrictVersion("6.2.0"):
@@ -82,13 +82,13 @@ class testSlowLog():
         try:
             slowlog = self.redis_con.execute_command("GRAPH.SLOWLOG", "NONE_EXISTING_GRAPH", "RESET")
         except ResponseError as e:
-            self.env.assertIn("Invalid graph operation on empty key", str(e))
+            self.env.assertContains("Invalid graph operation on empty key", str(e))
 
         # issue an unknown slowlog sub command
         try:
             slowlog = self.redis_con.execute_command("GRAPH.SLOWLOG", GRAPH_ID, "UNKNOW_SUB_CMD")
         except ResponseError as e:
-            self.env.assertIn("Unknown subcommand", str(e))
+            self.env.assertContains("Unknown subcommand", str(e))
 
         # populate slowlog
         self.populate_slowlog(36)
@@ -102,7 +102,7 @@ class testSlowLog():
 
         # expecting an empty slowlog
         slowlog = self.redis_con.execute_command("GRAPH.SLOWLOG", GRAPH_ID)
-        self.env.assertEquals(len(slowlog), 0)
+        self.env.assertEqual(len(slowlog), 0)
 
         # make sure slowlog repopulates after RESET
         self.populate_slowlog(36)

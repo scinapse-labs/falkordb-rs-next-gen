@@ -21,7 +21,7 @@ class testConfig(FlowTestsBase):
         response = self.redis_con.execute_command("GRAPH.CONFIG GET *")
 
         # 16 configurations should be reported
-        self.env.assertEquals(len(response), NUMBER_OF_CONFIGURATIONS)
+        self.env.assertEqual(len(response), NUMBER_OF_CONFIGURATIONS)
 
         # validate default configuration values
 
@@ -52,13 +52,13 @@ class testConfig(FlowTestsBase):
             value = config[1]
 
             # validate config name
-            self.env.assertEquals(name, default_config[i][0])
+            self.env.assertEqual(name, default_config[i][0])
 
             # validate config value
             if type(default_config[i][1]) is list:
-                self.env.assertIn(value, default_config[i][1])
+                self.env.assertContains(value, default_config[i][1])
             else:
-                self.env.assertEquals(value, default_config[i][1])
+                self.env.assertEqual(value, default_config[i][1])
 
     def test02_config_get_invalid_name(self):
         # Ensure that getter fails on invalid parameters appropriately

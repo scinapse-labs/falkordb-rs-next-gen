@@ -554,4 +554,4 @@ class testEntityUpdate():
         res = self.graph.query("MATCH (n) UNWIND [0, 1, 2, 3] AS x SET n.v = n.v + x RETURN n")
 
         # assert results
-        self.env.assertEquals(res.result_set[0][0], Node(properties={'v': 7}))
+        self.env.assertEqual(res.result_set[0][0], Node(properties={'v': 7}))

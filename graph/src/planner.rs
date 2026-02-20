@@ -81,11 +81,15 @@ pub enum IR {
         index: Arc<String>,
         query: Arc<IndexQuery<QueryExpr<Variable>>>,
     },
-    /// Lookup node by ID
-    NodeByIdScan {
+    /// Lookup node by label and id
+    NodeByLabelAndIdScan {
         node: Arc<QueryNode<Arc<String>, Variable>>,
-        id: QueryExpr<Variable>,
-        op: ExprIR<Variable>,
+        filter: Vec<(QueryExpr<Variable>, ExprIR<Variable>)>,
+    },
+    /// Lookup node by id only
+    NodeByIdSeek {
+        node: Arc<QueryNode<Arc<String>, Variable>>,
+        filter: Vec<(QueryExpr<Variable>, ExprIR<Variable>)>,
     },
     /// Traverse relationships from known nodes
     CondTraverse(Arc<QueryRelationship<Arc<String>, Arc<String>, Variable>>),
@@ -165,9 +169,10 @@ impl Display for IR {
             Self::NodeByIndexScan { node, .. } => {
                 write!(f, "Node By Index Scan | {node}")
             }
-            Self::NodeByIdScan { node, .. } => {
+            Self::NodeByLabelAndIdScan { node, .. } => {
                 write!(f, "Node By Label and ID Scan | {node}")
             }
+            Self::NodeByIdSeek { .. } => write!(f, "NodeByIdSeek"),
             Self::CondTraverse(rel) => write!(f, "Conditional Traverse | {rel}"),
             Self::ExpandInto(rel) => write!(f, "Expand Into | {rel}"),
             Self::PathBuilder(_) => write!(f, "PathBuilder"),

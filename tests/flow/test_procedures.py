@@ -45,7 +45,7 @@ class testProcedures(FlowTestsBase):
     # Issue query and validates resultset.
     def queryAndValidate(self, query, expected_results, query_params={}):
         actual_resultset = self.graph.query(query, query_params).result_set
-        self.env.assertEquals(len(actual_resultset), len(expected_results))
+        self.env.assertEqual(len(actual_resultset), len(expected_results))
         for i in range(len(actual_resultset)):
             self.env.assertTrue(self._inResultSet(expected_results[i], actual_resultset))
 
@@ -269,17 +269,17 @@ class testProcedures(FlowTestsBase):
     def test05_procedure_labels(self):
         actual_resultset = self.graph.call_procedure("db.labels").result_set
         expected_results = [["fruit"]]
-        self.env.assertEquals(actual_resultset, expected_results)
+        self.env.assertEqual(actual_resultset, expected_results)
 
     def test06_procedure_relationshipTypes(self):
         actual_resultset = self.graph.call_procedure("db.relationshipTypes").result_set
         expected_results = [["goWellWith"]]
-        self.env.assertEquals(actual_resultset, expected_results)
+        self.env.assertEqual(actual_resultset, expected_results)
 
     def test07_procedure_propertyKeys(self):
         actual_resultset = self.graph.call_procedure("db.propertyKeys").result_set
         expected_results = [["name"], ["value"]]
-        self.env.assertEquals(actual_resultset, expected_results)
+        self.env.assertEqual(actual_resultset, expected_results)
 
     def test08_procedure_fulltext_syntax_error(self):
         try:
@@ -333,30 +333,30 @@ class testProcedures(FlowTestsBase):
         # Verify that the full-text index is reported properly.
         actual_resultset = self.graph.query("CALL db.indexes() YIELD label, properties").result_set
         expected_results = [["fruit", ["name"]]]
-        self.env.assertEquals(actual_resultset, expected_results)
+        self.env.assertEqual(actual_resultset, expected_results)
 
         # Add an exact-match index to a different property on the same label..
         result = create_node_range_index(self.graph, 'fruit', 'other_property')
-        self.env.assertEquals(result.indices_created, 1)
+        self.env.assertEqual(result.indices_created, 1)
 
         # Verify that all indexes are reported.
         actual_resultset = self.graph.query("CALL db.indexes() YIELD label, properties RETURN * ORDER BY properties").result_set
         expected_results = [["fruit", ["name", "other_property"]]]
-        self.env.assertEquals(actual_resultset, expected_results)
+        self.env.assertEqual(actual_resultset, expected_results)
 
         # Add an exact-match index to the full-text indexed property on the same label..
         result = create_node_range_index(self.graph, 'fruit', 'name', sync=True)
-        self.env.assertEquals(result.indices_created, 1)
+        self.env.assertEqual(result.indices_created, 1)
 
         # Verify that all indexes are reported.
         actual_resultset = self.graph.query("CALL db.indexes() YIELD label, properties RETURN * ORDER BY properties").result_set
         expected_results = [["fruit", ["name", "other_property"]]]
-        self.env.assertEquals(actual_resultset, expected_results)
+        self.env.assertEqual(actual_resultset, expected_results)
 
         # Validate the results when yielding only one element.
         actual_resultset = self.graph.query("CALL db.indexes() YIELD label").result_set
         expected_results = [["fruit"]]
-        self.env.assertEquals(actual_resultset, expected_results)
+        self.env.assertEqual(actual_resultset, expected_results)
 
     def test12_procedure_reordered_yields(self):
         # Yield results of procedure in a non-default sequence
@@ -381,4 +381,4 @@ class testProcedures(FlowTestsBase):
                            ["READ",  "db.propertyKeys"],
                            ["READ",  "db.relationshipTypes"],
                            ["READ",  "dbms.procedures"]]
-        self.env.assertEquals(actual_resultset, expected_result)
+        self.env.assertEqual(actual_resultset, expected_result)
