@@ -32,7 +32,7 @@
 use std::collections::HashSet;
 use std::sync::Arc;
 
-use orx_tree::{Bfs, Dyn, DynNode, DynTree, Lazy, NodeIdx, NodeRef, Side};
+use orx_tree::{Bfs, Dyn, DynNode, DynTree, NodeIdx, NodeRef};
 
 use crate::{
     ast::{ExprIR, QueryExpr, QueryNode, Variable},
@@ -185,7 +185,7 @@ fn try_distance_index_scan(
 ///
 /// If an index exists on the filtered property, replaces with `NodeByIndexScan`.
 fn utilize_index(
-    optimized_plan: &mut DynTree<IR, Lazy>,
+    optimized_plan: &mut DynTree<IR>,
     graph: &Graph,
 ) {
     let indices = optimized_plan.root().indices::<Bfs>().collect::<Vec<_>>();
@@ -302,7 +302,7 @@ fn collect_expr_variables(expr: &DynTree<ExprIR<Variable>>) -> HashSet<u32> {
 }
 
 /// Collects all variable IDs provided by a plan subtree.
-fn collect_subtree_variables(node: &DynNode<IR, Lazy>) -> HashSet<u32> {
+fn collect_subtree_variables(node: &DynNode<IR>) -> HashSet<u32> {
     let mut vars = HashSet::new();
     for var in node.get_variables() {
         vars.insert(var.id);
@@ -331,7 +331,7 @@ fn collect_subtree_variables(node: &DynNode<IR, Lazy>) -> HashSet<u32> {
 /// Each conjunct is routed to the child whose variables fully cover the
 /// conjunct's referenced variables. Conjuncts that span multiple children
 /// remain at the current level.
-fn push_filters_down(optimized_plan: &mut DynTree<IR, Lazy>) {
+fn push_filters_down(optimized_plan: &mut DynTree<IR>) {
     loop {
         let mut changed = false;
         let indices = optimized_plan.root().indices::<Bfs>().collect::<Vec<_>>();
@@ -364,7 +364,9 @@ fn push_filters_down(optimized_plan: &mut DynTree<IR, Lazy>) {
             let children: Vec<_> = optimized_plan
                 .node(idx)
                 .children()
-                .filter(|c| c.num_children() > 0 && !matches!(c.data(), IR::Project(..)))
+                .filter(|c| {
+                    c.num_children() > 0 && !matches!(c.data(), IR::Project(..) | IR::Aggregate(..))
+                })
                 .flat_map(|c| c.children().collect::<Vec<_>>())
                 .map(|c| (c.idx(), collect_subtree_variables(&c)))
                 .collect();
@@ -394,9 +396,7 @@ fn push_filters_down(optimized_plan: &mut DynTree<IR, Lazy>) {
             }
 
             // For each child with matching conjuncts: add a Filter-wrapped
-            // clone as a sibling, then record the original for removal.
-            let mut to_remove: Vec<Vec<NodeIdx<Dyn<IR>>>> = vec![];
-
+            // clone as a sibling, then prune the original.
             for (i, conjuncts) in child_conjuncts.into_iter().enumerate() {
                 if conjuncts.is_empty() {
                     continue;
@@ -405,34 +405,16 @@ fn push_filters_down(optimized_plan: &mut DynTree<IR, Lazy>) {
                 let child_idx = children[i].0;
 
                 // Build the filter expression for this child
-                let filter_expr: QueryExpr<Variable> = if conjuncts.len() == 1 {
+                let filter_expr = if conjuncts.len() == 1 {
                     Arc::new(conjuncts.into_iter().next().unwrap())
                 } else {
                     Arc::new(tree!(ExprIR::And; conjuncts))
                 };
 
-                // Clone the child subtree and wrap it in a Filter
-                let child_subtree: DynTree<IR, Lazy> =
-                    optimized_plan.node(child_idx).clone_as_tree();
-                let filter_tree = tree!(IR::Filter(filter_expr), child_subtree);
-
-                // Add the wrapped version as a sibling of the original child
+                // Insert the new filter node above the child
                 optimized_plan
                     .node_mut(child_idx)
-                    .push_sibling_tree(Side::Right, filter_tree);
-
-                // Record the original subtree nodes for removal (BFS order)
-                let subtree_indices: Vec<_> =
-                    optimized_plan.node(child_idx).indices::<Bfs>().collect();
-                to_remove.push(subtree_indices);
-            }
-
-            // Remove original children by taking out nodes in reverse BFS
-            // order (leaves first, so each take_out operates on a leaf).
-            for subtree_indices in to_remove {
-                for node_idx in subtree_indices.into_iter().rev() {
-                    optimized_plan.node_mut(node_idx).take_out();
-                }
+                    .push_parent(IR::Filter(filter_expr));
             }
 
             // Update or remove the original Filter
@@ -457,7 +439,7 @@ fn push_filters_down(optimized_plan: &mut DynTree<IR, Lazy>) {
 }
 
 /// Replaces label scan + ID filter with direct node ID lookup.
-fn utilize_node_by_id(optimized_plan: &mut DynTree<IR, Lazy>) {
+fn utilize_node_by_id(optimized_plan: &mut DynTree<IR>) {
     let indices = optimized_plan.root().indices::<Bfs>().collect::<Vec<_>>();
 
     for idx in indices {
@@ -514,13 +496,13 @@ pub fn optimize(
     plan: &DynTree<IR>,
     graph: &Graph,
 ) -> DynTree<IR> {
-    let mut optimized_plan = plan.clone().into_lazy_reclaim();
+    let mut optimized_plan = plan.clone();
 
     push_filters_down(&mut optimized_plan);
     utilize_index(&mut optimized_plan, graph);
     utilize_node_by_id(&mut optimized_plan);
 
-    optimized_plan.into_auto_reclaim()
+    optimized_plan
 }
 
 /// Checks if a node pattern has an indexed property filter.
