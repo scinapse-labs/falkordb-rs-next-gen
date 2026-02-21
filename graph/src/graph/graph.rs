@@ -724,9 +724,9 @@ impl Graph {
             for (_, label_id) in self.node_labels_matrix.iter(id, id) {
                 let label = self.node_labels[label_id as usize].clone();
                 self.labels_matices[label_id as usize].remove(id, id);
-                if self.node_indexer.is_label_indexed(label.clone()) {
+                if self.node_indexer.has_index(&label) {
                     for attr in self.node_attrs.get_attrs(id) {
-                        if self.node_indexer.is_attr_indexed(label.clone(), attr) {
+                        if self.node_indexer.has_indexed_attr(&label, &attr) {
                             remove_docs.entry(label.clone()).or_default().insert(id);
                             break;
                         }

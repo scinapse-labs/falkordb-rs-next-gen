@@ -160,7 +160,7 @@ class testIndexCreationFlow:
             assert False
         except ResponseError as e:
             self.env.assertContains("Nostem must be bool", str(e))
-        
+
         try:
             # phonetic must be boolean
             result = self.graph.query(
@@ -168,7 +168,7 @@ class testIndexCreationFlow:
             )
             assert False
         except ResponseError as e:
-            self.env.assertContains("Phonetic must be string", str(e))
+            self.env.assertContains("Phonetic must be bool", str(e))
 
     def test03_multi_prop_index_creation(self):
         # create an index over person:age and person:name
@@ -310,7 +310,6 @@ class testIndexCreationFlow:
         except ResponseError as e:
             self.env.assertContains("Invalid input '1': expected an identifier", str(e))
 
-<<<<<<< HEAD
     def test07_index_creation_undefined_identifier(self):
         # create index on undefined identifier
         try:
@@ -364,7 +363,7 @@ class testIndexCreationFlow:
         # create an index
         # -----------------------------------------------------------------------
 
-        res = create_node_range_index(g, 'L', 'v', sync=False)
+        res = create_node_range_index(g, "L", "v", sync=False)
         self.env.assertEqual(res.indices_created, 1)
 
         # -----------------------------------------------------------------------
@@ -431,28 +430,24 @@ class testIndexCreationFlow:
 
         # find newly created node
         q = "MATCH (n:L {v:$v}) RETURN count(n)"
-        res = g.query(q, {'v': max_node_v + 10}).result_set
+        res = g.query(q, {"v": max_node_v + 10}).result_set
         self.env.assertEqual(res[0][0], 1)
 
         # find updated nodes
         q = "MATCH (n:L) WHERE n.v = $new_v RETURN count(n)"
-        res = g.query(q, {'new_v': -max_node_v}).result_set
+        res = g.query(q, {"new_v": -max_node_v}).result_set
         self.env.assertEqual(res[0][0], 1)
 
         # find updated node
-        res = g.query(q, {'new_v': -1}).result_set
+        res = g.query(q, {"new_v": -1}).result_set
         self.env.assertEqual(len(res), 1)
 
         # make sure deleted nodes aren't found
         q = "MATCH (n:L) WHERE n.v = $id RETURN count(n)"
-        res = g.query(q, {'id': max_node_v - 9}).result_set
+        res = g.query(q, {"id": max_node_v - 9}).result_set
         self.env.assertEqual(res[0][0], 0)
-        res = g.query(q, {'id': 2}).result_set
+        res = g.query(q, {"id": 2}).result_set
         self.env.assertEqual(res[0][0], 0)
-
-        # find updated node
-        res = g.query(q, {"new_v": -1}).result_set
-        self.env.assertEquals(len(res), 1)
 
         # make sure deleted nodes aren't found
         q = "MATCH (n:L) WHERE n.v = $id RETURN count(n)"
