@@ -63,7 +63,7 @@ fi
    **If outside devcontainer:**
    ```bash
    # Use docker to run coverage inside the devcontainer
-   docker build -t falkordb-dev .devcontainer
+   docker build -t falkordb-dev -f .devcontainer/Dockerfile .
    docker run --rm -v $(pwd):/workspace -w /workspace falkordb-dev bash -c "
      find . -name '*.profraw' -delete
      rm -f cov.profdata codecov.txt codecov.txt.all
@@ -96,7 +96,7 @@ fi
 
    **If outside devcontainer:**
    ```bash
-   docker build -t falkordb-dev .devcontainer
+   docker build -t falkordb-dev -f .devcontainer/Dockerfile .
    docker run --rm -v $(pwd):/workspace -w /workspace falkordb-dev bash -c "
      find . -name '*.profraw' -delete
      rm -f cov.profdata codecov.txt codecov.txt.all
@@ -127,7 +127,7 @@ fi
 
    **If outside devcontainer:**
    ```bash
-   docker build -t falkordb-dev .devcontainer
+   docker build -t falkordb-dev -f .devcontainer/Dockerfile .
    docker run --rm -v $(pwd):/workspace -w /workspace falkordb-dev bash -c "
      find . -name '*.profraw' -delete
      rm -f cov.profdata codecov.txt codecov.txt.all

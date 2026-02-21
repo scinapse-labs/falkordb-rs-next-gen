@@ -1,6 +1,8 @@
-FROM redis:8.2.0
+FROM ubuntu:24.04
 
+ENV DEBIAN_FRONTEND=noninteractive
 ENV PATH="/root/.cargo/bin:${PATH}"
+ENV CXX=clang++-21
 
 # Install LLVM 21 and build dependencies
 RUN apt update -y && \
@@ -10,7 +12,7 @@ RUN apt update -y && \
     ./llvm.sh 21 && \
     apt update -y
 
-# Install development dependencies
+# Install development dependencies including Redis
 RUN apt install -y \
     git \
     make \
@@ -30,7 +32,9 @@ RUN apt install -y \
     llvm-21 \
     llvm-21-dev \
     llvm-21-tools \
-    lld-21
+    lld-21 \
+    redis-server \
+    sudo
 
 # Create Python virtual environment for testing
 RUN python3 -m venv /data/venv
@@ -38,33 +42,23 @@ RUN python3 -m venv /data/venv
 # Install Python test dependencies
 RUN /data/venv/bin/pip install behave falkordb hypothesis pytest pytest-benchmark git+https://github.com/falkordb/RLTest.git@master
 
-# Build and install GraphBLAS
-RUN git clone --branch v10.3.1 --single-branch https://github.com/DrTimothyAldenDavis/GraphBLAS.git && \
-    cd GraphBLAS && \
-    make static CMAKE_OPTIONS='-DGRAPHBLAS_COMPACT=1 -DCMAKE_POSITION_INDEPENDENT_CODE=on' JOBS=2 CC=clang-21 CXX=clang++-21 && \
-    make install && \
-    cd .. && \
-    rm -rf GraphBLAS
-
-# Install Rust
+# Install Rust (needed before running scripts)
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
 
-# Build and install RediSearch
-RUN . /data/venv/bin/activate && \
-    mkdir -p /redisearch && \
-    cd /redisearch && \
-    git clone --recurse-submodules --branch vector-low-level-api --single-branch https://github.com/FalkorDB/RediSearch.git && \
-    cd RediSearch && \
-    sed -i 's/-Werror//g' deps/VectorSimilarity/src/VecSim/CMakeLists.txt && \
-    make build STATIC=1 CLANG=1 CC=clang-21 CXX=clang++-21 && \
-    cd .. && \
-    cp -r RediSearch/bin bin  && \
-    rm -rf RediSearch
-
-# Set CXX environment variable for clippy
-ENV CXX=clang++-21
-
-# Set working directory
+# Set working directory for build scripts
 WORKDIR /workspace
+
+# Copy build scripts
+COPY graphblas.sh redisearch.sh /tmp/
+
+# Build and install GraphBLAS using project script
+RUN cd /tmp && \
+    chmod +x graphblas.sh && \
+    CC=clang-21 CXX=clang++-21 ./graphblas.sh
+
+# Build and install RediSearch using project script
+RUN cd /tmp && \
+    chmod +x redisearch.sh && \
+    ./redisearch.sh
 
 CMD ["/bin/bash"]

@@ -6,12 +6,13 @@ This directory contains the configuration for the FalkorDB development container
 
 The development container includes:
 
+- **Ubuntu 24.04** as the base image
+- **Redis server** installed via apt
 - **Rust toolchain** with all necessary components
 - **LLVM 21** with clang, clang++, llvm-cov, and llvm-profdata for building and code coverage
-- **GraphBLAS** (v10.3.1) compiled and installed
-- **RediSearch** with vector similarity support
+- **GraphBLAS** (v10.3.1) compiled and installed using `graphblas.sh`
+- **RediSearch** with vector similarity support, built using `redisearch.sh`
 - **Python 3 virtual environment** at `/data/venv` with all test dependencies
-- **Redis 8.2.0** as the base image
 
 ## Usage
 
@@ -28,8 +29,8 @@ The development container includes:
 If you're not using VS Code, you can manually build and run the container:
 
 ```bash
-# Build the dev container image
-docker build -t falkordb-dev .devcontainer
+# Build the dev container image (from project root)
+docker build -t falkordb-dev -f .devcontainer/Dockerfile .
 
 # Run the container with the workspace mounted
 docker run --rm -it -v $(pwd):/workspace -w /workspace falkordb-dev bash
