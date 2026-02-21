@@ -32,3 +32,4 @@ redisearch
 .zed/
 .github/copilot-instructions.md
 attrs/
+.cargo-cache
