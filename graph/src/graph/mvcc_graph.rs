@@ -95,3 +95,9 @@ impl MvccGraph {
         self.write.store(false, Ordering::Release);
     }
 }
+
+impl Drop for MvccGraph {
+    fn drop(&mut self) {
+        self.graph.borrow().cancel_indexing();
+    }
+}

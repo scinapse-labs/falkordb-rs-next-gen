@@ -1712,11 +1712,8 @@ impl<'a> Runtime {
                     .g
                     .borrow_mut()
                     .drop_index(index_type, entity_type, label, attrs)?;
-                match res {
-                    Some((before, after)) => {
-                        self.stats.borrow_mut().indexes_dropped += before - after;
-                    }
-                    None => {}
+                if let Some((before, after)) = res {
+                    self.stats.borrow_mut().indexes_dropped += before - after;
                 }
                 Ok(Box::new(empty()))
             }

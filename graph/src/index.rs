@@ -1,6 +1,6 @@
 use std::{
     collections::HashMap,
-    ffi::CString,
+    ffi::{CStr, CString},
     hash::Hash,
     os::raw::{c_char, c_int, c_void},
     ptr::null_mut,
@@ -22,8 +22,9 @@ use crate::{
         RediSearch_DocumentAddFieldString, RediSearch_DocumentAddFieldVector, RediSearch_DropIndex,
         RediSearch_FreeIndexOptions, RediSearch_GetResultsIterator, RediSearch_IndexAddDocument,
         RediSearch_IndexOptionsSetGCPolicy, RediSearch_IndexOptionsSetLanguage,
-        RediSearch_IndexOptionsSetStopwords, RediSearch_QueryNodeAddChild,
-        RediSearch_ResultsIteratorFree, RediSearch_ResultsIteratorNext,
+        RediSearch_IndexOptionsSetStopwords, RediSearch_IterateQuery,
+        RediSearch_QueryNodeAddChild, RediSearch_ResultsIteratorFree,
+        RediSearch_ResultsIteratorGetScore, RediSearch_ResultsIteratorNext,
         RediSearch_TagFieldSetCaseSensitive, RediSearch_TagFieldSetSeparator,
         RediSearch_TextFieldSetWeight,
     },
@@ -152,6 +153,8 @@ pub struct IndexInfo {
     pub label: Arc<String>,
     pub status: IndexStatus,
     pub fields: HashMap<Arc<String>, Vec<Arc<Field>>>,
+    pub language: Option<Arc<String>>,
+    pub stopwords: Option<Vec<Arc<String>>>,
 }
 
 #[derive(Debug)]
@@ -171,12 +174,14 @@ pub enum IndexQuery<T> {
 #[derive(Clone)]
 pub struct Document {
     rs_doc: *mut RSDoc,
+    id: u64,
 }
 
 impl Document {
     #[must_use]
     pub fn new(id: u64) -> Self {
         Self {
+            id,
             rs_doc: unsafe {
                 let doc = RediSearch_CreateDocument2(
                     (&raw const id).cast::<c_void>(),
@@ -189,6 +194,11 @@ impl Document {
                 doc
             },
         }
+    }
+
+    #[must_use]
+    pub const fn id(&self) -> u64 {
+        self.id
     }
 
     pub fn set(
@@ -370,7 +380,8 @@ impl Index {
                     IndexType::Fulltext => {
                         let mut field_options_flag = RSFLDOPT_NONE;
                         let mut weight = 1.0;
-                        if let Some(options) = field_options {
+                        let effective_options = field_options.or_else(|| field.options());
+                        if let Some(options) = effective_options {
                             weight = options.weight().unwrap_or(1.0);
                             if options.nostem().unwrap_or(false) {
                                 field_options_flag |= RSFLDOPT_TXTNOSTEM;
@@ -500,6 +511,38 @@ impl Index {
             }
             RediSearch_ResultsIteratorFree(iter);
             res
+        }
+    }
+
+    /// Execute a fulltext query and return matching entity IDs with scores.
+    pub fn fulltext_query(
+        &self,
+        query: &str,
+    ) -> Result<Vec<(u64, f64)>, String> {
+        let cstr = CString::new(query).map_err(|e| e.to_string())?;
+        let mut err: *mut c_char = null_mut();
+        unsafe {
+            let iter = RediSearch_IterateQuery(self.rs_idx, cstr.as_ptr(), query.len(), &mut err);
+            if !err.is_null() {
+                let msg = CStr::from_ptr(err).to_string_lossy().into_owned();
+                libc::free(err.cast());
+                return Err(msg);
+            }
+            if iter.is_null() {
+                return Ok(vec![]);
+            }
+            let mut res = vec![];
+            loop {
+                let id =
+                    RediSearch_ResultsIteratorNext(iter, self.rs_idx, null_mut()).cast::<u64>();
+                if id.is_null() {
+                    break;
+                }
+                let score = RediSearch_ResultsIteratorGetScore(iter);
+                res.push((id.read_unaligned(), score));
+            }
+            RediSearch_ResultsIteratorFree(iter);
+            Ok(res)
         }
     }
 
@@ -734,6 +777,9 @@ impl Index {
         }
         let stopwords = self.stopwords.clone();
         let language = self.language.clone();
-        self.create_rs_index(label, stopwords.as_ref(), language.as_ref())
+        self.create_rs_index(label, stopwords.as_ref(), language.as_ref())?;
+        let fields = self.clone_fields();
+        self.register_fields(&fields, None);
+        Ok(())
     }
 }

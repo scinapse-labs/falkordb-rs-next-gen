@@ -319,8 +319,7 @@ class testProcedures(FlowTestsBase):
         # The following two procedure are a part of the expected results
         expected_result = [["db.labels", "READ"],
                            ["db.propertyKeys", "READ"], ["dbms.procedures", "READ"], ["db.relationshipTypes", "READ"],
-                           ["algo.BFS", "READ"], ["algo.pageRank", "READ"], ["db.idx.fulltext.queryNodes", "READ"],
-                           ["db.idx.fulltext.drop", "WRITE"]]
+                           ["algo.BFS", "READ"], ["algo.pageRank", "READ"], ["db.idx.fulltext.queryNodes", "READ"]]
         for res in expected_result:
             self.env.assertContains(res, actual_resultset)
 
@@ -370,7 +369,6 @@ class testProcedures(FlowTestsBase):
                            ["READ",  "algo.labelPropagation"],
                            ["READ",  "algo.pageRank"],
                            ['READ',  "db.constraints"],
-                           ["WRITE", "db.idx.fulltext.drop"],
                            ["READ",  "db.idx.fulltext.queryNodes"],
                            ["READ",  "db.idx.fulltext.queryRelationships"],
                            ["READ",  "db.idx.vector.queryNodes"],

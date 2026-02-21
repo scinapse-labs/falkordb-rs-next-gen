@@ -34,7 +34,10 @@
 use std::{
     collections::HashMap,
     ffi::CString,
-    sync::{Arc, RwLock},
+    sync::{
+        Arc, RwLock,
+        atomic::{AtomicBool, Ordering},
+    },
 };
 
 use roaring::RoaringTreemap;
@@ -86,6 +89,10 @@ impl IndexOptions {
 #[derive(Default, Clone)]
 pub struct Indexer {
     index: Arc<RwLock<HashMap<Arc<String>, Index>>>,
+    cancelled: Arc<AtomicBool>,
+    /// Node IDs modified by the write path during background index construction.
+    /// Background population skips these to avoid overwriting concurrent changes.
+    dirty_nodes: Arc<RwLock<HashMap<Arc<String>, RoaringTreemap>>>,
 }
 
 unsafe impl Send for Indexer {}
@@ -182,7 +189,14 @@ impl Indexer {
         label_indexes.register_fields(&fields, field_options.as_ref());
 
         // Update the label indexes with global settings
-        if language.is_some() && label_indexes.language().is_none() {
+        // Default to "english" for fulltext indexes when no language is specified,
+        // matching RediSearch's default behavior.
+        if label_indexes.language().is_none() && *index_type == IndexType::Fulltext {
+            match language {
+                Some(lang) => label_indexes.set_language(Some(lang)),
+                None => label_indexes.set_language(Some(Arc::new(String::from("english")))),
+            }
+        } else if language.is_some() && label_indexes.language().is_none() {
             label_indexes.set_language(language);
         }
         if stopwords.is_some() && label_indexes.stopwords().is_none() {
@@ -214,19 +228,15 @@ impl Indexer {
                 if has_type {
                     if field_count == 1 {
                         index.remove_field(attr);
-                        removed = true;
                     } else {
                         index.retain_fields(attr, index_type);
                     }
+                    removed = true;
                 }
-            }
-            // All labels were removed
-            if index.is_empty() {
-                index.set_under_construction(0, 0);
-                index.increment_pending();
             }
             if removed {
                 index.set_under_construction(0, total);
+                index.increment_pending();
             }
             // Return the number of indexes before and after the operation
             return Some((number_of_indexes, index.index_count()));
@@ -280,6 +290,17 @@ impl Indexer {
         vec![]
     }
 
+    pub fn fulltext_query(
+        &self,
+        label: Arc<String>,
+        query: &str,
+    ) -> Result<Vec<(u64, f64)>, String> {
+        if let Some(index) = self.index.read().unwrap().get(&label) {
+            return index.fulltext_query(query);
+        }
+        Ok(vec![])
+    }
+
     pub fn enable(
         &mut self,
         label: Arc<String>,
@@ -288,7 +309,11 @@ impl Indexer {
         if let Some(index) = index.get_mut(&label) {
             let res = index.decrement_pending();
             debug_assert!(res > 0);
-            return res == 1;
+            if res == 1 {
+                index.set_operational();
+                self.dirty_nodes.write().unwrap().remove(&label);
+                return true;
+            }
         }
         false
     }
@@ -338,7 +363,6 @@ impl Indexer {
             for doc in add_docs.drain(..) {
                 index.add_document(&doc);
             }
-            index.set_operational();
         }
         for (label, remove_docs) in remove_docs {
             let Some(index) = index.get_mut(label) else {
@@ -373,8 +397,88 @@ impl Indexer {
                 label: label.clone(),
                 status: index.status(),
                 fields: index.clone_fields(),
+                language: index.language().cloned(),
+                stopwords: index.stopwords().cloned(),
             })
             .collect()
+    }
+
+    #[must_use]
+    pub fn has_index(
+        &self,
+        label: &Arc<String>,
+    ) -> bool {
+        self.index.read().unwrap().contains_key(label)
+    }
+
+    #[must_use]
+    pub fn has_indexed_attr(
+        &self,
+        label: &Arc<String>,
+        field: &Arc<String>,
+    ) -> bool {
+        if let Some(index) = self.index.read().unwrap().get(label) {
+            return index.contains_field(field);
+        }
+        false
+    }
+
+    pub fn update_progress(
+        &self,
+        label: &Arc<String>,
+        progress: u64,
+    ) {
+        let mut index = self.index.write().unwrap();
+        if let Some(index) = index.get_mut(label)
+            && let IndexStatus::UnderConstruction(_, total) = index.status()
+        {
+            index.set_under_construction(progress, total);
+        }
+    }
+
+    /// Mark node IDs as modified by the write path so background population
+    /// will skip them to avoid overwriting concurrent changes.
+    pub fn mark_dirty(
+        &self,
+        label: &Arc<String>,
+        ids: &RoaringTreemap,
+    ) {
+        let mut dirty = self.dirty_nodes.write().unwrap();
+        let entry = dirty.entry(label.clone()).or_default();
+        *entry |= ids;
+    }
+
+    /// Commit documents from background population, atomically skipping nodes
+    /// that were modified by the write path during index construction.
+    pub fn commit_background(
+        &mut self,
+        add_docs: &mut HashMap<Arc<String>, Vec<Document>>,
+    ) {
+        let dirty = self.dirty_nodes.read().unwrap();
+        let mut index = self.index.write().unwrap();
+        for (label, add_docs) in add_docs {
+            let Some(index) = index.get_mut(label) else {
+                continue;
+            };
+            let dirty_ids = dirty.get(label);
+            for doc in add_docs.drain(..) {
+                // Skip this node — it was already indexed/removed by the main
+                // query path, so ingesting stale snapshot data would be wrong.
+                if dirty_ids.is_some_and(|ids| ids.contains(doc.id())) {
+                    continue;
+                }
+                index.add_document(&doc);
+            }
+        }
+    }
+
+    pub fn cancel(&self) {
+        self.cancelled.store(true, Ordering::Relaxed);
+    }
+
+    #[must_use]
+    pub fn is_cancelled(&self) -> bool {
+        self.cancelled.load(Ordering::Relaxed)
     }
 
     pub fn recreate_index(

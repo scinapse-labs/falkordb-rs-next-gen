@@ -1305,14 +1305,6 @@ pub fn init_functions() -> Result<(), Functions> {
         FnType::Procedure(vec![]),
         Type::Any,
     );
-    funcs.add(
-        "db.idx.fulltext.drop",
-        db_fulltext_drop_node_index,
-        true,
-        vec![],
-        FnType::Procedure(vec![]),
-        Type::Any,
-    );
 
     funcs.add(
         "db.idx.fulltext.queryNodes",
@@ -3302,6 +3294,8 @@ fn db_indexes(
                      label,
                      status,
                      fields,
+                     language,
+                     stopwords,
                  }| {
                     let mut map = OrderMap::default();
                     map.insert(Arc::new(String::from("label")), Value::String(label));
@@ -3332,8 +3326,22 @@ fn db_indexes(
                     }
                     map.insert(Arc::new(String::from("types")), Value::Map(types_map));
                     map.insert(Arc::new(String::from("options")), Value::Null);
-                    map.insert(Arc::new(String::from("language")), Value::Null);
-                    map.insert(Arc::new(String::from("stopwords")), Value::Null);
+                    map.insert(
+                        Arc::new(String::from("language")),
+                        match language {
+                            Some(lang) => Value::String(lang),
+                            None => Value::Null,
+                        },
+                    );
+                    map.insert(
+                        Arc::new(String::from("stopwords")),
+                        match stopwords {
+                            Some(sw) => Value::List(
+                                sw.into_iter().map(Value::String).collect(),
+                            ),
+                            None => Value::Null,
+                        },
+                    );
                     map.insert(
                         Arc::new(String::from("entitytype")),
                         Value::String(Arc::new(String::from("NODE"))),
@@ -3364,16 +3372,29 @@ fn db_fulltext_create_node_index(
     Ok(Value::List(thin_vec![]))
 }
 
-fn db_fulltext_drop_node_index(
-    _runtime: &Runtime,
-    _args: ThinVec<Value>,
-) -> Result<Value, String> {
-    Ok(Value::List(thin_vec![]))
-}
 
 fn db_fulltext_query_nodes(
-    _runtime: &Runtime,
-    _args: ThinVec<Value>,
+    runtime: &Runtime,
+    args: ThinVec<Value>,
 ) -> Result<Value, String> {
-    Ok(Value::List(thin_vec![]))
+    let label = match args.first() {
+        Some(Value::String(s)) => s.clone(),
+        _ => return Err("fulltext queryNodes expects a string label".into()),
+    };
+    let query = match args.get(1) {
+        Some(Value::String(s)) => s.clone(),
+        _ => return Err("fulltext queryNodes expects a string query".into()),
+    };
+    let results = runtime.g.borrow().fulltext_query_nodes(&label, &query)?;
+    Ok(Value::List(
+        results
+            .into_iter()
+            .map(|(node_id, score)| {
+                let mut map = OrderMap::default();
+                map.insert(Arc::new(String::from("node")), Value::Node(node_id));
+                map.insert(Arc::new(String::from("score")), Value::Float(score));
+                Value::Map(map)
+            })
+            .collect(),
+    ))
 }
