@@ -63,7 +63,6 @@ use crate::{
     },
     index::Field,
     indexer::{Document, EntityType, IndexInfo, IndexOptions, IndexQuery, IndexType, Indexer},
-
     optimizer::optimize,
     planner::{IR, Planner},
     runtime::{ordermap::OrderMap, orderset::OrderSet, pending::PendingRelationship, value::Value},
@@ -257,9 +256,7 @@ fn populate_index_batch(
         move || {
             const BATCH_SIZE: usize = 10_000;
 
-            if node_indexer.is_cancelled()
-                || node_indexer.pending_changes(label.clone()) > 1
-            {
+            if node_indexer.is_cancelled() || node_indexer.pending_changes(label.clone()) > 1 {
                 node_indexer.enable(label);
                 return;
             }
@@ -659,10 +656,7 @@ impl Graph {
             for (_, label_id) in self.node_labels_matrix.iter(id.into(), id.into()) {
                 for key in &keys {
                     let label = self.node_labels[label_id as usize].clone();
-                    if self
-                        .node_indexer
-                        .has_indexed_attr(&label, key)
-                    {
+                    if self.node_indexer.has_indexed_attr(&label, key) {
                         index_add_docs
                             .entry(label)
                             .or_default()
@@ -685,9 +679,7 @@ impl Graph {
             self.node_labels_matrix.set(id, label_id, true);
             self.labels_matices[label_id as usize].set(id, id, true);
             let label = self.node_labels[label_id as usize].clone();
-            if self.node_indexer.has_index(&label)
-                && self.node_attrs.has_attributes(id)
-            {
+            if self.node_indexer.has_index(&label) && self.node_attrs.has_attributes(id) {
                 index_add_docs.entry(label.clone()).or_default().insert(id);
             }
         }
@@ -1162,13 +1154,8 @@ impl Graph {
         match entity_type {
             EntityType::Node => {
                 let len = self.get_label_matrix_mut(label).nvals();
-                self.node_indexer.create_index(
-                    index_type,
-                    label.clone(),
-                    attrs,
-                    len,
-                    options,
-                )?;
+                self.node_indexer
+                    .create_index(index_type, label.clone(), attrs, len, options)?;
                 self.start_populate_index(label);
             }
             EntityType::Relationship => {}
@@ -1290,7 +1277,11 @@ impl Graph {
     ) -> Result<Vec<(NodeId, f64)>, String> {
         self.node_indexer
             .fulltext_query(label.clone(), query)
-            .map(|r| r.into_iter().map(|(id, score)| (NodeId(id), score)).collect())
+            .map(|r| {
+                r.into_iter()
+                    .map(|(id, score)| (NodeId(id), score))
+                    .collect()
+            })
     }
 
     #[must_use]

@@ -3336,9 +3336,7 @@ fn db_indexes(
                     map.insert(
                         Arc::new(String::from("stopwords")),
                         match stopwords {
-                            Some(sw) => Value::List(
-                                sw.into_iter().map(Value::String).collect(),
-                            ),
+                            Some(sw) => Value::List(sw.into_iter().map(Value::String).collect()),
                             None => Value::Null,
                         },
                     );
@@ -3371,7 +3369,6 @@ fn db_fulltext_create_node_index(
 ) -> Result<Value, String> {
     Ok(Value::List(thin_vec![]))
 }
-
 
 fn db_fulltext_query_nodes(
     runtime: &Runtime,
