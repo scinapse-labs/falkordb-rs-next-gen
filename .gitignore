@@ -3,6 +3,7 @@ __pycache__
 .pytest_cache
 venv
 redis-test.log
+redis-debug.log
 .vscode
 *.ipr
 .idea

@@ -25,10 +25,12 @@ RUN apt install -y \
     libc++-21-dev \
     libc++abi-21-dev \
     libzstd-dev \
+    python3-dev \
+    python3-pip \
     python3-venv \
+    gcc \
     lcov \
     clang-21 \
-    clang++-21 \
     llvm-21 \
     llvm-21-dev \
     llvm-21-tools \
@@ -36,29 +38,39 @@ RUN apt install -y \
     redis-server \
     sudo
 
+# Symlink redis-server to /usr/local/bin for tests that expect it there
+RUN ln -sf /usr/bin/redis-server /usr/local/bin/redis-server
+
+# Create clang/clang++ symlinks so scripts that reference unversioned names work
+RUN ln -sf /usr/bin/clang-21 /usr/local/bin/clang && \
+    ln -sf /usr/bin/clang++-21 /usr/local/bin/clang++
+
 # Create Python virtual environment for testing
 RUN python3 -m venv /data/venv
 
-# Install Python test dependencies
-RUN /data/venv/bin/pip install behave falkordb hypothesis pytest pytest-benchmark git+https://github.com/falkordb/RLTest.git@master
+# Install Python test dependencies (setuptools needed for pkg_resources)
+RUN /data/venv/bin/pip install setuptools behave falkordb hypothesis pytest pytest-benchmark git+https://github.com/falkordb/RLTest.git@master
 
 # Install Rust (needed before running scripts)
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
 
 # Set working directory for build scripts
-WORKDIR /workspace
+WORKDIR /data
 
 # Copy build scripts
-COPY graphblas.sh redisearch.sh /tmp/
+COPY graphblas.sh redisearch.sh /data/
 
 # Build and install GraphBLAS using project script
-RUN cd /tmp && \
-    chmod +x graphblas.sh && \
+RUN chmod +x graphblas.sh && \
     CC=clang-21 CXX=clang++-21 ./graphblas.sh
 
 # Build and install RediSearch using project script
-RUN cd /tmp && \
-    chmod +x redisearch.sh && \
-    ./redisearch.sh
+# Build in /data so output lands at /data/redisearch/RediSearch/
+# Symlink bin/ so build.rs can find it at /data/redisearch/bin/
+RUN chmod +x redisearch.sh && \
+    ./redisearch.sh && \
+    ln -sf /data/redisearch/RediSearch/bin /data/redisearch/bin
+
+WORKDIR /workspace
 
 CMD ["/bin/bash"]
