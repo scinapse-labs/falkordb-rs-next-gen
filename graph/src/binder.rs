@@ -587,7 +587,7 @@ impl Binder {
         for item in items {
             match item {
                 SetItem::Attribute(target, value, strict) => res.push(SetItem::Attribute(
-                    self.bind_set_target(&target)?,
+                    self.bind_expr(&target)?,
                     self.bind_expr(&value)?,
                     strict,
                 )),
@@ -607,22 +607,6 @@ impl Binder {
         self.bind_expr_with_locals(expr, &mut vec![])
     }
 
-    /// Bind a SET target expression. This is like `bind_expr` but allows
-    /// property access on Path types, since SET on a path entity is silently
-    /// ignored at runtime (matching C `FalkorDB` behavior).
-    fn bind_set_target(
-        &mut self,
-        expr: &QueryExpr<Arc<String>>,
-    ) -> Result<QueryExpr<Variable>, String> {
-        let root = expr.root();
-        Ok(Arc::new(self.bind_expr_node_impl(
-            expr,
-            root,
-            &mut vec![],
-            true,
-        )?))
-    }
-
     fn bind_expr_with_locals(
         &mut self,
         expr: &QueryExpr<Arc<String>>,
@@ -632,27 +616,16 @@ impl Binder {
         Ok(Arc::new(self.bind_expr_node(expr, root, locals)?))
     }
 
-    #[allow(clippy::only_used_in_recursion)]
-    fn bind_expr_node(
-        &mut self,
-        expr: &DynTree<ExprIR<Arc<String>>>,
-        node_ref: orx_tree::Node<orx_tree::Dyn<ExprIR<Arc<String>>>>,
-        locals: &mut Vec<HashMap<Arc<String>, Variable>>,
-    ) -> Result<DynTree<ExprIR<Variable>>, String> {
-        self.bind_expr_node_impl(expr, node_ref, locals, false)
-    }
-
     #[allow(
         clippy::only_used_in_recursion,
         clippy::too_many_lines,
         clippy::needless_pass_by_value
     )]
-    fn bind_expr_node_impl(
+    fn bind_expr_node(
         &mut self,
         expr: &DynTree<ExprIR<Arc<String>>>,
         node_ref: orx_tree::Node<orx_tree::Dyn<ExprIR<Arc<String>>>>,
         locals: &mut Vec<HashMap<Arc<String>, Variable>>,
-        allow_path_property: bool,
     ) -> Result<DynTree<ExprIR<Variable>>, String> {
         match node_ref.data() {
             ExprIR::Variable(name) => {
@@ -667,7 +640,7 @@ impl Binder {
                 locals.push(local);
                 let children = node_ref
                     .children()
-                    .map(|child| self.bind_expr_node_impl(expr, child, locals, allow_path_property))
+                    .map(|child| self.bind_expr_node(expr, child, locals))
                     .collect::<Result<Vec<_>, _>>()?;
                 locals.pop();
 
@@ -686,7 +659,7 @@ impl Binder {
                 locals.push(local);
                 let children = node_ref
                     .children()
-                    .map(|child| self.bind_expr_node_impl(expr, child, locals, allow_path_property))
+                    .map(|child| self.bind_expr_node(expr, child, locals))
                     .collect::<Result<Vec<_>, _>>()?;
                 locals.pop();
 
@@ -705,7 +678,7 @@ impl Binder {
             _ => {
                 let children = node_ref
                     .children()
-                    .map(|child| self.bind_expr_node_impl(expr, child, locals, allow_path_property))
+                    .map(|child| self.bind_expr_node(expr, child, locals))
                     .collect::<Result<Vec<_>, _>>()?;
                 let new_data = match node_ref.data().clone() {
                     ExprIR::Null => ExprIR::Null,
@@ -741,10 +714,8 @@ impl Binder {
                     ExprIR::Modulo => ExprIR::Modulo,
                     ExprIR::Distinct => ExprIR::Distinct,
                     ExprIR::Property(prop) => {
-                        // Property access is not valid on Path types in read
-                        // contexts. In SET targets, path property access is
-                        // allowed and silently ignored at runtime.
-                        if !allow_path_property && let Some(first_child) = children.first() {
+                        // Property access is not valid on Path types.
+                        if let Some(first_child) = children.first() {
                             let root = first_child.root();
                             let inner = if matches!(root.data(), ExprIR::Paren) {
                                 root.get_child(0)
