@@ -664,7 +664,7 @@ impl Binder {
                 locals.pop();
 
                 // Child 1 is the WHERE condition — validate it returns boolean
-                if children.len() > 1 && !Self::expr_returns_boolean(children[1].root()) {
+                if children.len() > 1 && !Self::expr_may_return_boolean(children[1].root()) {
                     return Err(String::from("Expected boolean predicate"));
                 }
 
@@ -889,7 +889,7 @@ impl Binder {
     /// from the C implementation and must be called at bind time for all
     /// WHERE predicates (Match, With, Call) and list-comprehension WHERE clauses.
     fn validate_filter_predicate(expr: &QueryExpr<Variable>) -> Result<(), String> {
-        if !Self::expr_returns_boolean(expr.root()) {
+        if !Self::expr_may_return_boolean(expr.root()) {
             return Err(String::from("Expected boolean predicate"));
         }
         Ok(())
@@ -910,7 +910,7 @@ impl Binder {
             ExprIR::And | ExprIR::Or | ExprIR::Xor | ExprIR::Not
         ) {
             for child in node.children() {
-                if !Self::expr_returns_boolean(child) {
+                if !Self::expr_may_return_boolean(child) {
                     return Err(String::from("Type mismatch: expected Boolean"));
                 }
             }
@@ -926,17 +926,17 @@ impl Binder {
     /// determined statically (variables, parameters, properties), returns
     /// `true` (deferring to the runtime check).
     #[allow(clippy::needless_pass_by_value)]
-    fn expr_returns_boolean(node: orx_tree::Node<orx_tree::Dyn<ExprIR<Variable>>>) -> bool {
+    fn expr_may_return_boolean(node: orx_tree::Node<orx_tree::Dyn<ExprIR<Variable>>>) -> bool {
         match node.data() {
             // Logical operators – result is boolean, but each child must
             // also return boolean (mirrors the C recursive FilterTree_Valid)
             ExprIR::Or | ExprIR::And | ExprIR::Xor | ExprIR::Not => {
-                node.children().all(Self::expr_returns_boolean)
+                node.children().all(Self::expr_may_return_boolean)
             }
 
             // Transparent wrappers – recurse into the single child
             ExprIR::Paren | ExprIR::Distinct => {
-                node.get_child(0).is_some_and(Self::expr_returns_boolean)
+                node.get_child(0).is_some_and(Self::expr_may_return_boolean)
             }
 
             // Function calls – use the registered return type
