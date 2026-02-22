@@ -52,34 +52,34 @@ class testEdgeByIndexScanFlow(FlowTestsBase):
     def test01_cartesian_product_mixed_scans(self):
         query = "MATCH ()-[f:friend]->(), ()-[k:knows]->() WHERE f.created_at >= 0 RETURN f.created_at, k.created_at ORDER BY f.created_at, k.created_at"
         plan = str(self.graph.explain(query))
-        self.env.assertIn('Edge By Index Scan', plan)
-        self.env.assertIn('Conditional Traverse', plan)
+        self.env.assertContains('Edge By Index Scan', plan)
+        self.env.assertContains('Conditional Traverse', plan)
         indexed_result = self.graph.query(query)
 
         query = "MATCH ()-[f:friend]->(), ()-[k:knows]->() RETURN f.created_at, k.created_at ORDER BY f.created_at, k.created_at"
         plan = str(self.graph.explain(query))
-        self.env.assertNotIn('Edge By Index Scan', plan)
-        self.env.assertIn('Conditional Traverse', plan)
+        self.env.assertNotContains('Edge By Index Scan', plan)
+        self.env.assertContains('Conditional Traverse', plan)
         unindexed_result = self.graph.query(query)
 
-        self.env.assertEquals(indexed_result.result_set, unindexed_result.result_set)
+        self.env.assertEqual(indexed_result.result_set, unindexed_result.result_set)
 
     # Validate that Cartesian products using just index scans succeed
     def test02_cartesian_product_index_scans_only(self):
         query = "MATCH ()-[f:friend]->(), ()-[k:knows]->() WHERE f.created_at >= 0 AND k.created_at >= 0 RETURN f.created_at, k.created_at ORDER BY f.created_at, k.created_at"
         plan = str(self.graph.explain(query))
         # The two streams should both use index scans
-        self.env.assertEquals(plan.count('Edge By Index Scan'), 2)
-        self.env.assertNotIn('Conditional Traverse', plan)
+        self.env.assertEqual(plan.count('Edge By Index Scan'), 2)
+        self.env.assertNotContains('Conditional Traverse', plan)
         indexed_result = self.graph.query(query)
 
         query = "MATCH ()-[f:friend]->(), ()-[k:knows]->() RETURN f.created_at, k.created_at ORDER BY f.created_at, k.created_at"
         plan = str(self.graph.explain(query))
-        self.env.assertNotIn('Edge By Index Scan', plan)
-        self.env.assertIn('Conditional Traverse', plan)
+        self.env.assertNotContains('Edge By Index Scan', plan)
+        self.env.assertContains('Conditional Traverse', plan)
         unindexed_result = self.graph.query(query)
 
-        self.env.assertEquals(indexed_result.result_set, unindexed_result.result_set)
+        self.env.assertEqual(indexed_result.result_set, unindexed_result.result_set)
 
     # Validate that the appropriate bounds are respected when a Cartesian product uses the same index in two streams
     def test03_cartesian_product_reused_index(self):
@@ -90,71 +90,71 @@ class testEdgeByIndexScanFlow(FlowTestsBase):
                    ORDER BY a.created_at, b.updated_at"""
         plan = str(self.graph.explain(query))
         # The two streams should both use index scans
-        self.env.assertEquals(plan.count('Edge By Index Scan'), 2)
-        self.env.assertNotIn('Conditional Traverse', plan)
+        self.env.assertEqual(plan.count('Edge By Index Scan'), 2)
+        self.env.assertNotContains('Conditional Traverse', plan)
 
 
         expected_result = [[81, 120], [81, 123], [83, 120], [83, 123]]
         result = self.graph.query(query)
 
-        self.env.assertEquals(result.result_set, expected_result)
+        self.env.assertEqual(result.result_set, expected_result)
 
     # Validate index utilization when filtering on a numeric field with the `IN` keyword.
     def test04_test_in_operator_numerics(self):
         # Validate the transformation of IN to multiple OR expressions.
         query = "MATCH ()-[f:friend]-() WHERE f.created_at IN [1,2,3] RETURN f"
         plan = str(self.graph.explain(query))
-        self.env.assertIn('Edge By Index Scan', plan)
+        self.env.assertContains('Edge By Index Scan', plan)
 
         # Validate that nested arrays are not scanned in index.
         query = "MATCH ()-[f:friend]-() WHERE f.created_at IN [[1,2],3] RETURN f"
         plan = str(self.graph.explain(query))
-        self.env.assertNotIn('Edge By Index Scan', plan)
-        self.env.assertIn('Conditional Traverse', plan)
+        self.env.assertNotContains('Edge By Index Scan', plan)
+        self.env.assertContains('Conditional Traverse', plan)
 
         # Validate the transformation of IN to multiple OR, over a range.
         query = "MATCH (n)-[f:friend]->() WHERE f.created_at IN range(0,30) RETURN DISTINCT n.name ORDER BY n.name"
         plan = str(self.graph.explain(query))
-        self.env.assertIn('Edge By Index Scan', plan)
+        self.env.assertContains('Edge By Index Scan', plan)
 
         expected_result = [['Ailon'], ['Alon'], ['Roi']]
         result = self.graph.query(query)
-        self.env.assertEquals(result.result_set, expected_result)
+        self.env.assertEqual(result.result_set, expected_result)
 
          # Validate the transformation of IN to empty index iterator.
         query = "MATCH ()-[f:friend]-() WHERE f.created_at IN [] RETURN f.name"
         plan = str(self.graph.explain(query))
-        self.env.assertIn('Edge By Index Scan', plan)
+        self.env.assertContains('Edge By Index Scan', plan)
 
         expected_result = []
         result = self.graph.query(query)
-        self.env.assertEquals(result.result_set, expected_result)
+        self.env.assertEqual(result.result_set, expected_result)
 
         # Validate the transformation of IN OR IN to empty index iterators.
         query = "MATCH ()-[f:friend]->() WHERE f.created_at IN [] OR f.created_at IN [] RETURN f.name"
         plan = str(self.graph.explain(query))
-        self.env.assertIn('Edge By Index Scan', plan)
+        self.env.assertContains('Edge By Index Scan', plan)
 
         expected_result = []
         result = self.graph.query(query)
-        self.env.assertEquals(result.result_set, expected_result)
+        self.env.assertEqual(result.result_set, expected_result)
 
         # Validate the transformation of multiple IN filters.
         query = "MATCH (n)-[f:friend]->() WHERE f.created_at IN [0, 1, 2] OR f.created_at IN [14, 15, 16] RETURN n.name ORDER BY n.name"
         plan = str(self.graph.explain(query))
-        self.env.assertIn('Edge By Index Scan', plan)
+        self.env.assertContains('Edge By Index Scan', plan)
 
         expected_result = [['Alon'], ['Roi']]
         result = self.graph.query(query)
-        self.env.assertEquals(result.result_set, expected_result)
+        self.env.assertEqual(result.result_set, expected_result)
 
         # Validate the transformation of multiple IN filters.
         query = "MATCH (n)-[f:friend]->() WHERE f.created_at IN [0, 1, 2] OR f.created_at IN [14, 15, 16] OR f.created_at IN [] RETURN n.name ORDER BY n.name"
         plan = str(self.graph.explain(query))
-        self.env.assertIn('Edge By Index Scan', plan)
+        self.env.assertContains('Edge By Index Scan', plan)
 
         result = self.graph.query(query)
-        self.env.assertEquals(result.result_set, expected_result)
+        self.env.assertEqual(result.result_set, expected_result)
 
     def test05_index_scan_and_id(self):
         query = """MATCH (n)-[f:friend]->()
@@ -163,48 +163,48 @@ class testEdgeByIndexScanFlow(FlowTestsBase):
                    ORDER BY n.name"""
         plan = str(self.graph.explain(query))
         query_result = self.graph.query(query)
-        self.env.assertIn('Filter', plan)
-        self.env.assertIn('Edge By Index Scan', plan)
+        self.env.assertContains('Filter', plan)
+        self.env.assertContains('Edge By Index Scan', plan)
 
         self.env.assertEqual(2, len(query_result.result_set))
         expected_result = [['Alon'], ['Roi']]
-        self.env.assertEquals(expected_result, query_result.result_set)
+        self.env.assertEqual(expected_result, query_result.result_set)
 
     # Validate placement of index scans and filter ops when not all filters can be replaced.
     def test06_index_scan_multiple_filters(self):
         query = "MATCH (n)-[f:friend]->() WHERE f.created_at = 31 AND NOT EXISTS(f.fakeprop) RETURN n.name"
         plan = str(self.graph.explain(query))
-        self.env.assertIn('Edge By Index Scan', plan)
-        self.env.assertNotIn('Conditional Traverse', plan)
-        self.env.assertIn('Filter', plan)
+        self.env.assertContains('Edge By Index Scan', plan)
+        self.env.assertNotContains('Conditional Traverse', plan)
+        self.env.assertContains('Filter', plan)
 
         query_result = self.graph.query(query)
         expected_result = ["Ailon"]
-        self.env.assertEquals(query_result.result_set[0], expected_result)
+        self.env.assertEqual(query_result.result_set[0], expected_result)
 
         query = "MATCH ({created_at:1})-[:friend {created_at:31}]->({created_at:2}) RETURN 1"
         plan = str(self.graph.explain(query))
-        self.env.assertIn('Edge By Index Scan', plan)
-        self.env.assertNotIn('Conditional Traverse', plan)
-        self.env.assertIn('Filter', plan)
+        self.env.assertContains('Edge By Index Scan', plan)
+        self.env.assertNotContains('Conditional Traverse', plan)
+        self.env.assertContains('Filter', plan)
 
     def test07_index_scan_with_params(self):
         query = "MATCH (n)-[f:friend]->() WHERE f.created_at = $time RETURN n.name"
         params = {'time': 31}
         plan = str(self.graph.explain(query, params=params))
-        self.env.assertIn('Edge By Index Scan', plan)
+        self.env.assertContains('Edge By Index Scan', plan)
         query_result = self.graph.query(query, params=params)
         expected_result = ["Ailon"]
-        self.env.assertEquals(query_result.result_set[0], expected_result)
+        self.env.assertEqual(query_result.result_set[0], expected_result)
 
     def test08_index_scan_with_param_array(self):
         query = "MATCH (n)-[f:friend]->() WHERE f.created_at in $times RETURN n.name"
         params = {'times': [31]}
         plan = str(self.graph.explain(query, params=params))
-        self.env.assertIn('Edge By Index Scan', plan)
+        self.env.assertContains('Edge By Index Scan', plan)
         query_result = self.graph.query(query, params=params)
         expected_result = ["Ailon"]
-        self.env.assertEquals(query_result.result_set[0], expected_result)
+        self.env.assertEqual(query_result.result_set[0], expected_result)
 
     def test09_runtime_index_utilization(self):
         # find all person nodes with age in the range 33-37
@@ -215,10 +215,10 @@ class testEdgeByIndexScanFlow(FlowTestsBase):
         RETURN n.name
         ORDER BY n.name"""
         plan = str(self.graph.explain(q))
-        self.env.assertIn('Edge By Index Scan', plan)
+        self.env.assertContains('Edge By Index Scan', plan)
         query_result = self.graph.query(q)
         expected_result = [['Ailon'], ['Ailon'], ['Boaz']]
-        self.env.assertEquals(query_result.result_set, expected_result)
+        self.env.assertEqual(query_result.result_set, expected_result)
 
         # similar to the query above, only this time the filter is specified
         # by an OR condition
@@ -228,10 +228,10 @@ class testEdgeByIndexScanFlow(FlowTestsBase):
         RETURN n.name
         ORDER BY n.name"""
         plan = str(self.graph.explain(q))
-        self.env.assertIn('Edge By Index Scan', plan)
+        self.env.assertContains('Edge By Index Scan', plan)
         query_result = self.graph.query(q)
         expected_result = [['Ailon'], ['Boaz']]
-        self.env.assertEquals(query_result.result_set, expected_result)
+        self.env.assertEqual(query_result.result_set, expected_result)
 
         # find all person nodes with age equals 33 'x'
         # 'x' value is known only at runtime
@@ -240,10 +240,10 @@ class testEdgeByIndexScanFlow(FlowTestsBase):
         RETURN n.name
         ORDER BY n.name"""
         plan = str(self.graph.explain(q))
-        self.env.assertIn('Edge By Index Scan', plan)
+        self.env.assertContains('Edge By Index Scan', plan)
         query_result = self.graph.query(q)
         expected_result = [["Ailon"]]
-        self.env.assertEquals(query_result.result_set, expected_result)
+        self.env.assertEqual(query_result.result_set, expected_result)
 
         # find all person nodes with age equals x + 1
         # the expression x+1 is evaluated to the constant 33 only at runtime
@@ -254,10 +254,10 @@ class testEdgeByIndexScanFlow(FlowTestsBase):
         RETURN n.name
         ORDER BY n.name"""
         plan = str(self.graph.explain(q))
-        self.env.assertIn('Edge By Index Scan', plan)
+        self.env.assertContains('Edge By Index Scan', plan)
         query_result = self.graph.query(q)
         expected_result = [["Ailon"]]
-        self.env.assertEquals(query_result.result_set, expected_result)
+        self.env.assertEqual(query_result.result_set, expected_result)
 
         # same idea as previous query only we've switched the position of the
         # operands, queried entity (p.age) is now on the right hand side of the
@@ -268,200 +268,200 @@ class testEdgeByIndexScanFlow(FlowTestsBase):
         RETURN n.name
         ORDER BY n.name"""
         plan = str(self.graph.explain(q))
-        self.env.assertIn('Edge By Index Scan', plan)
+        self.env.assertContains('Edge By Index Scan', plan)
         query_result = self.graph.query(q)
         expected_result = [["Ailon"]]
-        self.env.assertEquals(query_result.result_set, expected_result)
+        self.env.assertEqual(query_result.result_set, expected_result)
 
         # make sure all node scan not removed because we need to filter
         q = """MATCH (a)-[e:friend]->()
         WHERE a.created_at > 5 AND e.created_at > a.created_at
         RETURN DISTINCT a.name"""
         plan = str(self.graph.explain(q))
-        self.env.assertIn('Edge By Index Scan', plan)
-        self.env.assertIn('Filter', plan)
-        self.env.assertIn('All Node Scan', plan)
+        self.env.assertContains('Edge By Index Scan', plan)
+        self.env.assertContains('Filter', plan)
+        self.env.assertContains('All Node Scan', plan)
         query_result = self.graph.query(q)
         expected_result = [["Ori"]]
-        self.env.assertEquals(query_result.result_set, expected_result)
+        self.env.assertEqual(query_result.result_set, expected_result)
 
     def test10_index_scan_and_label_filter(self):
         query = "MATCH (n)-[f:friend]->(m) WHERE f.created_at = 1 RETURN n.name"
         plan = str(self.graph.explain(query))
-        self.env.assertIn('Edge By Index Scan', plan)
-        self.env.assertNotIn('All Node Scan', plan)
-        self.env.assertNotIn('Filter', plan)
+        self.env.assertContains('Edge By Index Scan', plan)
+        self.env.assertNotContains('All Node Scan', plan)
+        self.env.assertNotContains('Filter', plan)
         query_result = self.graph.query(query)
         expected_result = ["Roi"]
-        self.env.assertEquals(query_result.result_set[0], expected_result)
+        self.env.assertEqual(query_result.result_set[0], expected_result)
 
         query = "MATCH (n:person)-[f:friend]->(m) WHERE f.created_at = 1 RETURN n.name"
         plan = str(self.graph.explain(query))
-        self.env.assertIn('Edge By Index Scan', plan)
-        self.env.assertIn('Node By Label Scan', plan)
-        self.env.assertNotIn('Filter', plan)
+        self.env.assertContains('Edge By Index Scan', plan)
+        self.env.assertContains('Node By Label Scan', plan)
+        self.env.assertNotContains('Filter', plan)
         query_result = self.graph.query(query)
         expected_result = ["Roi"]
-        self.env.assertEquals(query_result.result_set[0], expected_result)
+        self.env.assertEqual(query_result.result_set[0], expected_result)
 
         query = "MATCH (n:person)-[f:friend]->(m:person) WHERE f.created_at = 1 RETURN n.name"
         plan = str(self.graph.explain(query))
-        self.env.assertIn('Edge By Index Scan', plan)
-        self.env.assertIn('Node By Label Scan', plan)
-        self.env.assertIn('Filter', plan)
+        self.env.assertContains('Edge By Index Scan', plan)
+        self.env.assertContains('Node By Label Scan', plan)
+        self.env.assertContains('Filter', plan)
         query_result = self.graph.query(query)
         expected_result = ["Roi"]
-        self.env.assertEquals(query_result.result_set[0], expected_result)
+        self.env.assertEqual(query_result.result_set[0], expected_result)
 
         query = "MATCH (n:person {name: 'Roi'})-[f:friend]->(m:person) WHERE f.created_at = 1 RETURN n.name"
         plan = str(self.graph.explain(query))
-        self.env.assertIn('Edge By Index Scan', plan)
-        self.env.assertIn('Node By Label Scan', plan)
-        self.env.assertIn('Filter', plan)
+        self.env.assertContains('Edge By Index Scan', plan)
+        self.env.assertContains('Node By Label Scan', plan)
+        self.env.assertContains('Filter', plan)
         query_result = self.graph.query(query)
         expected_result = ["Roi"]
-        self.env.assertEquals(query_result.result_set[0], expected_result)
+        self.env.assertEqual(query_result.result_set[0], expected_result)
 
         query = "MATCH (n:person {name: 'Alon'})-[f:friend]->(m:person) WHERE f.created_at = 1 RETURN n.name"
         plan = str(self.graph.explain(query))
-        self.env.assertIn('Edge By Index Scan', plan)
-        self.env.assertIn('Node By Label Scan', plan)
-        self.env.assertIn('Filter', plan)
+        self.env.assertContains('Edge By Index Scan', plan)
+        self.env.assertContains('Node By Label Scan', plan)
+        self.env.assertContains('Filter', plan)
         query_result = self.graph.query(query)
-        self.env.assertEquals(query_result.result_set, [])
+        self.env.assertEqual(query_result.result_set, [])
 
         query = "MATCH (n)<-[f:friend]-(m) WHERE f.created_at = 1 RETURN n.name"
         plan = str(self.graph.explain(query))
-        self.env.assertIn('Edge By Index Scan', plan)
-        self.env.assertNotIn('All Node Scan', plan)
-        self.env.assertNotIn('Filter', plan)
+        self.env.assertContains('Edge By Index Scan', plan)
+        self.env.assertNotContains('All Node Scan', plan)
+        self.env.assertNotContains('Filter', plan)
         query_result = self.graph.query(query)
         expected_result = ["Alon"]
-        self.env.assertEquals(query_result.result_set[0], expected_result)
+        self.env.assertEqual(query_result.result_set[0], expected_result)
 
         query = "MATCH (n:person)<-[f:friend]-(m) WHERE f.created_at = 1 RETURN n.name"
         plan = str(self.graph.explain(query))
-        self.env.assertIn('Edge By Index Scan', plan)
-        self.env.assertIn('Node By Label Scan', plan)
-        self.env.assertNotIn('Filter', plan)
+        self.env.assertContains('Edge By Index Scan', plan)
+        self.env.assertContains('Node By Label Scan', plan)
+        self.env.assertNotContains('Filter', plan)
         query_result = self.graph.query(query)
         expected_result = ["Alon"]
-        self.env.assertEquals(query_result.result_set[0], expected_result)
+        self.env.assertEqual(query_result.result_set[0], expected_result)
 
         query = "MATCH (n:person)<-[f:friend]-(m:person) WHERE f.created_at = 1 RETURN n.name"
         plan = str(self.graph.explain(query))
-        self.env.assertIn('Edge By Index Scan', plan)
-        self.env.assertIn('Node By Label Scan', plan)
-        self.env.assertIn('Filter', plan)
+        self.env.assertContains('Edge By Index Scan', plan)
+        self.env.assertContains('Node By Label Scan', plan)
+        self.env.assertContains('Filter', plan)
         query_result = self.graph.query(query)
         expected_result = ["Alon"]
-        self.env.assertEquals(query_result.result_set[0], expected_result)
+        self.env.assertEqual(query_result.result_set[0], expected_result)
 
         query = "MATCH (n:person {name: 'Roi'})<-[f:friend]-(m:person) WHERE f.created_at = 1 RETURN n.name"
         plan = str(self.graph.explain(query))
-        self.env.assertIn('Edge By Index Scan', plan)
-        self.env.assertIn('Node By Label Scan', plan)
-        self.env.assertIn('Filter', plan)
+        self.env.assertContains('Edge By Index Scan', plan)
+        self.env.assertContains('Node By Label Scan', plan)
+        self.env.assertContains('Filter', plan)
         query_result = self.graph.query(query)
-        self.env.assertEquals(query_result.result_set, [])
+        self.env.assertEqual(query_result.result_set, [])
 
         query = "MATCH (n:person {name: 'Alon'})<-[f:friend]-(m:person) WHERE f.created_at = 1 RETURN n.name"
         plan = str(self.graph.explain(query))
-        self.env.assertIn('Edge By Index Scan', plan)
-        self.env.assertIn('Node By Label Scan', plan)
-        self.env.assertIn('Filter', plan)
+        self.env.assertContains('Edge By Index Scan', plan)
+        self.env.assertContains('Node By Label Scan', plan)
+        self.env.assertContains('Filter', plan)
         query_result = self.graph.query(query)
         expected_result = ["Alon"]
-        self.env.assertEquals(query_result.result_set[0], expected_result)
+        self.env.assertEqual(query_result.result_set[0], expected_result)
 
     def test11_index_scan_and_with(self):
         query = "MATCH (n)-[f:friend]->(m) WHERE f.created_at = 1 WITH n RETURN n.name"
         plan = str(self.graph.explain(query))
-        self.env.assertIn('Edge By Index Scan', plan)
-        self.env.assertNotIn('All Node Scan', plan)
-        self.env.assertNotIn('Filter', plan)
+        self.env.assertContains('Edge By Index Scan', plan)
+        self.env.assertNotContains('All Node Scan', plan)
+        self.env.assertNotContains('Filter', plan)
         query_result = self.graph.query(query)
         expected_result = ["Roi"]
-        self.env.assertEquals(query_result.result_set[0], expected_result)
+        self.env.assertEqual(query_result.result_set[0], expected_result)
 
         query = "MATCH (n:person)-[f:friend]->(m) WHERE f.created_at = 1 WITH n RETURN n.name"
         plan = str(self.graph.explain(query))
-        self.env.assertIn('Edge By Index Scan', plan)
-        self.env.assertIn('Node By Label Scan', plan)
-        self.env.assertNotIn('Filter', plan)
+        self.env.assertContains('Edge By Index Scan', plan)
+        self.env.assertContains('Node By Label Scan', plan)
+        self.env.assertNotContains('Filter', plan)
         query_result = self.graph.query(query)
         expected_result = ["Roi"]
-        self.env.assertEquals(query_result.result_set[0], expected_result)
+        self.env.assertEqual(query_result.result_set[0], expected_result)
 
         query = "MATCH (n:person)-[f:friend]->(m:person) WHERE f.created_at = 1 WITH n RETURN n.name"
         plan = str(self.graph.explain(query))
-        self.env.assertIn('Edge By Index Scan', plan)
-        self.env.assertIn('Node By Label Scan', plan)
-        self.env.assertIn('Filter', plan)
+        self.env.assertContains('Edge By Index Scan', plan)
+        self.env.assertContains('Node By Label Scan', plan)
+        self.env.assertContains('Filter', plan)
         query_result = self.graph.query(query)
         expected_result = ["Roi"]
-        self.env.assertEquals(query_result.result_set[0], expected_result)
+        self.env.assertEqual(query_result.result_set[0], expected_result)
 
         query = "MATCH (n:person {name: 'Roi'})-[f:friend]->(m:person) WHERE f.created_at = 1 WITH n RETURN n.name"
         plan = str(self.graph.explain(query))
-        self.env.assertIn('Edge By Index Scan', plan)
-        self.env.assertIn('Node By Label Scan', plan)
-        self.env.assertIn('Filter', plan)
+        self.env.assertContains('Edge By Index Scan', plan)
+        self.env.assertContains('Node By Label Scan', plan)
+        self.env.assertContains('Filter', plan)
         query_result = self.graph.query(query)
         expected_result = ["Roi"]
-        self.env.assertEquals(query_result.result_set[0], expected_result)
+        self.env.assertEqual(query_result.result_set[0], expected_result)
 
         query = "MATCH (n:person {name: 'Alon'})-[f:friend]->(m:person) WHERE f.created_at = 1 WITH n RETURN n.name"
         plan = str(self.graph.explain(query))
-        self.env.assertIn('Edge By Index Scan', plan)
-        self.env.assertIn('Node By Label Scan', plan)
-        self.env.assertIn('Filter', plan)
+        self.env.assertContains('Edge By Index Scan', plan)
+        self.env.assertContains('Node By Label Scan', plan)
+        self.env.assertContains('Filter', plan)
         query_result = self.graph.query(query)
-        self.env.assertEquals(query_result.result_set, [])
+        self.env.assertEqual(query_result.result_set, [])
 
         query = "MATCH (n)<-[f:friend]-(m) WHERE f.created_at = 1 WITH n RETURN n.name"
         plan = str(self.graph.explain(query))
-        self.env.assertIn('Edge By Index Scan', plan)
-        self.env.assertNotIn('All Node Scan', plan)
-        self.env.assertNotIn('Filter', plan)
+        self.env.assertContains('Edge By Index Scan', plan)
+        self.env.assertNotContains('All Node Scan', plan)
+        self.env.assertNotContains('Filter', plan)
         query_result = self.graph.query(query)
         expected_result = ["Alon"]
-        self.env.assertEquals(query_result.result_set[0], expected_result)
+        self.env.assertEqual(query_result.result_set[0], expected_result)
 
         query = "MATCH (n:person)<-[f:friend]-(m) WHERE f.created_at = 1 WITH n RETURN n.name"
         plan = str(self.graph.explain(query))
-        self.env.assertIn('Edge By Index Scan', plan)
-        self.env.assertIn('Node By Label Scan', plan)
-        self.env.assertNotIn('Filter', plan)
+        self.env.assertContains('Edge By Index Scan', plan)
+        self.env.assertContains('Node By Label Scan', plan)
+        self.env.assertNotContains('Filter', plan)
         query_result = self.graph.query(query)
         expected_result = ["Alon"]
-        self.env.assertEquals(query_result.result_set[0], expected_result)
+        self.env.assertEqual(query_result.result_set[0], expected_result)
 
         query = "MATCH (n:person)<-[f:friend]-(m:person) WHERE f.created_at = 1 WITH n RETURN n.name"
         plan = str(self.graph.explain(query))
-        self.env.assertIn('Edge By Index Scan', plan)
-        self.env.assertIn('Node By Label Scan', plan)
-        self.env.assertIn('Filter', plan)
+        self.env.assertContains('Edge By Index Scan', plan)
+        self.env.assertContains('Node By Label Scan', plan)
+        self.env.assertContains('Filter', plan)
         query_result = self.graph.query(query)
         expected_result = ["Alon"]
-        self.env.assertEquals(query_result.result_set[0], expected_result)
+        self.env.assertEqual(query_result.result_set[0], expected_result)
 
         query = "MATCH (n:person {name: 'Roi'})<-[f:friend]-(m:person) WHERE f.created_at = 1 WITH n RETURN n.name"
         plan = str(self.graph.explain(query))
-        self.env.assertIn('Edge By Index Scan', plan)
-        self.env.assertIn('Node By Label Scan', plan)
-        self.env.assertIn('Filter', plan)
+        self.env.assertContains('Edge By Index Scan', plan)
+        self.env.assertContains('Node By Label Scan', plan)
+        self.env.assertContains('Filter', plan)
         query_result = self.graph.query(query)
-        self.env.assertEquals(query_result.result_set, [])
+        self.env.assertEqual(query_result.result_set, [])
 
         query = "MATCH (n:person {name: 'Alon'})<-[f:friend]-(m:person) WHERE f.created_at = 1 WITH n RETURN n.name"
         plan = str(self.graph.explain(query))
-        self.env.assertIn('Edge By Index Scan', plan)
-        self.env.assertIn('Node By Label Scan', plan)
-        self.env.assertIn('Filter', plan)
+        self.env.assertContains('Edge By Index Scan', plan)
+        self.env.assertContains('Node By Label Scan', plan)
+        self.env.assertContains('Filter', plan)
         query_result = self.graph.query(query)
         expected_result = ["Alon"]
-        self.env.assertEquals(query_result.result_set[0], expected_result)
+        self.env.assertEqual(query_result.result_set[0], expected_result)
 
     def test12_index_scan_numeric_accuracy(self):
         create_edge_range_index(self.graph, 'R1', 'id', sync=True)
@@ -472,50 +472,50 @@ class testEdgeByIndexScanFlow(FlowTestsBase):
         # test index search
         result = self.graph.query("MATCH ()-[u:R1{id: 990000000262240069}]->() RETURN u.id")
         expected_result = [[990000000262240069]]
-        self.env.assertEquals(result.result_set, expected_result)
+        self.env.assertEqual(result.result_set, expected_result)
 
         # test index search from child
         result = self.graph.query("MATCH ()-[u:R1]->() WITH min(u.id) as id MATCH ()-[u:R1{id: id}]->() RETURN u.id")
         expected_result = [[990000000262240069]]
-        self.env.assertEquals(result.result_set, expected_result)
+        self.env.assertEqual(result.result_set, expected_result)
 
         # test index search with or
         result = self.graph.query("MATCH ()-[u:R1]->() WHERE u.id = 990000000262240069 OR u.id = 990000000262240070 RETURN u.id ORDER BY u.id")
         expected_result = [[990000000262240069], [990000000262240070]]
-        self.env.assertEquals(result.result_set, expected_result)
+        self.env.assertEqual(result.result_set, expected_result)
 
         # test resetting index scan operation
         result = self.graph.query("MATCH ()-[u1:R1]->(), ()-[u2:R1]->() WHERE u1.id = 990000000262240069 AND (u2.id = 990000000262240070 OR u2.id = 990000000262240071) RETURN u1.id, u2.id ORDER BY u1.id, u2.id")
         expected_result = [[990000000262240069, 990000000262240070], [990000000262240069, 990000000262240071]]
-        self.env.assertEquals(result.result_set, expected_result)
+        self.env.assertEqual(result.result_set, expected_result)
 
         # test resetting index scan operation when using the consume from child function
         result = self.graph.query("MATCH ()-[u:R1]->() WITH min(u.id) as id MATCH ()-[u1:R1]->(), ()-[u2:R1]->() WHERE u1.id = 990000000262240069 AND (u2.id = 990000000262240070 OR u2.id = 990000000262240071) RETURN u1.id, u2.id ORDER BY u1.id, u2.id")
         expected_result = [[990000000262240069, 990000000262240070], [990000000262240069, 990000000262240071]]
-        self.env.assertEquals(result.result_set, expected_result)
+        self.env.assertEqual(result.result_set, expected_result)
 
         # test resetting index scan operation when rebuild index is required
         result = self.graph.query("MATCH ()-[u:R1]->() WITH min(u.id) as id MATCH ()-[u1:R1]->(), ()-[u2:R1]->() WHERE u1.id = id AND (u2.id = 990000000262240070 OR u2.id = 990000000262240071) RETURN u1.id, u2.id ORDER BY u1.id, u2.id")
         expected_result = [[990000000262240069, 990000000262240070], [990000000262240069, 990000000262240071]]
-        self.env.assertEquals(result.result_set, expected_result)
+        self.env.assertEqual(result.result_set, expected_result)
 
         # test index scan with 2 different attributes
         result = self.graph.query("MATCH ()-[u:R2]->() WHERE u.id1 = 990000000262240069 AND u.id2 = 990000000262240067 RETURN u.id1, u.id2")
         expected_result = [[990000000262240069, 990000000262240067]]
-        self.env.assertEquals(result.result_set, expected_result)
+        self.env.assertEqual(result.result_set, expected_result)
 
     def test13_create_index_multi_edge(self):
         result = self.graph.query("CREATE (a:A), (b:B)")
-        self.env.assertEquals(result.nodes_created, 2)
+        self.env.assertEqual(result.nodes_created, 2)
 
         result = self.graph.query("MATCH (a:A), (b:B) UNWIND range(1, 500) AS x CREATE (a)-[:R{v:x}]->(b)")
-        self.env.assertEquals(result.relationships_created, 500)
+        self.env.assertEqual(result.relationships_created, 500)
 
         result = create_edge_range_index(self.graph, 'R', 'v', sync=True)
-        self.env.assertEquals(result.indices_created, 1)
+        self.env.assertEqual(result.indices_created, 1)
 
         result = self.graph.query("MATCH (a:A)-[r:R]->(b:B) WHERE r.v > 0 RETURN count(r)")
-        self.env.assertEquals(result.result_set[0][0], 500)
+        self.env.assertEqual(result.result_set[0][0], 500)
 
     def test14_self_referencing_edge(self):
         self.graph.delete()
@@ -523,12 +523,12 @@ class testEdgeByIndexScanFlow(FlowTestsBase):
         # (0)->(0)
 
         res = self.graph.query("CREATE (a)-[e:R{v:1}]->(a) RETURN a, e")
-        self.env.assertEquals(res.nodes_created, 1)
-        self.env.assertEquals(res.relationships_created, 1)
+        self.env.assertEqual(res.nodes_created, 1)
+        self.env.assertEqual(res.relationships_created, 1)
 
         # validate IDs
-        self.env.assertEquals(res.result_set[0][0].id, 0)
-        self.env.assertEquals(res.result_set[0][1].id, 0)
+        self.env.assertEqual(res.result_set[0][0].id, 0)
+        self.env.assertEqual(res.result_set[0][1].id, 0)
 
         # create index over R.v
         create_edge_range_index(self.graph, "R", "v", sync=True)
@@ -538,11 +538,11 @@ class testEdgeByIndexScanFlow(FlowTestsBase):
 
         # validate index is utilized
         plan = str(self.graph.explain(q))
-        self.env.assertIn("Edge By Index Scan", plan)
+        self.env.assertContains("Edge By Index Scan", plan)
 
         # get result using index scan
         res = self.graph.query(q)
-        self.env.assertEquals(len(res.result_set), 1)
+        self.env.assertEqual(len(res.result_set), 1)
         actual = res.result_set
 
         # get results without index
@@ -550,5 +550,5 @@ class testEdgeByIndexScanFlow(FlowTestsBase):
         expected = res.result_set
 
         # make sure the same edge is returned
-        self.env.assertEquals(expected, actual)
+        self.env.assertEqual(expected, actual)
 

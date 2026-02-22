@@ -328,7 +328,7 @@ class testAllShortestPaths():
         ]
 
         for result in results:
-            self.env.assertEquals(len(result.result_set), 1)
+            self.env.assertEqual(len(result.result_set), 1)
 
             all_minimal = [p for p in self.sp_paths if p[1]
                            == self.sp_paths[0][1]]
@@ -340,7 +340,7 @@ class testAllShortestPaths():
         ]
 
         for result in results:
-            self.env.assertEquals(len(result.result_set), 1)
+            self.env.assertEqual(len(result.result_set), 1)
 
             all_minimal = [p for p in self.incoming_sp_paths if p[1]
                            == self.incoming_sp_paths[0][1]]
@@ -354,7 +354,7 @@ class testAllShortestPaths():
 
         for result in results:
             all_minimal = [p for p in self.sp_paths if p[1] == self.sp_paths[0][1]]
-            self.env.assertEquals(len(result.result_set), len(all_minimal))
+            self.env.assertEqual(len(result.result_set), len(all_minimal))
             for i in range(0, len(all_minimal)):
                 self.env.assertContains(result.result_set[i], all_minimal)
 
@@ -365,7 +365,7 @@ class testAllShortestPaths():
 
         for result in results:
             all_minimal = [p for p in self.incoming_sp_paths if p[1] == self.incoming_sp_paths[0][1]]
-            self.env.assertEquals(len(result.result_set), len(all_minimal))
+            self.env.assertEqual(len(result.result_set), len(all_minimal))
             for i in range(0, len(all_minimal)):
                 self.env.assertContains(result.result_set[i], all_minimal)
 
@@ -377,7 +377,7 @@ class testAllShortestPaths():
 
         for result in results:
             expected_len = min(len(self.sp_paths), 5)
-            self.env.assertEquals(len(result.result_set), expected_len)
+            self.env.assertEqual(len(result.result_set), expected_len)
             for i in range(0, expected_len):
                 self.env.assertContains(result.result_set[i], self.sp_paths)
 
@@ -387,7 +387,7 @@ class testAllShortestPaths():
         ]
 
         for result in results:
-            self.env.assertEquals(len(result.result_set), expected_len)
+            self.env.assertEqual(len(result.result_set), expected_len)
             for i in range(0, expected_len):
                 self.env.assertContains(result.result_set[i], self.incoming_sp_paths)
 
@@ -419,8 +419,8 @@ class testAllShortestPaths():
         ]
 
         for result in results:
-            self.env.assertEquals(len(result.result_set), 1)
-            self.env.assertEquals(result.result_set[0], self.ss_paths[0])
+            self.env.assertEqual(len(result.result_set), 1)
+            self.env.assertEqual(result.result_set[0], self.ss_paths[0])
 
     def test06_ss_all_minimal_paths(self):
         results = [
@@ -430,7 +430,7 @@ class testAllShortestPaths():
 
         for result in results:
             all_minimal = [p for p in self.ss_paths if p[1] == self.ss_paths[0][1]]
-            self.env.assertEquals(len(result.result_set), len(all_minimal))
+            self.env.assertEqual(len(result.result_set), len(all_minimal))
             for i in range(0, len(all_minimal)):
                 self.env.assertContains(result.result_set[i], all_minimal)
 
@@ -441,6 +441,6 @@ class testAllShortestPaths():
         ]
 
         for result in results:
-            self.env.assertEquals(len(result.result_set), 5)
+            self.env.assertEqual(len(result.result_set), 5)
             for i in range(0, 5):
                 self.env.assertContains(result.result_set[i], self.ss_paths)

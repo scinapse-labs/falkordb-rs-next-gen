@@ -371,5 +371,5 @@ class testParams(FlowTestsBase):
         query_info = QueryInfo(query=query, description="Test id scan with params", expected_result=expected_results)
         self._assert_resultset_equals_expected(self.graph.query(query, params), query_info)
         plan = str(self.graph.explain(query, params=params))
-        self.env.assertIn('NodeByIdSeek', plan)
+        self.env.assertContains('NodeByIdSeek', plan)
 

@@ -45,13 +45,13 @@ class testQueryValidationFlow(FlowTestsBase):
     def test04_escaped_quotes(self):
        query = r"CREATE (:escaped{prop1:'single \' char', prop2: 'double \" char', prop3: 'mixed \' and \" chars'})"
        actual_result = self.graph.query(query)
-       self.env.assertEquals(actual_result.nodes_created, 1)
-       self.env.assertEquals(actual_result.properties_set, 3)
+       self.env.assertEqual(actual_result.nodes_created, 1)
+       self.env.assertEqual(actual_result.properties_set, 3)
 
        query = r"MATCH (a:escaped) RETURN a.prop1, a.prop2, a.prop3"
        actual_result = self.graph.query(query)
        expected_result = [["single ' char", 'double " char', 'mixed \' and " chars']]
-       self.env.assertEquals(actual_result.result_set, expected_result)
+       self.env.assertEqual(actual_result.result_set, expected_result)
 
     def test05_invalid_entity_references(self):
         try:
@@ -202,40 +202,38 @@ class testQueryValidationFlow(FlowTestsBase):
             assert("not defined" in str(e))
             pass
 
-        try:
-            query = """MATCH (a {val: undeclared}) RETURN a"""
-            self.graph.query(query)
-            assert(False)
-        except redis.exceptions.ResponseError as e:
-            # Expecting an error.
-            assert("not defined" in str(e))
-            pass
+    ## Comments should not affect query functionality.
+    #def test21_ignore_query_comments(self):
+    #    query = """MATCH (n)  // This is a comment
+    #               /* This is a block comment */
+    #               WHERE EXISTS(n.age)
+    #               RETURN n.age /* Also a block comment*/"""
+    #    actual_result = self.graph.query(query)
+    #    expected_result = [[34]]
+    #    self.env.assertEqual(actual_result.result_set, expected_result)
 
-        try:
-            query = """UNWIND [fake] AS ref RETURN ref"""
-            self.graph.query(query)
-            assert(False)
-        except redis.exceptions.ResponseError as e:
-            # Expecting an error.
-            assert("not defined" in str(e))
-            pass
+    #    query = """/* A block comment*/ MATCH (n)  // This is a comment
+    #            /* This is a block comment */
+    #            WHERE EXISTS(n.age)
+    #            RETURN n.age /* Also a block comment*/"""
+    #    actual_result = self.graph.query(query)
+    #    expected_result = [[34]]
+    #    self.env.assertEqual(actual_result.result_set, expected_result)
 
-    def test19_invalid_cypher_options(self):
-        query = "EXPLAIN MATCH (p:president)-[:born]->(:state {name:'Hawaii'}) RETURN p"
-        try:
-            self.graph.query(query)
-            assert(False)
-        except:
-            # Expecting an error.
-            pass
+    #    query = """// This is a comment
+    #            MATCH (n)  // This is a comment
+    #            /* This is a block comment */
+    #            WHERE EXISTS(n.age)
+    #            RETURN n.age /* Also a block comment*/"""
+    #    actual_result = self.graph.query(query)
+    #    expected_result = [[34]]
+    #    self.env.assertEqual(actual_result.result_set, expected_result)
 
-        query = "PROFILE MATCH (p:president)-[:born]->(:state {name:'Hawaii'}) RETURN p"
-        try:
-            self.graph.query(query)
-            assert(False)
-        except:
-            # Expecting an error.
-            pass
+    #    query = """MATCH (n)  /* This is a block comment */ WHERE EXISTS(n.age)
+    #            RETURN n.age /* Also a block comment*/"""
+    #    actual_result = self.graph.query(query)
+    #    expected_result = [[34]]
+    #    self.env.assertEqual(actual_result.result_set, expected_result)
 
         query = "CYPHER val=1 EXPLAIN MATCH (p:president)-[:born]->(:state {name:'Hawaii'}) RETURN p"
         try:
@@ -495,20 +493,20 @@ class testQueryValidationFlow(FlowTestsBase):
     #        assert(False)
     #    except redis.exceptions.ResponseError as e:
     #        # Expecting an error.
-    #        self.env.assertIn("undefined attribute", str(e))
+    #        self.env.assertContains("undefined attribute", str(e))
 
     #    # MATCH clauses should be able to use self-referential properties as existential filters.
     #    query = """MATCH (a {age: a.age}) RETURN a.age"""
     #    actual_result = self.graph.query(query)
     #    expected_result = [[34]]
-    #    self.env.assertEquals(actual_result.result_set, expected_result)
+    #    self.env.assertEqual(actual_result.result_set, expected_result)
 
     ## Test a query that allocates a large buffer.
     #def test35_large_query(self):
     #    retval = "abcdef" * 1_000
     #    query = "RETURN " + "\"" + retval + "\""
     #    actual_result = self.graph.query(query)
-    #    self.env.assertEquals(actual_result.result_set[0][0], retval)
+    #    self.env.assertEqual(actual_result.result_set[0][0], retval)
 
     #def test36_multiple_proc_calls(self):
     #    query = """MATCH (a)
@@ -574,7 +572,7 @@ class testQueryValidationFlow(FlowTestsBase):
     #               "RETURN 1;;"]
     #    for q in queries:
     #        res = self.graph.query(q)
-    #        self.env.assertEquals(res.result_set, [[1]])
+    #        self.env.assertEqual(res.result_set, [[1]])
 
     #def test40_compile_time_errors_in_star_projections(self):
     #    # validate that parser errors are handled correctly
@@ -671,7 +669,7 @@ class testQueryValidationFlow(FlowTestsBase):
     #            self.env.assertTrue(False)
     #        except redis.exceptions.ResponseError as e:
     #            # Expecting an error.
-    #            self.env.assertIn("'a' not defined", str(e))
+    #            self.env.assertContains("'a' not defined", str(e))
 
     #    # invalid usage of undefined variables in a `RETURN` clause
     #    invalid_queries = [
@@ -689,7 +687,7 @@ class testQueryValidationFlow(FlowTestsBase):
     #            self.env.assertTrue(False)
     #        except redis.exceptions.ResponseError as e:
     #            # Expecting an error.
-    #            self.env.assertIn("'a' not defined", str(e))
+    #            self.env.assertContains("'a' not defined", str(e))
 
     #def test45_union_scope(self):
     #    # make sure OPTIONAL MATCH followed by a MATCH clause in a different

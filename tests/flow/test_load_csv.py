@@ -203,23 +203,23 @@ class testLoadLocalCSV():
         q = "LOAD CSV FROM $file AS row RETURN row ORDER BY row"
         result = self.graph.query(q, {'file': 'file://' + EMPTY_CELL_CSV}).result_set
         actual = result[1][0] # skip header row
-        self.env.assertIn("roi", actual)
-        self.env.assertIn(None, actual)
+        self.env.assertContains("roi", actual)
+        self.env.assertContains(None, actual)
 
         q = "LOAD CSV WITH HEADERS FROM $file AS row RETURN row"
         result = self.graph.query(q, {'file': 'file://' + EMPTY_CELL_CSV}).result_set
         actual = result[0][0]
-        self.env.assertNotIn('LastName', actual)
-        self.env.assertEquals(actual['FirstName'], 'roi')
-        self.env.assertEquals(actual['Age'], '40')
+        self.env.assertNotContains('LastName', actual)
+        self.env.assertEqual(actual['FirstName'], 'roi')
+        self.env.assertEqual(actual['Age'], '40')
 
         # create nodes from empty cell csv
         q = "LOAD CSV WITH HEADERS FROM $file AS row CREATE (p:Person) SET p = row RETURN p"
         result = self.graph.query(q, {'file': 'file://' + EMPTY_CELL_CSV}).result_set
         node = result[0][0]
         self.env.assertEqual(len(node.properties), 2)
-        self.env.assertEquals(node.properties['Age'], '40')
-        self.env.assertEquals(node.properties['FirstName'], 'roi')
+        self.env.assertEqual(node.properties['Age'], '40')
+        self.env.assertEqual(node.properties['FirstName'], 'roi')
 
     def test06_empty_column_csv(self):
         q = "LOAD CSV WITH HEADERS FROM $file AS row RETURN row ORDER BY row"
@@ -251,7 +251,7 @@ class testLoadLocalCSV():
             result = g.query(q, {'file': 'file://' + file_name}).result_set
             for i, row in enumerate(result):
                 # validate result
-                self.env.assertEquals(row[0], expected[i])
+                self.env.assertEqual(row[0], expected[i])
 
     def test08_project_csv_as_map(self):
         g = self.graph
@@ -277,7 +277,7 @@ class testLoadLocalCSV():
                 expected.append([obj])
             
             result = g.query(q, {'file': 'file://' + file}).result_set
-            self.env.assertEquals(result, expected)
+            self.env.assertEqual(result, expected)
 
     def test09_load_csv_multiple_times(self):
         # project the same CSV multiple times
@@ -293,7 +293,7 @@ class testLoadLocalCSV():
             for row in SHORT_CSV_WITHOUT_HEADERS_DATA:
                 expected.append([i, row])
 
-        self.env.assertEquals(result, expected)
+        self.env.assertEqual(result, expected)
 
     def test10_load_multiple_files(self):
         g = self.graph
@@ -310,11 +310,11 @@ class testLoadLocalCSV():
         file_1_rows = SHORT_CSV_WITHOUT_HEADERS_DATA
         file_2_rows = SHORT_CSV_WITH_HEADERS_HEADER + SHORT_CSV_WITH_HEADERS_DATA
 
-        self.env.assertEquals(len(file_1_rows), len(result[0][0]))
+        self.env.assertEqual(len(file_1_rows), len(result[0][0]))
         for item in file_1_rows:
             self.env.assertTrue(item in result[0][0])
 
-        self.env.assertEquals(len(file_2_rows), len(result[0][1]))
+        self.env.assertEqual(len(file_2_rows), len(result[0][1]))
         for item in file_2_rows:
             self.env.assertTrue(item in result[0][1])
 
@@ -341,8 +341,8 @@ class testLoadLocalCSV():
         actual = self.graph.query(q).result_set
 
         # validate returned arrays
-        self.env.assertEquals(actual[0][0], BOM_CSV_HEADER)
-        self.env.assertEquals(actual[1][0], BOM_CSV_DATA)
+        self.env.assertEqual(actual[0][0], BOM_CSV_HEADER)
+        self.env.assertEqual(actual[1][0], BOM_CSV_DATA)
 
         #-----------------------------------------------------------------------
 
@@ -352,7 +352,7 @@ class testLoadLocalCSV():
 
         # validate returned dict
         expected = {k: v for k, v in zip(BOM_CSV_HEADER, BOM_CSV_DATA)}
-        self.env.assertEquals(actual[0][0], expected)
+        self.env.assertEqual(actual[0][0], expected)
 
 
 class testLoadRemoteCSV():
@@ -385,7 +385,7 @@ class testLoadRemoteCSV():
 
         result = self.graph.query(query, {'url': url}).result_set
         for row in result:
-            self.env.assertIn(row[0], data)
+            self.env.assertContains(row[0], data)
 
     def test_02_none_existing_url(self):
         query = "LOAD CSV FROM $url AS row RETURN row"
@@ -430,10 +430,10 @@ class testLoadCsvPlan():
         # and a create clause
         for q in queries:
             plan = str(self.graph.explain(q, {'file': 'file://' + SHORT_CSV_WITH_HEADERS}))
-            self.env.assertIn("Node By Index Scan | (a:Person)", plan)
-            self.env.assertIn("Node By Index Scan | (b:Person)", plan)
-            self.env.assertIn("Cartesian Product", plan)
-            self.env.assertIn("Create", plan)
+            self.env.assertContains("Node By Index Scan | (a:Person)", plan)
+            self.env.assertContains("Node By Index Scan | (b:Person)", plan)
+            self.env.assertContains("Cartesian Product", plan)
+            self.env.assertContains("Create", plan)
 
         # run query and validate results
         # create nodes

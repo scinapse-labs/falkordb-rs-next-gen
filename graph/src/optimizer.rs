@@ -15,12 +15,12 @@
 //! After:  NodeByIndexScan(:Person, age, Equal(30))
 //! ```
 //!
-//! ## Node By ID Optimization
+//! ## Node By Label And ID Optimization
 //!
 //! Replaces label scan + ID filter with direct ID lookup:
 //! ```text
 //! Before: NodeByLabelScan(:Person) → Filter(id(n) = 42)
-//! After:  NodeByIdScan(:Person, 42)
+//! After:  NodeByLabelAndIdScan(:Person, 42)
 //! ```
 //!
 //! ## Good Practice
@@ -29,15 +29,17 @@
 //! to avoid issues with mutable iteration. This is a common pattern when
 //! working with tree structures that need in-place modification.
 
+use std::collections::HashSet;
 use std::sync::Arc;
 
-use orx_tree::{Bfs, Dyn, DynTree, NodeIdx, NodeRef};
+use orx_tree::{Bfs, Dyn, DynNode, DynTree, NodeIdx, NodeRef};
 
 use crate::{
     ast::{ExprIR, QueryExpr, QueryNode, Variable},
     graph::graph::Graph,
     indexer::IndexQuery,
     planner::IR,
+    runtime::runtime::GetVariables,
     tree,
 };
 
@@ -250,30 +252,229 @@ fn utilize_index(
     }
 }
 
+fn get_id_filter(
+    filter: DynNode<ExprIR<Variable>>,
+    node_alias: &Variable,
+) -> Option<(QueryExpr<Variable>, ExprIR<Variable>)> {
+    if matches!(
+        filter.data(),
+        ExprIR::Eq | ExprIR::Gt | ExprIR::Ge | ExprIR::Lt | ExprIR::Le
+    ) && let ExprIR::FuncInvocation(inner_func) = filter.child(0).data()
+        && inner_func.name == "id"
+        && let ExprIR::Variable(var) = filter.child(0).child(0).data()
+        && var == node_alias
+    {
+        Some((
+            Arc::new(filter.child(1).clone_as_tree()),
+            filter.data().clone(),
+        ))
+    } else if matches!(
+        filter.data(),
+        ExprIR::Eq | ExprIR::Gt | ExprIR::Ge | ExprIR::Lt | ExprIR::Le
+    ) && let ExprIR::FuncInvocation(inner_func) = filter.child(1).data()
+        && inner_func.name == "id"
+        && let ExprIR::Variable(var) = filter.child(1).child(0).data()
+        && var == node_alias
+    {
+        let op = match filter.data() {
+            ExprIR::Eq => ExprIR::Eq,
+            ExprIR::Gt => ExprIR::Lt,
+            ExprIR::Ge => ExprIR::Le,
+            ExprIR::Lt => ExprIR::Gt,
+            ExprIR::Le => ExprIR::Ge,
+            _ => unreachable!(),
+        };
+        Some((Arc::new(filter.child(0).clone_as_tree()), op))
+    } else {
+        None
+    }
+}
+
+/// Collects all variable IDs referenced in an expression tree.
+fn collect_expr_variables(expr: &DynTree<ExprIR<Variable>>) -> HashSet<u32> {
+    let mut vars = HashSet::new();
+    for idx in expr.root().indices::<Bfs>() {
+        if let ExprIR::Variable(var) = expr.node(idx).data() {
+            vars.insert(var.id);
+        }
+    }
+    vars
+}
+
+/// Collects all variable IDs provided by a plan subtree.
+fn collect_subtree_variables(node: &DynNode<IR>) -> HashSet<u32> {
+    let mut vars = HashSet::new();
+    for var in node.get_variables() {
+        vars.insert(var.id);
+    }
+    vars
+}
+
+/// Pushes filter conjuncts down through nodes.
+///
+/// Transforms:
+/// ```text
+/// Filter(AND(cond_a, cond_b))
+///   └─ CartesianProduct
+///        ├─ ChildA
+///        └─ ChildB
+/// ```
+/// Into:
+/// ```text
+/// CartesianProduct
+///   ├─ Filter(cond_a)
+///   │    └─ ChildA
+///   └─ Filter(cond_b)
+///        └─ ChildB
+/// ```
+///
+/// Each conjunct is routed to the child whose variables fully cover the
+/// conjunct's referenced variables. Conjuncts that span multiple children
+/// remain at the current level.
+fn push_filters_down(optimized_plan: &mut DynTree<IR>) {
+    loop {
+        let mut changed = false;
+        let indices = optimized_plan.root().indices::<Bfs>().collect::<Vec<_>>();
+        for idx in indices {
+            let IR::Filter(filter) = optimized_plan.node(idx).data() else {
+                continue;
+            };
+            if !optimized_plan
+                .node(idx)
+                .children()
+                .any(|c| c.num_children() > 0)
+            {
+                continue; // Skip if filter already is downstream
+            }
+            let filter = filter.clone();
+
+            // Split filter into individual conjuncts
+            let conjuncts: Vec<DynTree<ExprIR<Variable>>> =
+                if matches!(filter.root().data(), ExprIR::And) {
+                    filter
+                        .root()
+                        .children()
+                        .map(|c| c.clone_as_tree())
+                        .collect()
+                } else {
+                    vec![(*filter).clone()]
+                };
+
+            // Collect children and the variables they provide
+            let children: Vec<_> = optimized_plan
+                .node(idx)
+                .children()
+                .filter(|c| {
+                    c.num_children() > 0 && !matches!(c.data(), IR::Project(..) | IR::Aggregate(..))
+                })
+                .flat_map(|c| c.children().collect::<Vec<_>>())
+                .map(|c| (c.idx(), collect_subtree_variables(&c)))
+                .collect();
+
+            // Route each conjunct to the child that provides all its variables
+            let mut child_conjuncts: Vec<Vec<DynTree<ExprIR<Variable>>>> =
+                vec![vec![]; children.len()];
+            let mut remaining: Vec<DynTree<ExprIR<Variable>>> = vec![];
+
+            for conjunct in conjuncts {
+                let conj_vars = collect_expr_variables(&conjunct);
+                let matched_child = children
+                    .iter()
+                    .enumerate()
+                    .find(|(_, (_, child_vars))| conj_vars.iter().all(|v| child_vars.contains(v)))
+                    .map(|(i, _)| i);
+                if let Some(i) = matched_child {
+                    child_conjuncts[i].push(conjunct);
+                } else {
+                    remaining.push(conjunct);
+                }
+            }
+
+            // Skip if nothing can be pushed down
+            if child_conjuncts.iter().all(Vec::is_empty) {
+                continue;
+            }
+
+            // For each child with matching conjuncts: add a Filter-wrapped
+            // clone as a sibling, then prune the original.
+            for (i, conjuncts) in child_conjuncts.into_iter().enumerate() {
+                if conjuncts.is_empty() {
+                    continue;
+                }
+
+                let child_idx = children[i].0;
+
+                // Build the filter expression for this child
+                let filter_expr = if conjuncts.len() == 1 {
+                    Arc::new(conjuncts.into_iter().next().unwrap())
+                } else {
+                    Arc::new(tree!(ExprIR::And; conjuncts))
+                };
+
+                // Insert the new filter node above the child
+                optimized_plan
+                    .node_mut(child_idx)
+                    .push_parent(IR::Filter(filter_expr));
+            }
+
+            // Update or remove the original Filter
+            if remaining.is_empty() {
+                optimized_plan.node_mut(idx).take_out();
+            } else if remaining.len() == 1 {
+                *optimized_plan.node_mut(idx).data_mut() =
+                    IR::Filter(Arc::new(remaining.into_iter().next().unwrap()));
+            } else {
+                *optimized_plan.node_mut(idx).data_mut() =
+                    IR::Filter(Arc::new(tree!(ExprIR::And; remaining)));
+            }
+
+            changed = true;
+            break; // Restart traversal after structural modification
+        }
+
+        if !changed {
+            break;
+        }
+    }
+}
+
 /// Replaces label scan + ID filter with direct node ID lookup.
 fn utilize_node_by_id(optimized_plan: &mut DynTree<IR>) {
     let indices = optimized_plan.root().indices::<Bfs>().collect::<Vec<_>>();
 
     for idx in indices {
-        let node = if let IR::NodeByLabelScan(node) = optimized_plan.node(idx).data()
-            && let IR::Filter(filter) = optimized_plan.node(idx).parent().unwrap().data()
-            && matches!(filter.root().data(), ExprIR::Eq | ExprIR::Gt | ExprIR::Lt)
-            && let ExprIR::FuncInvocation(inner_func) = filter.root().child(0).data()
-            && inner_func.name == "id"
-            && let ExprIR::Variable(var) = filter.root().child(0).child(0).data()
-            && node.alias == *var
-        {
-            Some((
-                node.clone(),
-                Arc::new(filter.root().child(1).clone_as_tree()),
-                filter.root().data().clone(),
-            ))
-        } else {
-            None
+        let mut filters = vec![];
+        let IR::NodeByLabelScan(node) = optimized_plan.node(idx).data() else {
+            continue;
         };
-        if let Some((node, id, op)) = node {
+        let node = node.clone();
+        if let IR::Filter(filter) = optimized_plan.node(idx).parent().unwrap().data() {
+            if let Some((id, op)) = get_id_filter(filter.root(), &node.alias) {
+                filters.push((id, op));
+            } else if matches!(filter.root().data(), ExprIR::And) {
+                for child in filter.root().children() {
+                    if let Some((id, op)) = get_id_filter(child, &node.alias) {
+                        filters.push((id, op));
+                    } else {
+                        filters.clear();
+                        break;
+                    }
+                }
+            }
+        }
+        if !filters.is_empty() {
             let mut new_op = optimized_plan.node_mut(idx);
-            *new_op.data_mut() = IR::NodeByIdScan { node, id, op };
+            if node.labels.is_empty() {
+                *new_op.data_mut() = IR::NodeByIdSeek {
+                    node: node.clone(),
+                    filter: filters,
+                };
+            } else {
+                *new_op.data_mut() = IR::NodeByLabelAndIdScan {
+                    node: node.clone(),
+                    filter: filters,
+                };
+            }
             new_op.parent_mut().unwrap().take_out();
         }
     }
@@ -297,6 +498,7 @@ pub fn optimize(
 ) -> DynTree<IR> {
     let mut optimized_plan = plan.clone();
 
+    push_filters_down(&mut optimized_plan);
     utilize_index(&mut optimized_plan, graph);
     utilize_node_by_id(&mut optimized_plan);
 

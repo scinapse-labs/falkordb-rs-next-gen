@@ -262,7 +262,7 @@ class testWithClause(FlowTestsBase):
                 self.env.assertTrue(False)
             except redis.exceptions.ResponseError as e:
                 # Expecting an error.
-                self.env.assertIn("not defined", str(e))
+                self.env.assertContains("not defined", str(e))
 
     def test12_cartesian_product_reset_single_response(self):
         # Verify that WITH projections that with no children are reset

@@ -14,13 +14,11 @@ test_load_csv
 test_maintain_record_order
 test_map
 test_multi_label
-test_node_by_id
 test_null_handling
 test_opening_node
 test_optimizations_plan
 test_optional_match
 test_order_by
-test_params
 test_path_filter
 test_profile
 test_query_mem_limit
