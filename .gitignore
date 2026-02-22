@@ -11,7 +11,7 @@ myenv
 coverage.sh
 codecov.*
 temp-*
-coverage
+/coverage
 dump.rdb
 .antlr
 cov.profdata
@@ -32,3 +32,4 @@ redisearch
 .zed/
 .github/copilot-instructions.md
 attrs/
+.cargo-cache
