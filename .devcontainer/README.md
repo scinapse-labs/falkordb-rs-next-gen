@@ -51,7 +51,7 @@ When working inside the devcontainer with Claude Code, you have access to the fo
 
 - `/build` - Build and lint the project
 - `/test` - Run various test suites (unit, e2e, flow, TCK, etc.)
-- `/clippy` - Run advanced Clippy lints (pedantic, nursery, cargo)
+- `/lint` - Run advanced Clippy lints (pedantic, nursery, cargo)
 - `/coverage` - Run comprehensive code coverage analysis
 
 All skills automatically detect whether they're running inside or outside the devcontainer and adjust accordingly.

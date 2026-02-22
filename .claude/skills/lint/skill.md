@@ -1,15 +1,15 @@
-# /clippy - Advanced Clippy Linting
+# /lint - Advanced Clippy Linting
 
 Run Clippy with pedantic, nursery, and cargo lints enabled for comprehensive code quality checks.
 
 ## Usage
 
-- `/clippy` - Run clippy with advanced lint settings on all targets
-- `/clippy fix` - Automatically fix clippy warnings where possible
+- `/lint` - Run clippy with advanced lint settings on all targets
+- `/lint fix` - Automatically fix clippy warnings where possible
 
 ## Instructions
 
-When the user invokes `/clippy`:
+When the user invokes `/lint`:
 
 1. **Standard clippy run** (default, no argument):
    Run clippy with comprehensive lint settings:

@@ -14,8 +14,8 @@
         "mutantdino.resourcemonitor"
       ],
       "settings": {
-        "rust-analyzer.checkOnSave.command": "clippy",
-        "rust-analyzer.checkOnSave.extraArgs": [
+        "rust-analyzer.check.command": "clippy",
+        "rust-analyzer.check.extraArgs": [
           "--",
           "-W",
           "clippy::pedantic",
