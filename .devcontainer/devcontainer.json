@@ -9,9 +9,7 @@
       "extensions": [
         "rust-lang.rust-analyzer",
         "vadimcn.vscode-lldb",
-        "serayuzgur.crates",
-        "tamasfe.even-better-toml",
-        "mutantdino.resourcemonitor"
+        "tamasfe.even-better-toml"
       ],
       "settings": {
         "rust-analyzer.check.command": "clippy",
