@@ -65,6 +65,7 @@ fi
    # Use docker to run coverage inside the devcontainer
    docker build -t falkordb-dev -f .devcontainer/Dockerfile .
    docker run --rm -v $(pwd):/workspace -w /workspace falkordb-dev bash -c "
+     rm -f dump.rdb
      find . -name '*.profraw' -delete
      rm -f cov.profdata codecov.txt codecov.txt.all
      RUSTFLAGS='-C instrument-coverage' cargo build
@@ -129,6 +130,7 @@ fi
    ```bash
    docker build -t falkordb-dev -f .devcontainer/Dockerfile .
    docker run --rm -v $(pwd):/workspace -w /workspace falkordb-dev bash -c "
+     rm -f dump.rdb
      find . -name '*.profraw' -delete
      rm -f cov.profdata codecov.txt codecov.txt.all
      RUSTFLAGS='-C instrument-coverage' cargo build
