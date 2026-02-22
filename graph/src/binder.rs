@@ -125,7 +125,9 @@ impl Binder {
                 let pattern = self.bind_graph(pattern, false)?;
                 let filter = filter.map(|expr| self.bind_expr(&expr)).transpose()?;
                 if let Some(ref f) = filter {
-                    Self::validate_filter_predicate(f)?;
+                    if !Self::expr_may_return_boolean(f.root()) {
+                        return Err(String::from("Expected boolean predicate"));
+                    }
                 }
                 Ok(QueryIR::Match {
                     pattern,
@@ -258,7 +260,9 @@ impl Binder {
                 }
                 let filter = filter.map(|expr| self.bind_expr(&expr)).transpose()?;
                 if let Some(ref f) = filter {
-                    Self::validate_filter_predicate(f)?;
+                    if !Self::expr_may_return_boolean(f.root()) {
+                        return Err(String::from("Expected boolean predicate"));
+                    }
                 }
                 Ok(QueryIR::Call(func, args, bound_vars, filter))
             }
@@ -327,7 +331,9 @@ impl Binder {
         let limit = limit.map(|expr| self.bind_expr(&expr)).transpose()?;
         let filter = filter.map(|expr| self.bind_expr(&expr)).transpose()?;
         if let Some(ref f) = filter {
-            Self::validate_filter_predicate(f)?;
+            if !Self::expr_may_return_boolean(f.root()) {
+                return Err(String::from("Expected boolean predicate"));
+            }
         }
 
         let copy_from_parent = self
@@ -880,17 +886,6 @@ impl Binder {
                 "The alias '{}' was specified for both a node and a relationship.",
                 existing.as_str()
             ));
-        }
-        Ok(())
-    }
-
-    /// Validates that a filter expression can return a boolean value.
-    /// This mirrors `_FilterTree_ValidExpressionNode` / `AR_EXP_ReturnsBoolean`
-    /// from the C implementation and must be called at bind time for all
-    /// WHERE predicates (Match, With, Call) and list-comprehension WHERE clauses.
-    fn validate_filter_predicate(expr: &QueryExpr<Variable>) -> Result<(), String> {
-        if !Self::expr_may_return_boolean(expr.root()) {
-            return Err(String::from("Expected boolean predicate"));
         }
         Ok(())
     }
