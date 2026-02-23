@@ -632,7 +632,6 @@ dependencies = [
  "fjall",
  "itertools 0.14.0",
  "json-escape",
- "libc",
  "lru",
  "num_cpus",
  "num_enum",

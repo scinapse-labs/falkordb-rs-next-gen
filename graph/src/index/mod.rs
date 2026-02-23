@@ -471,7 +471,7 @@ impl Index {
             let iter = RediSearch_IterateQuery(self.rs_idx, cstr.as_ptr(), query.len(), &mut err);
             if !err.is_null() {
                 let msg = CStr::from_ptr(err).to_string_lossy().into_owned();
-                libc::free(err.cast());
+                drop(CString::from_raw(err));
                 return Err(msg);
             }
             if iter.is_null() {
