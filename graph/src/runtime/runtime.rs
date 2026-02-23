@@ -2334,14 +2334,26 @@ impl<'a> Runtime {
         node_pattern: &'a QueryNode<Arc<String>, Variable>,
         vars: Env,
     ) -> Result<Box<dyn Iterator<Item = Result<Env, String>> + 'a>, String> {
-        let attrs = self.run_expr(
-            &node_pattern.attrs,
-            node_pattern.attrs.root().idx(),
-            &vars,
-            None,
-        )?;
+        // Inline attrs are evaluated per-candidate so that self-referential
+        // property expressions resolve correctly, e.g.:
+        //   MATCH (a {age: a.age}) RETURN a.age
+        // The candidate node must be inserted into vars before evaluating
+        // attrs, so that `a.age` fetches the candidate's own "age" value.
+        // This turns `{age: a.age}` into an existential filter — matching
+        // only nodes that have the "age" property.
         let iter = self.g.borrow().get_nodes(&node_pattern.labels, 0);
         Ok(Box::new(iter.filter_map(move |v| {
+            let mut vars = vars.clone();
+            vars.insert(&node_pattern.alias, Value::Node(v));
+            let attrs = match self.run_expr(
+                &node_pattern.attrs,
+                node_pattern.attrs.root().idx(),
+                &vars,
+                None,
+            ) {
+                Ok(attrs) => attrs,
+                Err(e) => return Some(Err(e)),
+            };
             if let Value::Map(attrs) = &attrs
                 && !attrs.is_empty()
             {
@@ -2356,8 +2368,6 @@ impl<'a> Runtime {
                     return None;
                 }
             }
-            let mut vars = vars.clone();
-            vars.insert(&node_pattern.alias, Value::Node(v));
             Some(Ok(vars))
         })))
     }
@@ -2411,15 +2421,9 @@ impl<'a> Runtime {
         query: &IndexQuery<QueryExpr<Variable>>,
         vars: Env,
     ) -> Result<Box<dyn Iterator<Item = Result<Env, String>> + 'a>, String> {
-        let attrs = self.run_expr(
-            &node_pattern.attrs,
-            node_pattern.attrs.root().idx(),
-            &vars,
-            None,
-        )?;
-
         let q = self.evaluate_index_query(query, &vars)?;
 
+        // Evaluate attrs per-candidate (same rationale as node_by_label_scan).
         Ok(Box::new(
             self.g
                 .borrow()
@@ -2427,6 +2431,16 @@ impl<'a> Runtime {
                 .into_iter()
                 .filter_map(move |v| {
                     let mut vars = vars.clone();
+                    vars.insert(&node_pattern.alias, Value::Node(v));
+                    let attrs = match self.run_expr(
+                        &node_pattern.attrs,
+                        node_pattern.attrs.root().idx(),
+                        &vars,
+                        None,
+                    ) {
+                        Ok(attrs) => attrs,
+                        Err(e) => return Some(Err(e)),
+                    };
                     if let Value::Map(attrs) = &attrs
                         && !attrs.is_empty()
                     {
@@ -2441,7 +2455,6 @@ impl<'a> Runtime {
                             return None;
                         }
                     }
-                    vars.insert(&node_pattern.alias, Value::Node(v));
                     Some(Ok(vars))
                 }),
         ))

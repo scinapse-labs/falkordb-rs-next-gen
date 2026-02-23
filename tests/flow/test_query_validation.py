@@ -475,31 +475,31 @@ class testQueryValidationFlow(FlowTestsBase):
                 assert("Unexpected clause following RETURN" in str(e))
                 pass
 
-    ## Parameters cannot reference aliases.
-    #def test33_alias_reference_in_param(self):
-    #    try:
-    #        query = """CYPHER A=[a] RETURN 5"""
-    #        self.graph.query(query)
-    #        assert(False)
-    #    except redis.exceptions.ResponseError as e:
-    #        # expecting an error
-    #        pass
+    # Parameters cannot reference aliases.
+    def test33_alias_reference_in_param(self):
+        try:
+            query = """CYPHER A=[a] RETURN 5"""
+            self.graph.query(query)
+            assert(False)
+        except redis.exceptions.ResponseError as e:
+            # expecting an error
+            pass
 
-    #def test34_self_referential_properties(self):
-    #    try:
-    #        # The server should emit an error on trying to create a node with a self-referential property.
-    #        query = """CREATE (a:L {v: a.v})"""
-    #        self.graph.query(query)
-    #        assert(False)
-    #    except redis.exceptions.ResponseError as e:
-    #        # Expecting an error.
-    #        self.env.assertContains("undefined attribute", str(e))
+    def test34_self_referential_properties(self):
+        try:
+            # The server should emit an error on trying to create a node with a self-referential property.
+            query = """CREATE (a:L {v: a.v})"""
+            self.graph.query(query)
+            assert(False)
+        except redis.exceptions.ResponseError as e:
+            # Expecting an error.
+            self.env.assertContains("undefined attribute", str(e))
 
-    #    # MATCH clauses should be able to use self-referential properties as existential filters.
-    #    query = """MATCH (a {age: a.age}) RETURN a.age"""
-    #    actual_result = self.graph.query(query)
-    #    expected_result = [[34]]
-    #    self.env.assertEqual(actual_result.result_set, expected_result)
+        # MATCH clauses should be able to use self-referential properties as existential filters.
+        query = """MATCH (a {age: a.age}) RETURN a.age"""
+        actual_result = self.graph.query(query)
+        expected_result = [[34]]
+        self.env.assertEqual(actual_result.result_set, expected_result)
 
     ## Test a query that allocates a large buffer.
     #def test35_large_query(self):

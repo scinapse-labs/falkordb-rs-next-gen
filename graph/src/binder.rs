@@ -31,7 +31,7 @@ use crate::ast::{
 };
 use crate::runtime::functions::Type;
 use crate::tree;
-use orx_tree::{DynTree, NodeRef};
+use orx_tree::{Dfs, DynTree, NodeRef};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
@@ -141,6 +141,16 @@ impl Binder {
                 Ok(QueryIR::Unwind(expr, var))
             }
             QueryIR::Merge(pattern, on_create, on_match) => {
+                // MERGE may create new entities, so validate that inline attrs
+                // don't reference entities being merged.  Entity aliases are
+                // not yet in scope, so any such reference is caught here, e.g.:
+                //   MERGE (a:L {v: a.v})   → "'a' not defined"
+                for node in pattern.nodes() {
+                    self.bind_expr(&node.attrs)?;
+                }
+                for relationship in pattern.relationships() {
+                    self.bind_expr(&relationship.attrs)?;
+                }
                 let pattern = self.bind_graph(pattern, false)?;
                 let on_create = self.bind_set_items(on_create)?;
                 let on_match = self.bind_set_items(on_match)?;
@@ -369,6 +379,31 @@ impl Binder {
         })
     }
 
+    /// Binds a parsed graph pattern — resolving string variable names to
+    /// numeric `Variable` IDs and checking that every referenced name is in
+    /// scope.
+    ///
+    /// The function walks the pattern in two groups (nodes, then
+    /// relationships).  For each entity it:
+    ///   1. Defines the alias in the current scope via `define_name_in_scope`.
+    ///   2. Binds the inline property expression (`attrs`).
+    ///
+    /// Because the alias is defined *before* its attrs are bound,
+    /// self-referential inline properties resolve correctly in MATCH:
+    ///
+    /// ```cypher
+    /// MATCH (a {age: a.age}) RETURN a.age   -- existential filter
+    /// ```
+    ///
+    /// For CREATE / MERGE the callers perform their own pre-validation
+    /// (see `bind_graph_create` and the Merge handler) *before* calling
+    /// this function, so cross-entity and self-referential accesses are
+    /// caught with the appropriate error messages before we get here.
+    ///
+    /// `is_create` controls `allow_reuse` when defining aliases:
+    ///   - `false` (MATCH / MERGE) — an alias may shadow an outer-scope
+    ///     definition (e.g. `MATCH (n) MATCH (n)` re-uses `n`).
+    ///   - `true`  — redeclaration is an error.
     fn bind_graph(
         &mut self,
         graph: QueryGraph<Arc<String>, Arc<String>, Arc<String>>,
@@ -382,14 +417,13 @@ impl Binder {
             self.define_name_in_scope(raw_path.var.clone(), Type::Path, true)?;
         }
 
-        for node in graph.nodes() {
-            self.bind_expr(&node.attrs)?;
-        }
-        for relationship in graph.relationships() {
-            self.bind_expr(&relationship.attrs)?;
-        }
-
-        // Bind all nodes in the graph, merging duplicates by alias
+        // Bind all nodes in the graph, merging duplicates by alias.
+        // Note: node aliases are defined BEFORE binding their attrs so that
+        // self-referential inline properties resolve correctly, e.g.:
+        //   MATCH (a {age: a.age}) RETURN a.age
+        // Here a.age acts as an existential filter — matching nodes that have
+        // the "age" property.  The alias "a" must be in scope when we bind
+        // the attrs expression {age: a.age}.
         for node in graph.nodes() {
             let alias = self.define_name_in_scope(node.alias.clone(), Type::Node, !is_create)?;
             let attrs = self.bind_expr(&node.attrs)?;
@@ -581,8 +615,57 @@ impl Binder {
             // If it's a subsequent occurrence, it's allowed (it's a reference)
         }
 
+        // Reject self-referential property access BEFORE binding.
+        // A node being created has no properties yet, so referencing its own
+        // attributes is invalid, e.g.:
+        //   CREATE (a:L {v: a.v})   → "undefined attribute" (a.v during creation)
+        // Cross-node references are checked separately below.
+        for node in pattern.nodes() {
+            Self::check_unbound_self_referential(&node.alias, &node.attrs)?;
+        }
+        for rel in pattern.relationships() {
+            Self::check_unbound_self_referential(&rel.alias, &rel.attrs)?;
+        }
+
+        // Validate that inline attrs don't reference other entities being
+        // created in the same CREATE clause.  Entity aliases are not yet in
+        // scope, so any such reference produces "'x' not defined", e.g.:
+        //   CREATE (a {v:1}), (z {v:a.v+2})   → "'a' not defined"
+        for node in pattern.nodes() {
+            self.bind_expr(&node.attrs)?;
+        }
+        for rel in pattern.relationships() {
+            self.bind_expr(&rel.attrs)?;
+        }
+
         // Bind the pattern - allow reuse since we've already validated
         self.bind_graph(pattern, false)
+    }
+
+    /// Checks whether an entity's unbound inline attrs contain a property
+    /// access on the entity's own alias.  Used to reject self-referential
+    /// property access in CREATE clauses before the general binding pass,
+    /// e.g.:
+    ///   CREATE (a:L {v: a.v})  → Attempted to access undefined attribute
+    fn check_unbound_self_referential(
+        entity_alias: &Arc<String>,
+        attrs: &QueryExpr<Arc<String>>,
+    ) -> Result<(), String> {
+        if entity_alias.starts_with("_anon") {
+            return Ok(());
+        }
+        for idx in attrs.root().indices::<Dfs>() {
+            if let ExprIR::Property(_) = attrs.node(idx).data()
+                && let ExprIR::Variable(var_name) = attrs.node(idx).child(0).data()
+                && var_name == entity_alias
+            {
+                return Err(format!(
+                    "'{}' not defined; undefined attribute",
+                    entity_alias
+                ));
+            }
+        }
+        Ok(())
     }
 
     fn bind_set_items(
