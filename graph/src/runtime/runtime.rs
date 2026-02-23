@@ -1091,6 +1091,7 @@ impl<'a> Runtime {
                         "graph.RO_QUERY is to be executed only on read-only queries",
                     ));
                 }
+                func.validate_args_type(&args)?;
                 let res = (func.func)(self, args)?;
                 match res {
                     Value::List(arr) => Ok(arr

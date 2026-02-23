@@ -1310,7 +1310,7 @@ pub fn init_functions() -> Result<(), Functions> {
         "db.idx.fulltext.queryNodes",
         db_fulltext_query_nodes,
         false,
-        vec![Type::Map],
+        vec![Type::String, Type::String],
         FnType::Procedure(vec![String::from("node"), String::from("score")]),
         Type::Any,
     );
@@ -3374,24 +3374,22 @@ fn db_fulltext_query_nodes(
     runtime: &Runtime,
     args: ThinVec<Value>,
 ) -> Result<Value, String> {
-    let label = match args.first() {
-        Some(Value::String(s)) => s.clone(),
-        _ => return Err("fulltext queryNodes expects a string label".into()),
-    };
-    let query = match args.get(1) {
-        Some(Value::String(s)) => s.clone(),
-        _ => return Err("fulltext queryNodes expects a string query".into()),
-    };
-    let results = runtime.g.borrow().fulltext_query_nodes(&label, &query)?;
-    Ok(Value::List(
-        results
-            .into_iter()
-            .map(|(node_id, score)| {
-                let mut map = OrderMap::default();
-                map.insert(Arc::new(String::from("node")), Value::Node(node_id));
-                map.insert(Arc::new(String::from("score")), Value::Float(score));
-                Value::Map(map)
-            })
-            .collect(),
-    ))
+    let mut iter = args.iter();
+    match (iter.next(), iter.next()) {
+        (Some(Value::String(label)), Some(Value::String(query))) => {
+            let results = runtime.g.borrow().fulltext_query_nodes(&label, &query)?;
+            Ok(Value::List(
+                results
+                    .into_iter()
+                    .map(|(node_id, score)| {
+                        let mut map = OrderMap::default();
+                        map.insert(Arc::new(String::from("node")), Value::Node(node_id));
+                        map.insert(Arc::new(String::from("score")), Value::Float(score));
+                        Value::Map(map)
+                    })
+                    .collect(),
+            ))
+        }
+        _ => Err("fulltext queryNodes expects a string label and a string query".into()),
+    }
 }
