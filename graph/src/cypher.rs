@@ -1951,6 +1951,10 @@ impl<'a> Parser<'a> {
                             parse_expr_return!(stack, res);
                             continue;
                         }
+                        Token::Keyword(Keyword::Not, _) => {
+                            self.lexer.next();
+                            res = tree!(ExprIR::Not, res);
+                        }
                         _ => {
                             parse_expr_return!(stack, res);
                             continue;

@@ -703,7 +703,12 @@ impl Binder {
                     ExprIR::Or => ExprIR::Or,
                     ExprIR::Xor => ExprIR::Xor,
                     ExprIR::And => ExprIR::And,
-                    ExprIR::Not => ExprIR::Not,
+                    ExprIR::Not => {
+                        if children.len() != 1 {
+                            return Err(String::from("Invalid usage of 'NOT' filter"));
+                        }
+                        ExprIR::Not
+                    }
                     ExprIR::Negate => ExprIR::Negate,
                     ExprIR::Eq => ExprIR::Eq,
                     ExprIR::Neq => ExprIR::Neq,
