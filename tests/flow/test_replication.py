@@ -1,7 +1,8 @@
-from common import *
-from index_utils import *
-from constraint_utils import *
 import time
+
+from common import *
+from constraint_utils import *
+from index_utils import *
 
 GRAPH_ID = "replication"
 
@@ -13,14 +14,16 @@ GRAPH_ID = "replication"
 # constraint creation and removal
 # read queries shouldn't be replicated.
 
-class testReplication(FlowTestsBase):
 
+class testReplication(FlowTestsBase):
     def __init__(self):
         # skip test if we're running under sanitizer
         if SANITIZER:
-            Environment.skip(None) # sanitizer is not working correctly with replication
+            Environment.skip(
+                None
+            )  # sanitizer is not working correctly with replication
 
-        self.env, self.db = Env(env='oss', useSlaves=True)
+        self.env, self.db = Env(env="oss", useSlaves=True)
 
     def test_CRUD_replication(self):
         # create a simple graph
@@ -37,39 +40,43 @@ class testReplication(FlowTestsBase):
 
         # perform CRUD operations
 
-        #-----------------------------------------------------------------------
+        # -----------------------------------------------------------------------
         # create a simple graph
-        #-----------------------------------------------------------------------
+        # -----------------------------------------------------------------------
 
         src = Graph(source_con, GRAPH_ID)
         replica = Graph(replica_con, GRAPH_ID)
 
-        s = Node(alias='s', labels='L', properties={'id': 0, 'name': 'abcd', 'height' : 178})
-        t = Node(alias='t', labels='L', properties={'id': 1, 'name': 'efgh', 'height' : 178})
-        e = Edge(s, 'R', t)
+        s = Node(
+            alias="s", labels="L", properties={"id": 0, "name": "abcd", "height": 178}
+        )
+        t = Node(
+            alias="t", labels="L", properties={"id": 1, "name": "efgh", "height": 178}
+        )
+        e = Edge(s, "R", t)
 
         src.query(f"CREATE {s}, {t}, {e}")
 
-        #-----------------------------------------------------------------------
+        # -----------------------------------------------------------------------
         # create indices
-        #-----------------------------------------------------------------------
+        # -----------------------------------------------------------------------
 
         # create index
-        create_node_range_index(src, 'L', 'id')
+        create_node_range_index(src, "L", "id")
 
         # create full-text index
-        create_node_fulltext_index(src, 'L', 'name')
+        create_node_fulltext_index(src, "L", "name")
 
         # add fields to existing index
-        create_node_fulltext_index(src, 'L', 'title', 'desc', sync=True)
+        create_node_fulltext_index(src, "L", "title", "desc", sync=True)
 
         # create full-text index with index config
         q = "CREATE FULLTEXT INDEX FOR (n:L1) ON (n.title, n.desc) OPTIONS {language: 'german', stopwords: ['a', 'b']}"
         src.query(q)
 
-        #-----------------------------------------------------------------------
+        # -----------------------------------------------------------------------
         # create constraints
-        #-----------------------------------------------------------------------
+        # -----------------------------------------------------------------------
 
         # create node unique constraint
         create_unique_node_constraint(src, "L", "id")
@@ -78,7 +85,9 @@ class testReplication(FlowTestsBase):
         create_unique_node_constraint(src, "L", "id", "name", sync=True)
 
         # add a unique constraint which is destined to fail
-        result = src.query("CREATE (:Actor {age: 10, name: 'jerry'}), (:Actor {age: 10, name: 'jerry'})")
+        result = src.query(
+            "CREATE (:Actor {age: 10, name: 'jerry'}), (:Actor {age: 10, name: 'jerry'})"
+        )
         self.env.assertEqual(result.nodes_created, 2)
 
         create_unique_node_constraint(src, "Actor", "age", sync=True)
@@ -161,15 +170,7 @@ class testReplication(FlowTestsBase):
         env.assertEqual(replica_result, result)
 
         # drop fulltext index
-        q = "DROP FULLTEXT INDEX FOR (n:L) ON (n.name)"
-        result = src.query(q)
-        env.assertEquals(result.indices_deleted, 1)
-
-        q = "DROP FULLTEXT INDEX FOR (n:L) ON (n.title)"
-        result = src.query(q)
-        env.assertEquals(result.indices_deleted, 1)
-
-        q = "DROP FULLTEXT INDEX FOR (n:L) ON (n.desc)"
+        q = "DROP FULLTEXT INDEX FOR (n:L) ON (n.name, n.title, n.desc)"
         result = src.query(q)
         env.assertEquals(result.indices_deleted, 1)
 
