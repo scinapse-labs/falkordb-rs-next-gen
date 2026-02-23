@@ -55,7 +55,8 @@ use crate::ast::{
     ExprIR, QuantifierType, QueryExpr, QueryGraph, QueryIR, QueryNode, QueryPath,
     QueryRelationship, RawQueryIR, SetItem,
 };
-use crate::indexer::{EntityType, IndexType};
+use crate::entity_type::EntityType;
+use crate::indexer::IndexType;
 use crate::runtime::orderset::OrderSet;
 use crate::string_escape::cypher_unescape;
 use crate::{

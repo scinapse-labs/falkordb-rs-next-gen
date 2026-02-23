@@ -3067,9 +3067,13 @@ fn map_to_index_options(
                 None => None,
                 _ => return Err("Stopwords must be array".into()),
             };
-            let options = IndexOptions::Text(TextIndexOptions::new(
-                weight, nostem, phonetic, language, stopwords,
-            ));
+            let options = IndexOptions::Text(TextIndexOptions {
+                weight,
+                nostem,
+                phonetic,
+                language,
+                stopwords,
+            });
             Ok(Some(options))
         }
         _ => Ok(None),

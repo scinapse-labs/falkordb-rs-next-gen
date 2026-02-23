@@ -52,6 +52,7 @@ use crate::{
     ast::ExprIR,
     binder::Binder,
     cypher::Parser,
+    entity_type::EntityType,
     graph::{
         attribute_store::AttributeStore,
         matrix::{
@@ -62,7 +63,7 @@ use crate::{
         versioned_matrix::{self, VersionedMatrix},
     },
     index::Field,
-    indexer::{Document, EntityType, IndexInfo, IndexOptions, IndexQuery, IndexType, Indexer},
+    indexer::{Document, IndexInfo, IndexOptions, IndexQuery, IndexType, Indexer},
     optimizer::optimize,
     planner::{IR, Planner},
     runtime::{ordermap::OrderMap, orderset::OrderSet, pending::PendingRelationship, value::Value},

@@ -43,7 +43,7 @@ use std::{
 use roaring::RoaringTreemap;
 
 pub use crate::index::{
-    Document, EntityType, Field, IndexInfo, IndexQuery, IndexStatus, IndexType, TextIndexOptions,
+    Document, Field, IndexInfo, IndexQuery, IndexStatus, IndexType, TextIndexOptions,
 };
 use crate::{index::Index, runtime::value::Value};
 
@@ -55,14 +55,14 @@ impl IndexOptions {
     /// Extract language from the options (only applicable for Text index options).
     pub fn language(&self) -> &Option<Arc<String>> {
         match self {
-            IndexOptions::Text(opts) => opts.language(),
+            IndexOptions::Text(opts) => &opts.language,
         }
     }
 
     /// Extract stopwords from the options (only applicable for Text index options).
     pub fn stopwords(&self) -> &Option<Vec<Arc<String>>> {
         match self {
-            IndexOptions::Text(opts) => opts.stopwords(),
+            IndexOptions::Text(opts) => &opts.stopwords,
         }
     }
 
@@ -70,14 +70,13 @@ impl IndexOptions {
     pub fn field_options(&self) -> Option<TextIndexOptions> {
         match self {
             IndexOptions::Text(opts) => {
-                if opts.weight().is_some() || opts.nostem().is_some() || opts.phonetic().is_some() {
-                    Some(TextIndexOptions::new(
-                        opts.weight(),
-                        opts.nostem(),
-                        opts.phonetic(),
-                        None,
-                        None,
-                    ))
+                if opts.weight.is_some() || opts.nostem.is_some() || opts.phonetic.is_some() {
+                    Some(TextIndexOptions {
+                        weight: opts.weight,
+                        nostem: opts.nostem,
+                        phonetic: opts.phonetic,
+                        ..Default::default()
+                    })
                 } else {
                     None
                 }
@@ -117,8 +116,8 @@ impl Indexer {
 
         let (language, stopwords, field_options) = match options {
             Some(IndexOptions::Text(text_opts)) => {
-                let language = text_opts.language().clone();
-                let stopwords = text_opts.stopwords().clone();
+                let language = text_opts.language.clone();
+                let stopwords = text_opts.stopwords.clone();
                 (language, stopwords, Some(text_opts))
             }
             None => (None, None, None),

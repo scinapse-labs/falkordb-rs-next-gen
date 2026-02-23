@@ -1,3 +1,6 @@
+pub mod text_index_options;
+pub use text_index_options::TextIndexOptions;
+
 use std::{
     collections::HashMap,
     ffi::{CStr, CString},
@@ -42,62 +45,6 @@ pub enum IndexType {
     Vector,
     /// Point index for geographic coordinates
     Point,
-}
-
-/// Entity type that can be indexed.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum EntityType {
-    /// Index on node properties
-    Node,
-    /// Index on relationship properties
-    Relationship,
-}
-
-#[derive(Debug, Default, Clone)]
-pub struct TextIndexOptions {
-    weight: Option<f64>,
-    nostem: Option<bool>,
-    phonetic: Option<bool>,
-    language: Option<Arc<String>>,
-    stopwords: Option<Vec<Arc<String>>>,
-}
-
-impl TextIndexOptions {
-    pub fn new(
-        weight: Option<f64>,
-        nostem: Option<bool>,
-        phonetic: Option<bool>,
-        language: Option<Arc<String>>,
-        stopwords: Option<Vec<Arc<String>>>,
-    ) -> Self {
-        Self {
-            weight,
-            nostem,
-            phonetic,
-            language,
-            stopwords,
-        }
-    }
-
-    pub fn language(&self) -> &Option<Arc<String>> {
-        &self.language
-    }
-
-    pub fn stopwords(&self) -> &Option<Vec<Arc<String>>> {
-        &self.stopwords
-    }
-
-    pub fn weight(&self) -> Option<f64> {
-        self.weight
-    }
-
-    pub fn nostem(&self) -> Option<bool> {
-        self.nostem
-    }
-
-    pub fn phonetic(&self) -> Option<bool> {
-        self.phonetic
-    }
 }
 
 #[derive(Debug, Default)]
@@ -381,11 +328,11 @@ impl Index {
                         let mut weight = 1.0;
                         let effective_options = field_options.or_else(|| field.options());
                         if let Some(options) = effective_options {
-                            weight = options.weight().unwrap_or(1.0);
-                            if options.nostem().unwrap_or(false) {
+                            weight = options.weight.unwrap_or(1.0);
+                            if options.nostem.unwrap_or(false) {
                                 field_options_flag |= RSFLDOPT_TXTNOSTEM;
                             }
-                            if options.phonetic().unwrap_or(false) {
+                            if options.phonetic.unwrap_or(false) {
                                 field_options_flag |= RSFLDOPT_TXTPHONETIC;
                             }
                         }

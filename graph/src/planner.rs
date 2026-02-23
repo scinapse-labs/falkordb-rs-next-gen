@@ -38,7 +38,8 @@ use crate::{
         BoundQueryIR, ExprIR, QueryExpr, QueryGraph, QueryIR, QueryNode, QueryPath,
         QueryRelationship, SetItem, SupportAggregation, Variable,
     },
-    indexer::{EntityType, IndexQuery, IndexType},
+    entity_type::EntityType,
+    indexer::{IndexQuery, IndexType},
     runtime::functions::GraphFn,
     tree,
 };
