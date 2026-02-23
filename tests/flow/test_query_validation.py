@@ -501,13 +501,14 @@ class testQueryValidationFlow(FlowTestsBase):
         expected_result = [[34]]
         self.env.assertEqual(actual_result.result_set, expected_result)
 
-    ## Test a query that allocates a large buffer.
-    #def test35_large_query(self):
-    #    retval = "abcdef" * 1_000
-    #    query = "RETURN " + "\"" + retval + "\""
-    #    actual_result = self.graph.query(query)
-    #    self.env.assertEqual(actual_result.result_set[0][0], retval)
+    # Test a query that allocates a large buffer.
+    def test35_large_query(self):
+        retval = "abcdef" * 1_000
+        query = "RETURN " + "\"" + retval + "\""
+        actual_result = self.graph.query(query)
+        self.env.assertEqual(actual_result.result_set[0][0], retval)
 
+    #@todo barak implement algo.BFS
     #def test36_multiple_proc_calls(self):
     #    query = """MATCH (a)
     #               CALL algo.BFS(a, 3, NULL) YIELD nodes as ns1
@@ -517,36 +518,36 @@ class testQueryValidationFlow(FlowTestsBase):
     #    plan = str(self.graph.explain(query))
     #    self.env.assertTrue(plan.count("ProcedureCall") == 2)
 
-    #def test37_list_comprehension_missuse(self):
-    #    # all expect list comprehension,
-    #    # unfortunately this isn't enforced by the parser
-    #    # as such it is possible for a user miss-use this function
-    #    # and our current arithmetic expression construction logic will
-    #    # construct a malformed function call
+    def test37_list_comprehension_missuse(self):
+        # all expect list comprehension,
+        # unfortunately this isn't enforced by the parser
+        # as such it is possible for a user miss-use this function
+        # and our current arithmetic expression construction logic will
+        # construct a malformed function call
 
-    #    # make sure we're reciving an exception for each miss-use query
-    #    queries = ["WITH 1 AS x RETURN all(x > 2)",
-    #            "WITH 1 AS x RETURN all([1],2,3)"]
+        # make sure we're reciving an exception for each miss-use query
+        queries = ["WITH 1 AS x RETURN all(x > 2)",
+                "WITH 1 AS x RETURN all([1],2,3)"]
 
-    #    for q in queries:
-    #        try:
-    #            self.graph.query(q)
-    #            assert(False)
-    #        except redis.exceptions.ResponseError as e:
-    #            pass
+        for q in queries:
+            try:
+                self.graph.query(q)
+                assert(False)
+            except redis.exceptions.ResponseError as e:
+                pass
 
-    #def test38_return_star_union(self):
-    #    # queries of the form [...] RETURN * UNION [...] should have
-    #    # all relevant validations on their column names enforced
-    #    queries = ["WITH 5 AS x RETURN * UNION WITH 10 AS y RETURN *",
-    #               "WITH 5 AS x RETURN * UNION WITH 10 AS y RETURN y",
-    #               "WITH 5 AS x, 8 AS y RETURN * UNION WITH 10 AS y RETURN y"]
-    #    for q in queries:
-    #        try:
-    #            self.graph.query(q)
-    #            assert(False)
-    #        except redis.exceptions.ResponseError as e:
-    #            self.env.assertContains("All sub queries in a UNION must have the same column names", str(e))
+    def test38_return_star_union(self):
+        # queries of the form [...] RETURN * UNION [...] should have
+        # all relevant validations on their column names enforced
+        queries = ["WITH 5 AS x RETURN * UNION WITH 10 AS y RETURN *",
+                   "WITH 5 AS x RETURN * UNION WITH 10 AS y RETURN y",
+                   "WITH 5 AS x, 8 AS y RETURN * UNION WITH 10 AS y RETURN y"]
+        for q in queries:
+            try:
+                self.graph.query(q)
+                assert(False)
+            except redis.exceptions.ResponseError as e:
+                self.env.assertContains("All sub queries in a UNION must have the same column names", str(e))
 
     #def test39_non_single_statement_query(self):
     #    queries = [";",      # Error: could not parse query

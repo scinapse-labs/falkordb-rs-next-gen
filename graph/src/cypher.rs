@@ -134,6 +134,7 @@ enum Keyword {
     Options,
     For,
     On,
+    Union,
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -230,6 +231,7 @@ const KEYWORDS: &[(&str, Keyword)] = &[
     ("OPTIONS", Keyword::Options),
     ("FOR", Keyword::For),
     ("ON", Keyword::On),
+    ("UNION", Keyword::Union),
 ];
 
 const MIN_I64: [&str; 5] = [
@@ -1146,7 +1148,39 @@ impl<'a> Parser<'a> {
         Ok(None)
     }
 
+    /// Parses a complete query, handling UNION if present.
+    ///
+    /// A Cypher query may consist of multiple sub-queries joined by UNION:
+    ///
+    /// ```cypher
+    /// MATCH (n:Person) RETURN n.name AS name
+    /// UNION
+    /// MATCH (n:Company) RETURN n.title AS name
+    /// ```
+    ///
+    /// Each sub-query is parsed by `parse_single_query()`.  If UNION appears
+    /// after the first sub-query's RETURN, additional sub-queries are parsed
+    /// and wrapped in `QueryIR::Union`.
     fn parse_query(&mut self) -> Result<RawQueryIR, String> {
+        let first = self.parse_single_query()?;
+        if optional_match_token!(self.lexer => Union) {
+            let mut branches = vec![first];
+            branches.push(self.parse_single_query()?);
+            while optional_match_token!(self.lexer => Union) {
+                branches.push(self.parse_single_query()?);
+            }
+            match_token!(self.lexer, EndOfFile);
+            return Ok(QueryIR::Union(branches));
+        }
+        Ok(first)
+    }
+
+    /// Parses a single sub-query (clauses up through an optional RETURN).
+    ///
+    /// This handles the reading/writing clause loops and WITH/RETURN
+    /// projection.  Called once for standalone queries and once per branch
+    /// in a UNION query.
+    fn parse_single_query(&mut self) -> Result<RawQueryIR, String> {
         let mut clauses = Vec::new();
         let mut write = false;
         loop {
@@ -1184,11 +1218,16 @@ impl<'a> Parser<'a> {
         if optional_match_token!(self.lexer => Return) {
             clauses.push(self.parse_return_clause(write)?);
             write = false;
-            if self.lexer.current()? != Token::EndOfFile {
+            // After RETURN, only UNION or end-of-file may follow.
+            if self.lexer.current()? != Token::EndOfFile
+                && !matches!(self.lexer.current()?, Token::Keyword(Keyword::Union, _))
+            {
                 return Err(String::from("Unexpected clause following RETURN"));
             }
         }
-        match_token!(self.lexer, EndOfFile);
+        if !matches!(self.lexer.current()?, Token::Keyword(Keyword::Union, _)) {
+            match_token!(self.lexer, EndOfFile);
+        }
         Ok(QueryIR::Query(clauses, write))
     }
 
