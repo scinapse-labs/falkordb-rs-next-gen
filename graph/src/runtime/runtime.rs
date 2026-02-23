@@ -1389,7 +1389,10 @@ impl<'a> Runtime {
                         Ok(Value::Bool(true)) => Some(Ok(vars)),
                         Ok(Value::Bool(false) | Value::Null) => None,
                         Err(e) => Some(Err(e)),
-                        _ => Some(Err(String::from("Expected boolean predicate."))),
+                        Ok(value) => Some(Err(format!(
+                            "Type mismatch: expected Boolean but was {}",
+                            value.name()
+                        ))),
                     },
                     Err(e) => Some(Err(e)),
                 })

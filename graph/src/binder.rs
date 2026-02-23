@@ -942,19 +942,13 @@ impl Binder {
             // Function calls – use the registered return type
             ExprIR::FuncInvocation(func) => func.ret_type.can_return_boolean(),
 
-            // Non-boolean: literals, arithmetic, subscript, list comprehension
+            // Non-boolean: literals, unary arithmetic, subscript, list comprehension
             ExprIR::Integer(_)
             | ExprIR::Float(_)
             | ExprIR::String(_)
             | ExprIR::List
             | ExprIR::Map
             | ExprIR::Negate
-            | ExprIR::Add
-            | ExprIR::Sub
-            | ExprIR::Mul
-            | ExprIR::Div
-            | ExprIR::Pow
-            | ExprIR::Modulo
             | ExprIR::Length
             | ExprIR::GetElement
             | ExprIR::GetElements
@@ -970,6 +964,12 @@ impl Binder {
             | ExprIR::Le
             | ExprIR::Ge
             | ExprIR::In
+            | ExprIR::Add
+            | ExprIR::Sub
+            | ExprIR::Mul
+            | ExprIR::Div
+            | ExprIR::Pow
+            | ExprIR::Modulo
             | ExprIR::IsNode
             | ExprIR::IsRelationship
             | ExprIR::Quantifier(_, _)
