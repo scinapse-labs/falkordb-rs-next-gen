@@ -12,15 +12,23 @@
 //! Uses a `ThinVec<(K, V)>` internally with O(n) lookup. This is efficient
 //! for small maps (typical property counts) while preserving order.
 
-use std::{borrow::Borrow, hash::Hash, ops::Index};
+use std::{
+    borrow::Borrow,
+    hash::{DefaultHasher, Hash, Hasher},
+    ops::Index,
+};
 
+use itertools::Itertools;
 use thin_vec::{ThinVec, thin_vec};
 
 /// A map that preserves insertion order during iteration.
 ///
 /// Keys are compared by equality (`PartialEq`). For small maps (< ~20 keys),
 /// this is faster than hash-based lookup due to cache locality.
-#[derive(Clone, Debug, PartialEq, Eq)]
+///
+/// Equality and hashing are order-independent: two maps with the same
+/// key-value pairs are equal regardless of insertion order.
+#[derive(Clone, Debug, Eq)]
 pub struct OrderMap<K, V> {
     vec: ThinVec<(K, V)>,
 }
@@ -131,12 +139,29 @@ impl<V> OrderMap<std::sync::Arc<String>, V> {
     }
 }
 
-impl<K: Hash, V: Hash> Hash for OrderMap<K, V> {
+impl<K: Ord + Hash, V: Hash> Hash for OrderMap<K, V> {
     fn hash<H: std::hash::Hasher>(
         &self,
         state: &mut H,
     ) {
-        self.vec.hash(state);
+        self.vec.len().hash(state);
+        for pair in self.vec.iter().sorted_by_key(|(k, _)| k) {
+            pair.hash(state);
+        }
+    }
+}
+
+impl<K: PartialEq, V: PartialEq> PartialEq for OrderMap<K, V> {
+    fn eq(
+        &self,
+        other: &Self,
+    ) -> bool {
+        if self.vec.len() != other.vec.len() {
+            return false;
+        }
+        self.vec
+            .iter()
+            .all(|(k, v)| other.get(k).is_some_and(|ov| ov == v))
     }
 }
 
