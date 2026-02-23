@@ -2165,8 +2165,22 @@ impl<'a> Parser<'a> {
         let attrs = if let Token::Parameter(param) = self.lexer.current()? {
             self.lexer.next();
             tree!(ExprIR::Parameter(param))
+        } else if self.lexer.current()? == Token::LBracket {
+            // Try to parse properties as a map. If parsing fails, the value
+            // may contain a graph pattern instead of an expression, e.g.:
+            //   MATCH (a {prop: ()-[]->()}) RETURN a
+            // In that case, skip the {…} block and produce a non-Map
+            // placeholder so validate_inlined_properties() rejects it.
+            let pos = self.lexer.pos;
+            let anon = self.anon_counter;
+            self.parse_map().unwrap_or_else(|_| {
+                self.lexer.set_pos(pos);
+                self.anon_counter = anon;
+                let _ = self.skip_pattern();
+                tree!(ExprIR::Null)
+            })
         } else {
-            self.parse_map()?
+            tree!(ExprIR::Map)
         };
         match_token!(self.lexer, RParen);
         Ok(Arc::new(QueryNode::new(alias, labels, Arc::new(attrs))))
@@ -2230,8 +2244,17 @@ impl<'a> Parser<'a> {
             let attrs = if let Token::Parameter(param) = self.lexer.current()? {
                 self.lexer.next();
                 tree!(ExprIR::Parameter(param))
+            } else if self.lexer.current()? == Token::LBracket {
+                let pos = self.lexer.pos;
+                let anon = self.anon_counter;
+                self.parse_map().unwrap_or_else(|_| {
+                    self.lexer.set_pos(pos);
+                    self.anon_counter = anon;
+                    let _ = self.skip_pattern();
+                    tree!(ExprIR::Null)
+                })
             } else {
-                self.parse_map()?
+                tree!(ExprIR::Map)
             };
             match_token!(self.lexer, RBrace);
             (alias, types.into_iter().collect(), attrs)
@@ -2269,6 +2292,30 @@ impl<'a> Parser<'a> {
             labels.insert(self.parse_ident()?);
         }
         Ok(labels)
+    }
+
+    fn skip_pattern(&mut self) -> Result<(), String> {
+        let mut depth = 0i32;
+        loop {
+            match self.lexer.current()? {
+                Token::LParen | Token::LBrace | Token::LBracket => {
+                    depth += 1;
+                    self.lexer.next();
+                }
+                Token::RParen | Token::RBrace | Token::RBracket => {
+                    if depth == 0 {
+                        break;
+                    }
+                    depth -= 1;
+                    self.lexer.next();
+                }
+                Token::EndOfFile => break,
+                _ => {
+                    self.lexer.next();
+                }
+            }
+        }
+        Ok(())
     }
 
     fn parse_map(&mut self) -> Result<DynTree<ExprIR<Arc<String>>>, String> {
