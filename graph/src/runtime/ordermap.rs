@@ -12,11 +12,7 @@
 //! Uses a `ThinVec<(K, V)>` internally with O(n) lookup. This is efficient
 //! for small maps (typical property counts) while preserving order.
 
-use std::{
-    borrow::Borrow,
-    hash::{DefaultHasher, Hash, Hasher},
-    ops::Index,
-};
+use std::{borrow::Borrow, hash::Hash, ops::Index};
 
 use itertools::Itertools;
 use thin_vec::{ThinVec, thin_vec};

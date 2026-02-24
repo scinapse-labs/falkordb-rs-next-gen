@@ -2843,6 +2843,10 @@ impl<'a> Runtime {
         // child 0 is the base expression
         let base = self.run_expr(ir, node.child(0).idx(), env, agg_group_key)?;
 
+        if matches!(base, Value::Null) {
+            return Ok(Value::Null);
+        }
+
         // Validate base type
         if !matches!(
             &base,

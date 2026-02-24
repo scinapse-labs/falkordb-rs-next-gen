@@ -949,18 +949,20 @@ impl Graph {
             .collect::<Vec<_>>();
         let src_labels_matrices = src_lables
             .iter()
-            .filter_map(|label| self.get_label_matrix(label))
-            .collect::<Vec<_>>();
+            .map(|label| self.get_label_matrix(label))
+            .collect::<Option<Vec<_>>>();
         let dest_labels_matrices = dest_labels
             .iter()
-            .filter_map(|label| self.get_label_matrix(label))
-            .collect::<Vec<_>>();
-
+            .map(|label| self.get_label_matrix(label))
+            .collect::<Option<Vec<_>>>();
         // If labels/types were requested but none exist in the graph,
         // no results can match.
         let no_match = (!types.is_empty() && matrices.is_empty())
-            || (!src_lables.is_empty() && src_labels_matrices.is_empty())
-            || (!dest_labels.is_empty() && dest_labels_matrices.is_empty());
+            || src_labels_matrices.is_none()
+            || dest_labels_matrices.is_none();
+
+        let src_labels_matrices = src_labels_matrices.unwrap_or_default();
+        let dest_labels_matrices = dest_labels_matrices.unwrap_or_default();
 
         let m = if no_match {
             // If labels/types were requested but none exist in the graph,
