@@ -450,6 +450,9 @@ impl<'a> Runtime {
                         .collect::<Result<_, String>>()?,
                 ));
             }
+            ExprIR::MapProjection => {
+                return self.eval_map_projection(ir, idx, env, agg_group_key);
+            }
             _ => {}
         }
         let mut res: Vec<Value> = vec![];
@@ -836,6 +839,9 @@ impl<'a> Runtime {
                         })
                         .collect::<Result<_, String>>()?,
                 )),
+                ExprIR::MapProjection => {
+                    res.push(self.eval_map_projection(ir, idx, env, agg_group_key)?);
+                }
                 ExprIR::Quantifier(quantifier, var) => {
                     let list = self.run_expr(ir, node.child(0).idx(), env, agg_group_key)?;
                     match list {
@@ -1568,7 +1574,18 @@ impl<'a> Runtime {
                     )
                     .map(move |(key, v)| {
                         let mut vars = v?;
-                        vars.merge(key?);
+                        let key = key?;
+                        // Map group key values back to original variable IDs so that
+                        // aggregation expressions can reference parent-scope variables
+                        // (e.g., map projections like n{.*, x: COLLECT(...)}).
+                        for (name, tree) in keys {
+                            if let ExprIR::Variable(original_var) = tree.root().data()
+                                && let Some(value) = key.get(name)
+                            {
+                                vars.insert(original_var, value);
+                            }
+                        }
+                        vars.merge(key);
                         for (name, tree) in agg {
                             vars.insert(name, self.run_expr(tree, tree.root().idx(), &vars, None)?);
                         }
@@ -2813,6 +2830,97 @@ impl<'a> Runtime {
             .iter()
             .map(|l| self.g.borrow().get_label_by_id(*l))
             .collect()
+    }
+
+    fn eval_map_projection(
+        &self,
+        ir: &DynTree<ExprIR<Variable>>,
+        idx: NodeIdx<Dyn<ExprIR<Variable>>>,
+        env: &Env,
+        agg_group_key: Option<u64>,
+    ) -> Result<Value, String> {
+        let node = ir.node(idx);
+        // child 0 is the base expression
+        let base = self.run_expr(ir, node.child(0).idx(), env, agg_group_key)?;
+
+        if matches!(base, Value::Null) {
+            return Ok(Value::Null);
+        }
+
+        // Validate base type
+        if !matches!(
+            &base,
+            Value::Node(_) | Value::Relationship(_) | Value::Map(_)
+        ) {
+            return Err("Encountered unhandled type evaluating map projection".to_string());
+        }
+
+        let mut result = OrderMap::default();
+
+        // children 1..N are projection items
+        for i in 1..node.num_children() {
+            let item = node.child(i);
+            match item.data() {
+                ExprIR::MapProjection => {
+                    // .* - include all properties from base
+                    match &base {
+                        Value::Node(id) => {
+                            for (k, v) in self.get_node_attrs(*id) {
+                                result.insert(k, v);
+                            }
+                        }
+                        Value::Relationship(rel) => {
+                            for (k, v) in self.get_relationship_attrs(rel.0) {
+                                result.insert(k, v);
+                            }
+                        }
+                        Value::Map(map) => {
+                            for (k, v) in map.iter() {
+                                result.insert(k.clone(), v.clone());
+                            }
+                        }
+                        _ => {
+                            return Err(
+                                "Encountered unhandled type evaluating map projection".to_string()
+                            );
+                        }
+                    }
+                }
+                ExprIR::Property(prop_name) => {
+                    // .prop - property shorthand
+                    let value = match &base {
+                        Value::Node(id) => self
+                            .get_node_attribute(*id, prop_name)
+                            .unwrap_or(Value::Null),
+                        Value::Relationship(rel) => self
+                            .get_relationship_attribute(rel.0, prop_name)
+                            .unwrap_or(Value::Null),
+                        Value::Map(map) => map.get(prop_name).cloned().unwrap_or(Value::Null),
+                        _ => {
+                            return Err(
+                                "Encountered unhandled type evaluating map projection".to_string()
+                            );
+                        }
+                    };
+                    result.insert(prop_name.clone(), value);
+                }
+                ExprIR::String(_) => {
+                    // key: expr - named projection
+                    let key = if let ExprIR::String(k) = item.data() {
+                        k.clone()
+                    } else {
+                        unreachable!();
+                    };
+                    let value = self.run_expr(ir, item.child(0).idx(), env, agg_group_key)?;
+                    result.insert(key, value);
+                }
+                _ => {
+                    return Err("Encountered unhandled type evaluating map projection".to_string());
+                }
+            }
+        }
+
+        Ok(Value::Map(result))
     }
 
     pub fn get_node_attrs(

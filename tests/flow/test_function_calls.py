@@ -535,12 +535,11 @@ class testFunctionCallsFlow(FlowTestsBase):
         parsed = json.loads(actual_result.result_set[0][0])
         self.env.assertEqual(parsed, {})
 
-        # @todo Barak remove comment once map projection is implemented
         # Test converting a map projection.
-        #query = """MATCH (n {val: 1}) RETURN toJSON(n {.val, .name})"""
-        #actual_result = self.graph.query(query)
-        #parsed = json.loads(actual_result.result_set[0][0])
-        #self.env.assertEqual(parsed, {"name": "Alon", "val": 1})
+        query = """MATCH (n {val: 1}) RETURN toJSON(n {.val, .name})"""
+        actual_result = self.graph.query(query)
+        parsed = json.loads(actual_result.result_set[0][0])
+        self.env.assertEqual(parsed, {"name": "Alon", "val": 1})
 
         # Test converting a full node.
         query = """MATCH (n {val: 1}) RETURN toJSON(n)"""
