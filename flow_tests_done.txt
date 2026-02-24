@@ -13,7 +13,9 @@ tests/flow/test_mix_labels
 tests/flow/test_multi_pattern
 tests/flow/test_multiple_edges
 tests/flow/test_node_by_id
+tests/flow/test_optional_match
 tests/flow/test_params
+tests/flow/test_path_filter
 tests/flow/test_point
 tests/flow/test_query_validation
 tests/flow/test_reversed_patterns

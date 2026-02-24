@@ -463,6 +463,8 @@ impl Binder {
                 from_bound,
                 to_bound,
                 relationship.bidirectional,
+                relationship.min_hops,
+                relationship.max_hops,
             ));
             bound.add_relationship(rel);
         }
@@ -745,6 +747,7 @@ impl Binder {
                     ExprIR::Variable(_)
                     | ExprIR::Quantifier(_, _)
                     | ExprIR::ListComprehension(_) => unreachable!("handled above"),
+                    ExprIR::Pattern(pattern) => ExprIR::Pattern(self.bind_graph(pattern, false)?),
                 };
                 let mut new_tree = DynTree::new(new_data);
                 let mut root = new_tree.root_mut();
@@ -972,7 +975,8 @@ impl Binder {
             | ExprIR::Quantifier(_, _)
             | ExprIR::Variable(_)
             | ExprIR::Parameter(_)
-            | ExprIR::Property(_) => true,
+            | ExprIR::Property(_)
+            | ExprIR::Pattern(_) => true,
         }
     }
 }

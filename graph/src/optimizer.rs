@@ -365,7 +365,15 @@ fn push_filters_down(optimized_plan: &mut DynTree<IR>) {
                 .node(idx)
                 .children()
                 .filter(|c| {
-                    c.num_children() > 0 && !matches!(c.data(), IR::Project(..) | IR::Aggregate(..))
+                    c.num_children() > 0
+                        && !matches!(
+                            c.data(),
+                            IR::Project(..)
+                                | IR::Aggregate(..)
+                                | IR::SemiApply
+                                | IR::AntiSemiApply
+                                | IR::OrApplyMultiplexer(_)
+                        )
                 })
                 .flat_map(|c| c.children().collect::<Vec<_>>())
                 .map(|c| (c.idx(), collect_subtree_variables(&c)))
@@ -444,10 +452,10 @@ fn utilize_node_by_id(optimized_plan: &mut DynTree<IR>) {
 
     for idx in indices {
         let mut filters = vec![];
-        let IR::NodeByLabelScan(node) = optimized_plan.node(idx).data() else {
-            continue;
+        let node = match optimized_plan.node(idx).data() {
+            IR::NodeByLabelScan(node) | IR::AllNodeScan(node) => node.clone(),
+            _ => continue,
         };
-        let node = node.clone();
         if let IR::Filter(filter) = optimized_plan.node(idx).parent().unwrap().data() {
             if let Some((id, op)) = get_id_filter(filter.root(), &node.alias) {
                 filters.push((id, op));
