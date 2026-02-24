@@ -1221,7 +1221,11 @@ impl<'a> Parser<'a> {
             // After RETURN, only UNION or end-of-file may follow.
             match self.lexer.current()? {
                 Token::EndOfFile | Token::Keyword(Keyword::Union, _) => {}
-                _ => return Err(self.lexer.format_error("Unexpected clause following RETURN")),
+                _ => {
+                    return Err(self
+                        .lexer
+                        .format_error("Unexpected clause following RETURN"));
+                }
             }
         }
         if !matches!(self.lexer.current()?, Token::Keyword(Keyword::Union, _)) {
