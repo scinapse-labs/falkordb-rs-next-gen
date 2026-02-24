@@ -1993,9 +1993,70 @@ impl<'a> Parser<'a> {
                             parse_expr_return!(stack, res);
                             continue;
                         }
+                        // Negated predicates: peek after NOT to decide
+                        // whether it negates a predicate keyword.
+                        //
+                        // For recognized predicates we use a double-push:
+                        //   1. Push Not() wrapper onto the stack.
+                        //   2. Set `res` to the inner predicate with `lhs`
+                        //      already attached.
+                        // When the rhs returns from levels 6+, it becomes a
+                        // child of the predicate, which in turn becomes a
+                        // child of Not():
+                        //   `x NOT IN [1,2]` → Not(In(x, [1,2]))
+                        //
+                        // Bare NOT (e.g. `u.v NOT NULL`) produces a binary
+                        // Not(lhs, rhs) which the binder rejects.
                         Token::Keyword(Keyword::Not, _) => {
                             self.lexer.next();
-                            res = tree!(ExprIR::Not, res);
+                            match self.lexer.current()? {
+                                // x NOT IN [1, 2, 3]
+                                Token::Keyword(Keyword::In, _) => {
+                                    self.lexer.next();
+                                    stack.push((current, Some(tree!(ExprIR::Not))));
+                                    res = tree!(ExprIR::In, res);
+                                }
+                                // name NOT STARTS WITH 'A'
+                                Token::Keyword(Keyword::Starts, _) => {
+                                    self.lexer.next();
+                                    match_token!(self.lexer => With);
+                                    stack.push((current, Some(tree!(ExprIR::Not))));
+                                    res = tree!(
+                                        ExprIR::FuncInvocation(
+                                            get_functions()
+                                                .get("starts_with", &FnType::Internal)?,
+                                        ),
+                                        res
+                                    );
+                                }
+                                // name NOT ENDS WITH 'z'
+                                Token::Keyword(Keyword::Ends, _) => {
+                                    self.lexer.next();
+                                    match_token!(self.lexer => With);
+                                    stack.push((current, Some(tree!(ExprIR::Not))));
+                                    res = tree!(
+                                        ExprIR::FuncInvocation(
+                                            get_functions().get("ends_with", &FnType::Internal)?,
+                                        ),
+                                        res
+                                    );
+                                }
+                                // name NOT CONTAINS 'foo'
+                                Token::Keyword(Keyword::Contains, _) => {
+                                    self.lexer.next();
+                                    stack.push((current, Some(tree!(ExprIR::Not))));
+                                    res = tree!(
+                                        ExprIR::FuncInvocation(
+                                            get_functions().get("contains", &FnType::Internal)?,
+                                        ),
+                                        res
+                                    );
+                                }
+                                // u.v NOT NULL → binary Not(lhs, rhs), rejected by binder
+                                _ => {
+                                    res = tree!(ExprIR::Not, res);
+                                }
+                            }
                         }
                         _ => {
                             parse_expr_return!(stack, res);
