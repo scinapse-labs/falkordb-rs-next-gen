@@ -2279,12 +2279,15 @@ impl<'a> Parser<'a> {
             // placeholder so validate_inlined_properties() rejects it.
             let pos = self.lexer.pos;
             let anon = self.anon_counter;
-            self.parse_map().unwrap_or_else(|_| {
-                self.lexer.set_pos(pos);
-                self.anon_counter = anon;
-                let _ = self.skip_pattern();
-                tree!(ExprIR::Null)
-            })
+            match self.parse_map() {
+                Ok(map) => map,
+                Err(_) => {
+                    self.lexer.set_pos(pos);
+                    self.anon_counter = anon;
+                    self.skip_pattern()?;
+                    tree!(ExprIR::Null)
+                }
+            }
         } else {
             tree!(ExprIR::Map)
         };
@@ -2353,12 +2356,15 @@ impl<'a> Parser<'a> {
             } else if self.lexer.current()? == Token::LBracket {
                 let pos = self.lexer.pos;
                 let anon = self.anon_counter;
-                self.parse_map().unwrap_or_else(|_| {
-                    self.lexer.set_pos(pos);
-                    self.anon_counter = anon;
-                    let _ = self.skip_pattern();
-                    tree!(ExprIR::Null)
-                })
+                match self.parse_map() {
+                    Ok(map) => map,
+                    Err(_) => {
+                        self.lexer.set_pos(pos);
+                        self.anon_counter = anon;
+                        self.skip_pattern()?;
+                        tree!(ExprIR::Null)
+                    }
+                }
             } else {
                 tree!(ExprIR::Map)
             };
