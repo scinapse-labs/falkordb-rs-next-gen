@@ -187,6 +187,9 @@ pub enum ExprIR<TVar> {
     ListComprehension(TVar),
     /// Parenthesized expression (for precedence)
     Paren,
+    /// Map projection: base { .prop, .*, key: expr, var }
+    /// First child is the base expression, remaining children are projection items
+    MapProjection,
 }
 
 #[cfg_attr(tarpaulin, skip)]
@@ -238,6 +241,7 @@ impl<TVar: Display> Display for ExprIR<TVar> {
                 write!(f, "list comp({var})")
             }
             Self::Paren => write!(f, "()"),
+            Self::MapProjection => write!(f, "map_projection"),
         }
     }
 }

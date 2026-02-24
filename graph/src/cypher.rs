@@ -2112,6 +2112,10 @@ impl<'a> Parser<'a> {
                                 self.lexer.next();
                                 res = self.parse_property_lookup(res)?;
                             }
+                            Token::LBracket => {
+                                self.lexer.next();
+                                res = self.parse_map_projection(res)?;
+                            }
                             _ => break,
                         }
                     }
@@ -2460,6 +2464,64 @@ impl<'a> Parser<'a> {
                 }
             }
         }
+    }
+
+    fn parse_map_projection(
+        &mut self,
+        base: DynTree<ExprIR<Arc<String>>>,
+    ) -> Result<DynTree<ExprIR<Arc<String>>>, String> {
+        let mut items = vec![base];
+
+        // Empty projection: expr {}
+        if self.lexer.current()? == Token::RBracket {
+            self.lexer.next();
+            return Ok(tree!(ExprIR::MapProjection ; items));
+        }
+
+        loop {
+            if self.lexer.current()? == Token::Dot {
+                self.lexer.next();
+                if optional_match_token!(self.lexer, Star) {
+                    // .* - all properties
+                    items.push(tree!(ExprIR::MapProjection));
+                } else {
+                    // .property - property shorthand
+                    let prop_name = self.parse_ident()?;
+                    items.push(tree!(ExprIR::Property(prop_name)));
+                }
+            } else {
+                // key: expr  or  variable shorthand
+                let ident = self.parse_ident()?;
+                if optional_match_token!(self.lexer, Colon) {
+                    let value = self.parse_expr()?;
+                    items.push(tree!(ExprIR::String(ident), value));
+                } else {
+                    // variable shorthand: name -> name: name
+                    items.push(tree!(
+                        ExprIR::String(ident.clone()),
+                        tree!(ExprIR::Variable(ident))
+                    ));
+                }
+            }
+
+            match self.lexer.current()? {
+                Token::Comma => {
+                    self.lexer.next();
+                }
+                Token::RBracket => {
+                    self.lexer.next();
+                    break;
+                }
+                _ => {
+                    return Err(self.lexer.format_error(&format!(
+                        "Invalid input '{}': expected ':', ',' or '}}'",
+                        self.lexer.current_str()
+                    )));
+                }
+            }
+        }
+
+        Ok(tree!(ExprIR::MapProjection ; items))
     }
 
     fn parse_orderby(&mut self) -> Result<Vec<(QueryExpr<Arc<String>>, bool)>, String> {

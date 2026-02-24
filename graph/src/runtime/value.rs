@@ -727,6 +727,9 @@ impl Add for Value {
             (Self::Float(f), Self::String(s)) => Ok(Self::String(Arc::new(format!("{f:.6}{s}")))),
             (Self::Bool(b), Self::String(s)) => Ok(Self::String(Arc::new(format!("{b}{s}")))),
 
+            (Self::Map(_), _) | (_, Self::Map(_)) => {
+                Err("Cannot merge a map with a non-map value".to_string())
+            }
             (a, b) => Err(format!(
                 "Unexpected types for add operator ({}, {})",
                 a.name(),

@@ -12,7 +12,6 @@ test_index_updates
 test_intern_string
 test_load_csv
 test_maintain_record_order
-test_map
 test_multi_label
 test_null_handling
 test_opening_node

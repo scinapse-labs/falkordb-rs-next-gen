@@ -812,6 +812,7 @@ impl Binder {
                     ExprIR::String(s) => ExprIR::String(s),
                     ExprIR::List => ExprIR::List,
                     ExprIR::Map => ExprIR::Map,
+                    ExprIR::MapProjection => ExprIR::MapProjection,
                     ExprIR::Parameter(p) => ExprIR::Parameter(p),
                     ExprIR::Length => ExprIR::Length,
                     ExprIR::GetElement => ExprIR::GetElement,
@@ -1066,6 +1067,7 @@ impl Binder {
             | ExprIR::String(_)
             | ExprIR::List
             | ExprIR::Map
+            | ExprIR::MapProjection
             | ExprIR::Negate
             | ExprIR::Length
             | ExprIR::GetElement
