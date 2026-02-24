@@ -62,10 +62,14 @@ impl AttributeStore {
         database: Database,
         keyspace: &str,
     ) -> Self {
+        let exists = database.keyspace_exists(keyspace);
         let keyspace = database
             .keyspace(keyspace, KeyspaceCreateOptions::default)
             .unwrap();
-        keyspace.clear().unwrap(); // Clear any existing data for a fresh start
+        if exists && keyspace.approximate_len() > 0 {
+            // Clear existing data if keyspace already exists (for a fresh start)
+            keyspace.clear().unwrap();
+        }
         Self {
             database: database.clone(),
             snapshot: database.snapshot(),
