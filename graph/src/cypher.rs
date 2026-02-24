@@ -1219,10 +1219,9 @@ impl<'a> Parser<'a> {
             clauses.push(self.parse_return_clause(write)?);
             write = false;
             // After RETURN, only UNION or end-of-file may follow.
-            if self.lexer.current()? != Token::EndOfFile
-                && !matches!(self.lexer.current()?, Token::Keyword(Keyword::Union, _))
-            {
-                return Err(String::from("Unexpected clause following RETURN"));
+            match self.lexer.current()? {
+                Token::EndOfFile | Token::Keyword(Keyword::Union, _) => {}
+                _ => return Err(self.lexer.format_error("Unexpected clause following RETURN")),
             }
         }
         if !matches!(self.lexer.current()?, Token::Keyword(Keyword::Union, _)) {
