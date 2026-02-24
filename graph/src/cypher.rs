@@ -1782,7 +1782,9 @@ impl<'a> Parser<'a> {
             Token::LParen => {
                 let checkpoint = self.lexer.pos;
                 // Try to detect pattern predicate: (ident)--(...) or (ident)<--(...)
-                if allow_pattern_predicate && let Ok(pattern) = self.parse_pattern(&Keyword::Match)
+                if allow_pattern_predicate
+                    && let Ok(pattern) = self.parse_pattern(&Keyword::Match)
+                    && !pattern.relationships().is_empty()
                 {
                     return Ok((tree!(ExprIR::Pattern(pattern)), false));
                 }
