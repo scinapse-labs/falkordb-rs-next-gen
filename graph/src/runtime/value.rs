@@ -107,23 +107,26 @@ impl Point {
         }
     }
 
+    #[must_use]
     pub fn distance(
         &self,
         other: &Self,
     ) -> f64 {
-        let lat1 = self.latitude.to_radians() as f64;
-        let lon1 = self.longitude.to_radians() as f64;
-        let lat2 = other.latitude.to_radians() as f64;
-        let lon2 = other.longitude.to_radians() as f64;
+        const EARTH_RADIUS: f64 = 6_378_140.0;
+
+        let lat1 = f64::from(self.latitude.to_radians());
+        let lon1 = f64::from(self.longitude.to_radians());
+        let lat2 = f64::from(other.latitude.to_radians());
+        let lon2 = f64::from(other.longitude.to_radians());
 
         let dlat = lat2 - lat1;
         let dlon = lon2 - lon1;
 
-        let a = (dlat / 2.0).sin().powi(2) + lat1.cos() * lat2.cos() * (dlon / 2.0).sin().powi(2);
+        let a = (lat1.cos() * lat2.cos())
+            .mul_add((dlon / 2.0).sin().powi(2), (dlat / 2.0).sin().powi(2));
         let c = 2.0 * a.sqrt().atan2((1.0 - a).sqrt());
 
         // Earth's radius in meters
-        const EARTH_RADIUS: f64 = 6378140.0;
         EARTH_RADIUS * c
     }
 
@@ -257,15 +260,15 @@ impl Value {
     pub fn get_attr(
         &self,
         attr: &str,
-    ) -> Result<Value, String> {
+    ) -> Result<Self, String> {
         match self {
-            Value::Map(map) => Ok(map.get_str(attr).cloned().unwrap_or(Value::Null)),
-            Value::Point(p) => Ok(Self::get_point_component(p, attr)),
-            Value::Datetime(ts) => Self::get_datetime_component(*ts, attr),
-            Value::Date(ts) => Self::get_date_component(*ts, attr),
-            Value::Time(ts) => Self::get_time_component(*ts, attr),
-            Value::Duration(dur) => Self::get_duration_component(*dur, attr),
-            Value::Null => Ok(Value::Null),
+            Self::Map(map) => Ok(map.get_str(attr).cloned().unwrap_or(Self::Null)),
+            Self::Point(p) => Ok(Self::get_point_component(p, attr)),
+            Self::Datetime(ts) => Self::get_datetime_component(*ts, attr),
+            Self::Date(ts) => Self::get_date_component(*ts, attr),
+            Self::Time(ts) => Self::get_time_component(*ts, attr),
+            Self::Duration(dur) => Self::get_duration_component(*dur, attr),
+            Self::Null => Ok(Self::Null),
             v => Err(format!(
                 "Type mismatch: expected Map, Node, Edge, Datetime, Date, Time, Duration, Null, or Point but was {}",
                 v.name()
@@ -273,16 +276,16 @@ impl Value {
         }
     }
 
-    fn get_point_component(
+    const fn get_point_component(
         p: &Point,
         attr: &str,
-    ) -> Value {
+    ) -> Self {
         if attr.eq_ignore_ascii_case("latitude") {
-            Value::Float(p.latitude as f64)
+            Self::Float(p.latitude as f64)
         } else if attr.eq_ignore_ascii_case("longitude") {
-            Value::Float(p.longitude as f64)
+            Self::Float(p.longitude as f64)
         } else {
-            Value::Null
+            Self::Null
         }
     }
 
@@ -291,11 +294,11 @@ impl Value {
     fn get_datetime_component(
         timestamp_ms: i64,
         component: &str,
-    ) -> Result<Value, String> {
+    ) -> Result<Self, String> {
         use chrono::{Datelike, TimeZone, Timelike, Utc};
 
         let chrono::LocalResult::Single(dt) = Utc.timestamp_millis_opt(timestamp_ms) else {
-            return Ok(Value::Null);
+            return Ok(Self::Null);
         };
 
         let c = component;
@@ -342,7 +345,7 @@ impl Value {
             return Err(format!("unknown datetime component {component}"));
         };
 
-        Ok(Value::Int(val))
+        Ok(Self::Int(val))
     }
 
     /// Extract a component from a date value (stored as milliseconds since
@@ -350,11 +353,11 @@ impl Value {
     fn get_date_component(
         timestamp_ms: i64,
         component: &str,
-    ) -> Result<Value, String> {
+    ) -> Result<Self, String> {
         use chrono::{Datelike, TimeZone, Utc};
 
         let chrono::LocalResult::Single(dt) = Utc.timestamp_millis_opt(timestamp_ms) else {
-            return Ok(Value::Null);
+            return Ok(Self::Null);
         };
 
         let c = component;
@@ -389,7 +392,7 @@ impl Value {
             return Err(format!("unknown date component {component}"));
         };
 
-        Ok(Value::Int(val))
+        Ok(Self::Int(val))
     }
 
     /// Extract a component from a time value (stored as milliseconds since
@@ -398,11 +401,11 @@ impl Value {
     fn get_time_component(
         timestamp_ms: i64,
         component: &str,
-    ) -> Result<Value, String> {
+    ) -> Result<Self, String> {
         use chrono::{TimeZone, Timelike, Utc};
 
         let chrono::LocalResult::Single(dt) = Utc.timestamp_millis_opt(timestamp_ms) else {
-            return Ok(Value::Null);
+            return Ok(Self::Null);
         };
 
         let c = component;
@@ -416,7 +419,7 @@ impl Value {
             return Err(format!("unknown time component {component}"));
         };
 
-        Ok(Value::Int(val))
+        Ok(Self::Int(val))
     }
 
     /// Extract a component from a duration value (stored as milliseconds from
@@ -426,7 +429,7 @@ impl Value {
     fn get_duration_component(
         duration_ms: i64,
         component: &str,
-    ) -> Result<Value, String> {
+    ) -> Result<Self, String> {
         use chrono::{Datelike, TimeZone, Utc};
 
         // Fast-reject unknown components before doing any chrono work.
@@ -444,11 +447,11 @@ impl Value {
 
         // weeks is always 0 in the C decomposition — skip chrono entirely.
         if c.eq_ignore_ascii_case("weeks") {
-            return Ok(Value::Float(0.0));
+            return Ok(Self::Float(0.0));
         }
 
         let chrono::LocalResult::Single(dt) = Utc.timestamp_millis_opt(duration_ms) else {
-            return Ok(Value::Null);
+            return Ok(Self::Null);
         };
 
         // Decompose into years/months from epoch (1970-01-01) – mirrors the C
@@ -468,10 +471,10 @@ impl Value {
 
         // For years/months we already have the answer — skip the rest.
         if c.eq_ignore_ascii_case("years") {
-            return Ok(Value::Float(f64::from(year_diff)));
+            return Ok(Self::Float(f64::from(year_diff)));
         }
         if c.eq_ignore_ascii_case("months") {
-            return Ok(Value::Float(f64::from(month_diff)));
+            return Ok(Self::Float(f64::from(month_diff)));
         }
 
         // Reconstruct an anchor date that has the same year/month offset from
@@ -505,7 +508,7 @@ impl Value {
             (remaining_secs % 60) as f64
         };
 
-        Ok(Value::Float(val))
+        Ok(Self::Float(val))
     }
 }
 
@@ -965,10 +968,10 @@ impl ValueTypeOf for Value {
             | (Self::Relationship(_), Type::Relationship)
             | (Self::Path(_), Type::Path)
             | (Self::Point(_), Type::Point)
-            | (Value::Datetime(_), Type::Datetime)
-            | (Value::Date(_), Type::Date)
-            | (Value::Time(_), Type::Time)
-            | (Value::Duration(_), Type::Duration)
+            | (Self::Datetime(_), Type::Datetime)
+            | (Self::Date(_), Type::Date)
+            | (Self::Time(_), Type::Time)
+            | (Self::Duration(_), Type::Duration)
             | (_, Type::Any) => None,
             (Self::Arc(inner), ty) => {
                 // If the inner value is a Rc, we need to check its type
@@ -1155,6 +1158,7 @@ impl Value {
 }
 
 impl DisplayJson for Value {
+    #[allow(clippy::too_many_lines)]
     fn fmt_json(
         &self,
         f: &mut fmt::Formatter<'_>,

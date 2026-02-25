@@ -208,7 +208,7 @@ impl Planner {
         let leaves: Vec<_> = tree
             .root()
             .walk_with(&mut tr)
-            .filter(orx_tree::NodeRef::is_leaf)
+            .filter(NodeRef::is_leaf)
             .map(|x| x.idx())
             .collect();
 

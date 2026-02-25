@@ -253,7 +253,7 @@ fn utilize_index(
 }
 
 fn get_id_filter(
-    filter: DynNode<ExprIR<Variable>>,
+    filter: &DynNode<ExprIR<Variable>>,
     node_alias: &Variable,
 ) -> Option<(QueryExpr<Variable>, ExprIR<Variable>)> {
     if matches!(
@@ -449,11 +449,11 @@ fn utilize_node_by_id(optimized_plan: &mut DynTree<IR>) {
         };
         let node = node.clone();
         if let IR::Filter(filter) = optimized_plan.node(idx).parent().unwrap().data() {
-            if let Some((id, op)) = get_id_filter(filter.root(), &node.alias) {
+            if let Some((id, op)) = get_id_filter(&filter.root(), &node.alias) {
                 filters.push((id, op));
             } else if matches!(filter.root().data(), ExprIR::And) {
                 for child in filter.root().children() {
-                    if let Some((id, op)) = get_id_filter(child, &node.alias) {
+                    if let Some((id, op)) = get_id_filter(&child, &node.alias) {
                         filters.push((id, op));
                     } else {
                         filters.clear();

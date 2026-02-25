@@ -260,9 +260,9 @@ impl Pending {
     pub fn remove_node_labels(
         &mut self,
         id: NodeId,
-        labels: Vec<LabelId>,
+        labels: &[LabelId],
     ) {
-        for label in &labels {
+        for label in labels {
             self.set_node_labels
                 .remove(id.into(), usize::from(*label) as u64);
             self.remove_node_labels
@@ -483,7 +483,7 @@ impl Pending {
             for (id, attrs) in self.set_nodes_attrs.drain() {
                 stats.borrow_mut().properties_removed +=
                     g.borrow_mut()
-                        .set_node_attributes(id, attrs, &mut self.index_add_docs)?;
+                        .set_node_attributes(id, &attrs, &mut self.index_add_docs)?;
             }
         }
         if !self.set_relationships_attrs.is_empty() {
@@ -498,7 +498,7 @@ impl Pending {
                 .sum::<usize>();
             for (id, attrs) in self.set_relationships_attrs.drain() {
                 stats.borrow_mut().properties_removed +=
-                    g.borrow_mut().set_relationship_attributes(id, attrs)?;
+                    g.borrow_mut().set_relationship_attributes(id, &attrs)?;
             }
             self.set_relationships_attrs.clear();
         }

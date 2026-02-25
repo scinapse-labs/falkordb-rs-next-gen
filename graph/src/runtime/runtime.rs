@@ -1985,8 +1985,8 @@ impl<'a> Runtime {
                             .iter()
                             .filter_map(|l| self.g.borrow_mut().get_label_id(l.as_str()))
                             .filter(|l| current_labels.contains(l))
-                            .collect();
-                        self.pending.borrow_mut().remove_node_labels(node, labels);
+                            .collect::<Vec<_>>();
+                        self.pending.borrow_mut().remove_node_labels(node, &labels);
                     }
                 }
                 Value::Relationship(rel) => {
@@ -2578,9 +2578,7 @@ impl<'a> Runtime {
                         }),
                 ))
             }
-            None => {
-                return Ok(Box::new(std::iter::empty()));
-            }
+            None => Ok(Box::new(std::iter::empty())),
         }
     }
 
@@ -2603,9 +2601,7 @@ impl<'a> Runtime {
                     }
                 })))
             }
-            None => {
-                return Ok(Box::new(std::iter::empty()));
-            }
+            None => Ok(Box::new(std::iter::empty())),
         }
     }
 
