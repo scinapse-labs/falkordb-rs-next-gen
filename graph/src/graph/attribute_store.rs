@@ -71,8 +71,8 @@ impl AttributeStore {
             keyspace.clear().unwrap();
         }
         Self {
-            database: database.clone(),
             snapshot: database.snapshot(),
+            database,
             keyspace,
             attrs_name: OrderSet::default(),
         }
@@ -166,10 +166,10 @@ impl AttributeStore {
                 && let Some(idx) = extract_attr_idx(&k)
             {
                 let i = idx as usize;
-                if i < self.attrs_name.len() {
-                    if let Some((value, _)) = Value::from_bytes(&data) {
-                        attrs.insert(self.attrs_name[i].clone(), value);
-                    }
+                if i < self.attrs_name.len()
+                    && let Some((value, _)) = Value::from_bytes(&data)
+                {
+                    attrs.insert(self.attrs_name[i].clone(), value);
                 }
             }
         }
@@ -213,7 +213,7 @@ impl AttributeStore {
         &mut self,
         key: u64,
         attr: &Arc<String>,
-        value: Value,
+        value: &Value,
     ) -> Result<bool, String> {
         let idx = self.attrs_name.get_index_of(attr).unwrap_or_else(|| {
             self.attrs_name.insert(attr.clone());

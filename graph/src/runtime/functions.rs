@@ -1610,11 +1610,10 @@ fn avg(
             let (first, rest) = vec.split_at_mut(1);
             let (second, third) = rest.split_at_mut(1);
 
-            let (sum, count, had_overflow) = match (&mut first[0], &mut second[0], &mut third[0]) {
-                (Value::Float(sum), Value::Int(count), Value::Bool(had_overflow)) => {
-                    (sum, count, had_overflow)
-                }
-                _ => unreachable!("avg accumulator should be [sum, count, overflow]"),
+            let (Value::Float(sum), Value::Int(count), Value::Bool(had_overflow)) =
+                (&mut first[0], &mut second[0], &mut third[0])
+            else {
+                unreachable!("avg accumulator should be [sum, count, overflow]");
             };
 
             *count += 1;
@@ -2310,7 +2309,7 @@ fn string_join(
                 .ok_or_else(|| String::from("String overflow"))?;
         }
 
-        for s in strings.iter() {
+        for s in strings {
             let s_len = i32::try_from(s.len()).map_err(|_| String::from("String overflow"))?;
 
             str_len = str_len
