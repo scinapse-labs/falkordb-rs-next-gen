@@ -424,7 +424,8 @@ impl<'a> Runtime {
             ExprIR::Variable(x) => {
                 return env
                     .get(x)
-                    .ok_or_else(|| format!("Variable {} not found", x.as_str()));
+                    .ok_or_else(|| format!("Variable {} not found", x.as_str()))
+                    .cloned();
             }
 
             ExprIR::Parameter(x) => {
@@ -467,7 +468,8 @@ impl<'a> Runtime {
                 ExprIR::String(x) => res.push(Value::String(x.clone())),
                 ExprIR::Variable(x) => res.push(
                     env.get(x)
-                        .ok_or_else(|| format!("Variable {} not found", x.as_str()))?,
+                        .ok_or_else(|| format!("Variable {} not found", x.as_str()))?
+                        .clone(),
                 ),
                 ExprIR::Parameter(x) => res.push(self.parameters.get(x).map_or_else(
                     || Err(format!("Parameter {x} not found")),
@@ -792,7 +794,7 @@ impl<'a> Runtime {
                         && let FnType::Aggregation(_, finalize) = &func.fn_type
                         && let ExprIR::Variable(key) = node.child(node.num_children() - 1).data()
                     {
-                        let acc = env.get(key).unwrap();
+                        let acc = env.get(key).unwrap().clone();
 
                         return match finalize {
                             Some(func) => Ok((func)(acc)),
@@ -1376,10 +1378,12 @@ impl<'a> Runtime {
                             .vars
                             .iter()
                             .map(|v| {
-                                vars.get(v).map_or_else(
-                                    || Err(format!("Variable {} not found", v.as_str())),
-                                    Ok,
-                                )
+                                vars.get(v)
+                                    .map_or_else(
+                                        || Err(format!("Variable {} not found", v.as_str())),
+                                        Ok,
+                                    )
+                                    .cloned()
                             })
                             .collect::<Result<_, String>>()?;
                         vars.insert(&path.var, Value::Path(p));
@@ -1585,7 +1589,7 @@ impl<'a> Runtime {
                             if let ExprIR::Variable(original_var) = tree.root().data()
                                 && let Some(value) = key.get(name)
                             {
-                                vars.insert(original_var, value);
+                                vars.insert(original_var, value.clone());
                             }
                         }
                         vars.merge(key);
@@ -1603,7 +1607,7 @@ impl<'a> Runtime {
                     let mut return_vars = Env::default();
                     for (old_var, new_var) in copy_from_parent {
                         if let Some(value) = vars.get(old_var) {
-                            return_vars.insert(new_var, value);
+                            return_vars.insert(new_var, value.clone());
                         }
                     }
                     for (name, tree) in trees {
@@ -2029,7 +2033,8 @@ impl<'a> Runtime {
                         ExprIR::Variable(name) => {
                             let entity = vars
                                 .get(name)
-                                .ok_or_else(|| format!("Variable {} not found", name.as_str()))?;
+                                .ok_or_else(|| format!("Variable {} not found", name.as_str()))?
+                                .clone();
                             (entity, None)
                         }
                         ExprIR::Property(property) => (
@@ -2210,13 +2215,13 @@ impl<'a> Runtime {
                     let run_expr = vars.get(entity);
                     match run_expr {
                         Some(Value::Node(id)) => {
-                            if (self.g.borrow().is_node_deleted(id)
-                                && !self.pending.borrow().is_node_created(id))
-                                || self.pending.borrow().is_node_deleted(id)
+                            if (self.g.borrow().is_node_deleted(*id)
+                                && !self.pending.borrow().is_node_created(*id))
+                                || self.pending.borrow().is_node_deleted(*id)
                             {
                                 continue;
                             }
-                            self.pending.borrow_mut().set_node_labels(id, labels);
+                            self.pending.borrow_mut().set_node_labels(*id, labels);
                         }
                         Some(Value::Null) => {}
                         _ => {
@@ -2248,13 +2253,15 @@ impl<'a> Runtime {
             .and_then(|v| match v {
                 Value::Node(id) => Some(id),
                 _ => None,
-            });
+            })
+            .cloned();
         let to_id = vars
             .get(&relationship_pattern.to.alias)
             .and_then(|v| match v {
                 Value::Node(id) => Some(id),
                 _ => None,
-            });
+            })
+            .cloned();
         let iter = self.g.borrow().get_relationships(
             &relationship_pattern.types,
             &relationship_pattern.from.labels,
@@ -2310,24 +2317,30 @@ impl<'a> Runtime {
         relationship_pattern: &'a QueryRelationship<Arc<String>, Arc<String>, Variable>,
         vars: Env,
     ) -> Result<Box<dyn Iterator<Item = Result<Env, String>> + 'a>, String> {
-        let src = vars.get(&relationship_pattern.from.alias).map_or_else(
-            || Err(String::from("Node not found")),
-            |v| match v {
-                Value::Node(id) => Ok(id),
-                _ => Err(String::from(
-                    "Invalid node id for 'from' in relationship pattern",
-                )),
-            },
-        )?;
-        let dst = vars.get(&relationship_pattern.to.alias).map_or_else(
-            || Err(String::from("Node not found")),
-            |v| match v {
-                Value::Node(id) => Ok(id),
-                _ => Err(String::from(
-                    "Invalid node id for 'from' in relationship pattern",
-                )),
-            },
-        )?;
+        let src = vars
+            .get(&relationship_pattern.from.alias)
+            .map_or_else(
+                || Err(String::from("Node not found")),
+                |v| match v {
+                    Value::Node(id) => Ok(id),
+                    _ => Err(String::from(
+                        "Invalid node id for 'from' in relationship pattern",
+                    )),
+                },
+            )?
+            .clone();
+        let dst = vars
+            .get(&relationship_pattern.to.alias)
+            .map_or_else(
+                || Err(String::from("Node not found")),
+                |v| match v {
+                    Value::Node(id) => Ok(id),
+                    _ => Err(String::from(
+                        "Invalid node id for 'from' in relationship pattern",
+                    )),
+                },
+            )?
+            .clone();
         Ok(Box::new(
             self.g
                 .borrow()
@@ -2691,12 +2704,14 @@ impl<'a> Runtime {
                 let Value::Node(from_id) = vars
                     .get(&rel.from.alias)
                     .ok_or_else(|| format!("Variable {} not found", rel.from.alias.as_str()))?
+                    .clone()
                 else {
                     return Err(String::from("Invalid node id"));
                 };
                 let Value::Node(to_id) = vars
                     .get(&rel.to.alias)
                     .ok_or_else(|| format!("Variable {} not found", rel.to.alias.as_str()))?
+                    .clone()
                 else {
                     return Err(String::from("Invalid node id"));
                 };

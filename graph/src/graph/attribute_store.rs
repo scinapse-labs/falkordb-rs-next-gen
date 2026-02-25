@@ -177,6 +177,26 @@ impl AttributeStore {
         attrs
     }
 
+    #[must_use]
+    pub fn get_all_attrs_by_id(
+        &self,
+        key: u64,
+    ) -> OrderMap<u16, Value> {
+        let prefix = key.to_be_bytes();
+        let mut attrs = OrderMap::default();
+
+        for entry in self.snapshot.prefix(&self.keyspace, prefix) {
+            if let Ok((k, data)) = entry.into_inner()
+                && let Some(idx) = extract_attr_idx(&k)
+                && let Some((value, _)) = Value::from_bytes(&data)
+            {
+                attrs.insert(idx, value);
+            }
+        }
+
+        attrs
+    }
+
     pub fn remove_attr(
         &mut self,
         key: u64,
