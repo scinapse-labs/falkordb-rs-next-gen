@@ -275,7 +275,7 @@ impl<'a> Lexer<'a> {
 
     fn next(&mut self) {
         self.pos += Self::read_spaces(self.str, self.pos);
-        self.pos += self.cached_current.as_ref().map(|t| t.1).unwrap_or(0);
+        self.pos += self.cached_current.as_ref().map_or(0, |t| t.1);
         let pos = self.pos + Self::read_spaces(self.str, self.pos);
         self.cached_current = Self::get_token(self.str, pos);
     }
@@ -361,7 +361,7 @@ impl<'a> Lexer<'a> {
 
     pub fn current_str(&self) -> &str {
         let pos = self.pos(false);
-        &self.str[pos..pos + self.cached_current.as_ref().map(|t| t.1).unwrap_or(0)]
+        &self.str[pos..pos + self.cached_current.as_ref().map_or(0, |t| t.1)]
     }
 
     #[inline]
