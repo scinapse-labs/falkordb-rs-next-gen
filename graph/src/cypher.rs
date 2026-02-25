@@ -2276,22 +2276,8 @@ impl<'a> Parser<'a> {
             self.lexer.next();
             tree!(ExprIR::Parameter(param))
         } else if self.lexer.current()? == Token::LBracket {
-            // Try to parse properties as a map. If parsing fails, the value
-            // may contain a graph pattern instead of an expression, e.g.:
-            //   MATCH (a {prop: ()-[]->()}) RETURN a
-            // In that case, skip the {…} block and produce a non-Map
-            // placeholder so validate_inlined_properties() rejects it.
-            let pos = self.lexer.pos;
-            let anon = self.anon_counter;
-            match self.parse_map() {
-                Ok(map) => map,
-                Err(_) => {
-                    self.lexer.set_pos(pos);
-                    self.anon_counter = anon;
-                    self.skip_pattern()?;
-                    tree!(ExprIR::Null)
-                }
-            }
+            self.parse_map()
+                .map_err(|_| String::from("Encountered unhandled type in inlined properties."))?
         } else {
             tree!(ExprIR::Map)
         };
@@ -2358,17 +2344,9 @@ impl<'a> Parser<'a> {
                 self.lexer.next();
                 tree!(ExprIR::Parameter(param))
             } else if self.lexer.current()? == Token::LBracket {
-                let pos = self.lexer.pos;
-                let anon = self.anon_counter;
-                match self.parse_map() {
-                    Ok(map) => map,
-                    Err(_) => {
-                        self.lexer.set_pos(pos);
-                        self.anon_counter = anon;
-                        self.skip_pattern()?;
-                        tree!(ExprIR::Null)
-                    }
-                }
+                self.parse_map().map_err(|_| {
+                    String::from("Encountered unhandled type in inlined properties.")
+                })?
             } else {
                 tree!(ExprIR::Map)
             };
@@ -2408,30 +2386,6 @@ impl<'a> Parser<'a> {
             labels.insert(self.parse_ident()?);
         }
         Ok(labels)
-    }
-
-    fn skip_pattern(&mut self) -> Result<(), String> {
-        let mut depth = 0i32;
-        loop {
-            match self.lexer.current()? {
-                Token::LParen | Token::LBrace | Token::LBracket => {
-                    depth += 1;
-                    self.lexer.next();
-                }
-                Token::RParen | Token::RBrace | Token::RBracket => {
-                    if depth == 0 {
-                        break;
-                    }
-                    depth -= 1;
-                    self.lexer.next();
-                }
-                Token::EndOfFile => break,
-                _ => {
-                    self.lexer.next();
-                }
-            }
-        }
-        Ok(())
     }
 
     fn parse_map(&mut self) -> Result<DynTree<ExprIR<Arc<String>>>, String> {
