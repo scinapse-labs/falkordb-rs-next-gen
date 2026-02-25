@@ -31,7 +31,7 @@ use crate::ast::{
 };
 use crate::runtime::functions::Type;
 use crate::tree;
-use orx_tree::{DynTree, NodeRef};
+use orx_tree::{DynNode, DynTree, NodeRef};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
@@ -105,6 +105,7 @@ impl Binder {
         self.parent_to_child_scope.clear();
     }
 
+    #[allow(clippy::too_many_lines)]
     fn bind_ir(
         &mut self,
         ir: RawQueryIR,
@@ -122,12 +123,12 @@ impl Binder {
                 filter,
                 optional,
             } => {
-                let pattern = self.bind_graph(pattern, false)?;
+                let pattern = self.bind_graph(&pattern, false)?;
                 let filter = filter.map(|expr| self.bind_expr(&expr)).transpose()?;
-                if let Some(ref f) = filter {
-                    if !Self::expr_may_return_boolean(f.root()) {
-                        return Err(String::from("Expected boolean predicate"));
-                    }
+                if let Some(ref f) = filter
+                    && !Self::expr_may_return_boolean(f.root())
+                {
+                    return Err(String::from("Expected boolean predicate"));
                 }
                 Ok(QueryIR::Match {
                     pattern,
@@ -141,13 +142,13 @@ impl Binder {
                 Ok(QueryIR::Unwind(expr, var))
             }
             QueryIR::Merge(pattern, on_create, on_match) => {
-                let pattern = self.bind_graph(pattern, false)?;
+                let pattern = self.bind_graph(&pattern, false)?;
                 let on_create = self.bind_set_items(on_create)?;
                 let on_match = self.bind_set_items(on_match)?;
                 Ok(QueryIR::Merge(pattern, on_create, on_match))
             }
             QueryIR::Create(pattern) => {
-                let bound = self.bind_graph_create(pattern)?;
+                let bound = self.bind_graph_create(&pattern)?;
                 Ok(QueryIR::Create(bound))
             }
             QueryIR::CreateIndex {
@@ -222,8 +223,8 @@ impl Binder {
                 ProjectionKind::With,
                 distinct,
                 all,
-                exprs,
-                orderby,
+                &exprs,
+                &orderby,
                 skip,
                 limit,
                 filter,
@@ -242,8 +243,8 @@ impl Binder {
                 ProjectionKind::Return,
                 distinct,
                 all,
-                exprs,
-                orderby,
+                &exprs,
+                &orderby,
                 skip,
                 limit,
                 None,
@@ -259,10 +260,10 @@ impl Binder {
                     bound_vars.push(self.define_name_in_scope(name, Type::Any, true)?);
                 }
                 let filter = filter.map(|expr| self.bind_expr(&expr)).transpose()?;
-                if let Some(ref f) = filter {
-                    if !Self::expr_may_return_boolean(f.root()) {
-                        return Err(String::from("Expected boolean predicate"));
-                    }
+                if let Some(ref f) = filter
+                    && !Self::expr_may_return_boolean(f.root())
+                {
+                    return Err(String::from("Expected boolean predicate"));
                 }
                 Ok(QueryIR::Call(func, args, bound_vars, filter))
             }
@@ -275,8 +276,8 @@ impl Binder {
         kind: ProjectionKind,
         distinct: bool,
         all: bool,
-        exprs: Vec<(Arc<String>, QueryExpr<Arc<String>>)>,
-        orderby: Vec<(QueryExpr<Arc<String>>, bool)>,
+        exprs: &[(Arc<String>, QueryExpr<Arc<String>>)],
+        orderby: &[(QueryExpr<Arc<String>>, bool)],
         skip: Option<QueryExpr<Arc<String>>>,
         limit: Option<QueryExpr<Arc<String>>>,
         filter: Option<QueryExpr<Arc<String>>>,
@@ -330,10 +331,10 @@ impl Binder {
         let skip = skip.map(|expr| self.bind_expr(&expr)).transpose()?;
         let limit = limit.map(|expr| self.bind_expr(&expr)).transpose()?;
         let filter = filter.map(|expr| self.bind_expr(&expr)).transpose()?;
-        if let Some(ref f) = filter {
-            if !Self::expr_may_return_boolean(f.root()) {
-                return Err(String::from("Expected boolean predicate"));
-            }
+        if let Some(ref f) = filter
+            && !Self::expr_may_return_boolean(f.root())
+        {
+            return Err(String::from("Expected boolean predicate"));
         }
 
         let copy_from_parent = self
@@ -371,7 +372,7 @@ impl Binder {
 
     fn bind_graph(
         &mut self,
-        graph: QueryGraph<Arc<String>, Arc<String>, Arc<String>>,
+        graph: &QueryGraph<Arc<String>, Arc<String>, Arc<String>>,
         is_create: bool,
     ) -> Result<QueryGraph<Arc<String>, Arc<String>, Variable>, String> {
         let mut bound: QueryGraph<Arc<String>, Arc<String>, Variable> = QueryGraph::default();
@@ -492,7 +493,7 @@ impl Binder {
 
     fn bind_graph_create(
         &mut self,
-        pattern: QueryGraph<Arc<String>, Arc<String>, Arc<String>>,
+        pattern: &QueryGraph<Arc<String>, Arc<String>, Arc<String>>,
     ) -> Result<QueryGraph<Arc<String>, Arc<String>, Variable>, String> {
         // For CREATE clause validation: we need to detect when a variable is declared
         // multiple times OR when it shadows a previous declaration.
@@ -621,7 +622,7 @@ impl Binder {
         locals: &mut Vec<HashMap<Arc<String>, Variable>>,
     ) -> Result<QueryExpr<Variable>, String> {
         let root = expr.root();
-        Ok(Arc::new(self.bind_expr_node(expr, root, locals)?))
+        Ok(Arc::new(self.bind_expr_node(expr, &root, locals)?))
     }
 
     #[allow(
@@ -632,7 +633,7 @@ impl Binder {
     fn bind_expr_node(
         &mut self,
         expr: &DynTree<ExprIR<Arc<String>>>,
-        node_ref: orx_tree::Node<orx_tree::Dyn<ExprIR<Arc<String>>>>,
+        node_ref: &DynNode<ExprIR<Arc<String>>>,
         locals: &mut Vec<HashMap<Arc<String>, Variable>>,
     ) -> Result<DynTree<ExprIR<Variable>>, String> {
         match node_ref.data() {
@@ -648,7 +649,7 @@ impl Binder {
                 locals.push(local);
                 let children = node_ref
                     .children()
-                    .map(|child| self.bind_expr_node(expr, child, locals))
+                    .map(|child| self.bind_expr_node(expr, &child, locals))
                     .collect::<Result<Vec<_>, _>>()?;
                 locals.pop();
 
@@ -667,7 +668,7 @@ impl Binder {
                 locals.push(local);
                 let children = node_ref
                     .children()
-                    .map(|child| self.bind_expr_node(expr, child, locals))
+                    .map(|child| self.bind_expr_node(expr, &child, locals))
                     .collect::<Result<Vec<_>, _>>()?;
                 locals.pop();
 
@@ -686,7 +687,7 @@ impl Binder {
             _ => {
                 let children = node_ref
                     .children()
-                    .map(|child| self.bind_expr_node(expr, child, locals))
+                    .map(|child| self.bind_expr_node(expr, &child, locals))
                     .collect::<Result<Vec<_>, _>>()?;
                 let new_data = match node_ref.data().clone() {
                     ExprIR::Null => ExprIR::Null,
@@ -863,7 +864,6 @@ impl Binder {
         ty: Type,
         scope_id: u32,
     ) -> Variable {
-        let _current_scope_idx = scope_id as usize;
         let var_id = self.next_var_id;
         self.next_var_id += 1;
 
@@ -898,12 +898,10 @@ impl Binder {
     /// has operands that can return boolean.  Produces a "Type mismatch"
     /// error for non-filter contexts (e.g. RETURN expressions).
     fn validate_boolean_operands(expr: &QueryExpr<Variable>) -> Result<(), String> {
-        Self::validate_boolean_operands_impl(expr.root())
+        Self::validate_boolean_operands_impl(&expr.root())
     }
 
-    fn validate_boolean_operands_impl(
-        node: orx_tree::Node<orx_tree::Dyn<ExprIR<Variable>>>
-    ) -> Result<(), String> {
+    fn validate_boolean_operands_impl(node: &DynNode<ExprIR<Variable>>) -> Result<(), String> {
         if matches!(
             node.data(),
             ExprIR::And | ExprIR::Or | ExprIR::Xor | ExprIR::Not
@@ -915,7 +913,7 @@ impl Binder {
             }
         }
         for child in node.children() {
-            Self::validate_boolean_operands_impl(child)?;
+            Self::validate_boolean_operands_impl(&child)?;
         }
         Ok(())
     }
@@ -925,7 +923,7 @@ impl Binder {
     /// determined statically (variables, parameters, properties), returns
     /// `true` (deferring to the runtime check).
     #[allow(clippy::needless_pass_by_value)]
-    fn expr_may_return_boolean(node: orx_tree::Node<orx_tree::Dyn<ExprIR<Variable>>>) -> bool {
+    fn expr_may_return_boolean(node: DynNode<ExprIR<Variable>>) -> bool {
         match node.data() {
             // Logical operators – result is boolean, but each child must
             // also return boolean (mirrors the C recursive FilterTree_Valid)

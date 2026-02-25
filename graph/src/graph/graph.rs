@@ -613,11 +613,11 @@ impl Graph {
     pub fn set_node_attributes(
         &mut self,
         id: NodeId,
-        attrs: OrderMap<Arc<String>, Value>,
+        attrs: &OrderMap<Arc<String>, Value>,
         index_add_docs: &mut HashMap<Arc<String>, RoaringTreemap>,
     ) -> Result<usize, String> {
         let keys = attrs.keys().cloned().collect::<Vec<_>>();
-        let nremoved = self.node_attrs.insert_attrs(id.0, &attrs)?;
+        let nremoved = self.node_attrs.insert_attrs(id.0, attrs)?;
 
         if self.node_indexer.has_indices() {
             for (_, label_id) in self.node_labels_matrix.iter(id.into(), id.into()) {
@@ -863,9 +863,9 @@ impl Graph {
     pub fn set_relationship_attributes(
         &mut self,
         id: RelationshipId,
-        attrs: OrderMap<Arc<String>, Value>,
+        attrs: &OrderMap<Arc<String>, Value>,
     ) -> Result<usize, String> {
-        let nremoved = self.relationship_attrs.insert_attrs(id.0, &attrs)?;
+        let nremoved = self.relationship_attrs.insert_attrs(id.0, attrs)?;
         Ok(nremoved)
     }
 
