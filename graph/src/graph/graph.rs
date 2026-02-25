@@ -1088,6 +1088,14 @@ impl Graph {
     }
 
     #[must_use]
+    pub fn get_node_all_attrs_by_id(
+        &self,
+        id: NodeId,
+    ) -> OrderMap<u16, Value> {
+        self.node_attrs.get_all_attrs_by_id(id.0)
+    }
+
+    #[must_use]
     pub fn get_relationship_attrs(
         &self,
         id: RelationshipId,
@@ -1102,6 +1110,14 @@ impl Graph {
         id: RelationshipId,
     ) -> OrderMap<Arc<String>, Value> {
         self.relationship_attrs.get_all_attrs(id.0)
+    }
+
+    #[must_use]
+    pub fn get_relationship_all_attrs_by_id(
+        &self,
+        id: RelationshipId,
+    ) -> OrderMap<u16, Value> {
+        self.relationship_attrs.get_all_attrs_by_id(id.0)
     }
 
     pub fn create_index(

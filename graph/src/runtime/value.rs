@@ -616,8 +616,8 @@ impl Env {
     pub fn get(
         &self,
         key: &Variable,
-    ) -> Option<Value> {
-        self.0.get(key.id as usize).cloned()
+    ) -> Option<&Value> {
+        self.0.get(key.id as usize)
     }
 
     /// Takes ownership of a value from the environment, replacing it with `Null`.
