@@ -79,9 +79,9 @@ pub struct Pending {
     /// Relationships to be deleted (edge_id, src, dst)
     deleted_relationships: OrderSet<(RelationshipId, NodeId, NodeId)>,
     /// Property updates for nodes
-    set_nodes_attrs: HashMap<NodeId, OrderMap<Arc<String>, Value>>,
+    set_nodes_attrs: HashMap<u64, OrderMap<Arc<String>, Value>>,
     /// Property updates for relationships
-    set_relationships_attrs: HashMap<RelationshipId, OrderMap<Arc<String>, Value>>,
+    set_relationships_attrs: HashMap<u64, OrderMap<Arc<String>, Value>>,
     /// Labels to add (node_id × label_id matrix)
     set_node_labels: Matrix,
     /// Labels to remove
@@ -171,7 +171,7 @@ impl Pending {
                 )?;
             }
         }
-        self.set_nodes_attrs.insert(id, attrs);
+        self.set_nodes_attrs.insert(id.into(), attrs);
         Ok(())
     }
 
@@ -206,7 +206,7 @@ impl Pending {
             )?;
         }
         self.set_nodes_attrs
-            .entry(id)
+            .entry(id.into())
             .or_default()
             .insert(key, value);
         Ok(())
@@ -216,7 +216,7 @@ impl Pending {
         &mut self,
         id: NodeId,
     ) {
-        self.set_nodes_attrs.remove(&id);
+        self.set_nodes_attrs.remove(&id.into());
     }
 
     #[must_use]
@@ -226,7 +226,7 @@ impl Pending {
         key: &Arc<String>,
     ) -> Option<&Value> {
         self.set_nodes_attrs
-            .get(&id)
+            .get(&id.into())
             .and_then(|attrs| attrs.get(key))
     }
 
@@ -235,7 +235,7 @@ impl Pending {
         id: NodeId,
         attrs: &mut OrderMap<Arc<String>, Value>,
     ) {
-        if let Some(added) = self.set_nodes_attrs.get(&id) {
+        if let Some(added) = self.set_nodes_attrs.get(&id.into()) {
             for (key, value) in added.iter() {
                 if *value == Value::Null {
                     attrs.remove(key);
@@ -332,7 +332,7 @@ impl Pending {
                 )?;
             }
         }
-        self.set_relationships_attrs.insert(id, attrs);
+        self.set_relationships_attrs.insert(id.into(), attrs);
         Ok(())
     }
 
@@ -363,7 +363,7 @@ impl Pending {
             )?;
         }
         self.set_relationships_attrs
-            .entry(id)
+            .entry(id.into())
             .or_default()
             .insert(key, value);
         Ok(())
@@ -376,7 +376,7 @@ impl Pending {
         key: &Arc<String>,
     ) -> Option<&Value> {
         self.set_relationships_attrs
-            .get(&id)
+            .get(&id.into())
             .and_then(|attrs| attrs.get(key))
     }
 
@@ -385,7 +385,7 @@ impl Pending {
         id: RelationshipId,
         attrs: &mut OrderMap<Arc<String>, Value>,
     ) {
-        if let Some(added) = self.set_relationships_attrs.get(&id) {
+        if let Some(added) = self.set_relationships_attrs.get(&id.into()) {
             for (key, value) in added.iter() {
                 if *value == Value::Null {
                     attrs.remove(key);
@@ -480,12 +480,12 @@ impl Pending {
                     _ => 1,
                 })
                 .sum::<usize>();
-            for (id, attrs) in self.set_nodes_attrs.drain() {
-                stats.borrow_mut().properties_removed +=
-                    g.borrow_mut()
-                        .set_node_attributes(id, &attrs, &mut self.index_add_docs)?;
-            }
+            stats.borrow_mut().properties_removed += g
+                .borrow_mut()
+                .set_nodes_attributes(&self.set_nodes_attrs, &mut self.index_add_docs)?;
+            self.set_nodes_attrs.clear();
         }
+
         if !self.set_relationships_attrs.is_empty() {
             stats.borrow_mut().properties_set += self
                 .set_relationships_attrs
@@ -496,10 +496,9 @@ impl Pending {
                     _ => 1,
                 })
                 .sum::<usize>();
-            for (id, attrs) in self.set_relationships_attrs.drain() {
-                stats.borrow_mut().properties_removed +=
-                    g.borrow_mut().set_relationship_attributes(id, &attrs)?;
-            }
+            stats.borrow_mut().properties_removed += g
+                .borrow_mut()
+                .set_relationships_attributes(&self.set_relationships_attrs)?;
             self.set_relationships_attrs.clear();
         }
         if !self.deleted_nodes.is_empty() {
