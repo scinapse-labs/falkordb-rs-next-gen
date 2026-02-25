@@ -31,7 +31,7 @@ use crate::ast::{
 };
 use crate::runtime::functions::Type;
 use crate::tree;
-use orx_tree::{DynNode, DynTree, NodeRef};
+use orx_tree::{Dfs, DynNode, DynTree, NodeRef};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
