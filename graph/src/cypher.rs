@@ -968,9 +968,7 @@ impl<'a> Parser<'a> {
             self.lexer.next();
         }
         if !matches!(self.lexer.current()?, Token::EndOfFile) {
-            return Err(
-                "query with more than one statement is not supported".to_string(),
-            );
+            return Err("query with more than one statement is not supported".to_string());
         }
         Ok(())
     }
