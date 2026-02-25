@@ -515,8 +515,18 @@ impl<T, L, TVar: Clone + Hash + Eq> QueryGraph<T, L, TVar> {
     }
 
     #[must_use]
+    pub fn nodes_ref(&self) -> &[Arc<QueryNode<L, TVar>>] {
+        &self.nodes
+    }
+
+    #[must_use]
     pub fn relationships(&self) -> Vec<Arc<QueryRelationship<T, L, TVar>>> {
         self.relationships.clone()
+    }
+
+    #[must_use]
+    pub fn relationships_ref(&self) -> &[Arc<QueryRelationship<T, L, TVar>>] {
+        &self.relationships
     }
 
     #[must_use]

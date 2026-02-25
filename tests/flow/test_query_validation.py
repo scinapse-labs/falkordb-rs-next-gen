@@ -575,32 +575,32 @@ class testQueryValidationFlow(FlowTestsBase):
             res = self.graph.query(q)
             self.env.assertEqual(res.result_set, [[1]])
 
-    #def test40_compile_time_errors_in_star_projections(self):
-    #    # validate that parser errors are handled correctly
-    #    # in queries containing star projections
-    #    queries = ["MATCH (a)-[r:]->(b) RETURN *",
-    #               "MATCH (a)-[r:]->(b) WITH b RETURN *"]
-    #    for query in queries:
-    #        try:
-    #            self.graph.query(query)
-    #            self.env.assertTrue(False)
-    #        except redis.exceptions.ResponseError:
-    #            pass
+    def test40_compile_time_errors_in_star_projections(self):
+        # validate that parser errors are handled correctly
+        # in queries containing star projections
+        queries = ["MATCH (a)-[r:]->(b) RETURN *",
+                   "MATCH (a)-[r:]->(b) WITH b RETURN *"]
+        for query in queries:
+            try:
+                self.graph.query(query)
+                self.env.assertTrue(False)
+            except redis.exceptions.ResponseError:
+                pass
 
-    #    # check that AST validation errors are handled correctly
-    #    # in queries containing star projections
-    #    queries = ["WITH 1 RETURN *",
-    #               "RETURN *",
-    #               "CREATE () RETURN DISTINCT *",
-    #               "MATCH () WITH * RETURN z",
-    #               "MATCH () WITH * RETURN *",
-    #               "MATCH () WITH * WHERE n.v > 1 RETURN *"]
-    #    for query in queries:
-    #        try:
-    #            self.graph.query(query)
-    #            self.env.assertTrue(False)
-    #        except redis.exceptions.ResponseError:
-    #            pass
+        # check that AST validation errors are handled correctly
+        # in queries containing star projections
+        queries = ["WITH 1 RETURN *",
+                   "RETURN *",
+                   "CREATE () RETURN DISTINCT *",
+                   "MATCH () WITH * RETURN z",
+                   "MATCH () WITH * RETURN *",
+                   "MATCH () WITH * WHERE n.v > 1 RETURN *"]
+        for query in queries:
+            try:
+                self.graph.query(query)
+                self.env.assertTrue(False)
+            except redis.exceptions.ResponseError:
+                pass
 
     ## Test returning multiple occurrence of an expression.
     #def test41_return_duplicate_expression(self):
