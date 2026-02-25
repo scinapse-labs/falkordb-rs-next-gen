@@ -17,7 +17,7 @@
 //!
 //! **Key format:** `entity_id (8 bytes BE) + attr_idx (2 bytes BE)`
 
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
 use fjall::{Database, Keyspace, KeyspaceCreateOptions, Readable, Snapshot};
 use roaring::RoaringTreemap;
@@ -239,40 +239,41 @@ impl AttributeStore {
     /// Returns the number of attributes that were replaced (vs newly added).
     pub fn insert_attrs(
         &mut self,
-        key: u64,
-        attrs: &crate::runtime::ordermap::OrderMap<Arc<String>, Value>,
+        attrs: &HashMap<u64, OrderMap<Arc<String>, Value>>,
     ) -> Result<usize, String> {
         let mut nremoved = 0;
         let mut batch = self.database.batch();
 
-        for (attr, value) in attrs.iter() {
-            let idx = self.attrs_name.get_index_of(attr).unwrap_or_else(|| {
-                self.attrs_name.insert(attr.clone());
-                self.attrs_name.len() - 1
-            }) as u16;
+        for (key, attrs) in attrs.iter() {
+            for (attr, value) in attrs.iter() {
+                let idx = self.attrs_name.get_index_of(attr).unwrap_or_else(|| {
+                    self.attrs_name.insert(attr.clone());
+                    self.attrs_name.len() - 1
+                }) as u16;
 
-            let composite_key = make_key(key, idx);
+                let composite_key = make_key(u64::from(*key), idx);
 
-            if *value == Value::Null {
-                // Check snapshot for existence
-                if self
-                    .snapshot
-                    .contains_key(&self.keyspace, composite_key)
-                    .map_err(|e| e.to_string())?
-                {
-                    batch.remove(&self.keyspace, composite_key);
-                    nremoved += 1;
+                if *value == Value::Null {
+                    // Check snapshot for existence
+                    if self
+                        .snapshot
+                        .contains_key(&self.keyspace, composite_key)
+                        .map_err(|e| e.to_string())?
+                    {
+                        batch.remove(&self.keyspace, composite_key);
+                        nremoved += 1;
+                    }
+                } else {
+                    // Check snapshot for replaced count
+                    if self
+                        .snapshot
+                        .contains_key(&self.keyspace, composite_key)
+                        .map_err(|e| e.to_string())?
+                    {
+                        nremoved += 1;
+                    }
+                    batch.insert(&self.keyspace, composite_key, value.to_bytes());
                 }
-            } else {
-                // Check snapshot for replaced count
-                if self
-                    .snapshot
-                    .contains_key(&self.keyspace, composite_key)
-                    .map_err(|e| e.to_string())?
-                {
-                    nremoved += 1;
-                }
-                batch.insert(&self.keyspace, composite_key, value.to_bytes());
             }
         }
 
