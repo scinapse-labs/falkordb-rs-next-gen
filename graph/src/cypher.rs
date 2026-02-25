@@ -134,6 +134,7 @@ enum Keyword {
     Options,
     For,
     On,
+    Union,
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -230,6 +231,7 @@ const KEYWORDS: &[(&str, Keyword)] = &[
     ("OPTIONS", Keyword::Options),
     ("FOR", Keyword::For),
     ("ON", Keyword::On),
+    ("UNION", Keyword::Union),
 ];
 
 const MIN_I64: [&str; 5] = [
@@ -1146,7 +1148,39 @@ impl<'a> Parser<'a> {
         Ok(None)
     }
 
+    /// Parses a complete query, handling UNION if present.
+    ///
+    /// A Cypher query may consist of multiple sub-queries joined by UNION:
+    ///
+    /// ```cypher
+    /// MATCH (n:Person) RETURN n.name AS name
+    /// UNION
+    /// MATCH (n:Company) RETURN n.title AS name
+    /// ```
+    ///
+    /// Each sub-query is parsed by `parse_single_query()`.  If UNION appears
+    /// after the first sub-query's RETURN, additional sub-queries are parsed
+    /// and wrapped in `QueryIR::Union`.
     fn parse_query(&mut self) -> Result<RawQueryIR, String> {
+        let first = self.parse_single_query()?;
+        if optional_match_token!(self.lexer => Union) {
+            let mut branches = vec![first];
+            branches.push(self.parse_single_query()?);
+            while optional_match_token!(self.lexer => Union) {
+                branches.push(self.parse_single_query()?);
+            }
+            match_token!(self.lexer, EndOfFile);
+            return Ok(QueryIR::Union(branches));
+        }
+        Ok(first)
+    }
+
+    /// Parses a single sub-query (clauses up through an optional RETURN).
+    ///
+    /// This handles the reading/writing clause loops and WITH/RETURN
+    /// projection.  Called once for standalone queries and once per branch
+    /// in a UNION query.
+    fn parse_single_query(&mut self) -> Result<RawQueryIR, String> {
         let mut clauses = Vec::new();
         let mut write = false;
         loop {
@@ -1184,8 +1218,19 @@ impl<'a> Parser<'a> {
         if optional_match_token!(self.lexer => Return) {
             clauses.push(self.parse_return_clause(write)?);
             write = false;
+            // After RETURN, only UNION or end-of-file may follow.
+            match self.lexer.current()? {
+                Token::EndOfFile | Token::Keyword(Keyword::Union, _) => {}
+                _ => {
+                    return Err(self
+                        .lexer
+                        .format_error("Unexpected clause following RETURN"));
+                }
+            }
         }
-        match_token!(self.lexer, EndOfFile);
+        if !matches!(self.lexer.current()?, Token::Keyword(Keyword::Union, _)) {
+            match_token!(self.lexer, EndOfFile);
+        }
         Ok(QueryIR::Query(clauses, write))
     }
 
@@ -1951,6 +1996,74 @@ impl<'a> Parser<'a> {
                             parse_expr_return!(stack, res);
                             continue;
                         }
+                        // Negated predicates: peek after NOT to decide
+                        // whether it negates a predicate keyword.
+                        //
+                        // For recognized predicates we use a double-push:
+                        //   1. Push Not() wrapper onto the stack.
+                        //   2. Set `res` to the inner predicate with `lhs`
+                        //      already attached.
+                        // When the rhs returns from levels 6+, it becomes a
+                        // child of the predicate, which in turn becomes a
+                        // child of Not():
+                        //   `x NOT IN [1,2]` → Not(In(x, [1,2]))
+                        //
+                        // Bare NOT (e.g. `u.v NOT NULL`) produces a binary
+                        // Not(lhs, rhs) which the binder rejects.
+                        Token::Keyword(Keyword::Not, _) => {
+                            self.lexer.next();
+                            match self.lexer.current()? {
+                                // x NOT IN [1, 2, 3]
+                                Token::Keyword(Keyword::In, _) => {
+                                    self.lexer.next();
+                                    stack.push((current, Some(tree!(ExprIR::Not))));
+                                    res = tree!(ExprIR::In, res);
+                                }
+                                // name NOT STARTS WITH 'A'
+                                Token::Keyword(Keyword::Starts, _) => {
+                                    self.lexer.next();
+                                    match_token!(self.lexer => With);
+                                    stack.push((current, Some(tree!(ExprIR::Not))));
+                                    res = tree!(
+                                        ExprIR::FuncInvocation(
+                                            get_functions()
+                                                .get("starts_with", &FnType::Internal)?,
+                                        ),
+                                        res
+                                    );
+                                }
+                                // name NOT ENDS WITH 'z'
+                                Token::Keyword(Keyword::Ends, _) => {
+                                    self.lexer.next();
+                                    match_token!(self.lexer => With);
+                                    stack.push((current, Some(tree!(ExprIR::Not))));
+                                    res = tree!(
+                                        ExprIR::FuncInvocation(
+                                            get_functions().get("ends_with", &FnType::Internal)?,
+                                        ),
+                                        res
+                                    );
+                                }
+                                // name NOT CONTAINS 'foo'
+                                Token::Keyword(Keyword::Contains, _) => {
+                                    self.lexer.next();
+                                    stack.push((current, Some(tree!(ExprIR::Not))));
+                                    res = tree!(
+                                        ExprIR::FuncInvocation(
+                                            get_functions().get("contains", &FnType::Internal)?,
+                                        ),
+                                        res
+                                    );
+                                }
+                                // Bare NOT without a recognized predicate keyword
+                                // (e.g. `u.v NOT NULL` instead of `u.v IS NOT NULL`).
+                                _ => {
+                                    return Err(self
+                                        .lexer
+                                        .format_error("Invalid usage of 'NOT' filter"));
+                                }
+                            }
+                        }
                         _ => {
                             parse_expr_return!(stack, res);
                             continue;
@@ -2165,8 +2278,11 @@ impl<'a> Parser<'a> {
         let attrs = if let Token::Parameter(param) = self.lexer.current()? {
             self.lexer.next();
             tree!(ExprIR::Parameter(param))
+        } else if self.lexer.current()? == Token::LBracket {
+            self.parse_map()
+                .map_err(|_| String::from("Encountered unhandled type in inlined properties."))?
         } else {
-            self.parse_map()?
+            tree!(ExprIR::Map)
         };
         match_token!(self.lexer, RParen);
         Ok(Arc::new(QueryNode::new(alias, labels, Arc::new(attrs))))
@@ -2230,8 +2346,12 @@ impl<'a> Parser<'a> {
             let attrs = if let Token::Parameter(param) = self.lexer.current()? {
                 self.lexer.next();
                 tree!(ExprIR::Parameter(param))
+            } else if self.lexer.current()? == Token::LBracket {
+                self.parse_map().map_err(|_| {
+                    String::from("Encountered unhandled type in inlined properties.")
+                })?
             } else {
-                self.parse_map()?
+                tree!(ExprIR::Map)
             };
             match_token!(self.lexer, RBrace);
             (alias, types.into_iter().collect(), attrs)
