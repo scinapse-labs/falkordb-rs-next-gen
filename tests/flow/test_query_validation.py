@@ -382,132 +382,133 @@ class testQueryValidationFlow(FlowTestsBase):
                 assert("Expected boolean predicate" in str(e))
                 pass
 
-    ## The NOT operator does not compare left and right side expressions.
-    #def test28_invalid_filter_binary_not(self):
-    #    try:
-    #        # Query should have been:
-    #        # MATCH (u) where u.v IS NOT NULL RETURN u
-    #        query = """MATCH (u) where u.v NOT NULL RETURN u"""
-    #        self.graph.query(query)
-    #        assert(False)
-    #    except redis.exceptions.ResponseError as e:
-    #        # Expecting an error.
-    #        assert("Invalid usage of 'NOT' filter" in str(e))
-    #        pass
+    # The NOT operator does not compare left and right side expressions.
+    def test28_invalid_filter_binary_not(self):
+        try:
+            # Query should have been:
+            # MATCH (u) where u.v IS NOT NULL RETURN u
+            query = """MATCH (u) where u.v NOT NULL RETURN u"""
+            self.graph.query(query)
+            assert(False)
+        except redis.exceptions.ResponseError as e:
+            # Expecting an error.
+            assert("Invalid usage of 'NOT' filter" in str(e))
+            pass
 
-    #def test29_invalid_filter_non_boolean_constant(self):
-    #    try:
-    #        query = """MATCH (a) WHERE a RETURN a"""
-    #        self.graph.query(query)
-    #        assert(False)
-    #    except redis.exceptions.ResponseError as e:
-    #        assert("expected Boolean but was Node" in str(e))
-    #        pass
+    def test29_invalid_filter_non_boolean_constant(self):
+        try:
+            query = """MATCH (a) WHERE a RETURN a"""
+            self.graph.query(query)
+            assert(False)
+        except redis.exceptions.ResponseError as e:
+            assert("expected Boolean but was Node" in str(e))
+            pass
 
-    #    try:
-    #        query = """MATCH (a) WHERE 1+rand() RETURN a"""
-    #        self.graph.query(query)
-    #        assert(False)
-    #    except redis.exceptions.ResponseError as e:
-    #        assert("expected Boolean but was Float" in str(e))
-    #        pass
+        try:
+            query = """MATCH (a) WHERE 1+rand() RETURN a"""
+            self.graph.query(query)
+            assert(False)
+        except redis.exceptions.ResponseError as e:
+            assert("expected Boolean but was Float" in str(e))
+            pass
 
-    #    try:
-    #        query = """CYPHER p=3 WITH 1 AS a WHERE $p RETURN a"""
-    #        self.graph.query(query)
-    #        assert(False)
-    #    except redis.exceptions.ResponseError as e:
-    #        assert("expected Boolean but was Integer" in str(e))
-    #        pass
+        try:
+            query = """CYPHER p=3 WITH 1 AS a WHERE $p RETURN a"""
+            self.graph.query(query)
+            assert(False)
+        except redis.exceptions.ResponseError as e:
+            assert("expected Boolean but was Integer" in str(e))
+            pass
 
-    #    # 'val' is a boolean, so this query is valid.
-    #    query = """WITH true AS val WHERE val return val"""
-    #    self.graph.query(query)
+        # 'val' is a boolean, so this query is valid.
+        query = """WITH true AS val WHERE val return val"""
+        self.graph.query(query)
 
-    #    # Non-existent properties are treated as NULLs, which are boolean in Cypher's 3-valued logic.
-    #    query = """MATCH (a) WHERE a.fakeprop RETURN a"""
-    #    self.graph.query(query)
+        # Non-existent properties are treated as NULLs, which are boolean in Cypher's 3-valued logic.
+        query = """MATCH (a) WHERE a.fakeprop RETURN a"""
+        self.graph.query(query)
 
-    ## Encountering traversals as property values should raise compile-time errors.
-    #def test30_unexpected_traversals(self):
-    #    query = """MATCH (a {prop: ()-[]->()}) RETURN a"""
-    #    try:
-    #        self.graph.query(query)
-    #        assert(False)
-    #    except redis.exceptions.ResponseError as e:
-    #        # Expecting an error.
-    #        assert("Encountered unhandled type" in str(e))
+    # Encountering traversals as property values should raise compile-time errors.
+    def test30_unexpected_traversals(self):
+        query = """MATCH (a {prop: ()-[]->()}) RETURN a"""
+        try:
+            self.graph.query(query)
+            assert(False)
+        except redis.exceptions.ResponseError as e:
+            # Expecting an error.
+            assert("Encountered unhandled type" in str(e))
 
-    #def test31_set_invalid_property_type(self):
-    #    queries = ["""MATCH (a) CREATE (:L {v: a})""",
-    #               """MATCH (a), (b) WHERE b.age IS NOT NULL SET b.age = a""",
-    #               """MERGE (a) ON MATCH SET a.age = a"""]
-    #    for q in queries:
-    #        try:
-    #            self.graph.query(q)
-    #            assert(False)
-    #        except redis.exceptions.ResponseError as e:
-    #            # Expecting an error.
-    #            assert("Property values can only be of primitive types" in str(e))
-    #            pass
+    def test31_set_invalid_property_type(self):
+        queries = ["""MATCH (a) CREATE (:L {v: a})""",
+                   """MATCH (a), (b) WHERE b.age IS NOT NULL SET b.age = a""",
+                   """MERGE (a) ON MATCH SET a.age = a"""]
+        for q in queries:
+            try:
+                self.graph.query(q)
+                assert(False)
+            except redis.exceptions.ResponseError as e:
+                # Expecting an error.
+                assert("Property values can only be of primitive types" in str(e))
+                pass
 
-    #def test32_return_following_clauses(self):
-    #    # After a RETURN clause we're expecting only the following clauses:
-    #    # SKIP, LIMIT, ORDER-BY and UNION, given that SKIP and LIMIT are
-    #    # actually attributes of the RETURN clause this leaves us with
-    #    # ORDER-BY and UNION.
+    def test32_return_following_clauses(self):
+        # After a RETURN clause we're expecting only the following clauses:
+        # SKIP, LIMIT, ORDER-BY and UNION, given that SKIP and LIMIT are
+        # actually attributes of the RETURN clause this leaves us with
+        # ORDER-BY and UNION.
 
-    #    invalid_queries = ["""RETURN 1 CREATE ()""",
-    #            """RETURN 1 RETURN 2""",
-    #            """MATCH(n) RETURN n DELETE n""",
-    #            """MATCH(n) RETURN n SET n.v = 1""",
-    #            """RETURN 1 MERGE ()""",
-    #            """RETURN 1 MATCH (n) RETURN n""",
-    #            """RETURN 1 WITH 1 as one RETURN one""" ]
+        invalid_queries = ["""RETURN 1 CREATE ()""",
+                """RETURN 1 RETURN 2""",
+                """MATCH(n) RETURN n DELETE n""",
+                """MATCH(n) RETURN n SET n.v = 1""",
+                """RETURN 1 MERGE ()""",
+                """RETURN 1 MATCH (n) RETURN n""",
+                """RETURN 1 WITH 1 as one RETURN one""" ]
 
-    #    # Invalid queries, expecting errors.
-    #    for q in invalid_queries:
-    #        try:
-    #            self.graph.query(q)
-    #            assert(False)
-    #        except redis.exceptions.ResponseError as e:
-    #            # Expecting an error.
-    #            assert("Unexpected clause following RETURN" in str(e))
-    #            pass
+        # Invalid queries, expecting errors.
+        for q in invalid_queries:
+            try:
+                self.graph.query(q)
+                assert(False)
+            except redis.exceptions.ResponseError as e:
+                # Expecting an error.
+                assert("Unexpected clause following RETURN" in str(e))
+                pass
 
-    ## Parameters cannot reference aliases.
-    #def test33_alias_reference_in_param(self):
-    #    try:
-    #        query = """CYPHER A=[a] RETURN 5"""
-    #        self.graph.query(query)
-    #        assert(False)
-    #    except redis.exceptions.ResponseError as e:
-    #        # expecting an error
-    #        pass
+    # Parameters cannot reference aliases.
+    def test33_alias_reference_in_param(self):
+        try:
+            query = """CYPHER A=[a] RETURN 5"""
+            self.graph.query(query)
+            assert(False)
+        except redis.exceptions.ResponseError as e:
+            # expecting an error
+            pass
 
-    #def test34_self_referential_properties(self):
-    #    try:
-    #        # The server should emit an error on trying to create a node with a self-referential property.
-    #        query = """CREATE (a:L {v: a.v})"""
-    #        self.graph.query(query)
-    #        assert(False)
-    #    except redis.exceptions.ResponseError as e:
-    #        # Expecting an error.
-    #        self.env.assertContains("undefined attribute", str(e))
+    def test34_self_referential_properties(self):
+        try:
+            # The server should emit an error on trying to create a node with a self-referential property.
+            query = """CREATE (a:L {v: a.v})"""
+            self.graph.query(query)
+            assert(False)
+        except redis.exceptions.ResponseError as e:
+            # Expecting an error.
+            self.env.assertContains("undefined attribute", str(e))
 
-    #    # MATCH clauses should be able to use self-referential properties as existential filters.
-    #    query = """MATCH (a {age: a.age}) RETURN a.age"""
-    #    actual_result = self.graph.query(query)
-    #    expected_result = [[34]]
-    #    self.env.assertEqual(actual_result.result_set, expected_result)
+        # MATCH clauses should be able to use self-referential properties as existential filters.
+        query = """MATCH (a {age: a.age}) RETURN a.age"""
+        actual_result = self.graph.query(query)
+        expected_result = [[34]]
+        self.env.assertEqual(actual_result.result_set, expected_result)
 
-    ## Test a query that allocates a large buffer.
-    #def test35_large_query(self):
-    #    retval = "abcdef" * 1_000
-    #    query = "RETURN " + "\"" + retval + "\""
-    #    actual_result = self.graph.query(query)
-    #    self.env.assertEqual(actual_result.result_set[0][0], retval)
+    # Test a query that allocates a large buffer.
+    def test35_large_query(self):
+        retval = "abcdef" * 1_000
+        query = "RETURN " + "\"" + retval + "\""
+        actual_result = self.graph.query(query)
+        self.env.assertEqual(actual_result.result_set[0][0], retval)
 
+    #@todo barak implement algo.BFS
     #def test36_multiple_proc_calls(self):
     #    query = """MATCH (a)
     #               CALL algo.BFS(a, 3, NULL) YIELD nodes as ns1
@@ -517,36 +518,36 @@ class testQueryValidationFlow(FlowTestsBase):
     #    plan = str(self.graph.explain(query))
     #    self.env.assertTrue(plan.count("ProcedureCall") == 2)
 
-    #def test37_list_comprehension_missuse(self):
-    #    # all expect list comprehension,
-    #    # unfortunately this isn't enforced by the parser
-    #    # as such it is possible for a user miss-use this function
-    #    # and our current arithmetic expression construction logic will
-    #    # construct a malformed function call
+    def test37_list_comprehension_missuse(self):
+        # all expect list comprehension,
+        # unfortunately this isn't enforced by the parser
+        # as such it is possible for a user miss-use this function
+        # and our current arithmetic expression construction logic will
+        # construct a malformed function call
 
-    #    # make sure we're reciving an exception for each miss-use query
-    #    queries = ["WITH 1 AS x RETURN all(x > 2)",
-    #            "WITH 1 AS x RETURN all([1],2,3)"]
+        # make sure we're reciving an exception for each miss-use query
+        queries = ["WITH 1 AS x RETURN all(x > 2)",
+                "WITH 1 AS x RETURN all([1],2,3)"]
 
-    #    for q in queries:
-    #        try:
-    #            self.graph.query(q)
-    #            assert(False)
-    #        except redis.exceptions.ResponseError as e:
-    #            pass
+        for q in queries:
+            try:
+                self.graph.query(q)
+                assert(False)
+            except redis.exceptions.ResponseError as e:
+                pass
 
-    #def test38_return_star_union(self):
-    #    # queries of the form [...] RETURN * UNION [...] should have
-    #    # all relevant validations on their column names enforced
-    #    queries = ["WITH 5 AS x RETURN * UNION WITH 10 AS y RETURN *",
-    #               "WITH 5 AS x RETURN * UNION WITH 10 AS y RETURN y",
-    #               "WITH 5 AS x, 8 AS y RETURN * UNION WITH 10 AS y RETURN y"]
-    #    for q in queries:
-    #        try:
-    #            self.graph.query(q)
-    #            assert(False)
-    #        except redis.exceptions.ResponseError as e:
-    #            self.env.assertContains("All sub queries in a UNION must have the same column names", str(e))
+    def test38_return_star_union(self):
+        # queries of the form [...] RETURN * UNION [...] should have
+        # all relevant validations on their column names enforced
+        queries = ["WITH 5 AS x RETURN * UNION WITH 10 AS y RETURN *",
+                   "WITH 5 AS x RETURN * UNION WITH 10 AS y RETURN y",
+                   "WITH 5 AS x, 8 AS y RETURN * UNION WITH 10 AS y RETURN y"]
+        for q in queries:
+            try:
+                self.graph.query(q)
+                assert(False)
+            except redis.exceptions.ResponseError as e:
+                self.env.assertContains("All sub queries in a UNION must have the same column names", str(e))
 
     #def test39_non_single_statement_query(self):
     #    queries = [";",      # Error: could not parse query

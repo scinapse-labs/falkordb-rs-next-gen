@@ -737,6 +737,7 @@ pub enum QueryIR<TVar> {
         index_type: IndexType,
         entity_type: EntityType,
     },
+    Union(Vec<Self>),
     Query(Vec<Self>, bool),
 }
 
@@ -825,6 +826,15 @@ impl<TVar: Display + Eq + Hash> Display for QueryIR<TVar> {
             Self::Query(qs, _) => {
                 for q in qs {
                     write!(f, "{q}")?;
+                }
+                Ok(())
+            }
+            Self::Union(branches) => {
+                for (i, branch) in branches.iter().enumerate() {
+                    if i > 0 {
+                        writeln!(f, "UNION")?;
+                    }
+                    write!(f, "{branch}")?;
                 }
                 Ok(())
             }
@@ -948,6 +958,12 @@ impl<TVar: Eq + Hash> QueryIR<TVar> {
                 let mut iter = q.iter();
                 let first = iter.next().ok_or("Error: empty query.")?;
                 first.inner_validate(iter)
+            }
+            Self::Union(branches) => {
+                for branch in branches {
+                    branch.validate()?;
+                }
+                Ok(())
             }
         }
     }

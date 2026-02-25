@@ -1026,6 +1026,11 @@ impl Planner {
                 })
             }
             QueryIR::Query(q, write) => self.plan_query(q, write),
+            QueryIR::Union(_) => {
+                // UNION execution is not yet implemented.
+                // Currently, only column-name validation is performed (in the binder).
+                todo!("UNION execution not yet implemented")
+            }
         }
     }
 }

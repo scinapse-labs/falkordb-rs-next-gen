@@ -610,27 +610,25 @@ impl Graph {
         self.node_count + self.deleted_nodes.len() - 1
     }
 
-    pub fn set_node_attributes(
+    pub fn set_nodes_attributes(
         &mut self,
-        id: NodeId,
-        attrs: &OrderMap<Arc<String>, Value>,
+        attrs: &HashMap<u64, OrderMap<Arc<String>, Value>>,
         index_add_docs: &mut HashMap<Arc<String>, RoaringTreemap>,
     ) -> Result<usize, String> {
-        let keys = attrs.keys().cloned().collect::<Vec<_>>();
-        let nremoved = self.node_attrs.insert_attrs(id.0, attrs)?;
+        let nremoved = self.node_attrs.insert_attrs(attrs)?;
 
         if self.node_indexer.has_indices() {
-            for (_, label_id) in self.node_labels_matrix.iter(id.into(), id.into()) {
-                for key in &keys {
-                    let label = self.node_labels[label_id as usize].clone();
-                    if self
-                        .node_indexer
-                        .is_attr_indexed(label.clone(), key.clone())
-                    {
-                        index_add_docs
-                            .entry(label)
-                            .or_default()
-                            .insert(u64::from(id));
+            for (id, attrs) in attrs {
+                let keys = attrs.keys().cloned().collect::<Vec<_>>();
+                for (_, label_id) in self.node_labels_matrix.iter(*id, *id) {
+                    for key in &keys {
+                        let label = self.node_labels[label_id as usize].clone();
+                        if self
+                            .node_indexer
+                            .is_attr_indexed(label.clone(), key.clone())
+                        {
+                            index_add_docs.entry(label).or_default().insert(*id);
+                        }
                     }
                 }
             }
@@ -860,12 +858,11 @@ impl Graph {
         }
     }
 
-    pub fn set_relationship_attributes(
+    pub fn set_relationships_attributes(
         &mut self,
-        id: RelationshipId,
-        attrs: &OrderMap<Arc<String>, Value>,
+        attrs: &HashMap<u64, OrderMap<Arc<String>, Value>>,
     ) -> Result<usize, String> {
-        let nremoved = self.relationship_attrs.insert_attrs(id.0, attrs)?;
+        let nremoved = self.relationship_attrs.insert_attrs(attrs)?;
         Ok(nremoved)
     }
 
