@@ -31,7 +31,7 @@ use crate::ast::{
 };
 use crate::runtime::functions::Type;
 use crate::tree;
-use orx_tree::{DynNode, DynTree, NodeRef};
+use orx_tree::{Dfs, DynNode, DynTree, NodeRef};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
@@ -111,6 +111,41 @@ impl Binder {
         ir: RawQueryIR,
     ) -> Result<BoundQueryIR, String> {
         match ir {
+            QueryIR::Union(branches) => {
+                // Each UNION branch is an independent sub-query with its own
+                // variable scope, so each branch is bound with a fresh Binder.
+                //
+                // After binding, the RETURN column names of every branch must
+                // match.  For example, this is valid:
+                //
+                //   MATCH (n:Person) RETURN n.name AS name
+                //   UNION
+                //   MATCH (n:Company) RETURN n.title AS name
+                //
+                // But this is invalid (different column names):
+                //
+                //   WITH 5 AS x RETURN *
+                //   UNION
+                //   WITH 10 AS y RETURN *
+                let mut bound_branches = Vec::with_capacity(branches.len());
+                let mut first_columns: Option<Vec<Arc<String>>> = None;
+                for branch in branches {
+                    let binder = Self::default();
+                    let bound = binder.bind(branch)?;
+                    let columns = Self::extract_return_columns(&bound);
+                    if let Some(ref expected) = first_columns {
+                        if columns != *expected {
+                            return Err(String::from(
+                                "All sub queries in a UNION must have the same column names.",
+                            ));
+                        }
+                    } else {
+                        first_columns = Some(columns);
+                    }
+                    bound_branches.push(bound);
+                }
+                Ok(QueryIR::Union(bound_branches))
+            }
             QueryIR::Query(clauses, write) => {
                 let mut bound = Vec::with_capacity(clauses.len());
                 for clause in clauses {
@@ -142,6 +177,16 @@ impl Binder {
                 Ok(QueryIR::Unwind(expr, var))
             }
             QueryIR::Merge(pattern, on_create, on_match) => {
+                // MERGE may create new entities, so validate that inline attrs
+                // don't reference entities being merged.  Entity aliases are
+                // not yet in scope, so any such reference is caught here, e.g.:
+                //   MERGE (a:L {v: a.v})   → "'a' not defined"
+                for node in pattern.nodes() {
+                    self.bind_expr(&node.attrs)?;
+                }
+                for relationship in pattern.relationships() {
+                    self.bind_expr(&relationship.attrs)?;
+                }
                 let pattern = self.bind_graph(&pattern, false)?;
                 let on_create = self.bind_set_items(on_create)?;
                 let on_match = self.bind_set_items(on_match)?;
@@ -370,6 +415,31 @@ impl Binder {
         })
     }
 
+    /// Binds a parsed graph pattern — resolving string variable names to
+    /// numeric `Variable` IDs and checking that every referenced name is in
+    /// scope.
+    ///
+    /// The function walks the pattern in two groups (nodes, then
+    /// relationships).  For each entity it:
+    ///   1. Defines the alias in the current scope via `define_name_in_scope`.
+    ///   2. Binds the inline property expression (`attrs`).
+    ///
+    /// Because the alias is defined *before* its attrs are bound,
+    /// self-referential inline properties resolve correctly in MATCH:
+    ///
+    /// ```cypher
+    /// MATCH (a {age: a.age}) RETURN a.age   -- existential filter
+    /// ```
+    ///
+    /// For CREATE / MERGE the callers perform their own pre-validation
+    /// (see `bind_graph_create` and the Merge handler) *before* calling
+    /// this function, so cross-entity and self-referential accesses are
+    /// caught with the appropriate error messages before we get here.
+    ///
+    /// `is_create` controls `allow_reuse` when defining aliases:
+    ///   - `false` (MATCH / MERGE) — an alias may shadow an outer-scope
+    ///     definition (e.g. `MATCH (n) MATCH (n)` re-uses `n`).
+    ///   - `true`  — redeclaration is an error.
     fn bind_graph(
         &mut self,
         graph: &QueryGraph<Arc<String>, Arc<String>, Arc<String>>,
@@ -383,14 +453,13 @@ impl Binder {
             self.define_name_in_scope(raw_path.var.clone(), Type::Path, true)?;
         }
 
-        for node in graph.nodes() {
-            self.bind_expr(&node.attrs)?;
-        }
-        for relationship in graph.relationships() {
-            self.bind_expr(&relationship.attrs)?;
-        }
-
-        // Bind all nodes in the graph, merging duplicates by alias
+        // Bind all nodes in the graph, merging duplicates by alias.
+        // Note: node aliases are defined BEFORE binding their attrs so that
+        // self-referential inline properties resolve correctly, e.g.:
+        //   MATCH (a {age: a.age}) RETURN a.age
+        // Here a.age acts as an existential filter — matching nodes that have
+        // the "age" property.  The alias "a" must be in scope when we bind
+        // the attrs expression {age: a.age}.
         for node in graph.nodes() {
             let alias = self.define_name_in_scope(node.alias.clone(), Type::Node, !is_create)?;
             let attrs = self.bind_expr(&node.attrs)?;
@@ -582,8 +651,57 @@ impl Binder {
             // If it's a subsequent occurrence, it's allowed (it's a reference)
         }
 
+        // Reject self-referential property access BEFORE binding.
+        // A node being created has no properties yet, so referencing its own
+        // attributes is invalid, e.g.:
+        //   CREATE (a:L {v: a.v})   → "undefined attribute" (a.v during creation)
+        // Cross-node references are checked separately below.
+        for node in pattern.nodes() {
+            Self::check_unbound_self_referential(&node.alias, &node.attrs)?;
+        }
+        for rel in pattern.relationships() {
+            Self::check_unbound_self_referential(&rel.alias, &rel.attrs)?;
+        }
+
+        // Validate that inline attrs don't reference other entities being
+        // created in the same CREATE clause.  Entity aliases are not yet in
+        // scope, so any such reference produces "'x' not defined", e.g.:
+        //   CREATE (a {v:1}), (z {v:a.v+2})   → "'a' not defined"
+        for node in pattern.nodes() {
+            self.bind_expr(&node.attrs)?;
+        }
+        for rel in pattern.relationships() {
+            self.bind_expr(&rel.attrs)?;
+        }
+
         // Bind the pattern - allow reuse since we've already validated
         self.bind_graph(pattern, false)
+    }
+
+    /// Checks whether an entity's unbound inline attrs contain a property
+    /// access on the entity's own alias.  Used to reject self-referential
+    /// property access in CREATE clauses before the general binding pass,
+    /// e.g.:
+    ///   CREATE (a:L {v: a.v})  → Attempted to access undefined attribute
+    fn check_unbound_self_referential(
+        entity_alias: &Arc<String>,
+        attrs: &QueryExpr<Arc<String>>,
+    ) -> Result<(), String> {
+        if entity_alias.starts_with("_anon") {
+            return Ok(());
+        }
+        for idx in attrs.root().indices::<Dfs>() {
+            if let ExprIR::Property(_) = attrs.node(idx).data()
+                && let ExprIR::Variable(var_name) = attrs.node(idx).child(0).data()
+                && var_name == entity_alias
+            {
+                return Err(format!(
+                    "'{}' not defined; undefined attribute",
+                    entity_alias
+                ));
+            }
+        }
+        Ok(())
     }
 
     fn bind_set_items(
@@ -936,7 +1054,7 @@ impl Binder {
             // Function calls – use the registered return type
             ExprIR::FuncInvocation(func) => func.ret_type.can_return_boolean(),
 
-            // Non-boolean: literals, arithmetic, subscript, list comprehension
+            // Non-boolean: literals, unary arithmetic, subscript, list comprehension
             ExprIR::Integer(_)
             | ExprIR::Float(_)
             | ExprIR::String(_)
@@ -944,12 +1062,6 @@ impl Binder {
             | ExprIR::Map
             | ExprIR::MapProjection
             | ExprIR::Negate
-            | ExprIR::Add
-            | ExprIR::Sub
-            | ExprIR::Mul
-            | ExprIR::Div
-            | ExprIR::Pow
-            | ExprIR::Modulo
             | ExprIR::Length
             | ExprIR::GetElement
             | ExprIR::GetElements
@@ -965,6 +1077,12 @@ impl Binder {
             | ExprIR::Le
             | ExprIR::Ge
             | ExprIR::In
+            | ExprIR::Add
+            | ExprIR::Sub
+            | ExprIR::Mul
+            | ExprIR::Div
+            | ExprIR::Pow
+            | ExprIR::Modulo
             | ExprIR::IsNode
             | ExprIR::IsRelationship
             | ExprIR::Quantifier(_, _)
@@ -972,5 +1090,27 @@ impl Binder {
             | ExprIR::Parameter(_)
             | ExprIR::Property(_) => true,
         }
+    }
+
+    /// Extracts the RETURN column names from a bound query IR.
+    ///
+    /// Walks into `QueryIR::Query` to find the `QueryIR::Return` clause
+    /// and collects the alias names in order.  Returns an empty vec if
+    /// there is no RETURN clause (e.g. a write-only sub-query).
+    ///
+    /// Used by UNION binding to verify that all branches project the same
+    /// column names.
+    fn extract_return_columns(ir: &BoundQueryIR) -> Vec<Arc<String>> {
+        if let QueryIR::Query(clauses, _) = ir {
+            for clause in clauses.iter().rev() {
+                if let QueryIR::Return { exprs, .. } = clause {
+                    return exprs
+                        .iter()
+                        .filter_map(|(var, _)| var.name.clone())
+                        .collect();
+                }
+            }
+        }
+        Vec::new()
     }
 }

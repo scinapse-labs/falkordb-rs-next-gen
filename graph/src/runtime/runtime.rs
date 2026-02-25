@@ -1395,7 +1395,10 @@ impl<'a> Runtime {
                         Ok(Value::Bool(true)) => Some(Ok(vars)),
                         Ok(Value::Bool(false) | Value::Null) => None,
                         Err(e) => Some(Err(e)),
-                        _ => Some(Err(String::from("Expected boolean predicate."))),
+                        Ok(value) => Some(Err(format!(
+                            "Type mismatch: expected Boolean but was {}",
+                            value.name()
+                        ))),
                     },
                     Err(e) => Some(Err(e)),
                 })
@@ -2348,32 +2351,50 @@ impl<'a> Runtime {
         node_pattern: &'a QueryNode<Arc<String>, Variable>,
         vars: Env,
     ) -> Result<Box<dyn Iterator<Item = Result<Env, String>> + 'a>, String> {
-        let attrs = self.run_expr(
-            &node_pattern.attrs,
-            node_pattern.attrs.root().idx(),
-            &vars,
-            None,
-        )?;
+        let has_inline_attrs = node_pattern.attrs.root().children().next().is_some();
         let iter = self.g.borrow().get_nodes(&node_pattern.labels, 0);
-        Ok(Box::new(iter.filter_map(move |v| {
-            if let Value::Map(attrs) = &attrs
-                && !attrs.is_empty()
-            {
-                let g = self.g.borrow();
-                for (attr, avalue) in attrs.iter() {
-                    if let Some(pvalue) = g.get_node_attribute(v, attr) {
-                        if *avalue == pvalue {
-                            continue;
+
+        if has_inline_attrs {
+            // Inline attrs are evaluated per-candidate so that self-referential
+            // property expressions resolve correctly, e.g.:
+            //   MATCH (a {age: a.age}) RETURN a.age
+            // The candidate node must be inserted into vars before evaluating
+            // attrs, so that `a.age` fetches the candidate's own "age" value.
+            Ok(Box::new(iter.filter_map(move |v| {
+                let mut vars = vars.clone();
+                vars.insert(&node_pattern.alias, Value::Node(v));
+                let attrs = match self.run_expr(
+                    &node_pattern.attrs,
+                    node_pattern.attrs.root().idx(),
+                    &vars,
+                    None,
+                ) {
+                    Ok(attrs) => attrs,
+                    Err(e) => return Some(Err(e)),
+                };
+                if let Value::Map(attrs) = &attrs
+                    && !attrs.is_empty()
+                {
+                    let g = self.g.borrow();
+                    for (attr, avalue) in attrs.iter() {
+                        if let Some(pvalue) = g.get_node_attribute(v, attr) {
+                            if *avalue == pvalue {
+                                continue;
+                            }
+                            return None;
                         }
                         return None;
                     }
-                    return None;
                 }
-            }
-            let mut vars = vars.clone();
-            vars.insert(&node_pattern.alias, Value::Node(v));
-            Some(Ok(vars))
-        })))
+                Some(Ok(vars))
+            })))
+        } else {
+            Ok(Box::new(iter.filter_map(move |v| {
+                let mut vars = vars.clone();
+                vars.insert(&node_pattern.alias, Value::Node(v));
+                Some(Ok(vars))
+            })))
+        }
     }
 
     fn evaluate_index_query(
@@ -2425,40 +2446,58 @@ impl<'a> Runtime {
         query: &IndexQuery<QueryExpr<Variable>>,
         vars: Env,
     ) -> Result<Box<dyn Iterator<Item = Result<Env, String>> + 'a>, String> {
-        let attrs = self.run_expr(
-            &node_pattern.attrs,
-            node_pattern.attrs.root().idx(),
-            &vars,
-            None,
-        )?;
-
+        let has_inline_attrs = node_pattern.attrs.root().children().next().is_some();
         let q = self.evaluate_index_query(query, &vars)?;
 
-        Ok(Box::new(
-            self.g
-                .borrow()
-                .get_indexed_nodes(index, q)
-                .into_iter()
-                .filter_map(move |v| {
-                    let mut vars = vars.clone();
-                    if let Value::Map(attrs) = &attrs
-                        && !attrs.is_empty()
-                    {
-                        let g = self.g.borrow();
-                        for (attr, avalue) in attrs.iter() {
-                            if let Some(pvalue) = g.get_node_attribute(v, attr) {
-                                if *avalue == pvalue {
-                                    continue;
+        if has_inline_attrs {
+            // Evaluate attrs per-candidate (same rationale as node_by_label_scan).
+            Ok(Box::new(
+                self.g
+                    .borrow()
+                    .get_indexed_nodes(index, q)
+                    .into_iter()
+                    .filter_map(move |v| {
+                        let mut vars = vars.clone();
+                        vars.insert(&node_pattern.alias, Value::Node(v));
+                        let attrs = match self.run_expr(
+                            &node_pattern.attrs,
+                            node_pattern.attrs.root().idx(),
+                            &vars,
+                            None,
+                        ) {
+                            Ok(attrs) => attrs,
+                            Err(e) => return Some(Err(e)),
+                        };
+                        if let Value::Map(attrs) = &attrs
+                            && !attrs.is_empty()
+                        {
+                            let g = self.g.borrow();
+                            for (attr, avalue) in attrs.iter() {
+                                if let Some(pvalue) = g.get_node_attribute(v, attr) {
+                                    if *avalue == pvalue {
+                                        continue;
+                                    }
+                                    return None;
                                 }
                                 return None;
                             }
-                            return None;
                         }
-                    }
-                    vars.insert(&node_pattern.alias, Value::Node(v));
-                    Some(Ok(vars))
-                }),
-        ))
+                        Some(Ok(vars))
+                    }),
+            ))
+        } else {
+            Ok(Box::new(
+                self.g
+                    .borrow()
+                    .get_indexed_nodes(index, q)
+                    .into_iter()
+                    .filter_map(move |v| {
+                        let mut vars = vars.clone();
+                        vars.insert(&node_pattern.alias, Value::Node(v));
+                        Some(Ok(vars))
+                    }),
+            ))
+        }
     }
 
     fn evaluate_id_filter(
