@@ -21,11 +21,9 @@
 //! Jobs can optionally specify a worker index for affinity (useful when
 //! a query needs to run on the same thread as related work).
 
-use std::{
-    sync::mpsc::{Sender, channel},
-    thread::{self, JoinHandle},
-};
+use std::thread::{self, JoinHandle};
 
+use crossfire::{Tx, spsc::List};
 use once_cell::sync::OnceCell;
 
 /// A closure that can be sent to a worker thread.
@@ -34,15 +32,17 @@ type Job = Box<dyn FnOnce() + Send + 'static>;
 /// A pool of worker threads for executing jobs.
 struct ThreadPool {
     workers: Vec<JoinHandle<()>>,
-    sender: Vec<Sender<Job>>,
+    sender: Vec<Tx<List<Job>>>,
 }
+
+unsafe impl Sync for ThreadPool {}
 
 impl ThreadPool {
     pub fn new(size: usize) -> Self {
         let mut workers = Vec::with_capacity(size);
-        let mut sender: Vec<Sender<Job>> = Vec::with_capacity(size);
+        let mut sender = Vec::with_capacity(size);
         for _ in 0..size {
-            let (tx, rx) = channel();
+            let (tx, rx) = crossfire::spsc::unbounded_blocking::<Job>();
             sender.push(tx);
             let worker = thread::spawn(move || {
                 while let Ok(job) = rx.recv() {
