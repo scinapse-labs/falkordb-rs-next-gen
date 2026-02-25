@@ -748,7 +748,7 @@ impl Binder {
                     ExprIR::Variable(_)
                     | ExprIR::Quantifier(_, _)
                     | ExprIR::ListComprehension(_) => unreachable!("handled above"),
-                    ExprIR::Pattern(pattern) => ExprIR::Pattern(self.bind_graph(pattern, false)?),
+                    ExprIR::Pattern(pattern) => ExprIR::Pattern(self.bind_graph(&pattern, false)?),
                 };
                 let mut new_tree = DynTree::new(new_data);
                 let mut root = new_tree.root_mut();
