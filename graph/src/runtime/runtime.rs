@@ -2276,7 +2276,6 @@ impl<'a> Runtime {
                 self.g
                     .borrow()
                     .get_src_dest_relationships(src, dst, &relationship_pattern.types)
-                    .into_iter()
                     .filter(move |v| {
                         if let Value::Map(filter_attrs) = &filter_attrs
                             && !filter_attrs.is_empty()
@@ -2313,35 +2312,28 @@ impl<'a> Runtime {
         relationship_pattern: &'a QueryRelationship<Arc<String>, Arc<String>, Variable>,
         vars: Env,
     ) -> Result<Box<dyn Iterator<Item = Result<Env, String>> + 'a>, String> {
-        let src = vars
-            .get(&relationship_pattern.from.alias)
-            .map_or_else(
-                || Err(String::from("Node not found")),
-                |v| match v {
-                    Value::Node(id) => Ok(id),
-                    _ => Err(String::from(
-                        "Invalid node id for 'from' in relationship pattern",
-                    )),
-                },
-            )?
-            .clone();
-        let dst = vars
-            .get(&relationship_pattern.to.alias)
-            .map_or_else(
-                || Err(String::from("Node not found")),
-                |v| match v {
-                    Value::Node(id) => Ok(id),
-                    _ => Err(String::from(
-                        "Invalid node id for 'from' in relationship pattern",
-                    )),
-                },
-            )?
-            .clone();
+        let src = *vars.get(&relationship_pattern.from.alias).map_or_else(
+            || Err(String::from("Node not found")),
+            |v| match v {
+                Value::Node(id) => Ok(id),
+                _ => Err(String::from(
+                    "Invalid node id for 'from' in relationship pattern",
+                )),
+            },
+        )?;
+        let dst = *vars.get(&relationship_pattern.to.alias).map_or_else(
+            || Err(String::from("Node not found")),
+            |v| match v {
+                Value::Node(id) => Ok(id),
+                _ => Err(String::from(
+                    "Invalid node id for 'from' in relationship pattern",
+                )),
+            },
+        )?;
         Ok(Box::new(
             self.g
                 .borrow()
                 .get_src_dest_relationships(src, dst, &relationship_pattern.types)
-                .into_iter()
                 .map(move |id| {
                     let mut vars = vars.clone();
                     vars.insert(
@@ -2464,7 +2456,6 @@ impl<'a> Runtime {
                 self.g
                     .borrow()
                     .get_indexed_nodes(index, q)
-                    .into_iter()
                     .filter_map(move |v| {
                         let mut vars = vars.clone();
                         vars.insert(&node_pattern.alias, Value::Node(v));
@@ -2499,7 +2490,6 @@ impl<'a> Runtime {
                 self.g
                     .borrow()
                     .get_indexed_nodes(index, q)
-                    .into_iter()
                     .filter_map(move |v| {
                         let mut vars = vars.clone();
                         vars.insert(&node_pattern.alias, Value::Node(v));

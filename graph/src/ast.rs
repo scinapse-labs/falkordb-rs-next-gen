@@ -499,29 +499,27 @@ impl<T, L, TVar: Clone + Hash + Eq> QueryGraph<T, L, TVar> {
         }
     }
 
-    #[must_use]
-    pub fn variables(&self) -> Vec<TVar> {
+    pub fn variables(&self) -> impl Iterator<Item = TVar> + '_ {
         self.nodes
             .iter()
             .map(|n| n.alias.clone())
             .chain(self.relationships.iter().map(|r| r.alias.clone()))
             .chain(self.paths.iter().map(|p| p.var.clone()))
-            .collect()
     }
 
     #[must_use]
-    pub fn nodes(&self) -> Vec<Arc<QueryNode<L, TVar>>> {
-        self.nodes.clone()
+    pub fn nodes(&self) -> &[Arc<QueryNode<L, TVar>>] {
+        &self.nodes
     }
 
     #[must_use]
-    pub fn relationships(&self) -> Vec<Arc<QueryRelationship<T, L, TVar>>> {
-        self.relationships.clone()
+    pub fn relationships(&self) -> &[Arc<QueryRelationship<T, L, TVar>>] {
+        &self.relationships
     }
 
     #[must_use]
-    pub fn paths(&self) -> Vec<Arc<QueryPath<TVar>>> {
-        self.paths.clone()
+    pub fn paths(&self) -> &[Arc<QueryPath<TVar>>] {
+        &self.paths
     }
 }
 
