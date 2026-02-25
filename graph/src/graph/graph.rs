@@ -1070,53 +1070,47 @@ impl Graph {
         }
     }
 
-    #[must_use]
     pub fn get_node_attrs(
         &self,
         id: NodeId,
-    ) -> Vec<Arc<String>> {
+    ) -> impl Iterator<Item = Arc<String>> + '_ {
         self.node_attrs.get_attrs(id.0)
     }
 
     /// Get all attribute names and values for a node in a single storage pass.
-    #[must_use]
     pub fn get_node_all_attrs(
         &self,
         id: NodeId,
-    ) -> OrderMap<Arc<String>, Value> {
+    ) -> impl Iterator<Item = (Arc<String>, Value)> + '_ {
         self.node_attrs.get_all_attrs(id.0)
     }
 
-    #[must_use]
     pub fn get_node_all_attrs_by_id(
         &self,
         id: NodeId,
-    ) -> OrderMap<u16, Value> {
+    ) -> impl Iterator<Item = (u16, Value)> + '_ {
         self.node_attrs.get_all_attrs_by_id(id.0)
     }
 
-    #[must_use]
     pub fn get_relationship_attrs(
         &self,
         id: RelationshipId,
-    ) -> Vec<Arc<String>> {
+    ) -> impl Iterator<Item = Arc<String>> + '_ {
         self.relationship_attrs.get_attrs(id.0)
     }
 
     /// Get all attribute names and values for a relationship in a single storage pass.
-    #[must_use]
     pub fn get_relationship_all_attrs(
         &self,
         id: RelationshipId,
-    ) -> OrderMap<Arc<String>, Value> {
+    ) -> impl Iterator<Item = (Arc<String>, Value)> + '_ {
         self.relationship_attrs.get_all_attrs(id.0)
     }
 
-    #[must_use]
     pub fn get_relationship_all_attrs_by_id(
         &self,
         id: RelationshipId,
-    ) -> OrderMap<u16, Value> {
+    ) -> impl Iterator<Item = (u16, Value)> + '_ {
         self.relationship_attrs.get_all_attrs_by_id(id.0)
     }
 
