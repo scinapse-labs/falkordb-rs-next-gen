@@ -2543,12 +2543,12 @@ impl<'a> Parser<'a> {
                     items.push(tree!(ExprIR::MapProjection));
                 } else {
                     // .property - property shorthand
-                    let prop_name = self.parse_ident()?;
+                    let prop_name = self.parse_ident_as(IdentContext::PropertyName)?;
                     items.push(tree!(ExprIR::Property(prop_name)));
                 }
             } else {
                 // key: expr  or  variable shorthand
-                let ident = self.parse_ident()?;
+                let ident = self.parse_ident_as(IdentContext::Identifier)?;
                 if optional_match_token!(self.lexer, Colon) {
                     let value = self.parse_expr()?;
                     items.push(tree!(ExprIR::String(ident), value));

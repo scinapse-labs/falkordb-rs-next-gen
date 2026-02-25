@@ -676,14 +676,17 @@ impl Graph {
         let nremoved = self.node_attrs.insert_attrs(attrs)?;
 
         if self.node_indexer.has_indices() {
-            for (_, label_id) in self.node_labels_matrix.iter(id.into(), id.into()) {
-                for key in &keys {
-                    let label = self.node_labels[label_id as usize].clone();
-                    if self.node_indexer.has_indexed_attr(&label, key) {
-                        index_add_docs
-                            .entry(label)
-                            .or_default()
-                            .insert(u64::from(id));
+            for (id, attrs) in attrs {
+                let keys = attrs.keys().cloned().collect::<Vec<_>>();
+                for (_, label_id) in self.node_labels_matrix.iter(*id, *id) {
+                    for key in &keys {
+                        let label = self.node_labels[label_id as usize].clone();
+                        if self.node_indexer.has_indexed_attr(&label, key) {
+                            index_add_docs
+                                .entry(label)
+                                .or_default()
+                                .insert(*id);
+                        }
                     }
                 }
             }
