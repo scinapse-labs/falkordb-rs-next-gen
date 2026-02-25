@@ -576,7 +576,7 @@ impl Planner {
         let mut vec = vec![];
         for component in pattern.connected_components() {
             let relationships = component.relationships();
-            let mut iter = relationships.into_iter();
+            let mut iter = relationships.iter();
             let Some(relationship) = iter.next() else {
                 let nodes = component.nodes();
                 debug_assert_eq!(nodes.len(), 1);
@@ -593,7 +593,7 @@ impl Planner {
                     self.visited.insert(node.alias.id);
                     let paths = component.paths();
                     if !paths.is_empty() {
-                        res = tree!(IR::PathBuilder(paths), res);
+                        res = tree!(IR::PathBuilder(paths.to_vec()), res);
                     }
                     vec.push(res);
                 }
@@ -641,7 +641,7 @@ impl Planner {
             }
             let paths = component.paths();
             if !paths.is_empty() {
-                res = tree!(IR::PathBuilder(paths), res);
+                res = tree!(IR::PathBuilder(paths.to_vec()), res);
             }
             vec.push(res);
         }
@@ -911,13 +911,10 @@ impl Planner {
                     // Compute optional variables BEFORE plan_match adds them to visited
                     let optional_vars: Vec<Variable> = pattern
                         .variables()
-                        .iter()
                         .filter(|v| !self.visited.contains(&v.id))
-                        .cloned()
                         .collect();
                     let all_visited = pattern
                         .variables()
-                        .iter()
                         .all(|v| self.visited.contains(&v.id));
                     let mut match_plan = self.plan_match(&pattern, filter);
                     Self::add_argument_to_leaves(&mut match_plan);

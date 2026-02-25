@@ -373,8 +373,8 @@ impl Graph {
     }
 
     #[must_use]
-    pub fn get_labels(&self) -> Vec<Arc<String>> {
-        self.node_labels.clone()
+    pub fn get_labels(&self) -> &[Arc<String>] {
+        &self.node_labels
     }
 
     #[must_use]
@@ -386,8 +386,8 @@ impl Graph {
     }
 
     #[must_use]
-    pub fn get_types(&self) -> Vec<Arc<String>> {
-        self.relationship_types.clone()
+    pub fn get_types(&self) -> &[Arc<String>] {
+        &self.relationship_types
     }
 
     #[must_use]
@@ -398,14 +398,11 @@ impl Graph {
         self.relationship_types.get(id.0).cloned()
     }
 
-    #[must_use]
-    pub fn get_attrs(&self) -> Vec<Arc<String>> {
+    pub fn get_attrs(&self) -> impl Iterator<Item = &Arc<String>> + '_ {
         self.node_attrs
             .attrs_name
             .iter()
             .chain(self.relationship_attrs.attrs_name.iter())
-            .cloned()
-            .collect()
     }
 
     pub fn get_label_id_mut(
@@ -912,26 +909,25 @@ impl Graph {
         Ok(())
     }
 
-    #[must_use]
     pub fn get_src_dest_relationships(
         &self,
         src: NodeId,
         dest: NodeId,
         types: &[Arc<String>],
-    ) -> Vec<RelationshipId> {
-        let mut vec = vec![];
-        for relationship_type in if types.is_empty() {
+    ) -> impl Iterator<Item = RelationshipId> + use<> {
+        let iters: Vec<_> = if types.is_empty() {
             &self.relationship_types
         } else {
             types
-        } {
-            if let Some(relationship_matrix) = self.get_relationship_matrix(relationship_type) {
-                for (_, id) in relationship_matrix.get(src.0, dest.0) {
-                    vec.push(RelationshipId(id));
-                }
-            }
         }
-        vec
+        .iter()
+        .filter_map(|relationship_type| self.get_relationship_matrix(relationship_type))
+        .map(|relationship_matrix| relationship_matrix.get(src.0, dest.0))
+        .collect();
+
+        iters
+            .into_iter()
+            .flat_map(|iter| iter.map(|(_, id)| RelationshipId(id)))
     }
 
     pub fn get_relationships(
@@ -1070,38 +1066,48 @@ impl Graph {
         }
     }
 
-    #[must_use]
     pub fn get_node_attrs(
         &self,
         id: NodeId,
-    ) -> Vec<Arc<String>> {
+    ) -> impl Iterator<Item = Arc<String>> + '_ {
         self.node_attrs.get_attrs(id.0)
     }
 
     /// Get all attribute names and values for a node in a single storage pass.
-    #[must_use]
     pub fn get_node_all_attrs(
         &self,
         id: NodeId,
-    ) -> OrderMap<Arc<String>, Value> {
+    ) -> impl Iterator<Item = (Arc<String>, Value)> + '_ {
         self.node_attrs.get_all_attrs(id.0)
     }
 
-    #[must_use]
+    pub fn get_node_all_attrs_by_id(
+        &self,
+        id: NodeId,
+    ) -> impl Iterator<Item = (u16, Value)> + '_ {
+        self.node_attrs.get_all_attrs_by_id(id.0)
+    }
+
     pub fn get_relationship_attrs(
         &self,
         id: RelationshipId,
-    ) -> Vec<Arc<String>> {
+    ) -> impl Iterator<Item = Arc<String>> + '_ {
         self.relationship_attrs.get_attrs(id.0)
     }
 
     /// Get all attribute names and values for a relationship in a single storage pass.
-    #[must_use]
     pub fn get_relationship_all_attrs(
         &self,
         id: RelationshipId,
-    ) -> OrderMap<Arc<String>, Value> {
+    ) -> impl Iterator<Item = (Arc<String>, Value)> + '_ {
         self.relationship_attrs.get_all_attrs(id.0)
+    }
+
+    pub fn get_relationship_all_attrs_by_id(
+        &self,
+        id: RelationshipId,
+    ) -> impl Iterator<Item = (u16, Value)> + '_ {
+        self.relationship_attrs.get_all_attrs_by_id(id.0)
     }
 
     pub fn create_index(
@@ -1231,12 +1237,11 @@ impl Graph {
         &self,
         label: &Arc<String>,
         query: IndexQuery<Value>,
-    ) -> Vec<NodeId> {
+    ) -> impl Iterator<Item = NodeId> + use<> {
         self.node_indexer
             .query(label.clone(), query)
             .into_iter()
             .map(NodeId)
-            .collect()
     }
 
     #[must_use]

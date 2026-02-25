@@ -131,50 +131,57 @@ impl AttributeStore {
             .is_some()
     }
 
-    #[must_use]
     pub fn get_attrs(
         &self,
         key: u64,
-    ) -> Vec<Arc<String>> {
+    ) -> impl Iterator<Item = Arc<String>> + '_ {
         let prefix = key.to_be_bytes();
-        let mut names = vec![];
-
-        for entry in self.snapshot.prefix(&self.keyspace, prefix) {
-            if let Ok(k) = entry.key()
-                && let Some(idx) = extract_attr_idx(&k)
-            {
+        self.snapshot
+            .prefix(&self.keyspace, prefix)
+            .filter_map(|entry| {
+                let k = entry.key().ok()?;
+                let idx = extract_attr_idx(&k)?;
                 let i = idx as usize;
                 if i < self.attrs_name.len() {
-                    names.push(self.attrs_name[i].clone());
+                    Some(self.attrs_name[i].clone())
+                } else {
+                    None
                 }
-            }
-        }
-
-        names
+            })
     }
 
-    #[must_use]
     pub fn get_all_attrs(
         &self,
         key: u64,
-    ) -> OrderMap<Arc<String>, Value> {
+    ) -> impl Iterator<Item = (Arc<String>, Value)> + '_ {
         let prefix = key.to_be_bytes();
-        let mut attrs = OrderMap::default();
-
-        for entry in self.snapshot.prefix(&self.keyspace, prefix) {
-            if let Ok((k, data)) = entry.into_inner()
-                && let Some(idx) = extract_attr_idx(&k)
-            {
+        self.snapshot
+            .prefix(&self.keyspace, prefix)
+            .filter_map(|entry| {
+                let (k, data) = entry.into_inner().ok()?;
+                let idx = extract_attr_idx(&k)?;
                 let i = idx as usize;
-                if i < self.attrs_name.len()
-                    && let Some((value, _)) = Value::from_bytes(&data)
-                {
-                    attrs.insert(self.attrs_name[i].clone(), value);
+                if i >= self.attrs_name.len() {
+                    return None;
                 }
-            }
-        }
+                let (value, _) = Value::from_bytes(&data)?;
+                Some((self.attrs_name[i].clone(), value))
+            })
+    }
 
-        attrs
+    pub fn get_all_attrs_by_id(
+        &self,
+        key: u64,
+    ) -> impl Iterator<Item = (u16, Value)> + '_ {
+        let prefix = key.to_be_bytes();
+        self.snapshot
+            .prefix(&self.keyspace, prefix)
+            .filter_map(|entry| {
+                let (k, data) = entry.into_inner().ok()?;
+                let idx = extract_attr_idx(&k)?;
+                let (value, _) = Value::from_bytes(&data)?;
+                Some((idx, value))
+            })
     }
 
     pub fn remove_attr(
@@ -207,32 +214,6 @@ impl AttributeStore {
         }
         batch.durability(None).commit().map_err(|e| e.to_string())?;
         Ok(())
-    }
-
-    pub fn insert_attr(
-        &mut self,
-        key: u64,
-        attr: &Arc<String>,
-        value: &Value,
-    ) -> Result<bool, String> {
-        let idx = self.attrs_name.get_index_of(attr).unwrap_or_else(|| {
-            self.attrs_name.insert(attr.clone());
-            self.attrs_name.len() - 1
-        }) as u16;
-
-        let composite_key = make_key(key, idx);
-
-        // Check snapshot for existing value (avoids expensive live keyspace read)
-        let replaced = self
-            .snapshot
-            .contains_key(&self.keyspace, composite_key)
-            .map_err(|e| e.to_string())?;
-
-        self.keyspace
-            .insert(composite_key, value.to_bytes())
-            .map_err(|e| e.to_string())?;
-
-        Ok(replaced)
     }
 
     /// Batch insert/update multiple attributes for an entity.

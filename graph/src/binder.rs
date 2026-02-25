@@ -697,10 +697,7 @@ impl Binder {
                 && let ExprIR::Variable(var_name) = attrs.node(idx).child(0).data()
                 && var_name == entity_alias
             {
-                return Err(format!(
-                    "'{}' not defined; undefined attribute",
-                    entity_alias
-                ));
+                return Err(format!("'{entity_alias}' not defined; undefined attribute"));
             }
         }
         Ok(())
