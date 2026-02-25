@@ -2055,9 +2055,12 @@ impl<'a> Parser<'a> {
                                         res
                                     );
                                 }
-                                // u.v NOT NULL → binary Not(lhs, rhs), rejected by binder
+                                // Bare NOT without a recognized predicate keyword
+                                // (e.g. `u.v NOT NULL` instead of `u.v IS NOT NULL`).
                                 _ => {
-                                    res = tree!(ExprIR::Not, res);
+                                    return Err(self
+                                        .lexer
+                                        .format_error("Invalid usage of 'NOT' filter"));
                                 }
                             }
                         }
