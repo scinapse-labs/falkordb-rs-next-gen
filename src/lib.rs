@@ -340,7 +340,7 @@ unsafe extern "C" fn graph_free(value: *mut c_void) {
 fn reply_compact_value(
     ctx: &Context,
     runtime: &Runtime,
-    r: Value,
+    r: &Value,
 ) {
     match r {
         Value::Null => {
@@ -349,12 +349,12 @@ fn reply_compact_value(
         }
         Value::Bool(x) => {
             raw::reply_with_long_long(ctx.ctx, 4);
-            let str = if x { "true" } else { "false" };
+            let str = if *x { "true" } else { "false" };
             raw::reply_with_string_buffer(ctx.ctx, str.as_ptr().cast::<c_char>(), str.len());
         }
         Value::Int(x) => {
             raw::reply_with_long_long(ctx.ctx, 3);
-            raw::reply_with_long_long(ctx.ctx, x as _);
+            raw::reply_with_long_long(ctx.ctx, *x as _);
         }
         Value::Float(x) => {
             raw::reply_with_long_long(ctx.ctx, 5);
@@ -367,26 +367,26 @@ fn reply_compact_value(
         }
         Value::Datetime(ts) => {
             raw::reply_with_long_long(ctx.ctx, 13);
-            raw::reply_with_long_long(ctx.ctx, ts as _);
+            raw::reply_with_long_long(ctx.ctx, *ts as _);
         }
         Value::Date(ts) => {
             raw::reply_with_long_long(ctx.ctx, 14);
-            raw::reply_with_long_long(ctx.ctx, ts as _);
+            raw::reply_with_long_long(ctx.ctx, *ts as _);
         }
         Value::Time(ts) => {
             raw::reply_with_long_long(ctx.ctx, 15);
-            raw::reply_with_long_long(ctx.ctx, ts as _);
+            raw::reply_with_long_long(ctx.ctx, *ts as _);
         }
         Value::Duration(dur) => {
             raw::reply_with_long_long(ctx.ctx, 16);
-            raw::reply_with_long_long(ctx.ctx, dur as _);
+            raw::reply_with_long_long(ctx.ctx, *dur as _);
         }
         Value::List(values) => {
             raw::reply_with_long_long(ctx.ctx, 6);
             raw::reply_with_array(ctx.ctx, values.len() as _);
             for v in values {
                 raw::reply_with_array(ctx.ctx, 2);
-                reply_compact_value(ctx, runtime, v.clone());
+                reply_compact_value(ctx, runtime, v);
             }
         }
         Value::Map(map) => {
@@ -400,13 +400,13 @@ fn reply_compact_value(
                     key.len(),
                 );
                 raw::reply_with_array(ctx.ctx, 2);
-                reply_compact_value(ctx, runtime, value.clone());
+                reply_compact_value(ctx, runtime, value);
             }
         }
         Value::Node(id) => {
             raw::reply_with_long_long(ctx.ctx, 8);
             raw::reply_with_array(ctx.ctx, 3);
-            raw::reply_with_long_long(ctx.ctx, u64::from(id) as _);
+            raw::reply_with_long_long(ctx.ctx, u64::from(*id) as _);
             let dn = runtime.deleted_nodes.borrow();
             if let Some(x) = dn.get(&id) {
                 raw::reply_with_array(ctx.ctx, x.labels.len() as _);
@@ -418,22 +418,21 @@ fn reply_compact_value(
                     raw::reply_with_array(ctx.ctx, 3);
                     let key = runtime.g.borrow().get_node_attribute_id(key).unwrap();
                     raw::reply_with_long_long(ctx.ctx, key as _);
-                    reply_compact_value(ctx, runtime, value.clone());
+                    reply_compact_value(ctx, runtime, value);
                 }
             } else {
                 let bg = runtime.g.borrow();
-                let labels = bg.get_node_label_ids(id).collect::<Vec<_>>();
+                let labels = bg.get_node_label_ids(*id).collect::<Vec<_>>();
                 raw::reply_with_array(ctx.ctx, labels.len() as _);
                 for label in labels {
                     raw::reply_with_long_long(ctx.ctx, usize::from(label) as _);
                 }
-                let attrs = bg.get_node_attrs(id);
+                let attrs = bg.get_node_all_attrs_by_id(*id);
                 raw::reply_with_array(ctx.ctx, attrs.len() as _);
-                for key in attrs {
+                for (key, value) in attrs {
                     raw::reply_with_array(ctx.ctx, 3);
-                    let attr_id = bg.get_node_attribute_id(&key);
-                    raw::reply_with_long_long(ctx.ctx, attr_id.unwrap() as _);
-                    reply_compact_value(ctx, runtime, bg.get_node_attribute(id, &key).unwrap());
+                    raw::reply_with_long_long(ctx.ctx, key.into());
+                    reply_compact_value(ctx, runtime, &value);
                 }
             }
         }
@@ -452,7 +451,7 @@ fn reply_compact_value(
                     raw::reply_with_array(ctx.ctx, 3);
                     let key = bg.get_relationship_attribute_id(key).unwrap();
                     raw::reply_with_long_long(ctx.ctx, key as _);
-                    reply_compact_value(ctx, runtime, value.clone());
+                    reply_compact_value(ctx, runtime, value);
                 }
             } else {
                 let bg = runtime.g.borrow();
@@ -462,17 +461,12 @@ fn reply_compact_value(
                 );
                 raw::reply_with_long_long(ctx.ctx, u64::from(rel.1) as _);
                 raw::reply_with_long_long(ctx.ctx, u64::from(rel.2) as _);
-                let attrs = bg.get_relationship_attrs(rel.0);
+                let attrs = bg.get_relationship_all_attrs_by_id(rel.0);
                 raw::reply_with_array(ctx.ctx, attrs.len() as _);
-                for key in attrs {
+                for (key, value) in attrs {
                     raw::reply_with_array(ctx.ctx, 3);
-                    let attr_id = bg.get_relationship_attribute_id(&key);
-                    raw::reply_with_long_long(ctx.ctx, attr_id.unwrap() as _);
-                    reply_compact_value(
-                        ctx,
-                        runtime,
-                        bg.get_relationship_attribute(rel.0, &key).unwrap(),
-                    );
+                    raw::reply_with_long_long(ctx.ctx, key as _);
+                    reply_compact_value(ctx, runtime, &value);
                 }
             }
         }
@@ -482,7 +476,7 @@ fn reply_compact_value(
 
             let mut nodes = 0;
             let mut rels = 0;
-            for node in &path {
+            for node in path {
                 match node {
                     Value::Node(_) => nodes += 1,
                     Value::Relationship(_) => rels += 1,
@@ -493,11 +487,11 @@ fn reply_compact_value(
             raw::reply_with_array(ctx.ctx, 2);
             raw::reply_with_long_long(ctx.ctx, 6);
             raw::reply_with_array(ctx.ctx, nodes);
-            for node in &path {
+            for node in path {
                 match node {
                     Value::Node(_) => {
                         raw::reply_with_array(ctx.ctx, 2);
-                        reply_compact_value(ctx, runtime, node.clone());
+                        reply_compact_value(ctx, runtime, node);
                     }
                     Value::Relationship(_) => {}
                     _ => unreachable!("Path should only contain nodes and relationships"),
@@ -512,7 +506,7 @@ fn reply_compact_value(
                     Value::Node(_) => {}
                     Value::Relationship(_) => {
                         raw::reply_with_array(ctx.ctx, 2);
-                        reply_compact_value(ctx, runtime, node.clone());
+                        reply_compact_value(ctx, runtime, node);
                     }
                     _ => unreachable!("Path should only contain nodes and relationships"),
                 }
@@ -522,7 +516,7 @@ fn reply_compact_value(
             raw::reply_with_long_long(ctx.ctx, 12);
             raw::reply_with_array(ctx.ctx, vec.len() as _);
             for f in vec {
-                raw::reply_with_double(ctx.ctx, f64::from(f));
+                raw::reply_with_double(ctx.ctx, f64::from(*f));
             }
         }
         Value::Point(point) => {
@@ -546,7 +540,7 @@ fn reply_compact_value(
             );
         }
         Value::Arc(inner) => {
-            reply_compact_value(ctx, runtime, (*inner).clone());
+            reply_compact_value(ctx, runtime, inner);
         }
     }
 }
@@ -563,18 +557,18 @@ fn reply_compact_value(
 fn reply_verbose_value(
     ctx: &Context,
     runtime: &Runtime,
-    r: Value,
+    r: &Value,
 ) {
     match r {
         Value::Null => {
             raw::reply_with_null(ctx.ctx);
         }
         Value::Bool(x) => {
-            let str = if x { "true" } else { "false" };
+            let str = if *x { "true" } else { "false" };
             raw::reply_with_string_buffer(ctx.ctx, str.as_ptr().cast::<c_char>(), str.len());
         }
         Value::Int(x) => {
-            raw::reply_with_long_long(ctx.ctx, x as _);
+            raw::reply_with_long_long(ctx.ctx, *x as _);
         }
         Value::Float(x) => {
             let str = format!("{x:.14e}");
@@ -584,7 +578,7 @@ fn reply_verbose_value(
             raw::reply_with_string_buffer(ctx.ctx, x.as_str().as_ptr().cast::<c_char>(), x.len());
         }
         Value::Datetime(ts) => {
-            let formatted = Value::format_datetime(ts);
+            let formatted = Value::format_datetime(*ts);
             raw::reply_with_string_buffer(
                 ctx.ctx,
                 formatted.as_ptr().cast::<c_char>(),
@@ -592,7 +586,7 @@ fn reply_verbose_value(
             );
         }
         Value::Date(ts) => {
-            let formatted = Value::format_date(ts);
+            let formatted = Value::format_date(*ts);
             raw::reply_with_string_buffer(
                 ctx.ctx,
                 formatted.as_ptr().cast::<c_char>(),
@@ -600,7 +594,7 @@ fn reply_verbose_value(
             );
         }
         Value::Time(ts) => {
-            let formatted = Value::format_time(ts);
+            let formatted = Value::format_time(*ts);
             raw::reply_with_string_buffer(
                 ctx.ctx,
                 formatted.as_ptr().cast::<c_char>(),
@@ -608,7 +602,7 @@ fn reply_verbose_value(
             );
         }
         Value::Duration(dur) => {
-            let formatted = Value::format_duration(dur);
+            let formatted = Value::format_duration(*dur);
             raw::reply_with_string_buffer(
                 ctx.ctx,
                 formatted.as_ptr().cast::<c_char>(),
@@ -618,7 +612,7 @@ fn reply_verbose_value(
         Value::List(values) => {
             raw::reply_with_array(ctx.ctx, values.len() as _);
             for v in values {
-                reply_verbose_value(ctx, runtime, v.clone());
+                reply_verbose_value(ctx, runtime, v);
             }
         }
         Value::Map(map) => {
@@ -630,12 +624,12 @@ fn reply_verbose_value(
                     key.as_str().as_ptr().cast::<c_char>(),
                     key.len(),
                 );
-                reply_verbose_value(ctx, runtime, value.clone());
+                reply_verbose_value(ctx, runtime, value);
             }
         }
         Value::Node(id) => {
             raw::reply_with_array(ctx.ctx, 3);
-            raw::reply_with_long_long(ctx.ctx, u64::from(id) as _);
+            raw::reply_with_long_long(ctx.ctx, u64::from(*id) as _);
             let bg = runtime.g.borrow();
             let dn = runtime.deleted_nodes.borrow();
             if let Some(x) = dn.get(&id) {
@@ -656,10 +650,10 @@ fn reply_verbose_value(
                         key.as_ptr().cast::<c_char>(),
                         key.len(),
                     );
-                    reply_verbose_value(ctx, runtime, value.clone());
+                    reply_verbose_value(ctx, runtime, value);
                 }
             } else {
-                let labels = bg.get_node_labels(id).collect::<Vec<_>>();
+                let labels = bg.get_node_labels(*id).collect::<Vec<_>>();
                 raw::reply_with_array(ctx.ctx, labels.len() as _);
                 for label in labels {
                     raw::reply_with_string_buffer(
@@ -668,16 +662,16 @@ fn reply_verbose_value(
                         label.len(),
                     );
                 }
-                let attrs = bg.get_node_attrs(id);
+                let attrs = bg.get_node_all_attrs(*id);
                 raw::reply_with_array(ctx.ctx, attrs.len() as _);
-                for key in attrs {
+                for (key, value) in attrs {
                     raw::reply_with_array(ctx.ctx, 2);
                     raw::reply_with_string_buffer(
                         ctx.ctx,
                         key.as_ptr().cast::<c_char>(),
                         key.len(),
                     );
-                    reply_verbose_value(ctx, runtime, bg.get_node_attribute(id, &key).unwrap());
+                    reply_verbose_value(ctx, runtime, &value);
                 }
             }
         }
@@ -697,7 +691,7 @@ fn reply_verbose_value(
                         key.as_ptr().cast::<c_char>(),
                         key.len(),
                     );
-                    reply_verbose_value(ctx, runtime, value.clone());
+                    reply_verbose_value(ctx, runtime, value);
                 }
             } else {
                 let bg = runtime.g.borrow();
@@ -709,20 +703,16 @@ fn reply_verbose_value(
                 );
                 raw::reply_with_long_long(ctx.ctx, u64::from(rel.1) as _);
                 raw::reply_with_long_long(ctx.ctx, u64::from(rel.2) as _);
-                let props = bg.get_relationship_attrs(rel.0);
-                raw::reply_with_array(ctx.ctx, props.len() as _);
-                for key in props {
+                let attrs = bg.get_relationship_all_attrs(rel.0);
+                raw::reply_with_array(ctx.ctx, attrs.len() as _);
+                for (key, value) in attrs {
                     raw::reply_with_array(ctx.ctx, 2);
                     raw::reply_with_string_buffer(
                         ctx.ctx,
                         key.as_ptr().cast::<c_char>(),
                         key.len(),
                     );
-                    reply_verbose_value(
-                        ctx,
-                        runtime,
-                        bg.get_relationship_attribute(rel.0, &key).unwrap(),
-                    );
+                    reply_verbose_value(ctx, runtime, &value);
                 }
             }
         }
@@ -732,7 +722,7 @@ fn reply_verbose_value(
             for node in path {
                 match node {
                     Value::Relationship(_) | Value::Node(_) => {
-                        reply_verbose_value(ctx, runtime, node.clone());
+                        reply_verbose_value(ctx, runtime, node);
                     }
                     _ => unreachable!("Path should only contain nodes and relationships"),
                 }
@@ -741,7 +731,7 @@ fn reply_verbose_value(
         Value::VecF32(vec) => {
             raw::reply_with_array(ctx.ctx, vec.len() as _);
             for f in vec {
-                raw::reply_with_double(ctx.ctx, f64::from(f));
+                raw::reply_with_double(ctx.ctx, f64::from(*f));
             }
         }
         Value::Point(point) => {
@@ -754,7 +744,7 @@ fn reply_verbose_value(
             raw::reply_with_string_buffer(ctx.ctx, str.as_ptr().cast::<c_char>(), str.len());
         }
         Value::Arc(inner) => {
-            reply_verbose_value(ctx, runtime, (*inner).clone());
+            reply_verbose_value(ctx, runtime, inner);
         }
     }
 }
