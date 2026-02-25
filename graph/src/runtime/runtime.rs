@@ -2098,12 +2098,10 @@ impl<'a> Runtime {
                                                 )?;
                                             }
                                         }
-                                        for (key, value) in attrs.iter() {
-                                            self.pending.borrow_mut().set_node_attribute(
-                                                id,
-                                                key.clone(),
-                                                value.clone(),
-                                            )?;
+                                        for (key, value) in attrs {
+                                            self.pending
+                                                .borrow_mut()
+                                                .set_node_attribute(id, key, value)?;
                                         }
                                     }
                                     Value::Relationship(rel) => {
@@ -2118,12 +2116,10 @@ impl<'a> Runtime {
                                                 )?;
                                             }
                                         }
-                                        for (key, value) in attrs.iter() {
-                                            self.pending.borrow_mut().set_node_attribute(
-                                                id,
-                                                key.clone(),
-                                                value.clone(),
-                                            )?;
+                                        for (key, value) in attrs {
+                                            self.pending
+                                                .borrow_mut()
+                                                .set_node_attribute(id, key, value)?;
                                         }
                                     }
                                     _ => {
@@ -2170,11 +2166,11 @@ impl<'a> Runtime {
                                                     )?;
                                             }
                                         }
-                                        for (key, value) in attrs.iter() {
+                                        for (key, value) in attrs {
                                             self.pending.borrow_mut().set_relationship_attribute(
                                                 target_rel.0,
-                                                key.clone(),
-                                                value.clone(),
+                                                key,
+                                                value,
                                             )?;
                                         }
                                     }
@@ -2192,11 +2188,11 @@ impl<'a> Runtime {
                                                     )?;
                                             }
                                         }
-                                        for (key, value) in attrs.iter() {
+                                        for (key, value) in attrs {
                                             self.pending.borrow_mut().set_relationship_attribute(
                                                 target_rel.0,
-                                                key.clone(),
-                                                value.clone(),
+                                                key,
+                                                value,
                                             )?;
                                         }
                                     }
@@ -2644,7 +2640,7 @@ impl<'a> Runtime {
                     }
                     self.pending.borrow_mut().deleted_node(id);
                     let labels = self.g.borrow().get_node_label_ids(id).collect();
-                    let attrs = self.get_node_attrs(id);
+                    let attrs = self.get_node_attrs(id).collect();
                     self.deleted_nodes
                         .borrow_mut()
                         .insert(id, DeletedNode::new(labels, attrs));
@@ -2656,7 +2652,7 @@ impl<'a> Runtime {
                         .borrow_mut()
                         .deleted_relationship(rel.0, rel.1, rel.2);
                     let type_id = self.g.borrow().get_relationship_type_id(rel.0);
-                    let attrs = self.get_relationship_attrs(rel.0);
+                    let attrs = self.get_relationship_attrs(rel.0).collect();
                     self.deleted_relationships
                         .borrow_mut()
                         .insert(rel.0, DeletedRelationship::new(type_id, attrs));
@@ -2976,27 +2972,27 @@ impl<'a> Runtime {
     pub fn get_node_attrs(
         &self,
         id: NodeId,
-    ) -> OrderMap<Arc<String>, Value> {
+    ) -> impl Iterator<Item = (Arc<String>, Value)> {
         if let Some(dn) = self.deleted_nodes.borrow().get(&id) {
-            return dn.attrs.clone();
+            return dn.attrs.clone().into_iter();
         }
-        let mut actual = self.g.borrow().get_node_all_attrs(id);
+        let mut actual = self.g.borrow().get_node_all_attrs(id).collect();
         self.pending.borrow().update_node_attrs(id, &mut actual);
-        actual
+        actual.into_iter()
     }
 
     pub fn get_relationship_attrs(
         &self,
         id: RelationshipId,
-    ) -> OrderMap<Arc<String>, Value> {
+    ) -> impl Iterator<Item = (Arc<String>, Value)> {
         if let Some(dr) = self.deleted_relationships.borrow().get(&id) {
-            return dr.attrs.clone();
+            return dr.attrs.clone().into_iter();
         }
-        let mut actual = self.g.borrow().get_relationship_all_attrs(id);
+        let mut actual = self.g.borrow().get_relationship_all_attrs(id).collect();
         self.pending
             .borrow()
             .update_relationship_attrs(id, &mut actual);
-        actual
+        actual.into_iter()
     }
 
     pub fn get_relationship_type(
