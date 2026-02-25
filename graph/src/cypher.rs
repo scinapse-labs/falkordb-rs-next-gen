@@ -170,6 +170,7 @@ enum Token {
     DotDot,
     Pipe,
     RegexMatches,
+    Semicolon,
     EndOfFile,
 }
 
@@ -540,6 +541,7 @@ impl<'a> Lexer<'a> {
                     let id = &str[pos + 1..pos + len];
                     Ok((Token::Ident(Arc::new(String::from(id))), len + 1))
                 }
+                ';' => Ok((Token::Semicolon, 1)),
                 _ => Err((format!("Invalid input at pos: {pos} at char {char}"), 0)),
             };
         }
@@ -960,21 +962,40 @@ impl<'a> Parser<'a> {
         Ok((params, &self.lexer.str[self.lexer.pos..]))
     }
 
+    /// Consumes any trailing semicolons, then verifies end-of-file.
+    fn expect_end_of_input(&mut self) -> Result<(), String> {
+        while matches!(self.lexer.current()?, Token::Semicolon) {
+            self.lexer.next();
+        }
+        if !matches!(self.lexer.current()?, Token::EndOfFile) {
+            return Err(
+                "query with more than one statement is not supported".to_string(),
+            );
+        }
+        Ok(())
+    }
+
     /// Parses a complete Cypher query.
     ///
     /// This is the main entry point for parsing. It first tries to parse index
     /// operations (CREATE INDEX, DROP INDEX), then falls back to regular queries.
+    /// Trailing semicolons are consumed; multi-statement queries (content after
+    /// a semicolon) are rejected.
     ///
     /// # Errors
     /// Returns an error string if the query has syntax errors.
     pub fn parse(&mut self) -> Result<RawQueryIR, String> {
         let pos = self.lexer.pos;
-        if let Some(ir) = self.parse_index_ops()? {
-            Ok(ir)
+        let result = if let Some(ir) = self.parse_index_ops()? {
+            ir
         } else {
             self.lexer.set_pos(pos);
-            self.parse_query()
-        }
+            self.parse_query()?
+        };
+
+        self.expect_end_of_input()?;
+
+        Ok(result)
     }
 
     #[allow(clippy::too_many_lines)]
@@ -996,7 +1017,7 @@ impl<'a> Parser<'a> {
                     attrs.push(self.parse_ident()?);
                 }
                 match_token!(self.lexer, RParen);
-                match_token!(self.lexer, EndOfFile);
+                self.expect_end_of_input()?;
                 let index_type = IndexType::Range;
                 let entity_type = EntityType::Node;
                 return Ok(Some(QueryIR::CreateIndex {
@@ -1057,7 +1078,7 @@ impl<'a> Parser<'a> {
             } else {
                 None
             };
-            match_token!(self.lexer, EndOfFile);
+            self.expect_end_of_input()?;
             return Ok(Some(QueryIR::CreateIndex {
                 label,
                 attrs,
@@ -1082,7 +1103,7 @@ impl<'a> Parser<'a> {
                     attrs.push(self.parse_ident()?);
                 }
                 match_token!(self.lexer, RParen);
-                match_token!(self.lexer, EndOfFile);
+                self.expect_end_of_input()?;
                 let index_type = IndexType::Range;
                 let entity_type = EntityType::Node;
                 return Ok(Some(QueryIR::DropIndex {
@@ -1130,7 +1151,7 @@ impl<'a> Parser<'a> {
                 attrs.push(self.parse_ident()?);
             }
             match_token!(self.lexer, RParen);
-            match_token!(self.lexer, EndOfFile);
+            self.expect_end_of_input()?;
             let index_type = if fulltext {
                 IndexType::Fulltext
             } else if vector {
@@ -1169,7 +1190,6 @@ impl<'a> Parser<'a> {
             while optional_match_token!(self.lexer => Union) {
                 branches.push(self.parse_single_query()?);
             }
-            match_token!(self.lexer, EndOfFile);
             return Ok(QueryIR::Union(branches));
         }
         Ok(first)
@@ -1218,9 +1238,9 @@ impl<'a> Parser<'a> {
         if optional_match_token!(self.lexer => Return) {
             clauses.push(self.parse_return_clause(write)?);
             write = false;
-            // After RETURN, only UNION or end-of-file may follow.
+            // After RETURN, only UNION, semicolons, or end-of-file may follow.
             match self.lexer.current()? {
-                Token::EndOfFile | Token::Keyword(Keyword::Union, _) => {}
+                Token::EndOfFile | Token::Keyword(Keyword::Union, _) | Token::Semicolon => {}
                 _ => {
                     return Err(self
                         .lexer
@@ -1228,7 +1248,10 @@ impl<'a> Parser<'a> {
                 }
             }
         }
-        if !matches!(self.lexer.current()?, Token::Keyword(Keyword::Union, _)) {
+        if !matches!(
+            self.lexer.current()?,
+            Token::Keyword(Keyword::Union, _) | Token::Semicolon
+        ) {
             match_token!(self.lexer, EndOfFile);
         }
         Ok(QueryIR::Query(clauses, write))

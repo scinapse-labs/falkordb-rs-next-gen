@@ -549,31 +549,31 @@ class testQueryValidationFlow(FlowTestsBase):
             except redis.exceptions.ResponseError as e:
                 self.env.assertContains("All sub queries in a UNION must have the same column names", str(e))
 
-    #def test39_non_single_statement_query(self):
-    #    queries = [";",      # Error: could not parse query
-    #               " ;",     # Error: query with more than one statement is not supported.
-    #               " ",      # Error: query with more than one statement is not supported.
-    #               "cypher"] # Error: empty query.
-    #    for q in queries:
-    #        try:
-    #            self.graph.query(q)
-    #            assert(False)
-    #        except redis.exceptions.ResponseError as e:
-    #            pass
+    def test39_non_single_statement_query(self):
+        queries = [";",      # Error: could not parse query
+                   " ;",     # Error: query with more than one statement is not supported.
+                   " ",      # Error: query with more than one statement is not supported.
+                   "cypher"] # Error: empty query.
+        for q in queries:
+            try:
+                self.graph.query(q)
+                assert(False)
+            except redis.exceptions.ResponseError as e:
+                pass
         
-    #    queries = ["MATCH (n) RETURN n; MATCH"]
-    #    for q in queries:
-    #        try:
-    #            self.graph.query(q)
-    #            assert(False)
-    #        except redis.exceptions.ResponseError as e:
-    #            self.env.assertContains("query with more than one statement is not supported", str(e))
+        queries = ["MATCH (n) RETURN n; MATCH"]
+        for q in queries:
+            try:
+                self.graph.query(q)
+                assert(False)
+            except redis.exceptions.ResponseError as e:
+                self.env.assertContains("query with more than one statement is not supported", str(e))
 
-    #    queries = ["RETURN 1;",
-    #               "RETURN 1;;"]
-    #    for q in queries:
-    #        res = self.graph.query(q)
-    #        self.env.assertEqual(res.result_set, [[1]])
+        queries = ["RETURN 1;",
+                   "RETURN 1;;"]
+        for q in queries:
+            res = self.graph.query(q)
+            self.env.assertEqual(res.result_set, [[1]])
 
     #def test40_compile_time_errors_in_star_projections(self):
     #    # validate that parser errors are handled correctly
