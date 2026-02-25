@@ -35,7 +35,7 @@ use std::{
     collections::HashMap,
     ffi::CString,
     sync::{
-        Arc, RwLock,
+        Arc, Mutex, RwLock,
         atomic::{AtomicBool, Ordering},
     },
 };
@@ -88,10 +88,10 @@ impl IndexOptions {
 #[derive(Default, Clone)]
 pub struct Indexer {
     index: Arc<RwLock<HashMap<Arc<String>, Index>>>,
+    /// Serializes background index population batches with write-path
+    /// `commit_index` calls so they never run concurrently.
+    write_lock: Arc<Mutex<()>>,
     cancelled: Arc<AtomicBool>,
-    /// Node IDs modified by the write path during background index construction.
-    /// Background population skips these to avoid overwriting concurrent changes.
-    dirty_nodes: Arc<RwLock<HashMap<Arc<String>, RoaringTreemap>>>,
 }
 
 unsafe impl Send for Indexer {}
@@ -310,7 +310,6 @@ impl Indexer {
             debug_assert!(res > 0);
             if res == 1 {
                 index.set_operational();
-                self.dirty_nodes.write().unwrap().remove(&label);
                 return true;
             }
         }
@@ -435,40 +434,14 @@ impl Indexer {
         }
     }
 
-    /// Mark node IDs as modified by the write path so background population
-    /// will skip them to avoid overwriting concurrent changes.
-    pub fn mark_dirty(
-        &self,
-        label: &Arc<String>,
-        ids: &RoaringTreemap,
-    ) {
-        let mut dirty = self.dirty_nodes.write().unwrap();
-        let entry = dirty.entry(label.clone()).or_default();
-        *entry |= ids;
-    }
-
-    /// Commit documents from background population, atomically skipping nodes
-    /// that were modified by the write path during index construction.
-    pub fn commit_background(
-        &mut self,
-        add_docs: &mut HashMap<Arc<String>, Vec<Document>>,
-    ) {
-        let dirty = self.dirty_nodes.read().unwrap();
-        let mut index = self.index.write().unwrap();
-        for (label, add_docs) in add_docs {
-            let Some(index) = index.get_mut(label) else {
-                continue;
-            };
-            let dirty_ids = dirty.get(label);
-            for doc in add_docs.drain(..) {
-                // Skip this node — it was already indexed/removed by the main
-                // query path, so ingesting stale snapshot data would be wrong.
-                if dirty_ids.is_some_and(|ids| ids.contains(doc.id())) {
-                    continue;
-                }
-                index.add_document(&doc);
-            }
-        }
+    /// Get a clone of the serialization lock for index mutations.
+    ///
+    /// Used by background index population and `commit_index` to serialize
+    /// their index mutations so they never run concurrently.  Returns a
+    /// cloned `Arc` so the caller can lock it without borrowing `self`.
+    #[must_use]
+    pub fn write_lock(&self) -> Arc<Mutex<()>> {
+        self.write_lock.clone()
     }
 
     pub fn cancel(&self) {

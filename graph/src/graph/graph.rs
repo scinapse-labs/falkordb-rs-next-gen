@@ -232,8 +232,14 @@ unsafe impl Sync for Graph {}
 /// Iterates over a snapshot of the label matrix in batches, creating
 /// documents and committing them to the index. Each batch is processed
 /// as a separate thread pool job, yielding the worker between batches
-/// so other queries can execute. The snapshot is taken at index creation
-/// time; concurrent writes are handled by the write path's `commit_index()`.
+/// so write queries can execute between batches.
+///
+/// The Indexer's serialization lock serializes each batch with write-path
+/// `commit_index` calls, so they never run concurrently.  Within a
+/// batch the lock is held, preventing writes from committing index
+/// changes.  Between batches the lock is released, allowing writes
+/// to proceed.  Each batch refreshes the attribute store snapshot so
+/// it always sees prior write-path changes without dirty-node tracking.
 fn populate_index(
     label: Arc<String>,
     lm: versioned_matrix::Iter,
@@ -249,7 +255,7 @@ fn populate_index_batch(
     label: Arc<String>,
     mut lm: versioned_matrix::Iter,
     mut node_indexer: Indexer,
-    node_attrs: AttributeStore,
+    mut node_attrs: AttributeStore,
     attrs: HashMap<Arc<String>, Vec<Arc<Field>>>,
     mut progress: u64,
 ) {
@@ -262,41 +268,57 @@ fn populate_index_batch(
                 return;
             }
 
-            let mut batch = Vec::with_capacity(BATCH_SIZE);
+            let exhausted;
 
-            // Fill one batch from the iterator.
-            while batch.len() < BATCH_SIZE {
-                match lm.next() {
-                    Some((n, _)) => {
-                        let mut doc = Document::new(n);
-                        for (attr, fields) in &attrs {
-                            if let Some(value) = node_attrs.get_attr(n, attr) {
-                                for field in fields {
-                                    doc.set(field.clone(), value.clone());
+            // Hold the Indexer's serialization lock for the entire batch so
+            // that write-path `commit_index` calls wait until this batch
+            // finishes.  This guarantees no concurrent index mutations.
+            {
+                let lock = node_indexer.write_lock();
+                let _guard = lock.lock().unwrap();
+
+                // Refresh the snapshot so attribute reads reflect all
+                // writes that committed between the previous batch and now.
+                node_attrs.commit();
+
+                let mut batch = Vec::with_capacity(BATCH_SIZE);
+
+                while batch.len() < BATCH_SIZE {
+                    match lm.next() {
+                        Some((n, _)) => {
+                            let mut doc = Document::new(n);
+                            let mut has_fields = false;
+                            for (attr, fields) in &attrs {
+                                if let Some(value) = node_attrs.get_attr(n, attr) {
+                                    for field in fields {
+                                        doc.set(field.clone(), value.clone());
+                                    }
+                                    has_fields = true;
                                 }
                             }
+                            if has_fields {
+                                batch.push(doc);
+                            }
                         }
-                        batch.push(doc);
+                        None => break,
                     }
-                    None => break,
                 }
-            }
 
-            let exhausted = batch.len() < BATCH_SIZE;
+                exhausted = batch.len() < BATCH_SIZE;
 
-            if !batch.is_empty() {
-                progress += batch.len() as u64;
-                let mut add_docs = HashMap::new();
-                add_docs.insert(label.clone(), batch);
-                node_indexer.commit_background(&mut add_docs);
-                node_indexer.update_progress(&label, progress);
+                if !batch.is_empty() {
+                    progress += batch.len() as u64;
+                    let mut add_docs = HashMap::new();
+                    add_docs.insert(label.clone(), batch);
+                    node_indexer.commit(&mut add_docs, &mut HashMap::new());
+                    node_indexer.update_progress(&label, progress);
+                }
+                // _guard dropped here — lock released between batches
             }
 
             if exhausted {
-                // All nodes processed — mark index operational.
                 node_indexer.enable(label);
             } else {
-                // Spawn next batch as a separate job, yielding the worker.
                 populate_index_batch(label, lm, node_indexer, node_attrs, attrs, progress);
             }
         },
@@ -1187,16 +1209,8 @@ impl Graph {
         index_add_docs: &mut HashMap<Arc<String>, RoaringTreemap>,
         remove_docs: &mut HashMap<Arc<String>, RoaringTreemap>,
     ) {
-        // Mark all added/removed node IDs as "dirty" so the background indexer
-        // skips them. These nodes are already being indexed (or removed) right
-        // here on the main query path, so the background populator must not
-        // overwrite these changes with stale snapshot data.
-        for (label, ids) in index_add_docs.iter() {
-            self.node_indexer.mark_dirty(label, ids);
-        }
-        for (label, ids) in remove_docs.iter() {
-            self.node_indexer.mark_dirty(label, ids);
-        }
+        let lock = self.node_indexer.write_lock();
+        let _guard = lock.lock().unwrap();
 
         let mut add_docs = HashMap::new();
         for (label, ids) in index_add_docs.drain() {
