@@ -3234,10 +3234,10 @@ fn db_labels(
             .g
             .borrow()
             .get_labels()
-            .into_iter()
+            .iter()
             .map(|l| {
                 let mut map = OrderMap::default();
-                map.insert(Arc::new(String::from("label")), Value::String(l));
+                map.insert(Arc::new(String::from("label")), Value::String(l.clone()));
                 Value::Map(map)
             })
             .collect(),
@@ -3253,10 +3253,13 @@ fn db_types(
             .g
             .borrow()
             .get_types()
-            .into_iter()
+            .iter()
             .map(|t| {
                 let mut map = OrderMap::default();
-                map.insert(Arc::new(String::from("relationshipType")), Value::String(t));
+                map.insert(
+                    Arc::new(String::from("relationshipType")),
+                    Value::String(t.clone()),
+                );
                 Value::Map(map)
             })
             .collect(),
@@ -3272,10 +3275,12 @@ fn db_properties(
             .g
             .borrow()
             .get_attrs()
-            .into_iter()
             .map(|p| {
                 let mut map = OrderMap::default();
-                map.insert(Arc::new(String::from("propertyKey")), Value::String(p));
+                map.insert(
+                    Arc::new(String::from("propertyKey")),
+                    Value::String(p.clone()),
+                );
                 Value::Map(map)
             })
             .collect(),

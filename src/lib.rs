@@ -408,7 +408,7 @@ fn reply_compact_value(
             raw::reply_with_array(ctx.ctx, 3);
             raw::reply_with_long_long(ctx.ctx, u64::from(*id) as _);
             let dn = runtime.deleted_nodes.borrow();
-            if let Some(x) = dn.get(&id) {
+            if let Some(x) = dn.get(id) {
                 raw::reply_with_array(ctx.ctx, x.labels.len() as _);
                 for label in &x.labels {
                     raw::reply_with_long_long(ctx.ctx, usize::from(*label) as _);
@@ -648,7 +648,7 @@ fn reply_verbose_value(
             raw::reply_with_long_long(ctx.ctx, u64::from(*id) as _);
             let bg = runtime.g.borrow();
             let dn = runtime.deleted_nodes.borrow();
-            if let Some(x) = dn.get(&id) {
+            if let Some(x) = dn.get(id) {
                 raw::reply_with_array(ctx.ctx, x.labels.len() as _);
                 for label in &x.labels {
                     let label = bg.get_label_by_id(*label);
