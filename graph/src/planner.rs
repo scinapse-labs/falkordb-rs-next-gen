@@ -913,9 +913,7 @@ impl Planner {
                         .variables()
                         .filter(|v| !self.visited.contains(&v.id))
                         .collect();
-                    let all_visited = pattern
-                        .variables()
-                        .all(|v| self.visited.contains(&v.id));
+                    let all_visited = pattern.variables().all(|v| self.visited.contains(&v.id));
                     let mut match_plan = self.plan_match(&pattern, filter);
                     Self::add_argument_to_leaves(&mut match_plan);
                     if all_visited {
