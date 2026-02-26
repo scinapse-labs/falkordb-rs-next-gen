@@ -940,8 +940,8 @@ impl<'a> Runtime {
                                     &rel_pattern.to.labels,
                                 )
                                 .filter(|(src, dst)| {
-                                    from_id.map_or(true, |fid| fid == *src)
-                                        && to_id.map_or(true, |tid| tid == *dst)
+                                    from_id.is_none_or(|fid| fid == *src)
+                                        && to_id.is_none_or(|tid| tid == *dst)
                                 })
                                 .flat_map(|(src, dst)| {
                                     g.get_src_dest_relationships(src, dst, &rel_pattern.types)
@@ -994,8 +994,8 @@ impl<'a> Runtime {
                                     )
                                     .filter(|(src, dst)| {
                                         // Reversed: to_id matches src, from_id matches dst
-                                        to_id.map_or(true, |tid| tid == *src)
-                                            && from_id.map_or(true, |fid| fid == *dst)
+                                        to_id.is_none_or(|tid| tid == *src)
+                                            && from_id.is_none_or(|fid| fid == *dst)
                                     })
                                     .flat_map(|(src, dst)| {
                                         g.get_src_dest_relationships(src, dst, &rel_pattern.types)
@@ -2680,7 +2680,6 @@ impl<'a> Runtime {
                     self.g
                         .borrow()
                         .get_src_dest_relationships(src, dst, &relationship_pattern.types)
-                        .into_iter()
                         .filter(move |v| {
                             if let Value::Map(filter_attrs) = &filter_attrs
                                 && !filter_attrs.is_empty()
@@ -2936,10 +2935,10 @@ impl<'a> Runtime {
                 Some(Ok(vars))
             })))
         } else {
-            Ok(Box::new(iter.filter_map(move |v| {
+            Ok(Box::new(iter.map(move |v| {
                 let mut vars = vars.clone();
                 vars.insert(&node_pattern.alias, Value::Node(v));
-                Some(Ok(vars))
+                Ok(vars)
             })))
         }
     }
@@ -3032,16 +3031,13 @@ impl<'a> Runtime {
                     }),
             ))
         } else {
-            Ok(Box::new(
-                self.g
-                    .borrow()
-                    .get_indexed_nodes(index, q)
-                    .filter_map(move |v| {
-                        let mut vars = vars.clone();
-                        vars.insert(&node_pattern.alias, Value::Node(v));
-                        Some(Ok(vars))
-                    }),
-            ))
+            Ok(Box::new(self.g.borrow().get_indexed_nodes(index, q).map(
+                move |v| {
+                    let mut vars = vars.clone();
+                    vars.insert(&node_pattern.alias, Value::Node(v));
+                    Ok(vars)
+                },
+            )))
         }
     }
 
