@@ -1616,41 +1616,17 @@ impl<'a> Runtime {
                     self.record.borrow_mut().push((idx, res.clone()));
                 }))
             }
-            IR::Union => {
-                let children: Vec<_> = self.plan.node(idx).children().map(|c| c.idx()).collect();
-                let canonical = &self.plan.node(children[0]).get_variables();
-
-                // Execute branch 0 (no remapping needed).
-                let mut union_iter: Box<dyn Iterator<Item = Result<Env, String>> + '_> =
-                    self.run(children[0])?;
-
-                // Lazily chain remaining branches with positional variable remapping.
-                for &child_idx in children.iter().skip(1) {
-                    let mapping: Vec<(Variable, Variable)> = self
-                        .plan
-                        .node(child_idx)
-                        .get_variables()
-                        .iter()
-                        .cloned()
-                        .zip(canonical.iter().cloned())
-                        .collect();
-                    let branch_iter = self.run(child_idx)?.map(move |result| {
-                        result.map(|env| {
-                            let mut new_env = Env::default();
-                            for (from, to) in &mapping {
-                                if let Some(value) = env.get(from) {
-                                    new_env.insert(to, value.clone());
-                                }
-                            }
-                            new_env
-                        })
-                    });
-                    union_iter = Box::new(union_iter.chain(branch_iter));
-                }
-                Ok(union_iter.cond_inspect(self.inspect, move |res| {
+            IR::Union => Ok(self
+                .plan
+                .node(idx)
+                .children()
+                .map(|c| self.run(c.idx()))
+                .collect::<Result<Vec<_>, String>>()?
+                .into_iter()
+                .flatten()
+                .cond_inspect(self.inspect, move |res| {
                     self.record.borrow_mut().push((idx, res.clone()));
-                }))
-            }
+                })),
             IR::Apply => {
                 // Apply = correlated join: for each row from child 0, run child 1
                 // Child 1 has Argument nodes that receive the row via argument_envs
