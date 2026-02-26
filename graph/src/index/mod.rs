@@ -89,16 +89,11 @@ impl Hash for Field {
     }
 }
 
-#[derive(Clone, Debug, Default)]
-pub enum IndexStatus {
-    #[default]
-    Operational,
-    UnderConstruction(u64, u64),
-}
-
 pub struct IndexInfo {
     pub label: Arc<String>,
-    pub status: IndexStatus,
+    pub pending: i32,
+    pub progress: u64,
+    pub total: u64,
     pub fields: HashMap<Arc<String>, Vec<Arc<Field>>>,
     pub language: Option<Arc<String>>,
     pub stopwords: Option<Vec<Arc<String>>>,
@@ -313,8 +308,9 @@ impl Document {
 pub struct Index {
     rs_idx: *mut RSIndex,
     fields: HashMap<Arc<String>, Vec<Arc<Field>>>,
-    status: IndexStatus,
     pending_changes: AtomicI32,
+    progress: u64,
+    total: u64,
     language: Option<Arc<String>>,
     stopwords: Option<Vec<Arc<String>>>,
 }
@@ -680,30 +676,26 @@ impl Index {
 
     // --- status ---
 
-    /// Check if the index is in Operational status.
+    /// An index is operational when there are no pending changes.
     #[must_use]
     pub fn is_operational(&self) -> bool {
-        matches!(self.status, IndexStatus::Operational)
+        self.pending_changes.load(Ordering::SeqCst) == 0
     }
 
-    /// Get a clone of the current status.
-    #[must_use]
-    pub fn status(&self) -> IndexStatus {
-        self.status.clone()
-    }
-
-    /// Set the index status to UnderConstruction with given progress/total.
-    pub fn set_under_construction(
+    /// Set the index population progress.
+    pub fn set_progress(
         &mut self,
         progress: u64,
         total: u64,
     ) {
-        self.status = IndexStatus::UnderConstruction(progress, total);
+        self.progress = progress;
+        self.total = total;
     }
 
-    /// Set the index status to Operational.
-    pub fn set_operational(&mut self) {
-        self.status = IndexStatus::Operational;
+    /// Get the current progress values.
+    #[must_use]
+    pub fn progress(&self) -> (u64, u64) {
+        (self.progress, self.total)
     }
 
     // --- pending_changes ---

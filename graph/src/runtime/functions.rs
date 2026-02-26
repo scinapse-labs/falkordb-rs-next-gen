@@ -33,7 +33,7 @@
 #![allow(clippy::cast_possible_truncation)]
 
 use crate::{
-    indexer::{IndexInfo, IndexStatus, IndexType},
+    indexer::{IndexInfo, IndexType},
     runtime::{
         ordermap::OrderMap,
         runtime::Runtime,
@@ -3292,7 +3292,9 @@ fn db_indexes(
             .map(
                 |IndexInfo {
                      label,
-                     status,
+                     pending,
+                     progress,
+                     total,
                      fields,
                      language,
                      stopwords,
@@ -3346,9 +3348,9 @@ fn db_indexes(
                     );
                     map.insert(
                         Arc::new(String::from("status")),
-                        if let IndexStatus::UnderConstruction(current, total) = status {
+                        if pending > 0 {
                             Value::String(Arc::new(format!(
-                                "[Indexing] {current}/{total}: UNDER CONSTRUCTION"
+                                "[Indexing] {progress}/{total}: UNDER CONSTRUCTION"
                             )))
                         } else {
                             Value::String(Arc::new(String::from("OPERATIONAL")))

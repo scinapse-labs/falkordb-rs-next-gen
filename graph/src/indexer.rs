@@ -43,8 +43,8 @@ use std::{
 use roaring::RoaringTreemap;
 
 pub use crate::index::{
-    Document, Field, IdIter, IndexInfo, IndexQuery, IndexResultsIter, IndexStatus, IndexType,
-    ScoredIdIter, TextIndexOptions,
+    Document, Field, IdIter, IndexInfo, IndexQuery, IndexResultsIter, IndexType, ScoredIdIter,
+    TextIndexOptions,
 };
 use crate::{index::Index, runtime::value::Value};
 
@@ -203,7 +203,7 @@ impl Indexer {
             label_indexes.set_stopwords(stopwords);
         }
 
-        label_indexes.set_under_construction(0, total);
+        label_indexes.set_progress(0, total);
         label_indexes.increment_pending();
         Ok(())
     }
@@ -235,7 +235,7 @@ impl Indexer {
                 }
             }
             if removed {
-                index.set_under_construction(0, total);
+                index.set_progress(0, total);
                 index.increment_pending();
             }
             // Return the number of indexes before and after the operation
@@ -305,14 +305,11 @@ impl Indexer {
         &mut self,
         label: Arc<String>,
     ) -> bool {
-        let mut index = self.index.write().unwrap();
-        if let Some(index) = index.get_mut(&label) {
+        let index = self.index.read().unwrap();
+        if let Some(index) = index.get(&label) {
             let res = index.decrement_pending();
             debug_assert!(res > 0);
-            if res == 1 {
-                index.set_operational();
-                return true;
-            }
+            return res == 1;
         }
         false
     }
@@ -392,12 +389,17 @@ impl Indexer {
             .read()
             .unwrap()
             .iter()
-            .map(|(label, index)| IndexInfo {
-                label: label.clone(),
-                status: index.status(),
-                fields: index.clone_fields(),
-                language: index.language().cloned(),
-                stopwords: index.stopwords().cloned(),
+            .map(|(label, index)| {
+                let (progress, total) = index.progress();
+                IndexInfo {
+                    label: label.clone(),
+                    pending: index.pending_count(),
+                    progress,
+                    total,
+                    fields: index.clone_fields(),
+                    language: index.language().cloned(),
+                    stopwords: index.stopwords().cloned(),
+                }
             })
             .collect()
     }
@@ -428,10 +430,9 @@ impl Indexer {
         progress: u64,
     ) {
         let mut index = self.index.write().unwrap();
-        if let Some(index) = index.get_mut(label)
-            && let IndexStatus::UnderConstruction(_, total) = index.status()
-        {
-            index.set_under_construction(progress, total);
+        if let Some(index) = index.get_mut(label) {
+            let (_, total) = index.progress();
+            index.set_progress(progress, total);
         }
     }
 
