@@ -956,11 +956,20 @@ impl<'a> Runtime {
 
                                 // Check inline property predicates on nodes and relationship.
                                 if !self.check_inline_node_attrs(
-                                    &rel_pattern.from.attrs, src, &local_env, agg_group_key,
+                                    &rel_pattern.from.attrs,
+                                    src,
+                                    &local_env,
+                                    agg_group_key,
                                 )? || !self.check_inline_node_attrs(
-                                    &rel_pattern.to.attrs, dst, &local_env, agg_group_key,
+                                    &rel_pattern.to.attrs,
+                                    dst,
+                                    &local_env,
+                                    agg_group_key,
                                 )? || !self.check_inline_rel_attrs(
-                                    &rel_pattern.attrs, rel_id, &local_env, agg_group_key,
+                                    &rel_pattern.attrs,
+                                    rel_id,
+                                    &local_env,
+                                    agg_group_key,
                                 )? {
                                     continue;
                                 }
@@ -1000,11 +1009,20 @@ impl<'a> Runtime {
 
                                     // Check inline property predicates (swapped nodes).
                                     if !self.check_inline_node_attrs(
-                                        &rel_pattern.from.attrs, dst, &local_env, agg_group_key,
+                                        &rel_pattern.from.attrs,
+                                        dst,
+                                        &local_env,
+                                        agg_group_key,
                                     )? || !self.check_inline_node_attrs(
-                                        &rel_pattern.to.attrs, src, &local_env, agg_group_key,
+                                        &rel_pattern.to.attrs,
+                                        src,
+                                        &local_env,
+                                        agg_group_key,
                                     )? || !self.check_inline_rel_attrs(
-                                        &rel_pattern.attrs, rel_id, &local_env, agg_group_key,
+                                        &rel_pattern.attrs,
+                                        rel_id,
+                                        &local_env,
+                                        agg_group_key,
                                     )? {
                                         continue;
                                     }
