@@ -185,7 +185,7 @@ pub enum Value {
     Map(OrderMap<Arc<String>, Self>),
     /// Reference to a graph node (by ID)
     Node(NodeId),
-    /// Reference to a relationship: (edge_id, source_node, target_node)
+    /// Reference to a reglationship: (edge_id, source_node, target_node)
     Relationship(Box<(RelationshipId, NodeId, NodeId)>),
     /// A path through the graph (alternating nodes and relationships)
     Path(ThinVec<Self>),
@@ -610,19 +610,21 @@ impl Env {
             self.0.push(Value::Null);
         }
         self.0[key.id as usize] = value;
-        if (key.id as u32) < 128 {
+        if key.id < 128 {
             self.1 |= 1u128 << key.id;
+        } else {
+            todo!("Support variables with id >= 128 (currently max is 127 due to bitmask tracking)")
         }
     }
 
     /// Returns true if the variable was explicitly inserted (even if set to Null).
     /// Returns false for padding Null slots that were never explicitly set.
     #[must_use]
-    pub fn is_bound(
+    pub const fn is_bound(
         &self,
         key: &Variable,
     ) -> bool {
-        if (key.id as u32) < 128 {
+        if key.id < 128 {
             self.1 & (1u128 << key.id) != 0
         } else {
             (key.id as usize) < self.0.len()

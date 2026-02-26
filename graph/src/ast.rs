@@ -187,7 +187,7 @@ pub enum ExprIR<TVar> {
     ListComprehension(TVar),
     /// Parenthesized expression (for precedence)
     Paren,
-    /// Pattern predicate should be rewite in planner
+    /// Pattern predicate should be rewritten in planner
     Pattern(QueryGraph<Arc<String>, Arc<String>, TVar>),
     /// Map projection: base { .prop, .*, key: expr, var }
     /// First child is the base expression, remaining children are projection items
