@@ -18,12 +18,13 @@ use crate::{
         GC_POLICY_FORK, REDISEARCH_ADD_REPLACE, RSDoc, RSFLDOPT_NONE, RSFLDOPT_TXTNOSTEM,
         RSFLDOPT_TXTPHONETIC, RSFLDTYPE_FULLTEXT, RSFLDTYPE_GEO, RSFLDTYPE_NUMERIC, RSFLDTYPE_TAG,
         RSFLDTYPE_VECTOR, RSGeoDistance_RS_GEO_DISTANCE_M, RSIndex, RSRANGE_INF, RSRANGE_NEG_INF,
-        RediSearch_CreateDocument2, RediSearch_CreateField, RediSearch_CreateGeoNode,
-        RediSearch_CreateIndex, RediSearch_CreateIndexOptions, RediSearch_CreateNumericNode,
-        RediSearch_CreateTagNode, RediSearch_CreateTagTokenNode, RediSearch_DeleteDocument,
-        RediSearch_DocumentAddFieldGeo, RediSearch_DocumentAddFieldNumber,
-        RediSearch_DocumentAddFieldString, RediSearch_DocumentAddFieldVector, RediSearch_DropIndex,
-        RediSearch_FreeIndexOptions, RediSearch_GetResultsIterator, RediSearch_IndexAddDocument,
+        RSResultsIterator, RediSearch_CreateDocument2, RediSearch_CreateField,
+        RediSearch_CreateGeoNode, RediSearch_CreateIndex, RediSearch_CreateIndexOptions,
+        RediSearch_CreateNumericNode, RediSearch_CreateTagNode, RediSearch_CreateTagTokenNode,
+        RediSearch_DeleteDocument, RediSearch_DocumentAddFieldGeo,
+        RediSearch_DocumentAddFieldNumber, RediSearch_DocumentAddFieldString,
+        RediSearch_DocumentAddFieldVector, RediSearch_DropIndex, RediSearch_FreeIndexOptions,
+        RediSearch_GetResultsIterator, RediSearch_IndexAddDocument,
         RediSearch_IndexOptionsSetGCPolicy, RediSearch_IndexOptionsSetLanguage,
         RediSearch_IndexOptionsSetStopwords, RediSearch_IterateQuery, RediSearch_QueryNodeAddChild,
         RediSearch_ResultsIteratorFree, RediSearch_ResultsIteratorGetScore,
@@ -115,6 +116,93 @@ pub enum IndexQuery<T> {
         radius: T,
     },
 }
+
+/// Lazy iterator over RediSearch query results.
+///
+/// Wraps the C `RSResultsIterator` and calls `RediSearch_ResultsIteratorNext`
+/// on each `.next()`. Frees the C iterator on `Drop`.
+///
+/// The mapper function `F` extracts the desired item type from each raw
+/// iterator step (e.g. just the ID, or ID + score).
+pub struct IndexResultsIter<T, F: FnMut(*mut RSResultsIterator, u64) -> T> {
+    iter: *mut RSResultsIterator,
+    rs_idx: *mut RSIndex,
+    map: F,
+    _marker: std::marker::PhantomData<T>,
+}
+
+impl<T, F: FnMut(*mut RSResultsIterator, u64) -> T> IndexResultsIter<T, F> {
+    fn new(
+        iter: *mut RSResultsIterator,
+        rs_idx: *mut RSIndex,
+        map: F,
+    ) -> Self {
+        Self {
+            iter,
+            rs_idx,
+            map,
+            _marker: std::marker::PhantomData,
+        }
+    }
+}
+
+impl IndexResultsIter<u64, fn(*mut RSResultsIterator, u64) -> u64> {
+    #[must_use]
+    pub fn empty() -> Self {
+        Self {
+            iter: null_mut(),
+            rs_idx: null_mut(),
+            map: |_, id| id,
+            _marker: std::marker::PhantomData,
+        }
+    }
+}
+
+impl IndexResultsIter<(u64, f64), fn(*mut RSResultsIterator, u64) -> (u64, f64)> {
+    #[must_use]
+    pub fn empty_scored() -> Self {
+        Self {
+            iter: null_mut(),
+            rs_idx: null_mut(),
+            map: |_, id| (id, 0.0),
+            _marker: std::marker::PhantomData,
+        }
+    }
+}
+
+impl<T, F: FnMut(*mut RSResultsIterator, u64) -> T> Iterator for IndexResultsIter<T, F> {
+    type Item = T;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.iter.is_null() {
+            return None;
+        }
+        unsafe {
+            let id =
+                RediSearch_ResultsIteratorNext(self.iter, self.rs_idx, null_mut()).cast::<u64>();
+            if id.is_null() {
+                return None;
+            }
+            Some((self.map)(self.iter, id.read_unaligned()))
+        }
+    }
+}
+
+impl<T, F: FnMut(*mut RSResultsIterator, u64) -> T> Drop for IndexResultsIter<T, F> {
+    fn drop(&mut self) {
+        if !self.iter.is_null() {
+            unsafe {
+                RediSearch_ResultsIteratorFree(self.iter);
+            }
+        }
+    }
+}
+
+/// Iterator yielding entity IDs from range/tag/geo index queries.
+pub type IdIter = IndexResultsIter<u64, fn(*mut RSResultsIterator, u64) -> u64>;
+
+/// Iterator yielding (entity ID, score) pairs from fulltext index queries.
+pub type ScoredIdIter = IndexResultsIter<(u64, f64), fn(*mut RSResultsIterator, u64) -> (u64, f64)>;
 
 /// A document to be indexed, wrapping a RediSearch document.
 #[derive(Clone)]
@@ -371,7 +459,7 @@ impl Index {
     pub fn query(
         &self,
         query: IndexQuery<Value>,
-    ) -> Vec<u64> {
+    ) -> IdIter {
         let query = match query {
             IndexQuery::Equal(key, Value::Int(value)) => unsafe {
                 let field = &self.fields.get(&key).unwrap()[0];
@@ -445,18 +533,7 @@ impl Index {
 
         unsafe {
             let iter = RediSearch_GetResultsIterator(query, self.rs_idx);
-
-            let mut res = vec![];
-            loop {
-                let node_id =
-                    RediSearch_ResultsIteratorNext(iter, self.rs_idx, null_mut()).cast::<u64>();
-                if node_id.is_null() {
-                    break;
-                }
-                res.push(node_id.read_unaligned());
-            }
-            RediSearch_ResultsIteratorFree(iter);
-            res
+            IndexResultsIter::new(iter, self.rs_idx, |_, id| id)
         }
     }
 
@@ -464,7 +541,7 @@ impl Index {
     pub fn fulltext_query(
         &self,
         query: &str,
-    ) -> Result<Vec<(u64, f64)>, String> {
+    ) -> Result<ScoredIdIter, String> {
         let cstr = CString::new(query).map_err(|e| e.to_string())?;
         let mut err: *mut c_char = null_mut();
         unsafe {
@@ -474,21 +551,10 @@ impl Index {
                 drop(CString::from_raw(err));
                 return Err(msg);
             }
-            if iter.is_null() {
-                return Ok(vec![]);
-            }
-            let mut res = vec![];
-            loop {
-                let id =
-                    RediSearch_ResultsIteratorNext(iter, self.rs_idx, null_mut()).cast::<u64>();
-                if id.is_null() {
-                    break;
-                }
+            Ok(IndexResultsIter::new(iter, self.rs_idx, |iter, id| {
                 let score = RediSearch_ResultsIteratorGetScore(iter);
-                res.push((id.read_unaligned(), score));
-            }
-            RediSearch_ResultsIteratorFree(iter);
-            Ok(res)
+                (id, score)
+            }))
         }
     }
 

@@ -682,10 +682,7 @@ impl Graph {
                     for key in &keys {
                         let label = self.node_labels[label_id as usize].clone();
                         if self.node_indexer.has_indexed_attr(&label, key) {
-                            index_add_docs
-                                .entry(label)
-                                .or_default()
-                                .insert(*id);
+                            index_add_docs.entry(label).or_default().insert(*id);
                         }
                     }
                 }
@@ -1282,24 +1279,17 @@ impl Graph {
         label: &Arc<String>,
         query: IndexQuery<Value>,
     ) -> impl Iterator<Item = NodeId> + use<> {
-        self.node_indexer
-            .query(label.clone(), query)
-            .into_iter()
-            .map(NodeId)
+        self.node_indexer.query(label.clone(), query).map(NodeId)
     }
 
     pub fn fulltext_query_nodes(
         &self,
         label: &Arc<String>,
         query: &str,
-    ) -> Result<Vec<(NodeId, f64)>, String> {
+    ) -> Result<impl Iterator<Item = (NodeId, f64)> + use<>, String> {
         self.node_indexer
             .fulltext_query(label.clone(), query)
-            .map(|r| {
-                r.into_iter()
-                    .map(|(id, score)| (NodeId(id), score))
-                    .collect()
-            })
+            .map(|r| r.map(|(id, score)| (NodeId(id), score)))
     }
 
     #[must_use]

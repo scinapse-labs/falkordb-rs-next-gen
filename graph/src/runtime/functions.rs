@@ -3380,7 +3380,6 @@ fn db_fulltext_query_nodes(
             let results = runtime.g.borrow().fulltext_query_nodes(&label, &query)?;
             Ok(Value::List(
                 results
-                    .into_iter()
                     .map(|(node_id, score)| {
                         let mut map = OrderMap::default();
                         map.insert(Arc::new(String::from("node")), Value::Node(node_id));

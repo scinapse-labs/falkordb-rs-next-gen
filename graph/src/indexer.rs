@@ -43,7 +43,8 @@ use std::{
 use roaring::RoaringTreemap;
 
 pub use crate::index::{
-    Document, Field, IndexInfo, IndexQuery, IndexStatus, IndexType, TextIndexOptions,
+    Document, Field, IdIter, IndexInfo, IndexQuery, IndexResultsIter, IndexStatus, IndexType,
+    ScoredIdIter, TextIndexOptions,
 };
 use crate::{index::Index, runtime::value::Value};
 
@@ -282,22 +283,22 @@ impl Indexer {
         &self,
         label: Arc<String>,
         query: IndexQuery<Value>,
-    ) -> Vec<u64> {
+    ) -> IdIter {
         if let Some(index) = self.index.read().unwrap().get(&label) {
             return index.query(query);
         }
-        vec![]
+        IndexResultsIter::empty()
     }
 
     pub fn fulltext_query(
         &self,
         label: Arc<String>,
         query: &str,
-    ) -> Result<Vec<(u64, f64)>, String> {
+    ) -> Result<ScoredIdIter, String> {
         if let Some(index) = self.index.read().unwrap().get(&label) {
             return index.fulltext_query(query);
         }
-        Ok(vec![])
+        Ok(IndexResultsIter::empty_scored())
     }
 
     pub fn enable(
