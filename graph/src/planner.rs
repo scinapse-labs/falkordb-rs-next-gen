@@ -205,10 +205,11 @@ impl Display for IR {
 fn get_branch_return_vars(node: &DynNode<'_, IR>) -> Vec<Variable> {
     match node.data() {
         IR::Project(trees, _) => trees.iter().map(|v| v.0.clone()).collect(),
+        IR::ProcedureCall(_, _, named_outputs) => named_outputs.clone(),
         IR::Commit => node
             .get_child(0)
             .map_or(vec![], |child| get_branch_return_vars(&child)),
-        IR::Sort(_) | IR::Skip(_) | IR::Limit(_) | IR::Distinct => {
+        IR::Sort(_) | IR::Skip(_) | IR::Limit(_) | IR::Distinct | IR::Filter(_) => {
             get_branch_return_vars(&node.child(0))
         }
         IR::Aggregate(names, _, _) => names.clone(),

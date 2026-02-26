@@ -1016,12 +1016,19 @@ impl<TVar: Eq + Hash + Display> QueryIR<TVar> {
         Ok(())
     }
 
-    /// Extracts RETURN column names from a UNION branch for cross-branch validation.
+    /// Extracts RETURN (or CALL/YIELD) column names from a UNION branch
+    /// for cross-branch validation.
     fn return_column_names(branch: &Self) -> Vec<String> {
         if let Self::Query(clauses, _) = branch {
             for clause in clauses.iter().rev() {
-                if let Self::Return { exprs, .. } = clause {
-                    return exprs.iter().map(|(var, _)| var.to_string()).collect();
+                match clause {
+                    Self::Return { exprs, .. } => {
+                        return exprs.iter().map(|(var, _)| var.to_string()).collect();
+                    }
+                    Self::Call(_, _, vars, _) => {
+                        return vars.iter().map(ToString::to_string).collect();
+                    }
+                    _ => {}
                 }
             }
         }
