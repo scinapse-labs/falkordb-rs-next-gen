@@ -937,7 +937,9 @@ impl<'a> Parser<'a> {
             .iter()
             .filter(|r| !r.alias.starts_with("_anon_"))
             .count();
-        nodes + rels
+        // Path variables are always user-named (no anonymous named paths).
+        let paths = pattern.paths().len();
+        nodes + rels + paths
     }
 
     /// Updates `named_in_scope` based on variables introduced by a clause.
@@ -1059,7 +1061,6 @@ impl<'a> Parser<'a> {
                     attrs.push(self.parse_ident()?);
                 }
                 match_token!(self.lexer, RParen);
-                self.expect_end_of_input()?;
                 let index_type = IndexType::Range;
                 let entity_type = EntityType::Node;
                 return Ok(Some(QueryIR::CreateIndex {
@@ -1120,7 +1121,6 @@ impl<'a> Parser<'a> {
             } else {
                 None
             };
-            self.expect_end_of_input()?;
             return Ok(Some(QueryIR::CreateIndex {
                 label,
                 attrs,
@@ -1145,7 +1145,6 @@ impl<'a> Parser<'a> {
                     attrs.push(self.parse_ident()?);
                 }
                 match_token!(self.lexer, RParen);
-                self.expect_end_of_input()?;
                 let index_type = IndexType::Range;
                 let entity_type = EntityType::Node;
                 return Ok(Some(QueryIR::DropIndex {
@@ -1193,7 +1192,6 @@ impl<'a> Parser<'a> {
                 attrs.push(self.parse_ident()?);
             }
             match_token!(self.lexer, RParen);
-            self.expect_end_of_input()?;
             let index_type = if fulltext {
                 IndexType::Fulltext
             } else if vector {
