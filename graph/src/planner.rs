@@ -82,6 +82,13 @@ pub enum IR {
         index: Arc<String>,
         query: Arc<IndexQuery<QueryExpr<Variable>>>,
     },
+    /// Scan nodes using a fulltext index
+    NodeByFulltextScan {
+        node: Variable,
+        label: QueryExpr<Variable>,
+        query: QueryExpr<Variable>,
+        score: Option<Variable>,
+    },
     /// Lookup node by label and id
     NodeByLabelAndIdScan {
         node: Arc<QueryNode<Arc<String>, Variable>>,
@@ -169,6 +176,9 @@ impl Display for IR {
             Self::NodeByLabelScan(node) => write!(f, "Node By Label Scan | {node}"),
             Self::NodeByIndexScan { node, .. } => {
                 write!(f, "Node By Index Scan | {node}")
+            }
+            Self::NodeByFulltextScan { .. } => {
+                write!(f, "Node By Fulltext Index Scan")
             }
             Self::NodeByLabelAndIdScan { node, .. } => {
                 write!(f, "Node By Label and ID Scan | {node}")
@@ -402,12 +412,6 @@ impl Planner {
     ) -> DynTree<IR> {
         match ir {
             QueryIR::Call(proc, exprs, named_outputs, filter) => {
-                if let Some(filter) = filter {
-                    return tree!(
-                        IR::Filter(filter),
-                        tree!(IR::ProcedureCall(proc, exprs, named_outputs))
-                    );
-                }
                 if proc.name == "db.idx.fulltext.drop" {
                     let ExprIR::String(label) = exprs[0].root().data() else {
                         unreachable!()
@@ -418,6 +422,25 @@ impl Planner {
                         index_type: IndexType::Fulltext,
                         entity_type: EntityType::Node,
                     });
+                }
+                if proc.name == "db.idx.fulltext.queryNodes" {
+                    let scan = tree!(IR::NodeByFulltextScan {
+                        node: named_outputs[0].clone(),
+                        label: exprs[0].clone(),
+                        query: exprs[1].clone(),
+                        score: named_outputs.get(1).cloned(),
+                    });
+                    return if let Some(filter) = filter {
+                        tree!(IR::Filter(filter), scan)
+                    } else {
+                        scan
+                    };
+                }
+                if let Some(filter) = filter {
+                    return tree!(
+                        IR::Filter(filter),
+                        tree!(IR::ProcedureCall(proc, exprs, named_outputs))
+                    );
                 }
                 tree!(IR::ProcedureCall(proc, exprs, named_outputs))
             }

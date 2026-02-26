@@ -189,6 +189,12 @@ impl<T: MemoryPolicy> GetVariables for DynNode<'_, IR, T> {
                 | IR::NodeByIdSeek { node, .. } => {
                     vars.push(node.alias.clone());
                 }
+                IR::NodeByFulltextScan { node, score, .. } => {
+                    vars.push(node.clone());
+                    if let Some(score) = score {
+                        vars.push(score.clone());
+                    }
+                }
                 IR::CondTraverse(query_relationship) => {
                     vars.push(query_relationship.alias.clone());
                 }
@@ -226,6 +232,13 @@ impl ReturnNames for DynNode<'_, IR> {
                 .get_child(0)
                 .map_or(vec![], |child| child.get_return_names()),
             IR::ProcedureCall(_, _, named_outputs) => named_outputs.clone(),
+            IR::NodeByFulltextScan { node, score, .. } => {
+                let mut v = vec![node.clone()];
+                if let Some(score) = score {
+                    v.push(score.clone());
+                }
+                v
+            }
             IR::Sort(_) | IR::Skip(_) | IR::Limit(_) | IR::Distinct => {
                 self.child(0).get_return_names()
             }
@@ -1358,6 +1371,18 @@ impl<'a> Runtime {
                 })),
             IR::NodeByIndexScan { node, index, query } => Ok(iter
                 .try_flat_map(move |vars| self.node_by_index_scan(node, index, query, vars))
+                .cond_inspect(self.inspect, move |res| {
+                    self.record.borrow_mut().push((idx, res.clone()));
+                })),
+            IR::NodeByFulltextScan {
+                node,
+                label,
+                query,
+                score,
+            } => Ok(iter
+                .try_flat_map(move |vars| {
+                    self.node_by_fulltext_scan(node, label, query, score, vars)
+                })
                 .cond_inspect(self.inspect, move |res| {
                     self.record.borrow_mut().push((idx, res.clone()));
                 })),
@@ -2514,6 +2539,37 @@ impl<'a> Runtime {
                     }),
             ))
         }
+    }
+
+    fn node_by_fulltext_scan(
+        &'a self,
+        node: &'a Variable,
+        label: &QueryExpr<Variable>,
+        query: &QueryExpr<Variable>,
+        score: &'a Option<Variable>,
+        vars: Env,
+    ) -> Result<Box<dyn Iterator<Item = Result<Env, String>> + 'a>, String> {
+        let Value::String(label_str) = self.run_expr(label, label.root().idx(), &vars, None)?
+        else {
+            return Err("fulltext query expects a string label".into());
+        };
+        let Value::String(query_str) = self.run_expr(query, query.root().idx(), &vars, None)?
+        else {
+            return Err("fulltext query expects a string query".into());
+        };
+        Ok(Box::new(
+            self.g
+                .borrow()
+                .fulltext_query_nodes(&label_str, &query_str)?
+                .map(move |(node_id, s)| {
+                    let mut vars = vars.clone();
+                    vars.insert(node, Value::Node(node_id));
+                    if let Some(score) = score {
+                        vars.insert(score, Value::Float(s));
+                    }
+                    Ok(vars)
+                }),
+        ))
     }
 
     fn evaluate_id_filter(
