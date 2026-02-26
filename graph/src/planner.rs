@@ -35,7 +35,7 @@ use std::{
     sync::Arc,
 };
 
-use crate::runtime::functions::Type;
+use crate::runtime::{functions::Type, runtime::GetVariables};
 
 use orx_tree::{DynNode, DynTree, NodeRef, Side, Traversal, Traverser};
 
@@ -231,22 +231,6 @@ impl Display for IR {
                 write!(f, "Drop Index | :{label}({attrs:?})")
             }
         }
-    }
-}
-
-/// Extracts return column variables from a planned branch's IR tree.
-fn get_branch_return_vars(node: &DynNode<'_, IR>) -> Vec<Variable> {
-    match node.data() {
-        IR::Project(trees, _) => trees.iter().map(|v| v.0.clone()).collect(),
-        IR::ProcedureCall(_, _, named_outputs) => named_outputs.clone(),
-        IR::Commit => node
-            .get_child(0)
-            .map_or(vec![], |child| get_branch_return_vars(&child)),
-        IR::Sort(_) | IR::Skip(_) | IR::Limit(_) | IR::Distinct | IR::Filter(_) => {
-            get_branch_return_vars(&node.child(0))
-        }
-        IR::Aggregate(names, _, _) => names.clone(),
-        _ => vec![],
     }
 }
 
@@ -1151,7 +1135,7 @@ impl Planner {
                 for branch in branches {
                     let mut planner = Self::default();
                     let plan = planner.plan(branch);
-                    branch_return_vars.push(get_branch_return_vars(&plan.root()));
+                    branch_return_vars.push(plan.root().get_variables());
                     plans.push(plan);
                 }
                 let mut res = DynTree::new(IR::Union(branch_return_vars));
