@@ -2410,27 +2410,31 @@ impl<'a> Parser<'a> {
                     break;
                 }
             }
-            let _ = if optional_match_token!(self.lexer, Star) {
-                let start = if let Token::Integer(i) = self.lexer.current()? {
+            let is_var_len = if optional_match_token!(self.lexer, Star) {
+                // consume optional range specification [start] [.. [end]]
+                if let Token::Integer(_) = self.lexer.current()? {
                     self.lexer.next();
-                    Some(i)
-                } else {
-                    None
-                };
-                if optional_match_token!(self.lexer, DotDot) {
-                    let end = if let Token::Integer(i) = self.lexer.current()? {
-                        self.lexer.next();
-                        Some(i)
-                    } else {
-                        None
-                    };
-                    Some((start, end))
-                } else {
-                    Some((start, None))
                 }
+                if optional_match_token!(self.lexer, DotDot) {
+                    if let Token::Integer(_) = self.lexer.current()? {
+                        self.lexer.next();
+                    }
+                }
+                true
             } else {
-                None
+                false
             };
+            if is_var_len && matches!(clause, Keyword::Create | Keyword::Merge) {
+                let clause_name = if *clause == Keyword::Create {
+                    "CREATE"
+                } else {
+                    "MERGE"
+                };
+                return Err(format!(
+                    "Variable length relationships cannot be used in {} patterns.",
+                    clause_name
+                ));
+            }
             let attrs = if let Token::Parameter(param) = self.lexer.current()? {
                 self.lexer.next();
                 tree!(ExprIR::Parameter(param))
