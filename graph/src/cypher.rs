@@ -2362,8 +2362,13 @@ impl<'a> Parser<'a> {
             self.lexer.next();
             tree!(ExprIR::Parameter(param))
         } else if self.lexer.current()? == Token::LBracket {
-            self.parse_map()
-                .map_err(|_| String::from("Encountered unhandled type in inlined properties."))?
+            self.parse_map().map_err(|e| {
+                if e.starts_with("Unknown function") {
+                    e
+                } else {
+                    String::from("Encountered unhandled type in inlined properties.")
+                }
+            })?
         } else {
             tree!(ExprIR::Map)
         };
@@ -2430,8 +2435,12 @@ impl<'a> Parser<'a> {
                 self.lexer.next();
                 tree!(ExprIR::Parameter(param))
             } else if self.lexer.current()? == Token::LBracket {
-                self.parse_map().map_err(|_| {
-                    String::from("Encountered unhandled type in inlined properties.")
+                self.parse_map().map_err(|e| {
+                    if e.starts_with("Unknown function") {
+                        e
+                    } else {
+                        String::from("Encountered unhandled type in inlined properties.")
+                    }
                 })?
             } else {
                 tree!(ExprIR::Map)
