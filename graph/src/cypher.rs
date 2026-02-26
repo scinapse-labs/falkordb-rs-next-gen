@@ -893,6 +893,12 @@ macro_rules! parse_operators {
     };
 }
 
+#[derive(Clone, Copy)]
+struct ParserState {
+    pos: usize,
+    anon_counter: u32,
+}
+
 /// Cypher query parser.
 ///
 /// The parser implements a recursive descent parser with operator precedence
@@ -917,6 +923,21 @@ impl<'a> Parser<'a> {
             lexer: Lexer::new(str),
             anon_counter: 0,
         }
+    }
+
+    const fn save_state(&self) -> ParserState {
+        ParserState {
+            pos: self.lexer.pos,
+            anon_counter: self.anon_counter,
+        }
+    }
+
+    fn restore_state(
+        &mut self,
+        state: ParserState,
+    ) {
+        self.lexer.set_pos(state.pos);
+        self.anon_counter = state.anon_counter;
     }
 
     /// Checks if a tree or its descendants contain an aggregate function using DFS traversal
@@ -946,14 +967,14 @@ impl<'a> Parser<'a> {
         while let Ok(Token::Ident(id)) = self.lexer.current() {
             if id.as_str() == "CYPHER" {
                 self.lexer.next();
-                let mut pos = self.lexer.pos;
+                let mut state = self.save_state();
                 while let Ok(id) = self.parse_ident() {
                     if !optional_match_token!(self.lexer, Equal) {
-                        self.lexer.set_pos(pos);
+                        self.restore_state(state);
                         break;
                     }
                     params.insert(String::from(id.as_str()), self.parse_expr(false)?);
-                    pos = self.lexer.pos;
+                    state = self.save_state();
                 }
             } else {
                 break;
@@ -983,11 +1004,11 @@ impl<'a> Parser<'a> {
     /// # Errors
     /// Returns an error string if the query has syntax errors.
     pub fn parse(&mut self) -> Result<RawQueryIR, String> {
-        let pos = self.lexer.pos;
+        let state = self.save_state();
         let result = if let Some(ir) = self.parse_index_ops()? {
             ir
         } else {
-            self.lexer.set_pos(pos);
+            self.restore_state(state);
             self.parse_query()?
         };
 
@@ -1738,7 +1759,7 @@ impl<'a> Parser<'a> {
     ) -> Result<(DynTree<ExprIR<Arc<String>>>, bool), String> {
         match self.lexer.current()? {
             Token::Ident(_) => {
-                let pos = self.lexer.pos;
+                let state = self.save_state();
                 let ident = self.parse_dotted_ident()?;
                 if optional_match_token!(self.lexer, LParen) {
                     let func = get_functions()
@@ -1809,7 +1830,7 @@ impl<'a> Parser<'a> {
                     }
                     return Ok((tree!(ExprIR::FuncInvocation(func); args), false));
                 }
-                self.lexer.set_pos(pos);
+                self.restore_state(state);
                 let ident = self.parse_ident()?;
                 Ok((tree!(ExprIR::Variable(ident)), false))
             }
@@ -1852,7 +1873,7 @@ impl<'a> Parser<'a> {
             }
             Token::LBracket => Ok((self.parse_map()?, false)),
             Token::LParen => {
-                let checkpoint = self.lexer.pos;
+                let checkpoint = self.save_state();
                 // Try to detect pattern predicate: (ident)--(...) or (ident)<--(...)
                 if allow_pattern_predicate
                     && let Ok(pattern) = self.parse_pattern(&Keyword::Match)
@@ -1862,7 +1883,7 @@ impl<'a> Parser<'a> {
                 }
 
                 // Not a pattern predicate - restore and parse normally
-                self.lexer.set_pos(checkpoint);
+                self.restore_state(checkpoint);
                 self.lexer.next(); // re-consume LParen
                 let expr = tree!(ExprIR::Paren);
                 Ok((expr, true))
@@ -2283,8 +2304,7 @@ impl<'a> Parser<'a> {
     fn parse_list_literal_or_comprehension(
         &mut self
     ) -> Result<(DynTree<ExprIR<Arc<String>>>, bool), String> {
-        let saved_pos = self.lexer.pos;
-        let saved_anon = self.anon_counter;
+        let saved = self.save_state();
 
         // 1) Try list comprehension: [var IN ...]
         if let Ok(var) = self.parse_ident()
@@ -2292,8 +2312,7 @@ impl<'a> Parser<'a> {
         {
             return Ok((self.parse_list_comprehension(var)?, false));
         }
-        self.lexer.set_pos(saved_pos);
-        self.anon_counter = saved_anon;
+        self.restore_state(saved);
 
         // 2) Try named pattern comprehension: [var = (pattern) ... | expr]
         if let Ok(var) = self.parse_ident()
@@ -2303,16 +2322,14 @@ impl<'a> Parser<'a> {
         {
             return Ok((result, false));
         }
-        self.lexer.set_pos(saved_pos);
-        self.anon_counter = saved_anon;
+        self.restore_state(saved);
 
         // 3) Try unnamed pattern comprehension: [(pattern) ... | expr]
         if self.lexer.current()? == Token::LParen {
             if let Ok(result) = self.parse_pattern_comprehension(None) {
                 return Ok((result, false));
             }
-            self.lexer.set_pos(saved_pos);
-            self.anon_counter = saved_anon;
+            self.restore_state(saved);
         }
 
         // 4) Default: list literal
@@ -2503,8 +2520,7 @@ impl<'a> Parser<'a> {
                     "MERGE"
                 };
                 return Err(format!(
-                    "Variable length relationships cannot be used in {} patterns.",
-                    clause_name
+                    "Variable length relationships cannot be used in {clause_name} patterns."
                 ));
             }
             let attrs = if let Token::Parameter(param) = self.lexer.current()? {
