@@ -1486,7 +1486,7 @@ fn length(
 ) -> Result<Value, String> {
     let mut iter = args.into_iter();
     match iter.next() {
-        Some(Value::Path(path)) => Ok(Value::Int(path.len() as i64)),
+        Some(Value::Path(path)) => Ok(Value::Int(path.len() as i64 / 2)),
         Some(Value::Null) => Ok(Value::Null),
 
         _ => unreachable!(),

@@ -75,11 +75,22 @@ impl Binder {
     /// Binds a raw query IR, resolving all variable references.
     ///
     /// This is the main entry point for semantic analysis.
+    /// Returns the bound IR along with a map from scope ID to its variables.
     pub fn bind(
         mut self,
         ir: RawQueryIR,
-    ) -> Result<BoundQueryIR, String> {
-        self.bind_ir(ir)
+    ) -> Result<(BoundQueryIR, Vec<Vec<Variable>>), String> {
+        let bound = self.bind_ir(ir)?;
+        let scope_vars = self
+            .env_stack
+            .iter()
+            .map(|env| {
+                let mut vars = env.values().cloned().collect::<Vec<_>>();
+                vars.sort_by_key(|v| v.id);
+                vars
+            })
+            .collect();
+        Ok((bound, scope_vars))
     }
 
     fn current_env(&self) -> &HashMap<Arc<String>, Variable> {
@@ -115,9 +126,21 @@ impl Binder {
                 // Each UNION branch is an independent sub-query with its own
                 // variable scope, so each branch is bound with a fresh Binder.
                 let mut bound_branches = Vec::with_capacity(branches.len());
+                let mut first_columns: Option<Vec<Arc<String>>> = None;
                 for branch in branches {
                     let binder = Self::default();
-                    bound_branches.push(binder.bind(branch)?);
+                    let (bound, _) = binder.bind(branch)?;
+                    let columns = Self::extract_return_columns(&bound);
+                    if let Some(ref expected) = first_columns {
+                        if columns != *expected {
+                            return Err(String::from(
+                                "All sub queries in a UNION must have the same column names.",
+                            ));
+                        }
+                    } else {
+                        first_columns = Some(columns);
+                    }
+                    bound_branches.push(bound);
                 }
                 Ok(QueryIR::Union(bound_branches, all))
             }
@@ -508,6 +531,8 @@ impl Binder {
                 from_bound,
                 to_bound,
                 relationship.bidirectional,
+                relationship.min_hops,
+                relationship.max_hops,
             ));
             bound.add_relationship(rel);
         }
@@ -864,6 +889,7 @@ impl Binder {
                     | ExprIR::Quantifier(_, _)
                     | ExprIR::ListComprehension(_)
                     | ExprIR::PatternComprehension(_) => unreachable!("handled above"),
+                    ExprIR::Pattern(pattern) => ExprIR::Pattern(self.bind_graph(&pattern, false)?),
                 };
                 let mut new_tree = DynTree::new(new_data);
                 let mut root = new_tree.root_mut();
@@ -1089,7 +1115,30 @@ impl Binder {
             | ExprIR::Quantifier(_, _)
             | ExprIR::Variable(_)
             | ExprIR::Parameter(_)
-            | ExprIR::Property(_) => true,
+            | ExprIR::Property(_)
+            | ExprIR::Pattern(_) => true,
         }
+    }
+
+    /// Extracts the RETURN column names from a bound query IR.
+    ///
+    /// Walks into `QueryIR::Query` to find the `QueryIR::Return` clause
+    /// and collects the alias names in order.  Returns an empty vec if
+    /// there is no RETURN clause (e.g. a write-only sub-query).
+    ///
+    /// Used by UNION binding to verify that all branches project the same
+    /// column names.
+    fn extract_return_columns(ir: &BoundQueryIR) -> Vec<Arc<String>> {
+        if let QueryIR::Query(clauses, _) = ir {
+            for clause in clauses.iter().rev() {
+                if let QueryIR::Return { exprs, .. } = clause {
+                    return exprs
+                        .iter()
+                        .filter_map(|(var, _)| var.name.clone())
+                        .collect();
+                }
+            }
+        }
+        Vec::new()
     }
 }

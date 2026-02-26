@@ -598,7 +598,7 @@ impl Hash for Value {
 }
 
 #[derive(Default)]
-pub struct Env(Vec<Value>);
+pub struct Env(Vec<Value>, u128);
 
 impl Env {
     pub fn insert(
@@ -610,6 +610,25 @@ impl Env {
             self.0.push(Value::Null);
         }
         self.0[key.id as usize] = value;
+        if key.id < 128 {
+            self.1 |= 1u128 << key.id;
+        } else {
+            // todo!("Support variables with id >= 128 (currently max is 127 due to bitmask tracking)")
+        }
+    }
+
+    /// Returns true if the variable was explicitly inserted (even if set to Null).
+    /// Returns false for padding Null slots that were never explicitly set.
+    #[must_use]
+    pub const fn is_bound(
+        &self,
+        key: &Variable,
+    ) -> bool {
+        if key.id < 128 {
+            self.1 & (1u128 << key.id) != 0
+        } else {
+            (key.id as usize) < self.0.len()
+        }
     }
 
     #[must_use]
@@ -648,6 +667,10 @@ impl Env {
         })
     }
 
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+
     pub fn merge(
         &mut self,
         other: Self,
@@ -661,6 +684,7 @@ impl Env {
             }
             self.0[key] = value;
         }
+        self.1 |= other.1;
     }
 }
 
@@ -687,7 +711,7 @@ impl Hash for Env {
 
 impl Clone for Env {
     fn clone(&self) -> Self {
-        Self(self.0.clone())
+        Self(self.0.clone(), self.1)
     }
 }
 

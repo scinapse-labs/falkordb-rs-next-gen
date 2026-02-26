@@ -469,11 +469,11 @@ impl Graph {
                     drop(cache);
                     let start = Instant::now();
                     let raw_ir = parser.parse()?;
-                    let ir = Binder::default().bind(raw_ir)?;
+                    let (ir, scope_vars) = Binder::default().bind(raw_ir)?;
                     ir.validate()?;
                     parse_duration = start.elapsed();
 
-                    let mut planner = Planner::default();
+                    let mut planner = Planner::new(scope_vars);
                     let start = Instant::now();
                     let plan = planner.plan(ir);
                     let optimize_plan = optimize(&plan, self);
