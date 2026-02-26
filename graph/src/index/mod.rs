@@ -37,15 +37,13 @@ use crate::{
 /// Type of index for a property.
 #[derive(Clone, Debug, PartialEq, Eq, Default)]
 pub enum IndexType {
-    /// B-tree range index for numeric/string comparisons
+    /// B-tree range index for numeric/string/geo comparisons
     Range,
     /// Full-text search index with tokenization
     #[default]
     Fulltext,
     /// Vector similarity index
     Vector,
-    /// Point index for geographic coordinates
-    Point,
 }
 
 #[derive(Debug, Default)]
@@ -430,14 +428,6 @@ impl Index {
                             RSFLDOPT_NONE,
                         );
                     }
-                    IndexType::Point => {
-                        let _field_id = RediSearch_CreateField(
-                            self.rs_idx,
-                            field.name.as_ptr(),
-                            RSFLDTYPE_GEO,
-                            RSFLDOPT_NONE,
-                        );
-                    }
                 }
             }
         }
@@ -663,10 +653,10 @@ impl Index {
         self.fields.keys().cloned().collect()
     }
 
-    /// Clone all fields.
+    /// Get a reference to all fields.
     #[must_use]
-    pub fn clone_fields(&self) -> HashMap<Arc<String>, Vec<Arc<Field>>> {
-        self.fields.clone()
+    pub fn fields(&self) -> &HashMap<Arc<String>, Vec<Arc<Field>>> {
+        &self.fields
     }
 
     /// Iterate over all Field objects (flattened across all attributes).
@@ -774,8 +764,7 @@ impl Index {
         let stopwords = self.stopwords.clone();
         let language = self.language.clone();
         self.create_rs_index(label, stopwords.as_ref(), language.as_ref())?;
-        let fields = self.clone_fields();
-        self.register_fields(&fields, None);
+        self.register_fields(self.fields(), None);
         Ok(())
     }
 }

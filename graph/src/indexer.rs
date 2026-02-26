@@ -151,7 +151,6 @@ impl Indexer {
                 IndexType::Range => Arc::new(format!("range:{attr}")),
                 IndexType::Fulltext => attr.clone(),
                 IndexType::Vector => Arc::new(format!("vector:{attr}")),
-                IndexType::Point => Arc::new(format!("point:{attr}")),
             };
 
             if label_indexes.has_field_with_type(attr, index_type) {
@@ -170,8 +169,6 @@ impl Indexer {
                 label_indexes.insert_field(attr.clone(), field);
             }
         }
-        let fields = label_indexes.clone_fields();
-
         if !label_indexes.has_rs_index() {
             let effective_stopwords = stopwords
                 .clone()
@@ -186,7 +183,7 @@ impl Indexer {
             )?;
         }
 
-        label_indexes.register_fields(&fields, field_options.as_ref());
+        label_indexes.register_fields(label_indexes.fields(), field_options.as_ref());
 
         // Update the label indexes with global settings
         // Default to "english" for fulltext indexes when no language is specified,
@@ -381,7 +378,7 @@ impl Indexer {
             .read()
             .unwrap()
             .get(&label)
-            .map(|index| index.clone_fields())
+            .map(|index| index.fields().clone())
             .unwrap_or_default()
     }
 
@@ -398,7 +395,7 @@ impl Indexer {
                     pending: index.pending_count(),
                     progress,
                     total,
-                    fields: index.clone_fields(),
+                    fields: index.fields().clone(),
                     language: index.language().cloned(),
                     stopwords: index.stopwords().cloned(),
                 }
