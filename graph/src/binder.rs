@@ -773,6 +773,11 @@ impl Binder {
                 Ok(new_tree)
             }
             ExprIR::PatternComprehension(graph) => {
+                // Snapshot outer scope so pattern-local aliases can be
+                // cleaned up after binding (they must not leak outward).
+                let outer_scope_names: HashSet<Arc<String>> =
+                    self.current_env().keys().cloned().collect();
+
                 // bind_graph uses define_name_in_scope which reuses
                 // outer-scope variables (e.g. 'n' from MATCH) and creates
                 // fresh variables only for new aliases (anonymous nodes/rels).
@@ -782,6 +787,10 @@ impl Binder {
                     .children()
                     .map(|child| self.bind_expr_node(expr, &child, locals))
                     .collect::<Result<Vec<_>, _>>()?;
+
+                // Remove pattern-local aliases so they don't leak into outer scope.
+                self.current_env_mut()
+                    .retain(|name, _| outer_scope_names.contains(name));
 
                 let mut new_tree = DynTree::new(ExprIR::PatternComprehension(bound_graph));
                 let mut root = new_tree.root_mut();
