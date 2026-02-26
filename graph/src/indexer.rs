@@ -208,6 +208,8 @@ impl Indexer {
         Ok(())
     }
 
+    /// Drop index fields and return (dropped_count, remaining_count).
+    /// Returns `None` if the label has no index.
     pub fn drop_index(
         &mut self,
         label: Arc<String>,
@@ -217,7 +219,7 @@ impl Indexer {
     ) -> Option<(usize, usize)> {
         let mut index = self.index.write().unwrap();
         if let Some(index) = index.get_mut(&label) {
-            let number_of_indexes = index.index_count();
+            let before = index.index_count();
             let mut removed = false;
             for attr in attrs {
                 let (has_type, field_count) = if let Some(fields) = index.get_fields(attr) {
@@ -238,8 +240,8 @@ impl Indexer {
                 index.set_progress(0, total);
                 index.increment_pending();
             }
-            // Return the number of indexes before and after the operation
-            return Some((number_of_indexes, index.index_count()));
+            let after = index.index_count();
+            return Some((before - after, after));
         }
         None
     }

@@ -1709,13 +1709,11 @@ impl<'a> Runtime {
                     ));
                 }
 
-                let res = self
-                    .g
-                    .borrow_mut()
-                    .drop_index(index_type, entity_type, label, attrs)?;
-                if let Some((before, after)) = res {
-                    self.stats.borrow_mut().indexes_dropped += before - after;
-                }
+                let dropped =
+                    self.g
+                        .borrow_mut()
+                        .drop_index(index_type, entity_type, label, attrs)?;
+                self.stats.borrow_mut().indexes_dropped += dropped;
                 Ok(Box::new(empty()))
             }
         }

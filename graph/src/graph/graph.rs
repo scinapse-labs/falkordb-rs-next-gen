@@ -1239,7 +1239,7 @@ impl Graph {
         entity_type: &EntityType,
         label: &Arc<String>,
         attrs: &Vec<Arc<String>>,
-    ) -> Result<Option<(usize, usize)>, String> {
+    ) -> Result<usize, String> {
         match entity_type {
             EntityType::Node => {
                 let total = self.get_label_matrix(label).unwrap().nvals();
@@ -1247,21 +1247,21 @@ impl Graph {
                     .node_indexer
                     .drop_index(label.clone(), attrs, index_type, total);
 
-                if let Some((before, after)) = reindex {
-                    if before > after {
-                        if after > 0 {
+                if let Some((dropped, remaining)) = reindex {
+                    if dropped > 0 {
+                        if remaining > 0 {
                             self.node_indexer.recreate_index(label.clone())?;
                             self.start_populate_index(label);
                         } else {
                             drop_index_bg(label.clone(), self.node_indexer.clone());
                         }
                     }
-                    return Ok(Some((before, after)));
+                    return Ok(dropped);
                 }
             }
             EntityType::Relationship => {}
         }
-        Ok(None)
+        Ok(0)
     }
 
     #[must_use]
