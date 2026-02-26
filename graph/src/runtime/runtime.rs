@@ -176,7 +176,7 @@ impl<T: MemoryPolicy> GetVariables for DynNode<'_, IR, T> {
                 | IR::Remove(_)
                 | IR::Filter(_)
                 | IR::CartesianProduct
-                | IR::Union(_)
+                | IR::Union
                 | IR::Apply
                 | IR::SemiApply
                 | IR::AntiSemiApply
@@ -236,7 +236,7 @@ impl ReturnNames for DynNode<'_, IR> {
             IR::Sort(_) | IR::Skip(_) | IR::Limit(_) | IR::Distinct => {
                 self.child(0).get_return_names()
             }
-            IR::Union(branch_vars) => branch_vars.first().map_or(vec![], Clone::clone),
+            IR::Union => self.child(0).get_return_names(),
             IR::Aggregate(names, _, _) => names.clone(),
             _ => vec![],
         }
@@ -1209,7 +1209,7 @@ impl<'a> Runtime {
                 self.plan.node(idx).data()
             );
             unreachable!();
-        } else if matches!(self.plan.node(idx).data(), IR::Union(_)) {
+        } else if matches!(self.plan.node(idx).data(), IR::Union) {
             // Union handles all children in its match arm.
             Box::new(empty())
         } else if let Some(child_idx) = child0_idx {
@@ -1616,17 +1616,20 @@ impl<'a> Runtime {
                     self.record.borrow_mut().push((idx, res.clone()));
                 }))
             }
-            IR::Union(branch_vars) => {
-                let canonical = &branch_vars[0];
+            IR::Union => {
                 let children: Vec<_> = self.plan.node(idx).children().map(|c| c.idx()).collect();
+                let canonical = &self.plan.node(children[0]).get_variables();
 
                 // Execute branch 0 (no remapping needed).
                 let mut union_iter: Box<dyn Iterator<Item = Result<Env, String>> + '_> =
                     self.run(children[0])?;
 
                 // Lazily chain remaining branches with positional variable remapping.
-                for (i, &child_idx) in children.iter().enumerate().skip(1) {
-                    let mapping: Vec<(Variable, Variable)> = branch_vars[i]
+                for &child_idx in children.iter().skip(1) {
+                    let mapping: Vec<(Variable, Variable)> = self
+                        .plan
+                        .node(child_idx)
+                        .get_variables()
                         .iter()
                         .cloned()
                         .zip(canonical.iter().cloned())

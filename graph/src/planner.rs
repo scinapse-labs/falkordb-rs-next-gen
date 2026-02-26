@@ -35,7 +35,7 @@ use std::{
     sync::Arc,
 };
 
-use crate::runtime::{functions::Type, runtime::GetVariables};
+use crate::runtime::functions::Type;
 
 use orx_tree::{DynNode, DynTree, NodeRef, Side, Traversal, Traverser};
 
@@ -153,7 +153,7 @@ pub enum IR {
     /// UNION of multiple sub-query branches.
     /// Each child is a fully-planned branch. `Vec<Vec<Variable>>` stores
     /// each branch's return column variables for positional remapping.
-    Union(Vec<Vec<Variable>>),
+    Union,
     /// Commit write operations to graph
     Commit,
     /// CREATE INDEX operation
@@ -222,7 +222,7 @@ impl Display for IR {
             Self::Aggregate(_, _, _) => write!(f, "Aggregate"),
             Self::Project(_, _) => write!(f, "Project"),
             Self::Commit => write!(f, "Commit"),
-            Self::Union(_) => write!(f, "Union"),
+            Self::Union => write!(f, "Union"),
             Self::Distinct => write!(f, "Distinct"),
             Self::CreateIndex { label, attrs, .. } => {
                 write!(f, "Create Index | :{label}({attrs:?})")
@@ -1130,19 +1130,10 @@ impl Planner {
             // Multi-clause query: plan each clause and stitch together.
             QueryIR::Query(q, write) => self.plan_query(q, write),
             QueryIR::Union(branches, all) => {
-                let mut plans = Vec::with_capacity(branches.len());
-                let mut branch_return_vars = Vec::with_capacity(branches.len());
-                for branch in branches {
+                let mut res = tree!(IR::Union; branches.into_iter().map(|branch| {
                     let mut planner = Self::default();
-                    let plan = planner.plan(branch);
-                    branch_return_vars.push(plan.root().get_variables());
-                    plans.push(plan);
-                }
-                let mut res = DynTree::new(IR::Union(branch_return_vars));
-                let mut root = res.root_mut();
-                for plan in plans {
-                    root.push_child_tree(plan);
-                }
+                    planner.plan(branch)
+                }));
                 if !all {
                     res = tree!(IR::Distinct, res);
                 }
