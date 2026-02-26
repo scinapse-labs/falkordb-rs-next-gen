@@ -928,12 +928,12 @@ impl<'a> Parser<'a> {
         pattern: &QueryGraph<Arc<String>, Arc<String>, Arc<String>>
     ) -> usize {
         let nodes = pattern
-            .nodes_ref()
+            .nodes()
             .iter()
             .filter(|n| !n.alias.starts_with("_anon_"))
             .count();
         let rels = pattern
-            .relationships_ref()
+            .relationships()
             .iter()
             .filter(|r| !r.alias.starts_with("_anon_"))
             .count();
