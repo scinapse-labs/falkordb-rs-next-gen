@@ -1214,11 +1214,11 @@ impl DisplayJson for Value {
                 write_json_string(f, &type_name)?;
                 write!(f, r#","properties":{{"#)?;
 
-                for (i, (k, v)) in properties.iter().enumerate() {
+                for (i, (k, v)) in properties.enumerate() {
                     if i > 0 {
                         write!(f, ",")?;
                     }
-                    write_json_string(f, k)?;
+                    write_json_string(f, &k)?;
                     write!(f, ":")?;
                     v.fmt_json(f, runtime)?;
                 }
@@ -1321,11 +1321,11 @@ fn write_node_json(
 
     write!(f, r#"],"properties":{{"#)?;
 
-    for (i, (k, v)) in properties.iter().enumerate() {
+    for (i, (k, v)) in properties.enumerate() {
         if i > 0 {
             write!(f, ",")?;
         }
-        write_json_string(f, k)?;
+        write_json_string(f, &k)?;
         write!(f, ":")?;
         v.fmt_json(f, runtime)?;
     }

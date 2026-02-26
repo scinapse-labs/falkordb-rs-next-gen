@@ -1446,8 +1446,10 @@ fn properties(
     let mut iter = args.into_iter();
     match iter.next() {
         Some(Value::Map(map)) => Ok(Value::Map(map)),
-        Some(Value::Node(id)) => Ok(Value::Map(runtime.get_node_attrs(id))),
-        Some(Value::Relationship(rel)) => Ok(Value::Map(runtime.get_relationship_attrs(rel.0))),
+        Some(Value::Node(id)) => Ok(Value::Map(runtime.get_node_attrs(id).collect())),
+        Some(Value::Relationship(rel)) => {
+            Ok(Value::Map(runtime.get_relationship_attrs(rel.0).collect()))
+        }
         Some(Value::Null) => Ok(Value::Null),
 
         _ => unreachable!(),
@@ -2743,17 +2745,13 @@ fn keys(
         Some(Value::Node(id)) => Ok(Value::List(
             runtime
                 .get_node_attrs(id)
-                .keys()
-                .cloned()
-                .map(Value::String)
+                .map(|(k, _)| Value::String(k))
                 .collect::<ThinVec<_>>(),
         )),
         Some(Value::Relationship(rel)) => Ok(Value::List(
             runtime
                 .get_relationship_attrs(rel.0)
-                .keys()
-                .cloned()
-                .map(Value::String)
+                .map(|(k, _)| Value::String(k))
                 .collect::<ThinVec<_>>(),
         )),
         Some(Value::Null) => Ok(Value::Null),
@@ -3236,10 +3234,10 @@ fn db_labels(
             .g
             .borrow()
             .get_labels()
-            .into_iter()
+            .iter()
             .map(|l| {
                 let mut map = OrderMap::default();
-                map.insert(Arc::new(String::from("label")), Value::String(l));
+                map.insert(Arc::new(String::from("label")), Value::String(l.clone()));
                 Value::Map(map)
             })
             .collect(),
@@ -3255,10 +3253,13 @@ fn db_types(
             .g
             .borrow()
             .get_types()
-            .into_iter()
+            .iter()
             .map(|t| {
                 let mut map = OrderMap::default();
-                map.insert(Arc::new(String::from("relationshipType")), Value::String(t));
+                map.insert(
+                    Arc::new(String::from("relationshipType")),
+                    Value::String(t.clone()),
+                );
                 Value::Map(map)
             })
             .collect(),
@@ -3274,10 +3275,12 @@ fn db_properties(
             .g
             .borrow()
             .get_attrs()
-            .into_iter()
             .map(|p| {
                 let mut map = OrderMap::default();
-                map.insert(Arc::new(String::from("propertyKey")), Value::String(p));
+                map.insert(
+                    Arc::new(String::from("propertyKey")),
+                    Value::String(p.clone()),
+                );
                 Value::Map(map)
             })
             .collect(),
