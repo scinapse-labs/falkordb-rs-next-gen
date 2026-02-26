@@ -282,17 +282,29 @@ impl Binder {
                 skip,
                 limit,
                 write,
-            } => self.bind_projection(
-                ProjectionKind::Return,
-                distinct,
-                all,
-                &exprs,
-                &orderby,
-                skip,
-                limit,
-                None,
-                write,
-            ),
+            } => {
+                if all
+                    && !self
+                        .current_env()
+                        .iter()
+                        .any(|v| v.1.name.is_some() && !v.1.name.as_ref().unwrap().starts_with('_'))
+                {
+                    return Err(String::from(
+                        "RETURN * is not allowed when there are no variables in scope",
+                    ));
+                }
+                self.bind_projection(
+                    ProjectionKind::Return,
+                    distinct,
+                    all,
+                    &exprs,
+                    &orderby,
+                    skip,
+                    limit,
+                    None,
+                    write,
+                )
+            }
             QueryIR::Call(func, args, vars, filter) => {
                 let args = args
                     .iter()

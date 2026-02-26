@@ -907,9 +907,6 @@ pub struct Parser<'a> {
     lexer: Lexer<'a>,
     /// Counter for generating unique anonymous variable names
     anon_counter: u32,
-    /// Number of explicitly named variables in the current scope,
-    /// used to validate star projections (`RETURN *`, `WITH *`).
-    named_in_scope: usize,
 }
 
 impl<'a> Parser<'a> {
@@ -919,49 +916,6 @@ impl<'a> Parser<'a> {
         Self {
             lexer: Lexer::new(str),
             anon_counter: 0,
-            named_in_scope: 0,
-        }
-    }
-
-    /// Counts explicitly named entities (not `_anon_`-prefixed) in a pattern.
-    fn count_named_in_pattern(
-        pattern: &QueryGraph<Arc<String>, Arc<String>, Arc<String>>
-    ) -> usize {
-        let nodes = pattern
-            .nodes()
-            .iter()
-            .filter(|n| !n.alias.starts_with("_anon_"))
-            .count();
-        let rels = pattern
-            .relationships()
-            .iter()
-            .filter(|r| !r.alias.starts_with("_anon_"))
-            .count();
-        // Path variables are always user-named (no anonymous named paths).
-        let paths = pattern.paths().len();
-        nodes + rels + paths
-    }
-
-    /// Updates `named_in_scope` based on variables introduced by a clause.
-    fn update_named_scope(
-        &mut self,
-        clause: &RawQueryIR,
-    ) {
-        match clause {
-            QueryIR::Match { pattern, .. }
-            | QueryIR::Create(pattern)
-            | QueryIR::Merge(pattern, _, _) => {
-                self.named_in_scope += Self::count_named_in_pattern(pattern);
-            }
-            // UNWIND and LOAD CSV always require an explicit AS alias,
-            // so they each introduce exactly one named variable.
-            QueryIR::Unwind(_, _) | QueryIR::LoadCsv { .. } => {
-                self.named_in_scope += 1;
-            }
-            QueryIR::Call(_, _, vars, _) => {
-                self.named_in_scope += vars.len();
-            }
-            _ => {}
         }
     }
 
@@ -1250,7 +1204,6 @@ impl<'a> Parser<'a> {
     fn parse_single_query(&mut self) -> Result<RawQueryIR, String> {
         let mut clauses = Vec::new();
         let mut write = false;
-        self.named_in_scope = 0;
         loop {
             while let Token::Keyword(
                 Keyword::Optional
@@ -1262,7 +1215,6 @@ impl<'a> Parser<'a> {
             ) = self.lexer.current()?
             {
                 let clause = self.parse_reading_clasue()?;
-                self.update_named_scope(&clause);
                 clauses.push(clause);
             }
             while let Token::Keyword(
@@ -1277,7 +1229,6 @@ impl<'a> Parser<'a> {
             {
                 write = true;
                 let clause = self.parse_writing_clause()?;
-                self.update_named_scope(&clause);
                 clauses.push(clause);
             }
             if optional_match_token!(self.lexer => With) {
@@ -1495,10 +1446,7 @@ impl<'a> Parser<'a> {
             // WITH * carries forward the current named_in_scope unchanged
             (true, vec![])
         } else {
-            let (exprs, named_count) = self.parse_named_exprs()?;
-            // Non-star WITH replaces scope with its named projections
-            self.named_in_scope = named_count;
-            (false, exprs)
+            (false, self.parse_named_exprs(true)?)
         };
         let orderby = if optional_match_token!(self.lexer => Order) {
             self.parse_orderby()?
@@ -1567,15 +1515,9 @@ impl<'a> Parser<'a> {
     ) -> Result<RawQueryIR, String> {
         let distinct = optional_match_token!(self.lexer => Distinct);
         let (all, exprs) = if optional_match_token!(self.lexer, Star) {
-            if self.named_in_scope == 0 {
-                return Err(self
-                    .lexer
-                    .format_error("RETURN * is not allowed when there are no variables in scope"));
-            }
             (true, vec![])
         } else {
-            let (exprs, _named_count) = self.parse_named_exprs()?;
-            (false, exprs)
+            (false, self.parse_named_exprs(false)?)
         };
         let orderby = if optional_match_token!(self.lexer => Order) {
             self.parse_orderby()?
@@ -2274,10 +2216,10 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_named_exprs(
-        &mut self
-    ) -> Result<(Vec<(Arc<String>, QueryExpr<Arc<String>>)>, usize), String> {
+        &mut self,
+        must_alias: bool,
+    ) -> Result<Vec<(Arc<String>, QueryExpr<Arc<String>>)>, String> {
         let mut named_exprs = Vec::new();
-        let mut named_count = 0usize;
         loop {
             let pos = self.lexer.pos(false);
             let expr = Arc::new(self.parse_expr(false)?);
@@ -2285,11 +2227,14 @@ impl<'a> Parser<'a> {
                 self.lexer.next();
                 let ident = self.parse_ident()?;
                 named_exprs.push((ident, expr));
-                named_count += 1;
             } else if let ExprIR::Variable(id) = expr.root().data() {
                 named_exprs.push((id.clone(), expr));
-                named_count += 1;
             } else {
+                if must_alias {
+                    return Err(self
+                        .lexer
+                        .format_error("WITH clause projections must be aliased"));
+                }
                 named_exprs.push((
                     Arc::new(String::from(&self.lexer.str[pos..self.lexer.pos(true)])),
                     expr,
@@ -2297,7 +2242,7 @@ impl<'a> Parser<'a> {
             }
             match self.lexer.current()? {
                 Token::Comma => self.lexer.next(),
-                _ => return Ok((named_exprs, named_count)),
+                _ => return Ok(named_exprs),
             }
         }
     }
@@ -2351,12 +2296,12 @@ impl<'a> Parser<'a> {
         self.anon_counter = saved_anon;
 
         // 2) Try named pattern comprehension: [var = (pattern) ... | expr]
-        if let Ok(var) = self.parse_ident() {
-            if optional_match_token!(self.lexer, Equal) && self.lexer.current()? == Token::LParen {
-                if let Ok(result) = self.parse_pattern_comprehension(Some(var)) {
-                    return Ok((result, false));
-                }
-            }
+        if let Ok(var) = self.parse_ident()
+            && optional_match_token!(self.lexer, Equal)
+            && self.lexer.current()? == Token::LParen
+            && let Ok(result) = self.parse_pattern_comprehension(Some(var))
+        {
+            return Ok((result, false));
         }
         self.lexer.set_pos(saved_pos);
         self.anon_counter = saved_anon;
