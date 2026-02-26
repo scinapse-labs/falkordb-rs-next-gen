@@ -1225,12 +1225,19 @@ impl<'a> Parser<'a> {
     fn parse_query(&mut self) -> Result<RawQueryIR, String> {
         let first = self.parse_single_query()?;
         if optional_match_token!(self.lexer => Union) {
+            let all = optional_match_token!(self.lexer => All);
             let mut branches = vec![first];
             branches.push(self.parse_single_query()?);
             while optional_match_token!(self.lexer => Union) {
+                let next_all = optional_match_token!(self.lexer => All);
+                if next_all != all {
+                    return Err(self
+                        .lexer
+                        .format_error("Cannot mix UNION and UNION ALL in same query"));
+                }
                 branches.push(self.parse_single_query()?);
             }
-            return Ok(QueryIR::Union(branches));
+            return Ok(QueryIR::Union(branches, all));
         }
         Ok(first)
     }
@@ -2386,8 +2393,8 @@ impl<'a> Parser<'a> {
     ///
     /// Grammar: `[` (path_var `=`)? relationship_pattern (`WHERE` cond)? `|` expr `]`
     ///
-    /// Collects user-named aliases from the pattern into a `PatternComprehension`
-    /// node; anonymous (`_anon_`-prefixed) aliases are excluded.
+    /// Collects the graph pattern into a `PatternComprehension` node
+    /// for execution by the runtime.
     fn parse_pattern_comprehension(
         &mut self,
         path_var: Option<Arc<String>>,
@@ -2399,25 +2406,19 @@ impl<'a> Parser<'a> {
             return Err("Expected relationship pattern".into());
         }
 
-        let mut aliases = Vec::new();
-        if !first_node.alias.starts_with("_anon_") {
-            aliases.push(first_node.alias.clone());
-        }
+        let mut graph = QueryGraph::default();
+        graph.add_node(first_node.clone());
 
         let mut left = first_node;
         while matches!(self.lexer.current()?, Token::Dash | Token::LessThan) {
             let (rel, right) = self.parse_relationship_pattern(left, &Keyword::Match)?;
-            if !rel.alias.starts_with("_anon_") {
-                aliases.push(rel.alias.clone());
-            }
-            if !right.alias.starts_with("_anon_") {
-                aliases.push(right.alias.clone());
-            }
+            graph.add_node(right.clone());
+            graph.add_relationship(rel);
             left = right;
         }
 
-        if let Some(pv) = path_var {
-            aliases.push(pv);
+        if let Some(_pv) = path_var {
+            // TODO: path variable support for pattern comprehension
         }
 
         // Optional WHERE
@@ -2433,7 +2434,7 @@ impl<'a> Parser<'a> {
         match_token!(self.lexer, RBrace);
 
         Ok(tree!(
-            ExprIR::PatternComprehension(aliases),
+            ExprIR::PatternComprehension(graph),
             condition,
             result_expr
         ))

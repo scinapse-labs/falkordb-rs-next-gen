@@ -176,6 +176,7 @@ impl<T: MemoryPolicy> GetVariables for DynNode<'_, IR, T> {
                 | IR::Remove(_)
                 | IR::Filter(_)
                 | IR::CartesianProduct
+                | IR::Union(_)
                 | IR::Sort(_)
                 | IR::Skip(_)
                 | IR::Limit(_)
@@ -229,6 +230,7 @@ impl ReturnNames for DynNode<'_, IR> {
             IR::Sort(_) | IR::Skip(_) | IR::Limit(_) | IR::Distinct => {
                 self.child(0).get_return_names()
             }
+            IR::Union(branch_vars) => branch_vars.first().map_or(vec![], Clone::clone),
             IR::Aggregate(names, _, _) => names.clone(),
             _ => vec![],
         }
@@ -894,8 +896,111 @@ impl<'a> Runtime {
 
                     res.push(Value::List(acc));
                 }
-                ExprIR::PatternComprehension(_) => {
-                    res.push(Value::List(thin_vec![]));
+                ExprIR::PatternComprehension(graph) => {
+                    let children: Vec<_> = node.children().map(|c| c.idx()).collect();
+                    let where_idx = children[0];
+                    let expr_idx = children[1];
+                    let mut results = ThinVec::new();
+
+                    // Iterate each relationship hop in the pattern.
+                    // For single-hop patterns (the common case), there's
+                    // exactly one relationship; multi-hop chains expand
+                    // intermediate envs through each hop.
+                    let mut envs = vec![env.clone()];
+                    for rel_pattern in graph.relationships() {
+                        let mut next_envs = Vec::new();
+                        for current_env in &envs {
+                            let from_id =
+                                current_env
+                                    .get(&rel_pattern.from.alias)
+                                    .and_then(|v| match v {
+                                        Value::Node(id) => Some(*id),
+                                        _ => None,
+                                    });
+                            let to_id =
+                                current_env
+                                    .get(&rel_pattern.to.alias)
+                                    .and_then(|v| match v {
+                                        Value::Node(id) => Some(*id),
+                                        _ => None,
+                                    });
+
+                            // Phase 1: collect matches while holding graph borrow.
+                            let matches: Vec<(NodeId, NodeId, RelationshipId)> = {
+                                let g = self.g.borrow();
+                                g.get_relationships(
+                                    &rel_pattern.types,
+                                    &rel_pattern.from.labels,
+                                    &rel_pattern.to.labels,
+                                )
+                                .filter(|(src, dst)| {
+                                    from_id.map_or(true, |fid| fid == *src)
+                                        && to_id.map_or(true, |tid| tid == *dst)
+                                })
+                                .flat_map(|(src, dst)| {
+                                    g.get_src_dest_relationships(src, dst, &rel_pattern.types)
+                                        .map(move |rid| (src, dst, rid))
+                                })
+                                .collect()
+                            };
+
+                            // Phase 2: build envs per match (graph borrow released).
+                            for (src, dst, rel_id) in matches {
+                                let mut local_env = current_env.clone();
+                                local_env.insert(
+                                    &rel_pattern.alias,
+                                    Value::Relationship(Box::new((rel_id, src, dst))),
+                                );
+                                local_env.insert(&rel_pattern.from.alias, Value::Node(src));
+                                local_env.insert(&rel_pattern.to.alias, Value::Node(dst));
+                                next_envs.push(local_env);
+                            }
+
+                            // Handle bidirectional: also check reverse direction.
+                            if rel_pattern.bidirectional {
+                                let rev_matches: Vec<(NodeId, NodeId, RelationshipId)> = {
+                                    let g = self.g.borrow();
+                                    g.get_relationships(
+                                        &rel_pattern.types,
+                                        &rel_pattern.to.labels,
+                                        &rel_pattern.from.labels,
+                                    )
+                                    .filter(|(src, dst)| {
+                                        // Reversed: to_id matches src, from_id matches dst
+                                        to_id.map_or(true, |tid| tid == *src)
+                                            && from_id.map_or(true, |fid| fid == *dst)
+                                    })
+                                    .flat_map(|(src, dst)| {
+                                        g.get_src_dest_relationships(src, dst, &rel_pattern.types)
+                                            .map(move |rid| (src, dst, rid))
+                                    })
+                                    .collect()
+                                };
+                                for (src, dst, rel_id) in rev_matches {
+                                    let mut local_env = current_env.clone();
+                                    local_env.insert(
+                                        &rel_pattern.alias,
+                                        Value::Relationship(Box::new((rel_id, src, dst))),
+                                    );
+                                    // Swap from/to for bidirectional reverse
+                                    local_env.insert(&rel_pattern.from.alias, Value::Node(dst));
+                                    local_env.insert(&rel_pattern.to.alias, Value::Node(src));
+                                    next_envs.push(local_env);
+                                }
+                            }
+                        }
+                        envs = next_envs;
+                    }
+
+                    // Evaluate WHERE + result expression per matched env.
+                    for matched_env in &envs {
+                        match self.run_expr(ir, where_idx, matched_env, agg_group_key)? {
+                            Value::Bool(true) => {}
+                            _ => continue,
+                        }
+                        results.push(self.run_expr(ir, expr_idx, matched_env, agg_group_key)?);
+                    }
+                    res.push(Value::List(results));
                 }
                 ExprIR::Paren => {
                     res.push(self.run_expr(ir, node.child(0).idx(), env, agg_group_key)?);
@@ -1053,6 +1158,9 @@ impl<'a> Runtime {
                 self.plan.node(idx).data()
             );
             unreachable!();
+        } else if matches!(self.plan.node(idx).data(), IR::Union(_)) {
+            // Union handles all children in its match arm.
+            Box::new(empty())
         } else if let Some(child_idx) = child0_idx {
             self.run(child_idx)?
         } else {
@@ -1428,6 +1536,34 @@ impl<'a> Runtime {
                 Ok(iter.cond_inspect(self.inspect, move |res| {
                     self.record.borrow_mut().push((idx, res.clone()));
                 }))
+            }
+            IR::Union(branch_vars) => {
+                let canonical = &branch_vars[0];
+                let children: Vec<_> = self.plan.node(idx).children().map(|c| c.idx()).collect();
+
+                // Execute branch 0 (no remapping needed).
+                let mut all_results: Vec<Result<Env, String>> = self.run(children[0])?.collect();
+
+                // Execute remaining branches with positional variable remapping.
+                for (i, &child_idx) in children.iter().enumerate().skip(1) {
+                    let mapping: Vec<_> = branch_vars[i].iter().zip(canonical.iter()).collect();
+                    for result in self.run(child_idx)? {
+                        all_results.push(result.map(|env| {
+                            let mut new_env = Env::default();
+                            for (from, to) in &mapping {
+                                if let Some(value) = env.get(from) {
+                                    new_env.insert(to, value.clone());
+                                }
+                            }
+                            new_env
+                        }));
+                    }
+                }
+                Ok(
+                    Box::new(all_results.into_iter()).cond_inspect(self.inspect, move |res| {
+                        self.record.borrow_mut().push((idx, res.clone()));
+                    }),
+                )
             }
             IR::LoadCsv {
                 file_path,

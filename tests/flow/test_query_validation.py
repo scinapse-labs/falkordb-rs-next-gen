@@ -690,10 +690,10 @@ class testQueryValidationFlow(FlowTestsBase):
                 # Expecting an error.
                 self.env.assertContains("'a' not defined", str(e))
 
-    #def test45_union_scope(self):
-    #    # make sure OPTIONAL MATCH followed by a MATCH clause in a different
-    #    # UNION scope do not effect one another
-    #    # in case the scopes had been mixed we would encounted an error
+    def test45_union_scope(self):
+        # make sure OPTIONAL MATCH followed by a MATCH clause in a different
+        # UNION scope do not effect one another
+        # in case the scopes had been mixed we would encounted an error
 
-    #    q = "OPTIONAL MATCH (a) RETURN a UNION MATCH (a) RETURN a"
-    #    self.graph.query(q)
+        q = "OPTIONAL MATCH (a) RETURN a UNION MATCH (a) RETURN a"
+        self.graph.query(q)

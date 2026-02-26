@@ -31,7 +31,7 @@
 
 use std::{collections::HashSet, fmt::Display, sync::Arc};
 
-use orx_tree::{DynTree, NodeRef, Side, Traversal, Traverser};
+use orx_tree::{DynNode, DynTree, NodeRef, Side, Traversal, Traverser};
 
 use crate::{
     ast::{
@@ -127,6 +127,10 @@ pub enum IR {
     ),
     /// Remove duplicate rows
     Distinct,
+    /// UNION of multiple sub-query branches.
+    /// Each child is a fully-planned branch. `Vec<Vec<Variable>>` stores
+    /// each branch's return column variables for positional remapping.
+    Union(Vec<Vec<Variable>>),
     /// Commit write operations to graph
     Commit,
     /// CREATE INDEX operation
@@ -185,6 +189,7 @@ impl Display for IR {
             Self::Aggregate(_, _, _) => write!(f, "Aggregate"),
             Self::Project(_, _) => write!(f, "Project"),
             Self::Commit => write!(f, "Commit"),
+            Self::Union(_) => write!(f, "Union"),
             Self::Distinct => write!(f, "Distinct"),
             Self::CreateIndex { label, attrs, .. } => {
                 write!(f, "Create Index | :{label}({attrs:?})")
@@ -193,6 +198,21 @@ impl Display for IR {
                 write!(f, "Drop Index | :{label}({attrs:?})")
             }
         }
+    }
+}
+
+/// Extracts return column variables from a planned branch's IR tree.
+fn get_branch_return_vars(node: &DynNode<'_, IR>) -> Vec<Variable> {
+    match node.data() {
+        IR::Project(trees, _) => trees.iter().map(|v| v.0.clone()).collect(),
+        IR::Commit => node
+            .get_child(0)
+            .map_or(vec![], |child| get_branch_return_vars(&child)),
+        IR::Sort(_) | IR::Skip(_) | IR::Limit(_) | IR::Distinct => {
+            get_branch_return_vars(&node.child(0))
+        }
+        IR::Aggregate(names, _, _) => names.clone(),
+        _ => vec![],
     }
 }
 
@@ -562,10 +582,24 @@ impl Planner {
                 })
             }
             QueryIR::Query(q, write) => self.plan_query(q, write),
-            QueryIR::Union(_) => {
-                // UNION execution is not yet implemented.
-                // Currently, only column-name validation is performed (in the binder).
-                todo!("UNION execution not yet implemented")
+            QueryIR::Union(branches, all) => {
+                let mut plans = Vec::with_capacity(branches.len());
+                let mut branch_return_vars = Vec::with_capacity(branches.len());
+                for branch in branches {
+                    let mut planner = Self::default();
+                    let plan = planner.plan(branch);
+                    branch_return_vars.push(get_branch_return_vars(&plan.root()));
+                    plans.push(plan);
+                }
+                let mut res = DynTree::new(IR::Union(branch_return_vars));
+                let mut root = res.root_mut();
+                for plan in plans {
+                    root.push_child_tree(plan);
+                }
+                if !all {
+                    res = tree!(IR::Distinct, res);
+                }
+                res
             }
         }
     }

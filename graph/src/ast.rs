@@ -186,9 +186,9 @@ pub enum ExprIR<TVar> {
     /// List comprehension [x IN list | expr]
     ListComprehension(TVar),
     /// Pattern comprehension [(pattern) WHERE cond | expr]
-    /// Vec<TVar> stores aliases introduced by the pattern.
+    /// Stores the graph pattern for runtime traversal.
     /// Children: [where_condition, result_expression]
-    PatternComprehension(Vec<TVar>),
+    PatternComprehension(QueryGraph<Arc<String>, Arc<String>, TVar>),
     /// Parenthesized expression (for precedence)
     Paren,
     /// Map projection: base { .prop, .*, key: expr, var }
@@ -244,8 +244,8 @@ impl<TVar: Display + std::fmt::Debug> Display for ExprIR<TVar> {
             Self::ListComprehension(var) => {
                 write!(f, "list comp({var})")
             }
-            Self::PatternComprehension(vars) => {
-                write!(f, "pattern comp({vars:?})")
+            Self::PatternComprehension(_) => {
+                write!(f, "pattern comp")
             }
             Self::Paren => write!(f, "()"),
             Self::MapProjection => write!(f, "map_projection"),
@@ -732,7 +732,9 @@ pub enum QueryIR<TVar> {
         index_type: IndexType,
         entity_type: EntityType,
     },
-    Union(Vec<Self>),
+    /// UNION of multiple sub-query branches.
+    /// `bool` is true for UNION ALL (keep duplicates), false for UNION (deduplicate).
+    Union(Vec<Self>, bool),
     Query(Vec<Self>, bool),
 }
 
@@ -824,10 +826,11 @@ impl<TVar: Display + std::fmt::Debug + Eq + Hash> Display for QueryIR<TVar> {
                 }
                 Ok(())
             }
-            Self::Union(branches) => {
+            Self::Union(branches, all) => {
+                let keyword = if *all { "UNION ALL" } else { "UNION" };
                 for (i, branch) in branches.iter().enumerate() {
                     if i > 0 {
-                        writeln!(f, "UNION")?;
+                        writeln!(f, "{keyword}")?;
                     }
                     write!(f, "{branch}")?;
                 }
@@ -837,7 +840,7 @@ impl<TVar: Display + std::fmt::Debug + Eq + Hash> Display for QueryIR<TVar> {
     }
 }
 
-impl<TVar: Eq + Hash> QueryIR<TVar> {
+impl<TVar: Eq + Hash + Display> QueryIR<TVar> {
     pub fn validate(&self) -> Result<(), String> {
         self.inner_validate(std::iter::empty())
     }
@@ -954,9 +957,20 @@ impl<TVar: Eq + Hash> QueryIR<TVar> {
                 let first = iter.next().ok_or("Error: empty query.")?;
                 first.inner_validate(iter)
             }
-            Self::Union(branches) => {
+            Self::Union(branches, _) => {
+                let mut first_columns: Option<Vec<String>> = None;
                 for branch in branches {
                     branch.validate()?;
+                    let columns = Self::return_column_names(branch);
+                    if let Some(ref expected) = first_columns {
+                        if columns != *expected {
+                            return Err(String::from(
+                                "All sub queries in a UNION must have the same column names.",
+                            ));
+                        }
+                    } else {
+                        first_columns = Some(columns);
+                    }
                 }
                 Ok(())
             }
@@ -1000,6 +1014,18 @@ impl<TVar: Eq + Hash> QueryIR<TVar> {
             }
         }
         Ok(())
+    }
+
+    /// Extracts RETURN column names from a UNION branch for cross-branch validation.
+    fn return_column_names(branch: &Self) -> Vec<String> {
+        if let Self::Query(clauses, _) = branch {
+            for clause in clauses.iter().rev() {
+                if let Self::Return { exprs, .. } = clause {
+                    return exprs.iter().map(|(var, _)| var.to_string()).collect();
+                }
+            }
+        }
+        Vec::new()
     }
 }
 
