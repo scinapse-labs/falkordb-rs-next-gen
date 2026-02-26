@@ -894,6 +894,9 @@ impl<'a> Runtime {
 
                     res.push(Value::List(acc));
                 }
+                ExprIR::PatternComprehension(_) => {
+                    res.push(Value::List(thin_vec![]));
+                }
                 ExprIR::Paren => {
                     res.push(self.run_expr(ir, node.child(0).idx(), env, agg_group_key)?);
                 }

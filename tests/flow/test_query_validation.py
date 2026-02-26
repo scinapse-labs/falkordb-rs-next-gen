@@ -650,45 +650,45 @@ class testQueryValidationFlow(FlowTestsBase):
             except redis.exceptions.ResponseError as e:
                 self.env.assertContains("Variable length relationships cannot be used in", str(e))
 
-    #def test44_undefined_variables(self):
-    #    # invalid usage of undefined variables in a `WITH` clause
-    #    invalid_queries = [
-    #        "WITH a RETURN a",
-    #        "WITH a AS a RETURN a",
-    #        "WITH [a] AS a RETURN a",
-    #        "WITH [a[a[a]]] AS a RETURN a",
-    #        "WITH a AS b, b AS c, c AS a RETURN a",
-    #        "WITH {a:a} AS a RETURN a",
-    #        "WITH a RETURN 0",
-    #        "WITH 3 AS a, 4 AS b, a + b AS c RETURN c",
-    #        "WITH [x in a | x.prop1] AS a RETURN 1",
-    #        "WITH [(n)-[x:R]->(m) | a.prop1] AS a RETURN 1"
-    #    ]
-    #    for query in invalid_queries:
-    #        try:
-    #            self.graph.query(query)
-    #            self.env.assertTrue(False)
-    #        except redis.exceptions.ResponseError as e:
-    #            # Expecting an error.
-    #            self.env.assertContains("'a' not defined", str(e))
+    def test44_undefined_variables(self):
+        # invalid usage of undefined variables in a `WITH` clause
+        invalid_queries = [
+            "WITH a RETURN a",
+            "WITH a AS a RETURN a",
+            "WITH [a] AS a RETURN a",
+            "WITH [a[a[a]]] AS a RETURN a",
+            "WITH a AS b, b AS c, c AS a RETURN a",
+            "WITH {a:a} AS a RETURN a",
+            "WITH a RETURN 0",
+            "WITH 3 AS a, 4 AS b, a + b AS c RETURN c",
+            "WITH [x in a | x.prop1] AS a RETURN 1",
+            "WITH [(n)-[x:R]->(m) | a.prop1] AS a RETURN 1"
+        ]
+        for query in invalid_queries:
+            try:
+                self.graph.query(query)
+                self.env.assertTrue(False)
+            except redis.exceptions.ResponseError as e:
+                # Expecting an error.
+                self.env.assertContains("'a' not defined", str(e))
 
-    #    # invalid usage of undefined variables in a `RETURN` clause
-    #    invalid_queries = [
-    #        "RETURN a AS a",
-    #        "RETURN [a] AS a",
-    #        "RETURN [a[a[a]]] AS a",
-    #        "RETURN a AS b, b AS c, c AS a",
-    #        "RETURN {a:a} AS a",
-    #        "RETURN [x in a | x.prop1] AS a",
-    #        "RETURN [(n)-[x:R]->(m) | a.prop1] AS a"
-    #    ]
-    #    for query in invalid_queries:
-    #        try:
-    #            self.graph.query(query)
-    #            self.env.assertTrue(False)
-    #        except redis.exceptions.ResponseError as e:
-    #            # Expecting an error.
-    #            self.env.assertContains("'a' not defined", str(e))
+        # invalid usage of undefined variables in a `RETURN` clause
+        invalid_queries = [
+            "RETURN a AS a",
+            "RETURN [a] AS a",
+            "RETURN [a[a[a]]] AS a",
+            "RETURN a AS b, b AS c, c AS a",
+            "RETURN {a:a} AS a",
+            "RETURN [x in a | x.prop1] AS a",
+            "RETURN [(n)-[x:R]->(m) | a.prop1] AS a"
+        ]
+        for query in invalid_queries:
+            try:
+                self.graph.query(query)
+                self.env.assertTrue(False)
+            except redis.exceptions.ResponseError as e:
+                # Expecting an error.
+                self.env.assertContains("'a' not defined", str(e))
 
     #def test45_union_scope(self):
     #    # make sure OPTIONAL MATCH followed by a MATCH clause in a different

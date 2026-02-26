@@ -797,6 +797,31 @@ impl Binder {
                 }
                 Ok(new_tree)
             }
+            ExprIR::PatternComprehension(names) => {
+                // Bind pattern-local variables into a fresh scope so that
+                // references inside the comprehension's WHERE / result
+                // expression resolve to these locals (not outer scope).
+                let mut local = HashMap::with_capacity(names.len());
+                let mut bound_vars = Vec::with_capacity(names.len());
+                for name in names {
+                    let var = self.fresh_var(Some(name.clone()), Type::Any, 0);
+                    local.insert(name.clone(), var.clone());
+                    bound_vars.push(var);
+                }
+                locals.push(local);
+                let children = node_ref
+                    .children()
+                    .map(|child| self.bind_expr_node(expr, &child, locals))
+                    .collect::<Result<Vec<_>, _>>()?;
+                locals.pop();
+
+                let mut new_tree = DynTree::new(ExprIR::PatternComprehension(bound_vars));
+                let mut root = new_tree.root_mut();
+                for child in children {
+                    root.push_child_tree(child);
+                }
+                Ok(new_tree)
+            }
             _ => {
                 let children = node_ref
                     .children()
@@ -860,7 +885,8 @@ impl Binder {
                     ExprIR::Paren => ExprIR::Paren,
                     ExprIR::Variable(_)
                     | ExprIR::Quantifier(_, _)
-                    | ExprIR::ListComprehension(_) => unreachable!("handled above"),
+                    | ExprIR::ListComprehension(_)
+                    | ExprIR::PatternComprehension(_) => unreachable!("handled above"),
                 };
                 let mut new_tree = DynTree::new(new_data);
                 let mut root = new_tree.root_mut();
@@ -1062,7 +1088,8 @@ impl Binder {
             | ExprIR::Length
             | ExprIR::GetElement
             | ExprIR::GetElements
-            | ExprIR::ListComprehension(_) => false,
+            | ExprIR::ListComprehension(_)
+            | ExprIR::PatternComprehension(_) => false,
 
             // Boolean literals, comparisons, predicates, and runtime-typed nodes
             ExprIR::Bool(_)

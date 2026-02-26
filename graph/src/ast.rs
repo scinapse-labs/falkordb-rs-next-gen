@@ -185,6 +185,10 @@ pub enum ExprIR<TVar> {
     Quantifier(QuantifierType, TVar),
     /// List comprehension [x IN list | expr]
     ListComprehension(TVar),
+    /// Pattern comprehension [(pattern) WHERE cond | expr]
+    /// Vec<TVar> stores aliases introduced by the pattern.
+    /// Children: [where_condition, result_expression]
+    PatternComprehension(Vec<TVar>),
     /// Parenthesized expression (for precedence)
     Paren,
     /// Map projection: base { .prop, .*, key: expr, var }
@@ -193,7 +197,7 @@ pub enum ExprIR<TVar> {
 }
 
 #[cfg_attr(tarpaulin, skip)]
-impl<TVar: Display> Display for ExprIR<TVar> {
+impl<TVar: Display + std::fmt::Debug> Display for ExprIR<TVar> {
     fn fmt(
         &self,
         f: &mut std::fmt::Formatter<'_>,
@@ -239,6 +243,9 @@ impl<TVar: Display> Display for ExprIR<TVar> {
             }
             Self::ListComprehension(var) => {
                 write!(f, "list comp({var})")
+            }
+            Self::PatternComprehension(vars) => {
+                write!(f, "pattern comp({vars:?})")
             }
             Self::Paren => write!(f, "()"),
             Self::MapProjection => write!(f, "map_projection"),
@@ -622,7 +629,7 @@ pub enum SetItem<L, TVar> {
 }
 
 #[cfg_attr(tarpaulin, skip)]
-impl<L: Display + PartialEq, TVar: Display> Display for SetItem<L, TVar> {
+impl<L: Display + PartialEq, TVar: Display + std::fmt::Debug> Display for SetItem<L, TVar> {
     fn fmt(
         &self,
         f: &mut std::fmt::Formatter<'_>,
@@ -730,7 +737,7 @@ pub enum QueryIR<TVar> {
 }
 
 #[cfg_attr(tarpaulin, skip)]
-impl<TVar: Display + Eq + Hash> Display for QueryIR<TVar> {
+impl<TVar: Display + std::fmt::Debug + Eq + Hash> Display for QueryIR<TVar> {
     fn fmt(
         &self,
         f: &mut std::fmt::Formatter<'_>,

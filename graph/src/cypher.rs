@@ -2301,18 +2301,52 @@ impl<'a> Parser<'a> {
         Ok(exprs)
     }
 
+    /// Parses the contents after an opening `[` bracket.
+    ///
+    /// Uses backtracking to distinguish between:
+    /// 1. List comprehension: `[var IN list WHERE cond | expr]`
+    /// 2. Named pattern comprehension: `[var = (pattern) WHERE cond | expr]`
+    /// 3. Unnamed pattern comprehension: `[(pattern) WHERE cond | expr]`
+    /// 4. List literal: `[1, 2, 3]` or `[]`
+    ///
+    /// Returns `(tree, recurse)` where `recurse` indicates the caller must
+    /// continue parsing comma-separated elements for a list literal.
     fn parse_list_literal_or_comprehension(
         &mut self
     ) -> Result<(DynTree<ExprIR<Arc<String>>>, bool), String> {
-        // Check if the second token is 'IN' for list comprehension
-        let pos = self.lexer.pos;
+        let saved_pos = self.lexer.pos;
+        let saved_anon = self.anon_counter;
+
+        // 1) Try list comprehension: [var IN ...]
         if let Ok(var) = self.parse_ident()
             && optional_match_token!(self.lexer => In)
         {
             return Ok((self.parse_list_comprehension(var)?, false));
         }
-        self.lexer.set_pos(pos); // Reset lexer position
+        self.lexer.set_pos(saved_pos);
+        self.anon_counter = saved_anon;
 
+        // 2) Try named pattern comprehension: [var = (pattern) ... | expr]
+        if let Ok(var) = self.parse_ident() {
+            if optional_match_token!(self.lexer, Equal) && self.lexer.current()? == Token::LParen {
+                if let Ok(result) = self.parse_pattern_comprehension(Some(var)) {
+                    return Ok((result, false));
+                }
+            }
+        }
+        self.lexer.set_pos(saved_pos);
+        self.anon_counter = saved_anon;
+
+        // 3) Try unnamed pattern comprehension: [(pattern) ... | expr]
+        if self.lexer.current()? == Token::LParen {
+            if let Ok(result) = self.parse_pattern_comprehension(None) {
+                return Ok((result, false));
+            }
+            self.lexer.set_pos(saved_pos);
+            self.anon_counter = saved_anon;
+        }
+
+        // 4) Default: list literal
         Ok((
             tree!(ExprIR::List),
             !optional_match_token!(self.lexer, RBrace),
@@ -2348,6 +2382,75 @@ impl<'a> Parser<'a> {
         ))
     }
 
+    /// Parses a pattern comprehension after the opening `[`.
+    ///
+    /// Grammar: `[` (path_var `=`)? relationship_pattern (`WHERE` cond)? `|` expr `]`
+    ///
+    /// Collects user-named aliases from the pattern into a `PatternComprehension`
+    /// node; anonymous (`_anon_`-prefixed) aliases are excluded.
+    fn parse_pattern_comprehension(
+        &mut self,
+        path_var: Option<Arc<String>>,
+    ) -> Result<DynTree<ExprIR<Arc<String>>>, String> {
+        let first_node = self.parse_node_pattern()?;
+
+        // Must have at least one relationship
+        if !matches!(self.lexer.current()?, Token::Dash | Token::LessThan) {
+            return Err("Expected relationship pattern".into());
+        }
+
+        let mut aliases = Vec::new();
+        if !first_node.alias.starts_with("_anon_") {
+            aliases.push(first_node.alias.clone());
+        }
+
+        let mut left = first_node;
+        while matches!(self.lexer.current()?, Token::Dash | Token::LessThan) {
+            let (rel, right) = self.parse_relationship_pattern(left, &Keyword::Match)?;
+            if !rel.alias.starts_with("_anon_") {
+                aliases.push(rel.alias.clone());
+            }
+            if !right.alias.starts_with("_anon_") {
+                aliases.push(right.alias.clone());
+            }
+            left = right;
+        }
+
+        if let Some(pv) = path_var {
+            aliases.push(pv);
+        }
+
+        // Optional WHERE
+        let condition = if optional_match_token!(self.lexer => Where) {
+            self.parse_expr()?
+        } else {
+            tree!(ExprIR::Bool(true))
+        };
+
+        // Pipe + result expression
+        match_token!(self.lexer, Pipe);
+        let result_expr = self.parse_expr()?;
+        match_token!(self.lexer, RBrace);
+
+        Ok(tree!(
+            ExprIR::PatternComprehension(aliases),
+            condition,
+            result_expr
+        ))
+    }
+
+    /// Parses an inline property map, preserving "Unknown function" errors
+    /// while replacing other parse errors with a generic inlined-properties message.
+    fn parse_inline_properties(&mut self) -> Result<DynTree<ExprIR<Arc<String>>>, String> {
+        self.parse_map().map_err(|e| {
+            if e.starts_with("Unknown function") {
+                e
+            } else {
+                String::from("Encountered unhandled type in inlined properties.")
+            }
+        })
+    }
+
     fn parse_node_pattern(&mut self) -> Result<Arc<QueryNode<Arc<String>, Arc<String>>>, String> {
         match_token!(self.lexer, LParen);
         let alias = if let Ok(id) = self.parse_ident() {
@@ -2362,13 +2465,7 @@ impl<'a> Parser<'a> {
             self.lexer.next();
             tree!(ExprIR::Parameter(param))
         } else if self.lexer.current()? == Token::LBracket {
-            self.parse_map().map_err(|e| {
-                if e.starts_with("Unknown function") {
-                    e
-                } else {
-                    String::from("Encountered unhandled type in inlined properties.")
-                }
-            })?
+            self.parse_inline_properties()?
         } else {
             tree!(ExprIR::Map)
         };
@@ -2439,13 +2536,7 @@ impl<'a> Parser<'a> {
                 self.lexer.next();
                 tree!(ExprIR::Parameter(param))
             } else if self.lexer.current()? == Token::LBracket {
-                self.parse_map().map_err(|e| {
-                    if e.starts_with("Unknown function") {
-                        e
-                    } else {
-                        String::from("Encountered unhandled type in inlined properties.")
-                    }
-                })?
+                self.parse_inline_properties()?
             } else {
                 tree!(ExprIR::Map)
             };
