@@ -75,11 +75,22 @@ impl Binder {
     /// Binds a raw query IR, resolving all variable references.
     ///
     /// This is the main entry point for semantic analysis.
+    /// Returns the bound IR along with a map from scope ID to its variables.
     pub fn bind(
         mut self,
         ir: RawQueryIR,
-    ) -> Result<BoundQueryIR, String> {
-        self.bind_ir(ir)
+    ) -> Result<(BoundQueryIR, Vec<Vec<Variable>>), String> {
+        let bound = self.bind_ir(ir)?;
+        let scope_vars = self
+            .env_stack
+            .iter()
+            .map(|env| {
+                let mut vars = env.values().cloned().collect::<Vec<_>>();
+                vars.sort_by_key(|v| v.id);
+                vars
+            })
+            .collect();
+        Ok((bound, scope_vars))
     }
 
     fn current_env(&self) -> &HashMap<Arc<String>, Variable> {
@@ -131,7 +142,7 @@ impl Binder {
                 let mut first_columns: Option<Vec<Arc<String>>> = None;
                 for branch in branches {
                     let binder = Self::default();
-                    let bound = binder.bind(branch)?;
+                    let (bound, _) = binder.bind(branch)?;
                     let columns = Self::extract_return_columns(&bound);
                     if let Some(ref expected) = first_columns {
                         if columns != *expected {

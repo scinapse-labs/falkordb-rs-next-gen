@@ -185,7 +185,7 @@ pub enum Value {
     Map(OrderMap<Arc<String>, Self>),
     /// Reference to a graph node (by ID)
     Node(NodeId),
-    /// Reference to a reglationship: (edge_id, source_node, target_node)
+    /// Reference to a relationship: (edge_id, source_node, target_node)
     Relationship(Box<(RelationshipId, NodeId, NodeId)>),
     /// A path through the graph (alternating nodes and relationships)
     Path(ThinVec<Self>),
@@ -613,7 +613,7 @@ impl Env {
         if key.id < 128 {
             self.1 |= 1u128 << key.id;
         } else {
-            todo!("Support variables with id >= 128 (currently max is 127 due to bitmask tracking)")
+            // todo!("Support variables with id >= 128 (currently max is 127 due to bitmask tracking)")
         }
     }
 

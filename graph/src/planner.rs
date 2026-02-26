@@ -37,7 +37,7 @@ use std::{
 
 use crate::runtime::functions::Type;
 
-use orx_tree::{Bfs, DynNode, DynTree, NodeRef, Side, Traversal, Traverser};
+use orx_tree::{DynNode, DynTree, NodeRef, Side, Traversal, Traverser};
 
 use crate::{
     ast::{
@@ -229,13 +229,38 @@ impl Display for IR {
     }
 }
 
-#[derive(Default)]
+/// Converts a bound Cypher AST into a logical execution plan (IR tree).
+///
+/// The planner maintains state across clauses:
+/// - `visited` tracks which variable IDs have already been bound by earlier
+///   scans or traversals, so we know whether a node needs a fresh scan
+///   or can be referenced from the existing stream.
+/// - `scope_vars` holds the binder-assigned variables grouped by scope ID,
+///   used to mint fresh variable IDs for synthetic variables introduced
+///   during pattern-predicate decomposition without collisions.
 pub struct Planner {
+    /// Variable IDs that are already bound in the current execution stream.
+    /// Used to decide between scanning (new variable) vs referencing (already bound).
     visited: HashSet<u32>,
-    next_var_id: u32,
+    /// Binder-assigned variables grouped by scope ID.
+    /// Used to derive fresh variable IDs above all binder-assigned IDs.
+    scope_vars: Vec<Vec<Variable>>,
 }
 
 impl Planner {
+    #[must_use]
+    pub fn new(scope_vars: Vec<Vec<Variable>>) -> Self {
+        Self {
+            visited: HashSet::new(),
+            scope_vars,
+        }
+    }
+
+    /// Attach `Argument` nodes to every leaf in the plan tree.
+    ///
+    /// When a sub-plan is used inside a correlated join (Apply, SemiApply, etc.),
+    /// its leaves must receive the current row from the outer stream.  `Argument`
+    /// is the operator that feeds the outer row into the sub-plan.
     fn add_argument_to_leaves(tree: &mut DynTree<IR>) {
         let mut tr = Traversal.bfs().over_nodes();
 
@@ -459,108 +484,112 @@ impl Planner {
         plan
     }
 
-    /// Finds the maximum variable ID used in an expression tree, including
-    /// variables inside Pattern sub-graphs. Used to initialize `next_var_id`
-    /// above all binder-assigned IDs.
-    fn max_var_id_in_expr(expr: &DynTree<ExprIR<Variable>>) -> u32 {
-        let mut max_id = 0u32;
-        for idx in expr.root().indices::<Bfs>() {
-            match expr.node(idx).data() {
-                ExprIR::Variable(var) => max_id = max_id.max(var.id),
-                ExprIR::Pattern(graph) => {
-                    for var in graph.variables() {
-                        max_id = max_id.max(var.id);
-                    }
-                }
-                _ => {}
-            }
-        }
-        max_id
-    }
-
+    /// Walk a WHERE-clause expression tree and separate out pattern predicates
+    /// (e.g. `WHERE EXISTS { (a)-[:KNOWS]->(b) }`) from scalar predicates.
+    ///
+    /// Pattern predicates cannot be evaluated as simple filters -- they require
+    /// building a sub-plan (SemiApply / AntiSemiApply).  This function rebuilds
+    /// the expression tree with patterns replaced by either:
+    ///
+    /// - **Extractable** patterns (`can_extract = true`): removed from the
+    ///   expression and collected in `extractable`.  These are top-level AND
+    ///   conjuncts that can each become their own SemiApply/AntiSemiApply.
+    ///   The expression slot is replaced with `Bool(true)` (identity for AND).
+    ///
+    /// - **Inline** patterns (`can_extract = false`): replaced with a fresh
+    ///   synthetic variable and collected in `inline`.  These appear under OR
+    ///   or other operators where they cannot be independently extracted and
+    ///   must be handled by `expr_to_plan` (OrApplyMultiplexer, etc.).
+    ///
+    /// `can_extract` propagates through AND (conjuncts are independently
+    /// extractable) but resets to `false` under OR, NOT, and other operators.
     fn collect_patterns_and_rebuild(
+        &mut self,
         node: DynNode<ExprIR<Variable>>,
         extractable: &mut Vec<(QueryGraph<Arc<String>, Arc<String>, Variable>, bool)>,
-        inline: &mut Vec<(Variable, QueryGraph<Arc<String>, Arc<String>, Variable>)>,
-        next_var_id: &mut u32,
+        inline: &mut HashMap<u32, QueryGraph<Arc<String>, Arc<String>, Variable>>,
         can_extract: bool,
     ) -> DynTree<ExprIR<Variable>> {
         match node.data() {
+            // Bare pattern: `EXISTS { ... }` or similar.
             ExprIR::Pattern(graph) => {
                 if can_extract {
+                    // Top-level conjunct: extract for SemiApply, replace with true.
                     extractable.push((graph.clone(), false));
                     DynTree::new(ExprIR::Bool(true))
                 } else {
+                    // Under OR/NOT: replace with a fresh boolean variable and
+                    // record for inline handling via expr_to_plan.
+                    let current_scope = graph.variables().next().unwrap().scope_id;
                     let var = Variable {
                         name: None,
-                        id: *next_var_id,
-                        scope_id: 0,
+                        id: self.scope_vars[current_scope as usize].len() as u32,
+                        scope_id: current_scope,
                         ty: Type::Bool,
                     };
-                    *next_var_id += 1;
-                    inline.push((var.clone(), graph.clone()));
+                    self.scope_vars[current_scope as usize].push(var.clone());
+                    inline.insert(var.id, graph.clone());
                     DynTree::new(ExprIR::Variable(var))
                 }
             }
+            // NOT(pattern): `NOT EXISTS { ... }`.
             ExprIR::Not => {
+                // Special-case: NOT directly wrapping a pattern.
                 if let Some(child) = node.get_child(0)
                     && let ExprIR::Pattern(graph) = child.data()
                 {
                     if can_extract {
+                        // Extract for AntiSemiApply (is_anti = true).
                         extractable.push((graph.clone(), true));
                         return DynTree::new(ExprIR::Bool(true));
                     }
+                    // Inline: create NOT(synth_var) so expr_to_plan can
+                    // recognize the negation and use AntiSemiApply.
+                    let current_scope = graph.variables().next().unwrap().scope_id;
                     let var = Variable {
                         name: None,
-                        id: *next_var_id,
-                        scope_id: 0,
+                        id: self.scope_vars[current_scope as usize].len() as u32,
+                        scope_id: current_scope,
                         ty: Type::Bool,
                     };
-                    *next_var_id += 1;
-                    inline.push((var.clone(), graph.clone()));
+                    self.scope_vars[current_scope as usize].push(var.clone());
+                    inline.insert(var.id, graph.clone());
                     let mut new_tree = DynTree::new(ExprIR::Not);
                     new_tree
                         .root_mut()
                         .push_child_tree(DynTree::new(ExprIR::Variable(var)));
                     return new_tree;
                 }
+                // NOT wrapping something other than a bare pattern:
+                // recurse into children with can_extract = false (NOT
+                // blocks extraction since the pattern is negated).
                 let mut new_tree = DynTree::new(node.data().clone());
                 for child in node.children() {
-                    let child_tree = Self::collect_patterns_and_rebuild(
-                        child,
-                        extractable,
-                        inline,
-                        next_var_id,
-                        false,
-                    );
+                    let child_tree =
+                        self.collect_patterns_and_rebuild(child, extractable, inline, false);
                     new_tree.root_mut().push_child_tree(child_tree);
                 }
                 new_tree
             }
+            // AND: propagate can_extract to children since each conjunct
+            // can be independently extracted as its own SemiApply.
             ExprIR::And => {
                 let mut new_tree = DynTree::new(ExprIR::And);
                 for child in node.children() {
-                    let child_tree = Self::collect_patterns_and_rebuild(
-                        child,
-                        extractable,
-                        inline,
-                        next_var_id,
-                        can_extract,
-                    );
+                    let child_tree =
+                        self.collect_patterns_and_rebuild(child, extractable, inline, can_extract);
                     new_tree.root_mut().push_child_tree(child_tree);
                 }
                 new_tree
             }
+            // Any other expression node (comparisons, function calls, OR, etc.):
+            // recurse with can_extract = false since patterns under these
+            // operators cannot be independently extracted.
             _ => {
                 let mut new_tree = DynTree::new(node.data().clone());
                 for child in node.children() {
-                    let child_tree = Self::collect_patterns_and_rebuild(
-                        child,
-                        extractable,
-                        inline,
-                        next_var_id,
-                        false,
-                    );
+                    let child_tree =
+                        self.collect_patterns_and_rebuild(child, extractable, inline, false);
                     new_tree.root_mut().push_child_tree(child_tree);
                 }
                 new_tree
@@ -568,16 +597,27 @@ impl Planner {
         }
     }
 
+    /// Build an execution plan for a MATCH clause.
+    ///
+    /// The pattern graph is decomposed into connected components.  Each component
+    /// produces a sub-plan (scan + traversals), and disconnected components are
+    /// joined with a CartesianProduct.  The optional WHERE filter is then applied
+    /// on top, with pattern predicates decomposed into SemiApply/AntiSemiApply.
+    ///
+    /// The `visited` set is updated as variables are bound, so subsequent clauses
+    /// know which variables are already available in the stream.
     fn plan_match(
         &mut self,
         pattern: &QueryGraph<Arc<String>, Arc<String>, Variable>,
         filter: Option<QueryExpr<Variable>>,
     ) -> DynTree<IR> {
+        // Each connected component of the pattern becomes a separate sub-plan.
         let mut vec = vec![];
         for component in pattern.connected_components() {
             let relationships = component.relationships();
             let mut iter = relationships.iter();
             let Some(relationship) = iter.next() else {
+                // Node-only component (no relationships).
                 let nodes = component.nodes();
                 debug_assert_eq!(nodes.len(), 1);
                 let node = nodes[0].clone();
@@ -599,6 +639,12 @@ impl Planner {
                 }
                 continue;
             };
+            // Plan the first relationship in this connected component.
+            // The choice of operator depends on which endpoints are already bound:
+            //   - Self-loop (from == to): scan the node, then ExpandInto
+            //   - Both endpoints bound: ExpandInto (just check the edge exists)
+            //   - Variable-length path: CondVarLenTraverse (BFS)
+            //   - Otherwise: CondTraverse (fixed-length traversal)
             let mut res = if relationship.from.alias.id == relationship.to.alias.id {
                 let scan = if relationship.from.labels.is_empty() {
                     tree!(IR::AllNodeScan(relationship.from.clone()))
@@ -618,6 +664,8 @@ impl Planner {
             self.visited.insert(relationship.from.alias.id);
             self.visited.insert(relationship.to.alias.id);
             self.visited.insert(relationship.alias.id);
+            // Chain remaining relationships in the component, each one
+            // stacking on top of the previous result using the same logic.
             for relationship in iter {
                 res = if relationship.from.alias.id == relationship.to.alias.id {
                     let scan = if relationship.from.labels.is_empty() {
@@ -645,31 +693,32 @@ impl Planner {
             }
             vec.push(res);
         }
+        // Join disconnected components: single component uses its plan directly,
+        // multiple components are joined via CartesianProduct.
         let mut res = if vec.len() == 1 {
             vec.pop().unwrap()
         } else {
             tree!(IR::CartesianProduct; vec)
         };
+        // Apply the WHERE filter.  Pattern predicates are separated from scalar
+        // predicates by collect_patterns_and_rebuild:
+        //   - "extractable" patterns become SemiApply / AntiSemiApply wrappers
+        //   - "inline" patterns (under OR, etc.) are handled by expr_to_plan
+        //   - remaining scalar predicates become a Filter node
         if let Some(filter) = filter {
             let mut extractable = vec![];
-            let mut inline = vec![];
-            let visited_max = self.visited.iter().copied().max().unwrap_or(0);
-            let filter_max = Self::max_var_id_in_expr(&filter);
-            self.next_var_id = self.next_var_id.max(visited_max + 1).max(filter_max + 1);
-            let rebuilt = Self::collect_patterns_and_rebuild(
+            let mut inline = HashMap::new();
+            let rebuilt = self.collect_patterns_and_rebuild(
                 filter.root(),
                 &mut extractable,
                 &mut inline,
-                &mut self.next_var_id,
                 true,
             );
 
             // When there are inline patterns, recursively decompose the
             // rebuilt expression into multiplexer / semi-apply / filter nodes.
             if !inline.is_empty() {
-                let inline_map: HashMap<u32, QueryGraph<Arc<String>, Arc<String>, Variable>> =
-                    inline.into_iter().map(|(v, g)| (v.id, g)).collect();
-                res = self.expr_to_plan(rebuilt.root(), &inline_map, res);
+                res = self.expr_to_plan(rebuilt.root(), &inline, res);
             } else if !matches!(rebuilt.root().data(), ExprIR::Bool(true)) {
                 res = tree!(IR::Filter(Arc::new(rebuilt)), res);
             }
@@ -690,6 +739,15 @@ impl Planner {
         res
     }
 
+    /// Build a plan for WITH or RETURN clauses (projection / aggregation).
+    ///
+    /// This handles: projection, aggregation, DISTINCT, ORDER BY, SKIP, LIMIT,
+    /// and an optional WHERE filter (only for WITH, not RETURN).
+    ///
+    /// The plan tree is built top-down: the root is Project/Aggregate, with
+    /// Commit, Distinct, Sort, Skip, Limit, and Filter layered above as needed.
+    /// The `visited` set is reset to only the projected variables, since
+    /// WITH/RETURN starts a new scope.
     #[allow(clippy::too_many_arguments)]
     fn plan_project(
         &mut self,
@@ -712,6 +770,9 @@ impl Planner {
         for (new_var, _) in &copy_from_parent {
             self.visited.insert(new_var.id);
         }
+        // If any expression uses an aggregation function, produce an
+        // Aggregate node that separates group-by keys from aggregations.
+        // Otherwise, produce a simple Project node.
         let mut res = if exprs.iter().any(|e| e.1.is_aggregation()) {
             let mut group_by_keys = Vec::new();
             let mut aggregations = Vec::new();
@@ -728,6 +789,8 @@ impl Planner {
         } else {
             tree!(IR::Project(exprs, copy_from_parent))
         };
+        // If this clause follows write operations, insert a Commit node
+        // so mutations are flushed before the projection reads results.
         if write {
             res.root_mut().push_child(IR::Commit);
         }
@@ -743,17 +806,15 @@ impl Planner {
         if let Some(limit_expr) = limit {
             res = tree!(IR::Limit(limit_expr), res);
         }
+        // WITH ... WHERE filter (not applicable to RETURN, which passes None).
+        // Same pattern-predicate decomposition as in plan_match.
         if let Some(filter) = filter {
             let mut extractable = vec![];
-            let mut inline = vec![];
-            let visited_max = self.visited.iter().copied().max().unwrap_or(0);
-            let filter_max = Self::max_var_id_in_expr(&filter);
-            self.next_var_id = self.next_var_id.max(visited_max + 1).max(filter_max + 1);
-            let rebuilt = Self::collect_patterns_and_rebuild(
+            let mut inline = HashMap::new();
+            let rebuilt = self.collect_patterns_and_rebuild(
                 filter.root(),
                 &mut extractable,
                 &mut inline,
-                &mut self.next_var_id,
                 true,
             );
 
@@ -761,9 +822,7 @@ impl Planner {
                 if inline.is_empty() {
                     res = tree!(IR::Filter(Arc::new(rebuilt)), res);
                 } else {
-                    let inline_map: HashMap<u32, QueryGraph<Arc<String>, Arc<String>, Variable>> =
-                        inline.into_iter().map(|(v, g)| (v.id, g)).collect();
-                    res = self.expr_to_plan(rebuilt.root(), &inline_map, res);
+                    res = self.expr_to_plan(rebuilt.root(), &inline, res);
                 }
             }
 
@@ -782,17 +841,32 @@ impl Planner {
         res
     }
 
+    /// Assemble a multi-clause query plan from individual clause plans.
+    ///
+    /// Each Cypher clause (MATCH, WITH, RETURN, CREATE, etc.) is planned
+    /// independently first.  The resulting plan trees are then stitched
+    /// together in reverse order: the last clause (typically RETURN) becomes
+    /// the root, and earlier clauses are inserted as its deepest input.
+    ///
+    /// The "insertion point" (`idx`) walks past post-processing operators
+    /// (Sort, Skip, Limit, Distinct, Filter, semi-apply variants) and past
+    /// Project/Aggregate → Commit, to find the spot where the preceding
+    /// clause's output should feed in.
     fn plan_query(
         &mut self,
         q: Vec<QueryIR<Variable>>,
         write: bool,
     ) -> DynTree<IR> {
+        // Plan each clause independently.
         let mut plans = Vec::with_capacity(q.len());
         for ir in q {
             plans.push(self.plan(ir));
         }
+        // Stitch plans together in reverse: start from the last clause's plan
+        // (the root), then insert each preceding plan at the deepest input slot.
         let mut iter = plans.into_iter().rev();
         let mut res = iter.next().unwrap();
+        // Walk down to find the insertion point past post-processing operators.
         let mut idx = res.root().idx();
         while matches!(res.node(idx).data(), |IR::Sort(_)| IR::Skip(_)
             | IR::Limit(_)
@@ -804,6 +878,8 @@ impl Planner {
         {
             idx = res.node(idx).child(0).idx();
         }
+        // If we landed on a Project/Aggregate with a Commit child, step past
+        // the Commit too — the preceding clause feeds below it.
         if matches!(res.node(idx).data(), |IR::Project(_, _)| IR::Aggregate(
             _,
             _,
@@ -813,6 +889,9 @@ impl Planner {
         {
             idx = res.node(idx).child(0).idx();
         }
+        // Insert each remaining clause plan (in reverse order) at the
+        // current insertion point, then walk down again to find the next
+        // insertion point for the clause before it.
         for n in iter {
             if res.node(idx).num_children() > 0 {
                 idx = res
@@ -842,12 +921,19 @@ impl Planner {
                 idx = res.node(idx).child(0).idx();
             }
         }
+        // For write queries without an explicit WITH/RETURN commit, wrap
+        // the entire plan in a top-level Commit.
         if write {
             res = tree!(IR::Commit, res);
         }
         res
     }
 
+    /// Main entry point: convert a single bound query IR node into an execution plan.
+    ///
+    /// Each `QueryIR` variant maps to one or more IR operators.  Compound
+    /// queries (`QueryIR::Query`) are handled by `plan_query`, which stitches
+    /// multiple clause plans together.
     #[allow(clippy::too_many_lines)]
     #[must_use]
     pub fn plan(
@@ -855,6 +941,8 @@ impl Planner {
         ir: BoundQueryIR,
     ) -> DynTree<IR> {
         match ir {
+            // CALL procedure: special-case fulltext index procedures into
+            // native CreateIndex/DropIndex IR nodes.
             QueryIR::Call(proc, exprs, named_outputs, filter) => {
                 if let Some(filter) = filter {
                     return tree!(
@@ -902,13 +990,15 @@ impl Planner {
                 }
                 tree!(IR::ProcedureCall(proc, exprs, named_outputs))
             }
+            // MATCH / OPTIONAL MATCH
             QueryIR::Match {
                 pattern,
                 filter,
                 optional,
             } => {
                 if optional {
-                    // Compute optional variables BEFORE plan_match adds them to visited
+                    // Compute optional variables BEFORE plan_match adds them to visited,
+                    // so we know which variables to null-pad when no match is found.
                     let optional_vars: Vec<Variable> = pattern
                         .variables()
                         .filter(|v| !self.visited.contains(&v.id))
@@ -916,6 +1006,10 @@ impl Planner {
                     let all_visited = pattern.variables().all(|v| self.visited.contains(&v.id));
                     let mut match_plan = self.plan_match(&pattern, filter);
                     Self::add_argument_to_leaves(&mut match_plan);
+                    // If all pattern variables are already bound from a prior clause,
+                    // we need an Apply (correlated join) so the inner plan re-evaluates
+                    // the pattern for each incoming row.  Otherwise, the Optional node
+                    // directly wraps the match plan and handles null-padding.
                     if all_visited {
                         tree!(IR::Apply, tree!(IR::Optional(optional_vars), match_plan))
                     } else {
@@ -926,6 +1020,9 @@ impl Planner {
                 }
             }
             QueryIR::Unwind(expr, alias) => tree!(IR::Unwind(expr, alias)),
+            // MERGE: try to match the full pattern first; the Merge IR node
+            // decides at runtime whether to create the missing parts.
+            // filter_visited strips already-bound entities from the create pattern.
             QueryIR::Merge(pattern, on_create_set_items, on_match_set_items) => {
                 let create_pattern = pattern.filter_visited(&self.visited);
                 let mut match_branch = self.plan_match(&pattern, None);
@@ -936,6 +1033,7 @@ impl Planner {
                     match_branch
                 )
             }
+            // CREATE: only create entities not already bound.
             QueryIR::Create(pattern) => {
                 tree!(IR::Create(pattern.filter_visited(&self.visited)))
             }
@@ -955,6 +1053,8 @@ impl Planner {
                     var,
                 })
             }
+            // WITH clause: projection that also introduces a new scope.
+            // May include WHERE filter with pattern predicates.
             QueryIR::With {
                 distinct,
                 exprs,
@@ -975,6 +1075,7 @@ impl Planner {
                 distinct,
                 write,
             ),
+            // RETURN clause: final projection (no WHERE filter).
             QueryIR::Return {
                 distinct,
                 exprs,
@@ -1020,6 +1121,7 @@ impl Planner {
                     entity_type
                 })
             }
+            // Multi-clause query: plan each clause and stitch together.
             QueryIR::Query(q, write) => self.plan_query(q, write),
             QueryIR::Union(_) => {
                 // UNION execution is not yet implemented.
