@@ -151,8 +151,7 @@ pub enum IR {
     /// Remove duplicate rows
     Distinct,
     /// UNION of multiple sub-query branches.
-    /// Each child is a fully-planned branch. `Vec<Vec<Variable>>` stores
-    /// each branch's return column variables for positional remapping.
+    /// Each child is a fully-planned branch.
     Union,
     /// Commit write operations to graph
     Commit,
