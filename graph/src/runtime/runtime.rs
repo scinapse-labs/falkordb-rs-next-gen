@@ -61,7 +61,7 @@ use roaring::RoaringTreemap;
 use std::{
     cell::RefCell,
     cmp::Ordering,
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     fmt::Debug,
     hash::{DefaultHasher, Hash, Hasher},
     iter::{empty, once},
@@ -176,6 +176,10 @@ impl<T: MemoryPolicy> GetVariables for DynNode<'_, IR, T> {
                 | IR::Remove(_)
                 | IR::Filter(_)
                 | IR::CartesianProduct
+                | IR::Apply
+                | IR::SemiApply
+                | IR::AntiSemiApply
+                | IR::OrApplyMultiplexer(_)
                 | IR::Sort(_)
                 | IR::Skip(_)
                 | IR::Limit(_)
@@ -184,12 +188,14 @@ impl<T: MemoryPolicy> GetVariables for DynNode<'_, IR, T> {
                 | IR::CreateIndex { .. }
                 | IR::DropIndex { .. } => {}
                 IR::NodeByLabelScan(node)
+                | IR::AllNodeScan(node)
                 | IR::NodeByIndexScan { node, .. }
                 | IR::NodeByLabelAndIdScan { node, .. }
                 | IR::NodeByIdSeek { node, .. } => {
                     vars.push(node.alias.clone());
                 }
-                IR::CondTraverse(query_relationship) => {
+                IR::CondTraverse(query_relationship)
+                | IR::CondVarLenTraverse(query_relationship) => {
                     vars.push(query_relationship.alias.clone());
                 }
                 IR::ExpandInto(query_relationship) => vars.push(query_relationship.alias.clone()),
@@ -897,6 +903,9 @@ impl<'a> Runtime {
                 ExprIR::Paren => {
                     res.push(self.run_expr(ir, node.child(0).idx(), env, agg_group_key)?);
                 }
+                ExprIR::Pattern(_) => {
+                    unreachable!("Pattern expressions should have been rewritten in the planner");
+                }
             }
         }
         debug_assert_eq!(res.len(), 1);
@@ -1058,7 +1067,12 @@ impl<'a> Runtime {
         match self.plan.node(idx).data() {
             IR::Empty => Ok(Box::new(empty())),
             IR::Argument => {
-                let env = self.argument_envs.borrow_mut().remove(&idx).unwrap();
+                let env = self
+                    .argument_envs
+                    .borrow()
+                    .get(&idx)
+                    .cloned()
+                    .unwrap_or_default();
 
                 Ok(Box::new(once(Ok(env))))
             }
@@ -1068,14 +1082,30 @@ impl<'a> Runtime {
                 } else {
                     self.plan.node(idx).child(1).idx()
                 };
+                // Find all Argument nodes in the optional child tree
+                let argument_indices: Vec<NodeIdx<Dyn<IR>>> = self
+                    .plan
+                    .node(optional_child_idx)
+                    .indices::<Bfs>()
+                    .filter(|&i| matches!(self.plan.node(i).data(), IR::Argument))
+                    .collect();
                 Ok(iter
-                    .try_flat_map(move |mut env| {
+                    .try_flat_map(move |env| {
+                        // Build fallback env with new variables set to Null
+                        let mut fallback_env = env.clone();
                         for v in vars {
-                            env.insert(v, Value::Null);
+                            fallback_env.insert(v, Value::Null);
+                        }
+                        // Pass the original env (without nulls) to Argument nodes
+                        // so the child can discover new variables via scans/traversals
+                        for arg_idx in &argument_indices {
+                            self.argument_envs
+                                .borrow_mut()
+                                .insert(*arg_idx, env.clone());
                         }
                         Ok(self
                             .run(optional_child_idx)?
-                            .lazy_replace(move || once(Ok(env))))
+                            .lazy_replace(move || once(Ok(fallback_env))))
                     })
                     .cond_inspect(self.inspect, move |res| {
                         self.record.borrow_mut().push((idx, res.clone()));
@@ -1340,7 +1370,7 @@ impl<'a> Runtime {
                         self.record.borrow_mut().push((idx, res.clone()));
                     }))
             }
-            IR::NodeByLabelScan(node) => Ok(iter
+            IR::NodeByLabelScan(node) | IR::AllNodeScan(node) => Ok(iter
                 .try_flat_map(move |vars| self.node_by_label_scan(node, vars))
                 .cond_inspect(self.inspect, move |res| {
                     self.record.borrow_mut().push((idx, res.clone()));
@@ -1362,6 +1392,13 @@ impl<'a> Runtime {
                 })),
             IR::CondTraverse(relationship_pattern) => Ok(iter
                 .try_flat_map(move |vars| self.relationship_scan(relationship_pattern, vars))
+                .cond_inspect(self.inspect, move |res| {
+                    self.record.borrow_mut().push((idx, res.clone()));
+                })),
+            IR::CondVarLenTraverse(relationship_pattern) => Ok(iter
+                .try_flat_map(move |vars| {
+                    self.var_len_relationship_scan(relationship_pattern, vars)
+                })
                 .cond_inspect(self.inspect, move |res| {
                     self.record.borrow_mut().push((idx, res.clone()));
                 })),
@@ -1425,6 +1462,135 @@ impl<'a> Runtime {
                 Ok(iter.cond_inspect(self.inspect, move |res| {
                     self.record.borrow_mut().push((idx, res.clone()));
                 }))
+            }
+            IR::Apply => {
+                // Apply = correlated join: for each row from child 0, run child 1
+                // Child 1 has Argument nodes that receive the row via argument_envs
+                let right_child_idx = self.plan.node(idx).child(1).idx();
+                let right_data = self.plan.node(right_child_idx).data().clone();
+
+                let argument_indices: Vec<NodeIdx<Dyn<IR>>> = self
+                    .plan
+                    .node(right_child_idx)
+                    .indices::<Bfs>()
+                    .filter(|&i| matches!(self.plan.node(i).data(), IR::Argument))
+                    .collect();
+
+                match right_data {
+                    IR::Optional(ref vars) => {
+                        let vars = vars.clone();
+                        let optional_child_idx = self.plan.node(right_child_idx).child(0).idx();
+                        Ok(iter
+                            .try_flat_map(move |env| {
+                                let mut fallback_env = env.clone();
+                                for v in &vars {
+                                    fallback_env.insert(v, Value::Null);
+                                }
+                                for arg_idx in &argument_indices {
+                                    self.argument_envs
+                                        .borrow_mut()
+                                        .insert(*arg_idx, env.clone());
+                                }
+                                Ok(self
+                                    .run(optional_child_idx)?
+                                    .lazy_replace(move || once(Ok(fallback_env))))
+                            })
+                            .cond_inspect(self.inspect, move |res| {
+                                self.record.borrow_mut().push((idx, res.clone()));
+                            }))
+                    }
+                    _ => {
+                        // Generic Apply (non-Optional child)
+                        Ok(iter
+                            .try_flat_map(move |env| {
+                                for arg_idx in &argument_indices {
+                                    self.argument_envs
+                                        .borrow_mut()
+                                        .insert(*arg_idx, env.clone());
+                                }
+                                self.run(right_child_idx)
+                            })
+                            .cond_inspect(self.inspect, move |res| {
+                                self.record.borrow_mut().push((idx, res.clone()));
+                            }))
+                    }
+                }
+            }
+            IR::SemiApply | IR::AntiSemiApply => {
+                let is_anti = matches!(self.plan.node(idx).data(), IR::AntiSemiApply);
+                let right_child_idx = self.plan.node(idx).child(1).idx();
+
+                let argument_indices: Vec<NodeIdx<Dyn<IR>>> = self
+                    .plan
+                    .node(right_child_idx)
+                    .indices::<Bfs>()
+                    .filter(|&i| matches!(self.plan.node(i).data(), IR::Argument))
+                    .collect();
+
+                Ok(iter
+                    .try_flat_map(move |env| {
+                        for arg_idx in &argument_indices {
+                            self.argument_envs
+                                .borrow_mut()
+                                .insert(*arg_idx, env.clone());
+                        }
+                        let has_result = self.run(right_child_idx)?.next().transpose()?.is_some();
+                        if has_result ^ is_anti {
+                            Ok(Box::new(once(Ok(env)))
+                                as Box<dyn Iterator<Item = Result<Env, String>>>)
+                        } else {
+                            Ok(Box::new(empty()) as Box<dyn Iterator<Item = Result<Env, String>>>)
+                        }
+                    })
+                    .cond_inspect(self.inspect, move |res| {
+                        self.record.borrow_mut().push((idx, res.clone()));
+                    }))
+            }
+            IR::OrApplyMultiplexer(anti_flags) => {
+                let anti_flags = anti_flags.clone();
+
+                // Pre-compute argument node indices and branch node indices for
+                // each condition branch (children 1..N).
+                let num_branches = self.plan.node(idx).num_children() - 1;
+                let mut branch_indices = Vec::with_capacity(num_branches);
+                let mut branch_args: Vec<Vec<NodeIdx<Dyn<IR>>>> = Vec::with_capacity(num_branches);
+
+                for i in 1..=num_branches {
+                    let branch_idx = self.plan.node(idx).child(i).idx();
+                    branch_indices.push(branch_idx);
+                    branch_args.push(
+                        self.plan
+                            .node(branch_idx)
+                            .indices::<Bfs>()
+                            .filter(|&j| matches!(self.plan.node(j).data(), IR::Argument))
+                            .collect(),
+                    );
+                }
+
+                Ok(iter
+                    .try_flat_map(move |env| {
+                        // Try each condition branch with short-circuit OR.
+                        for (branch_num, branch_idx) in branch_indices.iter().enumerate() {
+                            // Inject current env into this branch's Argument nodes.
+                            for arg_idx in &branch_args[branch_num] {
+                                self.argument_envs
+                                    .borrow_mut()
+                                    .insert(*arg_idx, env.clone());
+                            }
+                            let has_result = self.run(*branch_idx)?.next().transpose()?.is_some();
+                            let is_anti = anti_flags[branch_num];
+                            if has_result ^ is_anti {
+                                // Branch succeeded → pass through the original env.
+                                return Ok(Box::new(once(Ok(env)))
+                                    as Box<dyn Iterator<Item = Result<Env, String>>>);
+                            }
+                        }
+                        // No branch succeeded → reject row.
+                        Ok(Box::new(empty()) as Box<dyn Iterator<Item = Result<Env, String>>>)
+                    })
+                    .cond_inspect(self.inspect, move |res| {
+                        self.record.borrow_mut().push((idx, res.clone()));
+                    }))
             }
             IR::LoadCsv {
                 file_path,
@@ -1741,6 +1907,8 @@ impl<'a> Runtime {
                     rel.to.attrs.clone(),
                 )),
                 rel.bidirectional,
+                rel.min_hops,
+                rel.max_hops,
             )));
         }
         for path in pattern.paths() {
@@ -2244,45 +2412,202 @@ impl<'a> Runtime {
             &vars,
             None,
         )?;
+        let from_node_attrs = self.run_expr(
+            &relationship_pattern.from.attrs,
+            relationship_pattern.from.attrs.root().idx(),
+            &vars,
+            None,
+        )?;
+        let to_node_attrs = self.run_expr(
+            &relationship_pattern.to.attrs,
+            relationship_pattern.to.attrs.root().idx(),
+            &vars,
+            None,
+        )?;
         let from_id = vars
             .get(&relationship_pattern.from.alias)
             .and_then(|v| match v {
-                Value::Node(id) => Some(id),
+                Value::Node(id) => Some(*id),
                 _ => None,
-            })
-            .cloned();
+            });
+        if from_id.is_none() && vars.is_bound(&relationship_pattern.from.alias) {
+            return Ok(Box::new(empty()));
+        }
         let to_id = vars
             .get(&relationship_pattern.to.alias)
             .and_then(|v| match v {
-                Value::Node(id) => Some(id),
+                Value::Node(id) => Some(*id),
                 _ => None,
-            })
-            .cloned();
-        let iter = self.g.borrow().get_relationships(
-            &relationship_pattern.types,
-            &relationship_pattern.from.labels,
-            &relationship_pattern.to.labels,
-        );
-        Ok(Box::new(iter.flat_map(move |(src, dst)| {
-            if from_id.is_some() && from_id.unwrap() != src {
-                return Box::new(empty()) as Box<dyn Iterator<Item = Result<Env, String>>>;
+            });
+        if to_id.is_none() && vars.is_bound(&relationship_pattern.to.alias) {
+            return Ok(Box::new(empty()));
+        }
+        let bidirectional = relationship_pattern.bidirectional;
+        // Collect (src, dst, is_reverse) tuples for edge scanning
+        // Forward direction: from=src, to=dst
+        let mut pairs: Vec<(NodeId, NodeId, bool)> = self
+            .g
+            .borrow()
+            .get_relationships(
+                &relationship_pattern.types,
+                &relationship_pattern.from.labels,
+                &relationship_pattern.to.labels,
+            )
+            .map(|(src, dst)| (src, dst, false))
+            .collect();
+        // For bidirectional traversals, also scan the reverse direction
+        // Skip self-loops (src == dst) as they are already included in the forward scan
+        if bidirectional {
+            let reverse: Vec<(NodeId, NodeId, bool)> = self
+                .g
+                .borrow()
+                .get_relationships(
+                    &relationship_pattern.types,
+                    &relationship_pattern.to.labels,
+                    &relationship_pattern.from.labels,
+                )
+                .filter(|(src, dst)| src != dst)
+                .map(|(src, dst)| (src, dst, true))
+                .collect();
+            pairs.extend(reverse);
+        }
+        Ok(Box::new(pairs.into_iter().flat_map(
+            move |(src, dst, is_reverse)| {
+                let (from_node, to_node) = if is_reverse { (dst, src) } else { (src, dst) };
+                if from_id.is_some() && from_id.unwrap() != from_node {
+                    return Box::new(empty()) as Box<dyn Iterator<Item = Result<Env, String>>>;
+                }
+                if to_id.is_some() && to_id.unwrap() != to_node {
+                    return Box::new(empty()) as Box<dyn Iterator<Item = Result<Env, String>>>;
+                }
+                // Check from node property attributes
+                if let Value::Map(ref attrs) = from_node_attrs
+                    && !attrs.is_empty()
+                {
+                    let g = self.g.borrow();
+                    for (attr, avalue) in attrs.iter() {
+                        match g.get_node_attribute(from_node, attr) {
+                            Some(pvalue) if pvalue == *avalue => continue,
+                            _ => {
+                                return Box::new(empty())
+                                    as Box<dyn Iterator<Item = Result<Env, String>>>;
+                            }
+                        }
+                    }
+                }
+                // Check to node property attributes
+                if let Value::Map(ref attrs) = to_node_attrs
+                    && !attrs.is_empty()
+                {
+                    let g = self.g.borrow();
+                    for (attr, avalue) in attrs.iter() {
+                        match g.get_node_attribute(to_node, attr) {
+                            Some(pvalue) if pvalue == *avalue => continue,
+                            _ => {
+                                return Box::new(empty())
+                                    as Box<dyn Iterator<Item = Result<Env, String>>>;
+                            }
+                        }
+                    }
+                }
+                let vars = vars.clone();
+                let filter_attrs = filter_attrs.clone();
+                Box::new(
+                    self.g
+                        .borrow()
+                        .get_src_dest_relationships(src, dst, &relationship_pattern.types)
+                        .into_iter()
+                        .filter(move |v| {
+                            if let Value::Map(filter_attrs) = &filter_attrs
+                                && !filter_attrs.is_empty()
+                            {
+                                let g = self.g.borrow();
+                                for (attr, avalue) in filter_attrs.iter() {
+                                    if let Some(pvalue) = g.get_relationship_attribute(*v, attr) {
+                                        if *avalue == pvalue {
+                                            continue;
+                                        }
+                                        return false;
+                                    }
+                                    return false;
+                                }
+                            }
+                            true
+                        })
+                        .map(move |id| {
+                            let mut vars = vars.clone();
+                            vars.insert(
+                                &relationship_pattern.alias,
+                                Value::Relationship(Box::new((id, src, dst))),
+                            );
+                            vars.insert(&relationship_pattern.from.alias, Value::Node(from_node));
+                            vars.insert(&relationship_pattern.to.alias, Value::Node(to_node));
+                            Ok(vars)
+                        }),
+                ) as Box<dyn Iterator<Item = Result<Env, String>>>
+            },
+        )))
+    }
+
+    fn expand_into(
+        &'a self,
+        relationship_pattern: &'a QueryRelationship<Arc<String>, Arc<String>, Variable>,
+        vars: Env,
+    ) -> Result<Box<dyn Iterator<Item = Result<Env, String>> + 'a>, String> {
+        let src = match vars.get(&relationship_pattern.from.alias) {
+            Some(Value::Node(id)) => *id,
+            Some(Value::Null) | None => return Ok(Box::new(empty())),
+            _ => {
+                return Err(String::from(
+                    "Invalid node id for 'from' in relationship pattern",
+                ));
             }
-            if to_id.is_some() && to_id.unwrap() != dst {
-                return Box::new(empty()) as Box<dyn Iterator<Item = Result<Env, String>>>;
+        };
+        let dst = match vars.get(&relationship_pattern.to.alias) {
+            Some(Value::Node(id)) => *id,
+            Some(Value::Null) | None => return Ok(Box::new(empty())),
+            _ => {
+                return Err(String::from(
+                    "Invalid node id for 'to' in relationship pattern",
+                ));
             }
-            let vars = vars.clone();
-            let filter_attrs = filter_attrs.clone();
-            Box::new(
+        };
+        let filter_attrs = self.run_expr(
+            &relationship_pattern.attrs,
+            relationship_pattern.attrs.root().idx(),
+            &vars,
+            None,
+        )?;
+        // Collect (edge_src, edge_dst) tuples for edge scanning
+        // Forward direction: check edges from src to dst
+        let mut edge_pairs: Vec<(NodeId, NodeId)> = vec![(src, dst)];
+        // For bidirectional traversals, also check reverse direction (dst → src)
+        if relationship_pattern.bidirectional && src != dst {
+            edge_pairs.push((dst, src));
+        }
+        Ok(Box::new(edge_pairs.into_iter().flat_map(
+            move |(edge_src, edge_dst)| {
+                let vars = vars.clone();
+                let filter_attrs = filter_attrs.clone();
                 self.g
                     .borrow()
-                    .get_src_dest_relationships(src, dst, &relationship_pattern.types)
-                    .filter(move |v| {
-                        if let Value::Map(filter_attrs) = &filter_attrs
+                    .get_src_dest_relationships(edge_src, edge_dst, &relationship_pattern.types)
+                    .filter(move |id| {
+                        // Filter out pending-deleted relationships
+                        if self
+                            .pending
+                            .borrow()
+                            .is_relationship_deleted(*id, edge_src, edge_dst)
+                        {
+                            return false;
+                        }
+                        // Check relationship attributes
+                        if let Value::Map(ref filter_attrs) = filter_attrs
                             && !filter_attrs.is_empty()
                         {
                             let g = self.g.borrow();
                             for (attr, avalue) in filter_attrs.iter() {
-                                if let Some(pvalue) = g.get_relationship_attribute(*v, attr) {
+                                if let Some(pvalue) = g.get_relationship_attribute(*id, attr) {
                                     if *avalue == pvalue {
                                         continue;
                                     }
@@ -2297,54 +2622,111 @@ impl<'a> Runtime {
                         let mut vars = vars.clone();
                         vars.insert(
                             &relationship_pattern.alias,
-                            Value::Relationship(Box::new((id, src, dst))),
+                            Value::Relationship(Box::new((id, edge_src, edge_dst))),
                         );
+                        // Keep from/to bindings matching the outer env (src, dst)
                         vars.insert(&relationship_pattern.from.alias, Value::Node(src));
                         vars.insert(&relationship_pattern.to.alias, Value::Node(dst));
                         Ok(vars)
-                    }),
-            ) as Box<dyn Iterator<Item = Result<Env, String>>>
-        })))
+                    })
+            },
+        )))
     }
 
-    fn expand_into(
+    fn var_len_relationship_scan(
         &'a self,
         relationship_pattern: &'a QueryRelationship<Arc<String>, Arc<String>, Variable>,
         vars: Env,
     ) -> Result<Box<dyn Iterator<Item = Result<Env, String>> + 'a>, String> {
-        let src = *vars.get(&relationship_pattern.from.alias).map_or_else(
-            || Err(String::from("Node not found")),
-            |v| match v {
-                Value::Node(id) => Ok(id),
-                _ => Err(String::from(
-                    "Invalid node id for 'from' in relationship pattern",
-                )),
+        let from_id = vars
+            .get(&relationship_pattern.from.alias)
+            .and_then(|v| match v {
+                Value::Node(id) => Some(id),
+                _ => None,
+            });
+        if from_id.is_none() && vars.is_bound(&relationship_pattern.from.alias) {
+            return Ok(Box::new(empty()));
+        }
+        let to_id = vars
+            .get(&relationship_pattern.to.alias)
+            .and_then(|v| match v {
+                Value::Node(id) => Some(*id),
+                _ => None,
+            });
+        if to_id.is_none() && vars.is_bound(&relationship_pattern.to.alias) {
+            return Ok(Box::new(empty()));
+        }
+
+        let min_hops = relationship_pattern.min_hops.unwrap_or(1);
+        let max_hops = relationship_pattern.max_hops.unwrap_or(u32::MAX);
+        let bidirectional = relationship_pattern.bidirectional;
+
+        // Get starting nodes
+        let start_nodes: Vec<NodeId> = from_id.map_or_else(
+            || {
+                self.g
+                    .borrow()
+                    .get_nodes(&relationship_pattern.from.labels, 0)
+                    .collect()
             },
-        )?;
-        let dst = *vars.get(&relationship_pattern.to.alias).map_or_else(
-            || Err(String::from("Node not found")),
-            |v| match v {
-                Value::Node(id) => Ok(id),
-                _ => Err(String::from(
-                    "Invalid node id for 'from' in relationship pattern",
-                )),
-            },
-        )?;
-        Ok(Box::new(
-            self.g
-                .borrow()
-                .get_src_dest_relationships(src, dst, &relationship_pattern.types)
-                .map(move |id| {
-                    let mut vars = vars.clone();
-                    vars.insert(
-                        &relationship_pattern.alias,
-                        Value::Relationship(Box::new((id, src, dst))),
-                    );
-                    vars.insert(&relationship_pattern.from.alias, Value::Node(src));
-                    vars.insert(&relationship_pattern.to.alias, Value::Node(dst));
-                    Ok(vars)
-                }),
-        ))
+            |id| vec![*id],
+        );
+
+        let mut results: Vec<Env> = Vec::new();
+
+        for start_node in start_nodes {
+            // BFS with visited tracking to avoid cycles
+            let mut frontier: Vec<NodeId> = vec![start_node];
+            let mut visited: HashSet<NodeId> = HashSet::new();
+            visited.insert(start_node);
+
+            for hop in 1..=max_hops {
+                let mut next_frontier_set: HashSet<NodeId> = HashSet::new();
+                let mut next_frontier: Vec<NodeId> = Vec::new();
+                for &current in &frontier {
+                    let g = self.g.borrow();
+                    for (edge_src, edge_dst, _) in g.get_node_relationships(current) {
+                        // For directed: only follow outgoing (edge_src == current)
+                        // For bidirectional: follow both directions
+                        let neighbor = if edge_src == current {
+                            Some(edge_dst)
+                        } else if bidirectional && edge_dst == current {
+                            Some(edge_src)
+                        } else {
+                            None
+                        };
+                        if let Some(dest) = neighbor
+                            && !visited.contains(&dest)
+                        {
+                            // Generate result for this edge if within hop range
+                            if hop >= min_hops && (to_id.is_none() || to_id == Some(dest)) {
+                                let mut env = vars.clone();
+                                env.insert(
+                                    &relationship_pattern.from.alias,
+                                    Value::Node(start_node),
+                                );
+                                env.insert(&relationship_pattern.to.alias, Value::Node(dest));
+                                results.push(env);
+                            }
+                            // Add to frontier (deduplicated for BFS efficiency)
+                            if next_frontier_set.insert(dest) {
+                                next_frontier.push(dest);
+                            }
+                        }
+                    }
+                }
+                if next_frontier.is_empty() {
+                    break;
+                }
+                // Add frontier nodes to visited AFTER processing all edges at this level
+                for &node in &next_frontier {
+                    visited.insert(node);
+                }
+                frontier = next_frontier;
+            }
+        }
+
+        Ok(Box::new(results.into_iter().map(Ok)))
     }
 
     fn node_by_label_scan(

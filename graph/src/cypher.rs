@@ -950,7 +950,7 @@ impl<'a> Parser<'a> {
                         self.lexer.set_pos(pos);
                         break;
                     }
-                    params.insert(String::from(id.as_str()), self.parse_expr()?);
+                    params.insert(String::from(id.as_str()), self.parse_expr(false)?);
                     pos = self.lexer.pos;
                 }
             } else {
@@ -1259,12 +1259,12 @@ impl<'a> Parser<'a> {
                 let headers = optional_match_token!(self.lexer => With)
                     && optional_match_token!(self.lexer => Headers);
                 let delimiter = if optional_match_token!(self.lexer => Delimiter) {
-                    Arc::new(self.parse_expr()?)
+                    Arc::new(self.parse_expr(false)?)
                 } else {
                     Arc::new(tree!(ExprIR::String(Arc::new(String::from(',')))))
                 };
                 match_token!(self.lexer => From);
-                let file_path = Arc::new(self.parse_expr()?);
+                let file_path = Arc::new(self.parse_expr(false)?);
                 match_token!(self.lexer => As);
                 let ident = self.parse_ident()?;
                 Ok(QueryIR::LoadCsv {
@@ -1358,7 +1358,7 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_unwind_clause(&mut self) -> Result<RawQueryIR, String> {
-        let list = Arc::new(self.parse_expr()?);
+        let list = Arc::new(self.parse_expr(false)?);
         match_token!(self.lexer => As);
         let ident = self.parse_ident()?;
         Ok(QueryIR::Unwind(list, ident))
@@ -1406,7 +1406,7 @@ impl<'a> Parser<'a> {
     fn parse_where(&mut self) -> Result<Option<QueryExpr<Arc<String>>>, String> {
         if let Token::Keyword(Keyword::Where, _) = self.lexer.current()? {
             self.lexer.next();
-            return Ok(Some(Arc::new(self.parse_expr()?)));
+            return Ok(Some(Arc::new(self.parse_expr(true)?)));
         }
         Ok(None)
     }
@@ -1427,7 +1427,7 @@ impl<'a> Parser<'a> {
             vec![]
         };
         let skip = if optional_match_token!(self.lexer => Skip) {
-            let skip = Arc::new(self.parse_expr()?);
+            let skip = Arc::new(self.parse_expr(false)?);
             match skip.root().data() {
                 ExprIR::Integer(i) => {
                     if *i < 0 {
@@ -1448,7 +1448,7 @@ impl<'a> Parser<'a> {
             None
         };
         let limit = if optional_match_token!(self.lexer => Limit) {
-            let limit = Arc::new(self.parse_expr()?);
+            let limit = Arc::new(self.parse_expr(false)?);
             match limit.root().data() {
                 ExprIR::Integer(i) => {
                     if *i < 0 {
@@ -1498,7 +1498,7 @@ impl<'a> Parser<'a> {
             vec![]
         };
         let skip = if optional_match_token!(self.lexer => Skip) {
-            let skip = Arc::new(self.parse_expr()?);
+            let skip = Arc::new(self.parse_expr(false)?);
             match skip.root().data() {
                 ExprIR::Integer(i) => {
                     if *i < 0 {
@@ -1519,7 +1519,7 @@ impl<'a> Parser<'a> {
             None
         };
         let limit = if optional_match_token!(self.lexer => Limit) {
-            let limit = Arc::new(self.parse_expr()?);
+            let limit = Arc::new(self.parse_expr(false)?);
             match limit.root().data() {
                 ExprIR::Integer(i) => {
                     if *i < 0 {
@@ -1646,20 +1646,20 @@ impl<'a> Parser<'a> {
         let mut children = vec![];
         if let Token::Keyword(Keyword::When, _) = self.lexer.current()? {
         } else {
-            children.push(self.parse_expr()?);
+            children.push(self.parse_expr(false)?);
         }
         let mut conditions = vec![];
         while optional_match_token!(self.lexer => When) {
-            conditions.push(self.parse_expr()?);
+            conditions.push(self.parse_expr(false)?);
             match_token!(self.lexer => Then);
-            conditions.push(self.parse_expr()?);
+            conditions.push(self.parse_expr(false)?);
         }
         if conditions.is_empty() {
             return Err(self.lexer.format_error("Invalid input"));
         }
         children.push(tree!(ExprIR::List ; conditions));
         if optional_match_token!(self.lexer => Else) {
-            children.push(self.parse_expr()?);
+            children.push(self.parse_expr(false)?);
         } else {
             children.push(tree!(ExprIR::Null));
         }
@@ -1693,9 +1693,9 @@ impl<'a> Parser<'a> {
         match_token!(self.lexer, LParen);
         let var = self.parse_ident()?;
         match_token!(self.lexer => In);
-        let expr = self.parse_expr()?;
+        let expr = self.parse_expr(false)?;
         match_token!(self.lexer => Where);
-        let condition = self.parse_expr()?;
+        let condition = self.parse_expr(false)?;
         match_token!(self.lexer, RParen);
         Ok(tree!(
             ExprIR::Quantifier(quantifier_type, var),
@@ -1705,7 +1705,10 @@ impl<'a> Parser<'a> {
     }
 
     #[allow(clippy::too_many_lines)]
-    fn parse_primary_expr(&mut self) -> Result<(DynTree<ExprIR<Arc<String>>>, bool), String> {
+    fn parse_primary_expr(
+        &mut self,
+        allow_pattern_predicate: bool,
+    ) -> Result<(DynTree<ExprIR<Arc<String>>>, bool), String> {
         match self.lexer.current()? {
             Token::Ident(_) => {
                 let pos = self.lexer.pos;
@@ -1822,7 +1825,18 @@ impl<'a> Parser<'a> {
             }
             Token::LBracket => Ok((self.parse_map()?, false)),
             Token::LParen => {
-                self.lexer.next();
+                let checkpoint = self.lexer.pos;
+                // Try to detect pattern predicate: (ident)--(...) or (ident)<--(...)
+                if allow_pattern_predicate
+                    && let Ok(pattern) = self.parse_pattern(&Keyword::Match)
+                    && !pattern.relationships().is_empty()
+                {
+                    return Ok((tree!(ExprIR::Pattern(pattern)), false));
+                }
+
+                // Not a pattern predicate - restore and parse normally
+                self.lexer.set_pos(checkpoint);
+                self.lexer.next(); // re-consume LParen
                 let expr = tree!(ExprIR::Paren);
                 Ok((expr, true))
             }
@@ -1835,9 +1849,9 @@ impl<'a> Parser<'a> {
         &mut self,
         mut lhs: DynTree<ExprIR<Arc<String>>>,
     ) -> Result<DynTree<ExprIR<Arc<String>>>, String> {
-        let from = self.parse_expr();
+        let from = self.parse_expr(false);
         if optional_match_token!(self.lexer, DotDot) {
-            let to = self.parse_expr();
+            let to = self.parse_expr(false);
             match_token!(self.lexer, RBrace);
             lhs = tree!(
                 ExprIR::GetElements,
@@ -1863,7 +1877,10 @@ impl<'a> Parser<'a> {
 
     #[allow(clippy::too_many_lines)]
     #[allow(clippy::cognitive_complexity)]
-    fn parse_expr(&mut self) -> Result<DynTree<ExprIR<Arc<String>>>, String> {
+    fn parse_expr(
+        &mut self,
+        allow_pattern_predicate: bool,
+    ) -> Result<DynTree<ExprIR<Arc<String>>>, String> {
         let mut stack = vec![(0, None::<DynTree<ExprIR<Arc<String>>>>)];
         while let Some((current, res)) = stack.pop() {
             let Some(res) = res else {
@@ -1903,7 +1920,7 @@ impl<'a> Parser<'a> {
                     stack.push((current + 1, None));
                 } else {
                     // primary expression
-                    let (res, recurse) = self.parse_primary_expr()?;
+                    let (res, recurse) = self.parse_primary_expr(allow_pattern_predicate)?;
                     if recurse {
                         stack.push((current, Some(res)));
                         stack.push((0, None));
@@ -2175,7 +2192,7 @@ impl<'a> Parser<'a> {
         let mut named_exprs = Vec::new();
         loop {
             let pos = self.lexer.pos(false);
-            let expr = Arc::new(self.parse_expr()?);
+            let expr = Arc::new(self.parse_expr(false)?);
             if let Token::Keyword(Keyword::As, _) = self.lexer.current()? {
                 self.lexer.next();
                 let ident = self.parse_ident()?;
@@ -2201,7 +2218,7 @@ impl<'a> Parser<'a> {
     ) -> Result<Vec<DynTree<ExprIR<Arc<String>>>>, String> {
         let mut exprs = Vec::new();
         while !expression_list_type.is_end_token(&self.lexer.current()?) {
-            exprs.push(self.parse_expr()?);
+            exprs.push(self.parse_expr(false)?);
             match self.lexer.current()? {
                 Token::Comma => self.lexer.next(),
                 _ => break,
@@ -2241,16 +2258,16 @@ impl<'a> Parser<'a> {
         var: Arc<String>,
     ) -> Result<DynTree<ExprIR<Arc<String>>>, String> {
         // var and 'IN' already parsed
-        let list_expr = self.parse_expr()?;
+        let list_expr = self.parse_expr(false)?;
 
         let condition = if optional_match_token!(self.lexer => Where) {
-            Some(self.parse_expr()?)
+            Some(self.parse_expr(false)?)
         } else {
             None
         };
 
         let expression = if optional_match_token!(self.lexer, Pipe) {
-            Some(self.parse_expr()?)
+            Some(self.parse_expr(false)?)
         } else {
             None
         };
@@ -2302,7 +2319,7 @@ impl<'a> Parser<'a> {
         let is_incoming = optional_match_token!(self.lexer, LessThan);
         match_token!(self.lexer, Dash);
         let has_details = optional_match_token!(self.lexer, LBrace);
-        let (alias, types, attrs) = if has_details {
+        let (alias, types, attrs, var_len) = if has_details {
             let alias = if let Ok(id) = self.parse_ident() {
                 id
             } else {
@@ -2322,7 +2339,7 @@ impl<'a> Parser<'a> {
                     break;
                 }
             }
-            let _ = if optional_match_token!(self.lexer, Star) {
+            let var_len = if optional_match_token!(self.lexer, Star) {
                 let start = if let Token::Integer(i) = self.lexer.current()? {
                     self.lexer.next();
                     Some(i)
@@ -2336,9 +2353,14 @@ impl<'a> Parser<'a> {
                     } else {
                         None
                     };
-                    Some((start, end))
+                    // [*a..b] → min=a (default 1), max=b (default None=infinity)
+                    Some((start.unwrap_or(1) as u32, end.map(|e| e as u32)))
+                } else if let Some(exact) = start {
+                    // [*N] → exact N hops
+                    Some((exact as u32, Some(exact as u32)))
                 } else {
-                    Some((start, None))
+                    // [*] → 1..infinity
+                    Some((1, None))
                 }
             } else {
                 None
@@ -2354,15 +2376,19 @@ impl<'a> Parser<'a> {
                 tree!(ExprIR::Map)
             };
             match_token!(self.lexer, RBrace);
-            (alias, types.into_iter().collect(), attrs)
+            (alias, types.into_iter().collect(), attrs, var_len)
         } else {
             let name = Arc::new(format!("_anon_{}", self.anon_counter));
             self.anon_counter += 1;
-            (name, vec![], tree!(ExprIR::Map))
+            (name, vec![], tree!(ExprIR::Map), None)
         };
         match_token!(self.lexer, Dash);
         let is_outgoing = optional_match_token!(self.lexer, GreaterThan);
         let dst = self.parse_node_pattern()?;
+        let (min_hops, max_hops) = match var_len {
+            Some((min, max)) => (Some(min), max),
+            None => (None, None),
+        };
         let relationship = match (is_incoming, is_outgoing) {
             (true, true) | (false, false) => {
                 if *clause == Keyword::Create {
@@ -2370,14 +2396,37 @@ impl<'a> Parser<'a> {
                         .lexer
                         .format_error("Only directed relationships are supported in CREATE"));
                 }
-                QueryRelationship::new(alias, types, Arc::new(attrs), src, dst.clone(), true)
+                QueryRelationship::new(
+                    alias,
+                    types,
+                    Arc::new(attrs),
+                    src,
+                    dst.clone(),
+                    true,
+                    min_hops,
+                    max_hops,
+                )
             }
-            (true, false) => {
-                QueryRelationship::new(alias, types, Arc::new(attrs), dst.clone(), src, false)
-            }
-            (false, true) => {
-                QueryRelationship::new(alias, types, Arc::new(attrs), src, dst.clone(), false)
-            }
+            (true, false) => QueryRelationship::new(
+                alias,
+                types,
+                Arc::new(attrs),
+                dst.clone(),
+                src,
+                false,
+                min_hops,
+                max_hops,
+            ),
+            (false, true) => QueryRelationship::new(
+                alias,
+                types,
+                Arc::new(attrs),
+                src,
+                dst.clone(),
+                false,
+                min_hops,
+                max_hops,
+            ),
         };
         Ok((Arc::new(relationship), dst))
     }
@@ -2407,7 +2456,7 @@ impl<'a> Parser<'a> {
         loop {
             let key = self.parse_ident()?;
             match_token!(self.lexer, Colon);
-            let value = self.parse_expr()?;
+            let value = self.parse_expr(false)?;
             attrs.push(tree!(ExprIR::String(key), value));
 
             match self.lexer.current()? {
@@ -2450,7 +2499,7 @@ impl<'a> Parser<'a> {
                 // key: expr  or  variable shorthand
                 let ident = self.parse_ident()?;
                 if optional_match_token!(self.lexer, Colon) {
-                    let value = self.parse_expr()?;
+                    let value = self.parse_expr(false)?;
                     items.push(tree!(ExprIR::String(ident), value));
                 } else {
                     // variable shorthand: name -> name: name
@@ -2485,7 +2534,7 @@ impl<'a> Parser<'a> {
         match_token!(self.lexer => By);
         let mut orderby = vec![];
         loop {
-            let expr = Arc::new(self.parse_expr()?);
+            let expr = Arc::new(self.parse_expr(false)?);
             let is_ascending = optional_match_token!(self.lexer => Asc)
                 || optional_match_token!(self.lexer => Ascending);
             let is_descending = !is_ascending
@@ -2510,9 +2559,9 @@ impl<'a> Parser<'a> {
         set_items: &mut Vec<SetItem<Arc<String>, Arc<String>>>,
     ) -> Result<(), String> {
         loop {
-            let (mut expr, recurse) = self.parse_primary_expr()?;
+            let (mut expr, recurse) = self.parse_primary_expr(false)?;
             if recurse {
-                expr = self.parse_expr()?;
+                expr = self.parse_expr(false)?;
                 match_token!(self.lexer, RParen);
             }
             if self.lexer.current()? == Token::Dot {
@@ -2521,7 +2570,7 @@ impl<'a> Parser<'a> {
                     expr = self.parse_property_lookup(expr)?;
                 }
                 match_token!(self.lexer, Equal);
-                let value = Arc::new(self.parse_expr()?);
+                let value = Arc::new(self.parse_expr(false)?);
                 set_items.push(SetItem::Attribute(Arc::new(expr), value, false));
             } else if self.lexer.current()? == Token::Colon {
                 let ExprIR::Variable(id) = expr.root().data() else {
@@ -2538,7 +2587,7 @@ impl<'a> Parser<'a> {
                     match_token!(self.lexer, PlusEqual);
                     true
                 };
-                let value = Arc::new(self.parse_expr()?);
+                let value = Arc::new(self.parse_expr(false)?);
                 set_items.push(SetItem::Attribute(Arc::new(expr), value, !plus_equals));
             }
 
@@ -2551,9 +2600,9 @@ impl<'a> Parser<'a> {
     fn parse_remove_clause(&mut self) -> Result<QueryIR<Arc<String>>, String> {
         let mut remove_items = vec![];
         loop {
-            let (mut expr, recurse) = self.parse_primary_expr()?;
+            let (mut expr, recurse) = self.parse_primary_expr(false)?;
             if recurse {
-                expr = self.parse_expr()?;
+                expr = self.parse_expr(false)?;
                 match_token!(self.lexer, RParen);
             }
             if self.lexer.current()? == Token::Dot {
