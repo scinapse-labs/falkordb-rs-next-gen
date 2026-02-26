@@ -128,7 +128,6 @@ pub struct IndexResultsIter<T, F: FnMut(*mut RSResultsIterator, u64) -> T> {
     iter: *mut RSResultsIterator,
     rs_idx: *mut RSIndex,
     map: F,
-    _marker: std::marker::PhantomData<T>,
 }
 
 impl<T, F: FnMut(*mut RSResultsIterator, u64) -> T> IndexResultsIter<T, F> {
@@ -137,12 +136,7 @@ impl<T, F: FnMut(*mut RSResultsIterator, u64) -> T> IndexResultsIter<T, F> {
         rs_idx: *mut RSIndex,
         map: F,
     ) -> Self {
-        Self {
-            iter,
-            rs_idx,
-            map,
-            _marker: std::marker::PhantomData,
-        }
+        Self { iter, rs_idx, map }
     }
 }
 
@@ -153,7 +147,6 @@ impl IndexResultsIter<u64, fn(*mut RSResultsIterator, u64) -> u64> {
             iter: null_mut(),
             rs_idx: null_mut(),
             map: |_, id| id,
-            _marker: std::marker::PhantomData,
         }
     }
 }
@@ -165,7 +158,6 @@ impl IndexResultsIter<(u64, f64), fn(*mut RSResultsIterator, u64) -> (u64, f64)>
             iter: null_mut(),
             rs_idx: null_mut(),
             map: |_, id| (id, 0.0),
-            _marker: std::marker::PhantomData,
         }
     }
 }
