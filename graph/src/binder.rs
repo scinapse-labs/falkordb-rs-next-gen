@@ -126,11 +126,11 @@ impl Binder {
                 // Each UNION branch is an independent sub-query with its own
                 // variable scope, so each branch is bound with a fresh Binder.
                 let mut bound_branches = Vec::with_capacity(branches.len());
-                let mut first_columns: Option<Vec<Arc<String>>> = None;
+                let mut first_columns: Option<Vec<String>> = None;
                 for branch in branches {
                     let binder = Self::default();
                     let (bound, _) = binder.bind(branch)?;
-                    let columns = Self::extract_return_columns(&bound);
+                    let columns = bound.return_column_names();
                     if let Some(ref expected) = first_columns {
                         if columns != *expected {
                             return Err(String::from(
@@ -1118,27 +1118,5 @@ impl Binder {
             | ExprIR::Property(_)
             | ExprIR::Pattern(_) => true,
         }
-    }
-
-    /// Extracts the RETURN column names from a bound query IR.
-    ///
-    /// Walks into `QueryIR::Query` to find the `QueryIR::Return` clause
-    /// and collects the alias names in order.  Returns an empty vec if
-    /// there is no RETURN clause (e.g. a write-only sub-query).
-    ///
-    /// Used by UNION binding to verify that all branches project the same
-    /// column names.
-    fn extract_return_columns(ir: &BoundQueryIR) -> Vec<Arc<String>> {
-        if let QueryIR::Query(clauses, _) = ir {
-            for clause in clauses.iter().rev() {
-                if let QueryIR::Return { exprs, .. } = clause {
-                    return exprs
-                        .iter()
-                        .filter_map(|(var, _)| var.name.clone())
-                        .collect();
-                }
-            }
-        }
-        Vec::new()
     }
 }

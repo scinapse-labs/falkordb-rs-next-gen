@@ -971,7 +971,7 @@ impl<TVar: Eq + Hash + Display> QueryIR<TVar> {
                 let mut first_columns: Option<Vec<String>> = None;
                 for branch in branches {
                     branch.validate()?;
-                    let columns = Self::return_column_names(branch);
+                    let columns = branch.return_column_names();
                     if let Some(ref expected) = first_columns {
                         if columns != *expected {
                             return Err(String::from(
@@ -1028,8 +1028,8 @@ impl<TVar: Eq + Hash + Display> QueryIR<TVar> {
 
     /// Extracts RETURN (or CALL/YIELD) column names from a UNION branch
     /// for cross-branch validation.
-    fn return_column_names(branch: &Self) -> Vec<String> {
-        if let Self::Query(clauses, _) = branch {
+    pub fn return_column_names(&self) -> Vec<String> {
+        if let Self::Query(clauses, _) = self {
             for clause in clauses.iter().rev() {
                 match clause {
                     Self::Return { exprs, .. } => {
