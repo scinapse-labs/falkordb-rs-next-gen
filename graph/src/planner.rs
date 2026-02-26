@@ -306,7 +306,7 @@ impl Planner {
     /// evaluates to true are passed through.
     fn expr_to_plan(
         &mut self,
-        node: orx_tree::Node<orx_tree::Dyn<ExprIR<Variable>>>,
+        node: DynNode<ExprIR<Variable>>,
         inline_map: &HashMap<u32, QueryGraph<Arc<String>, Arc<String>, Variable>>,
         input: DynTree<IR>,
     ) -> DynTree<IR> {
