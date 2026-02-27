@@ -221,7 +221,12 @@ impl ThreadedGraph {
             .into_iter()
             .map(|(k, v)| Ok((k, evaluate_param(&v.root())?)))
             .collect::<Result<HashMap<_, _>, String>>()?;
-        let is_write = plan.iter().any(|n| matches!(n, IR::Commit));
+        let is_write = plan.iter().any(|n| {
+            matches!(
+                n,
+                IR::Commit | IR::CreateIndex { .. } | IR::DropIndex { .. }
+            )
+        });
         let g = if is_write {
             if !write {
                 return Err(String::from(
@@ -274,7 +279,10 @@ impl ThreadedGraph {
             .into_iter()
             .map(|(k, v)| Ok((k, evaluate_param(&v.root())?)))
             .collect::<Result<HashMap<_, _>, String>>()?;
-        debug_assert!(plan.iter().any(|n| matches!(n, IR::Commit)));
+        debug_assert!(plan.iter().any(|n| matches!(
+            n,
+            IR::Commit | IR::CreateIndex { .. } | IR::DropIndex { .. }
+        )));
         let g = self.graph.write().unwrap();
         let mut runtime = Runtime::new(
             g.clone(),

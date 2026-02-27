@@ -41,6 +41,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+use atomic_refcell::AtomicRefCell;
 use fjall::Database;
 use itertools::Itertools;
 use lru::LruCache;
@@ -60,7 +61,7 @@ use crate::{
             Size,
         },
         tensor::Tensor,
-        versioned_matrix::{self, VersionedMatrix},
+        versioned_matrix::VersionedMatrix,
     },
     index::Field,
     indexer::{Document, IndexInfo, IndexOptions, IndexQuery, IndexType, Indexer},
@@ -229,35 +230,30 @@ unsafe impl Sync for Graph {}
 
 /// Populates an index in the background for existing nodes.
 ///
-/// Iterates over a snapshot of the label matrix in batches, creating
-/// documents and committing them to the index. Each batch is processed
-/// as a separate thread pool job, yielding the worker between batches
-/// so write queries can execute between batches.
+/// Each batch borrows the latest committed graph (via the Indexer's shared
+/// graph reference) to get a fresh label matrix and attribute store,
+/// ensuring nodes added by write transactions between batches are visible.
 ///
 /// The Indexer's serialization lock serializes each batch with write-path
 /// `commit_index` calls, so they never run concurrently.  Within a
 /// batch the lock is held, preventing writes from committing index
 /// changes.  Between batches the lock is released, allowing writes
-/// to proceed.  Each batch refreshes the attribute store snapshot so
-/// it always sees prior write-path changes without dirty-node tracking.
+/// to proceed.
 fn populate_index(
     label: Arc<String>,
-    lm: versioned_matrix::Iter,
     node_indexer: Indexer,
-    node_attrs: AttributeStore,
 ) {
     let attrs = node_indexer.get_fields(label.clone());
-    populate_index_batch(label, lm, node_indexer, node_attrs, attrs, 0);
+    populate_index_batch(label, node_indexer, attrs, 0, 0);
 }
 
 /// Processes one batch of index population and spawns the next batch.
 fn populate_index_batch(
     label: Arc<String>,
-    mut lm: versioned_matrix::Iter,
     mut node_indexer: Indexer,
-    mut node_attrs: AttributeStore,
     attrs: HashMap<Arc<String>, Vec<Arc<Field>>>,
     mut progress: u64,
+    min_row: u64,
 ) {
     spawn(
         move || {
@@ -269,6 +265,7 @@ fn populate_index_batch(
             }
 
             let exhausted;
+            let mut next_min_row = min_row;
 
             // Hold the Indexer's serialization lock for the entire batch so
             // that write-path `commit_index` calls wait until this batch
@@ -277,31 +274,45 @@ fn populate_index_batch(
                 let lock = node_indexer.write_lock();
                 let _guard = lock.lock().unwrap();
 
-                // Refresh the snapshot so attribute reads reflect all
-                // writes that committed between the previous batch and now.
-                node_attrs.commit();
-
+                let graph = node_indexer.get_graph();
                 let mut batch = Vec::with_capacity(BATCH_SIZE);
 
-                while batch.len() < BATCH_SIZE {
-                    match lm.next() {
-                        Some((n, _)) => {
-                            let mut doc = Document::new(n);
-                            let mut has_fields = false;
-                            for (attr, fields) in &attrs {
-                                if let Some(value) = node_attrs.get_attr(n, attr) {
-                                    for field in fields {
-                                        doc.set(field.clone(), value.clone());
+                if let Some(graph) = graph {
+                    let g = graph.borrow();
+                    if let Some(lm) = g.get_label_matrix(&label) {
+                        let mut iter = lm.to_matrix().iter(min_row, u64::MAX);
+                        while batch.len() < BATCH_SIZE {
+                            match iter.next() {
+                                Some((n, _)) => {
+                                    next_min_row = n + 1;
+                                    let mut doc = Document::new(n);
+                                    let mut has_fields = false;
+                                    for (attr, fields) in &attrs {
+                                        if let Some(value) = g.node_attrs().get_attr(n, attr) {
+                                            for field in fields {
+                                                doc.set(field.clone(), value.clone());
+                                            }
+                                            has_fields = true;
+                                        }
                                     }
-                                    has_fields = true;
+                                    if has_fields {
+                                        batch.push(doc);
+                                    }
                                 }
-                            }
-                            if has_fields {
-                                batch.push(doc);
+                                None => break,
                             }
                         }
-                        None => break,
                     }
+                    drop(g);
+                } else {
+                    // Graph not yet committed — reschedule this batch.
+                    // MvccGraph::commit() will set the indexer's graph
+                    // reference, so the next attempt will find it.
+                    drop(_guard);
+                    drop(lock);
+                    std::thread::sleep(Duration::from_millis(1));
+                    populate_index_batch(label, node_indexer, attrs, progress, min_row);
+                    return;
                 }
 
                 exhausted = batch.len() < BATCH_SIZE;
@@ -319,7 +330,7 @@ fn populate_index_batch(
             if exhausted {
                 node_indexer.enable(label);
             } else {
-                populate_index_batch(label, lm, node_indexer, node_attrs, attrs, progress);
+                populate_index_batch(label, node_indexer, attrs, progress, next_min_row);
             }
         },
         Some(0),
@@ -557,7 +568,7 @@ impl Graph {
         }
     }
 
-    fn get_label_matrix(
+    pub fn get_label_matrix(
         &self,
         label: &str,
     ) -> Option<&VersionedMatrix> {
@@ -1190,13 +1201,7 @@ impl Graph {
         &self,
         label: &Arc<String>,
     ) {
-        let lm = self.get_label_matrix(label).unwrap();
-        populate_index(
-            label.clone(),
-            lm.iter(0, u64::MAX),
-            self.node_indexer.clone(),
-            self.node_attrs.clone(),
-        );
+        populate_index(label.clone(), self.node_indexer.clone());
     }
 
     pub fn commit_attrs(&mut self) {
@@ -1299,6 +1304,18 @@ impl Graph {
 
     pub fn cancel_indexing(&self) {
         self.node_indexer.cancel();
+    }
+
+    pub fn set_indexer_graph(
+        &self,
+        graph: Arc<AtomicRefCell<Graph>>,
+    ) {
+        self.node_indexer.set_graph(graph);
+    }
+
+    #[must_use]
+    pub fn node_attrs(&self) -> &AttributeStore {
+        &self.node_attrs
     }
 
     #[must_use]

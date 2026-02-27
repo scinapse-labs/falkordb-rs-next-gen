@@ -40,13 +40,14 @@ use std::{
     },
 };
 
+use atomic_refcell::AtomicRefCell;
 use roaring::RoaringTreemap;
 
 pub use crate::index::{
     Document, Field, IdIter, IndexInfo, IndexQuery, IndexResultsIter, IndexType, ScoredIdIter,
     TextIndexOptions,
 };
-use crate::{index::Index, runtime::value::Value};
+use crate::{graph::graph::Graph, index::Index, runtime::value::Value};
 
 pub enum IndexOptions {
     Text(TextIndexOptions),
@@ -93,6 +94,9 @@ pub struct Indexer {
     /// `commit_index` calls so they never run concurrently.
     write_lock: Arc<Mutex<()>>,
     cancelled: Arc<AtomicBool>,
+    /// Latest committed graph, shared with background index population.
+    /// Updated by `MvccGraph::commit()` so background batches see fresh data.
+    graph: Arc<Mutex<Option<Arc<AtomicRefCell<Graph>>>>>,
 }
 
 unsafe impl Send for Indexer {}
@@ -463,5 +467,17 @@ impl Indexer {
             index.recreate_index(label)?;
         }
         Ok(())
+    }
+
+    pub fn set_graph(
+        &self,
+        graph: Arc<AtomicRefCell<Graph>>,
+    ) {
+        *self.graph.lock().unwrap() = Some(graph);
+    }
+
+    #[must_use]
+    pub fn get_graph(&self) -> Option<Arc<AtomicRefCell<Graph>>> {
+        self.graph.lock().unwrap().clone()
     }
 }
