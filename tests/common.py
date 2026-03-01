@@ -15,7 +15,7 @@ shutdown = False
 def start_redis(release=None):
     global redis_server, client, g, shutdown
     port = os.environ.get("PORT", "6379")
-    if release is not None:
+    if release is None:
         release = True if os.environ.get("RELEASE", "").lower() == "1" else False
     default_target = "target/debug/libfalkordb.so"
     if platform.system() == "Darwin":
