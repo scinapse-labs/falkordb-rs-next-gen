@@ -42,13 +42,14 @@ use crate::{
     indexer::IndexQuery,
     planner::IR,
     runtime::{
+        env::Env,
         functions::{FnType, apply_pow},
         iter::{Aggregate, CondInspectIter, LazyReplace, TryFlatMap, TryMap},
         ordermap::OrderMap,
         orderset::OrderSet,
         pending::Pending,
         value::{
-            CompareValue, Contains, DeletedNode, DeletedRelationship, DisjointOrNull, Env, Value,
+            CompareValue, Contains, DeletedNode, DeletedRelationship, DisjointOrNull, Value,
             ValuesDeduper,
         },
     },
