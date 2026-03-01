@@ -272,7 +272,7 @@ fn populate_index_batch(
             // finishes.  This guarantees no concurrent index mutations.
             {
                 let lock = node_indexer.write_lock();
-                let _guard = lock.lock().unwrap();
+                let guard = lock.lock().unwrap();
 
                 let graph = node_indexer.get_graph();
                 let mut batch = Vec::with_capacity(BATCH_SIZE);
@@ -280,7 +280,7 @@ fn populate_index_batch(
                 if let Some(graph) = graph {
                     let g = graph.borrow();
                     if let Some(lm) = g.get_label_matrix(&label) {
-                        let mut iter = lm.to_matrix().iter(min_row, u64::MAX);
+                        let mut iter = lm.iter(min_row, u64::MAX);
                         while batch.len() < BATCH_SIZE {
                             match iter.next() {
                                 Some((n, _)) => {
@@ -288,7 +288,7 @@ fn populate_index_batch(
                                     let mut doc = Document::new(n);
                                     let mut has_fields = false;
                                     for (attr, fields) in &attrs {
-                                        if let Some(value) = g.node_attrs().get_attr(n, attr) {
+                                        if let Some(value) = g.get_node_attribute(NodeId(n), attr) {
                                             for field in fields {
                                                 doc.set(field.clone(), value.clone());
                                             }
@@ -308,7 +308,7 @@ fn populate_index_batch(
                     // Graph not yet committed — reschedule this batch.
                     // MvccGraph::commit() will set the indexer's graph
                     // reference, so the next attempt will find it.
-                    drop(_guard);
+                    drop(guard);
                     drop(lock);
                     std::thread::sleep(Duration::from_millis(1));
                     populate_index_batch(label, node_indexer, attrs, progress, min_row);
@@ -568,7 +568,7 @@ impl Graph {
         }
     }
 
-    pub fn get_label_matrix(
+    fn get_label_matrix(
         &self,
         label: &str,
     ) -> Option<&VersionedMatrix> {
@@ -1307,15 +1307,10 @@ impl Graph {
     }
 
     pub fn set_indexer_graph(
-        &self,
-        graph: Arc<AtomicRefCell<Graph>>,
+        &mut self,
+        graph: Arc<AtomicRefCell<Self>>,
     ) {
         self.node_indexer.set_graph(graph);
-    }
-
-    #[must_use]
-    pub fn node_attrs(&self) -> &AttributeStore {
-        &self.node_attrs
     }
 
     #[must_use]

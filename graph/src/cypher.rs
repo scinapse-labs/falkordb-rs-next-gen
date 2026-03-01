@@ -2544,6 +2544,7 @@ impl<'a> Parser<'a> {
         Ok(Arc::new(QueryNode::new(alias, labels, Arc::new(attrs))))
     }
 
+    #[allow(clippy::too_many_lines)]
     fn parse_relationship_pattern(
         &mut self,
         src: Arc<QueryNode<Arc<String>, Arc<String>>>,

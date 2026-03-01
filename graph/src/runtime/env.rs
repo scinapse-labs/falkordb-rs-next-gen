@@ -69,8 +69,14 @@ impl Env {
         })
     }
 
-    pub fn len(&self) -> usize {
+    #[must_use]
+    pub const fn len(&self) -> usize {
         self.values.len()
+    }
+
+    #[must_use]
+    pub const fn is_empty(&self) -> bool {
+        self.values.is_empty()
     }
 
     pub fn merge(

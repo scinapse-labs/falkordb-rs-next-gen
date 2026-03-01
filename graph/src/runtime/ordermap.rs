@@ -39,7 +39,7 @@ impl<K, V> Default for OrderMap<K, V> {
 
 impl<K: PartialEq, V> OrderMap<K, V> {
     #[must_use]
-    pub fn from_vec(vec: ThinVec<(K, V)>) -> Self {
+    pub fn from_vec<I: IntoIterator<Item = (K, V)>>(vec: I) -> Self {
         let mut res = Self { vec: thin_vec![] };
         for (k, v) in vec {
             res.insert(k, v);
@@ -163,7 +163,7 @@ impl<K: PartialEq, V: PartialEq> PartialEq for OrderMap<K, V> {
 
 impl<K: PartialEq, V: PartialEq> FromIterator<(K, V)> for OrderMap<K, V> {
     fn from_iter<T: IntoIterator<Item = (K, V)>>(iter: T) -> Self {
-        Self::from_vec(iter.into_iter().collect())
+        Self::from_vec(iter)
     }
 }
 

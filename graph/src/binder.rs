@@ -940,7 +940,7 @@ impl Binder {
             if !allow_reuse {
                 return Err(format!("Variable `{name}` already declared"));
             }
-            self.ensure_type(existing, &ty)?;
+            Self::ensure_type(existing, &ty)?;
             return Ok(existing.clone());
         }
 
@@ -1043,7 +1043,6 @@ impl Binder {
     }
 
     fn ensure_type(
-        &self,
         existing: &Variable,
         ty: &Type,
     ) -> Result<(), String> {

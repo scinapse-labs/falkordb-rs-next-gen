@@ -54,7 +54,8 @@ pub struct Field {
 }
 
 impl Field {
-    pub fn new(
+    #[must_use]
+    pub const fn new(
         name: CString,
         ty: IndexType,
         options: Option<TextIndexOptions>,
@@ -62,7 +63,8 @@ impl Field {
         Self { name, ty, options }
     }
 
-    pub fn options(&self) -> Option<&TextIndexOptions> {
+    #[must_use]
+    pub const fn options(&self) -> Option<&TextIndexOptions> {
         self.options.as_ref()
     }
 }
@@ -124,7 +126,7 @@ pub struct IndexResultsIter<T, F: FnMut(*mut RSResultsIterator, u64) -> T> {
 }
 
 impl<T, F: FnMut(*mut RSResultsIterator, u64) -> T> IndexResultsIter<T, F> {
-    fn new(
+    const fn new(
         iter: *mut RSResultsIterator,
         rs_idx: *mut RSIndex,
         map: F,
@@ -328,7 +330,7 @@ impl Index {
 
     /// Returns true if a RediSearch index has been created.
     #[must_use]
-    pub fn has_rs_index(&self) -> bool {
+    pub const fn has_rs_index(&self) -> bool {
         !self.rs_idx.is_null()
     }
 
@@ -363,7 +365,7 @@ impl Index {
             if let Some(lang) = language {
                 let c_lang = CString::new(lang.as_str()).map_err(|e| e.to_string())?;
                 if RediSearch_IndexOptionsSetLanguage(options, c_lang.as_ptr()) != 0 {
-                    return Err(format!("Language is not supported: {}", lang));
+                    return Err(format!("Language is not supported: {lang}"));
                 }
             } else {
                 RediSearch_IndexOptionsSetLanguage(options, null_mut());
@@ -655,7 +657,7 @@ impl Index {
 
     /// Get a reference to all fields.
     #[must_use]
-    pub fn fields(&self) -> &HashMap<Arc<String>, Vec<Arc<Field>>> {
+    pub const fn fields(&self) -> &HashMap<Arc<String>, Vec<Arc<Field>>> {
         &self.fields
     }
 
@@ -673,7 +675,7 @@ impl Index {
     }
 
     /// Set the index population progress.
-    pub fn set_progress(
+    pub const fn set_progress(
         &mut self,
         progress: u64,
         total: u64,
@@ -684,7 +686,7 @@ impl Index {
 
     /// Get the current progress values.
     #[must_use]
-    pub fn progress(&self) -> (u64, u64) {
+    pub const fn progress(&self) -> (u64, u64) {
         (self.progress, self.total)
     }
 
@@ -710,7 +712,7 @@ impl Index {
 
     /// Get a reference to the language setting, if any.
     #[must_use]
-    pub fn language(&self) -> Option<&Arc<String>> {
+    pub const fn language(&self) -> Option<&Arc<String>> {
         self.language.as_ref()
     }
 
@@ -726,7 +728,7 @@ impl Index {
 
     /// Get a reference to the stopwords list, if any.
     #[must_use]
-    pub fn stopwords(&self) -> Option<&Vec<Arc<String>>> {
+    pub const fn stopwords(&self) -> Option<&Vec<Arc<String>>> {
         self.stopwords.as_ref()
     }
 
@@ -743,14 +745,9 @@ impl Index {
     /// Get the number of indexed documents.
     #[must_use]
     pub fn index_count(&self) -> usize {
-        self.fields
-            .values()
-            .into_iter()
-            .map(|v| v.iter().count())
-            .sum()
+        self.fields.values().map(Vec::len).sum()
     }
 
-    #[must_use]
     pub fn recreate_index(
         &mut self,
         label: Arc<String>,

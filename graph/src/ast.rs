@@ -387,6 +387,7 @@ impl<T: Display, L: Display, TVar: Display> Display for QueryRelationship<T, L, 
 }
 
 impl<T, L, TVar> QueryRelationship<T, L, TVar> {
+    #[allow(clippy::too_many_arguments)]
     #[must_use]
     pub const fn new(
         alias: TVar,

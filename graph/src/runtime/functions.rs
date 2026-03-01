@@ -3327,17 +3327,14 @@ fn db_indexes(
                     map.insert(Arc::new(String::from("options")), Value::Null);
                     map.insert(
                         Arc::new(String::from("language")),
-                        match language {
-                            Some(lang) => Value::String(lang),
-                            None => Value::Null,
-                        },
+                        language.map_or_else(|| Value::Null, Value::String),
                     );
                     map.insert(
                         Arc::new(String::from("stopwords")),
-                        match stopwords {
-                            Some(sw) => Value::List(sw.into_iter().map(Value::String).collect()),
-                            None => Value::Null,
-                        },
+                        stopwords.map_or_else(
+                            || Value::Null,
+                            |sw| Value::List(sw.into_iter().map(Value::String).collect()),
+                        ),
                     );
                     map.insert(
                         Arc::new(String::from("entitytype")),

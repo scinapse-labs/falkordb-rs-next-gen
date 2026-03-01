@@ -13,6 +13,7 @@ impl BitSet {
         self.0[word] |= 1u64 << (bit % 64);
     }
 
+    #[must_use]
     pub fn test(
         &self,
         bit: usize,

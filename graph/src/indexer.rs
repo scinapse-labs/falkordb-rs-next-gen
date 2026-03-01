@@ -55,23 +55,26 @@ pub enum IndexOptions {
 
 impl IndexOptions {
     /// Extract language from the options (only applicable for Text index options).
-    pub fn language(&self) -> &Option<Arc<String>> {
+    #[must_use]
+    pub const fn language(&self) -> &Option<Arc<String>> {
         match self {
-            IndexOptions::Text(opts) => &opts.language,
+            Self::Text(opts) => &opts.language,
         }
     }
 
     /// Extract stopwords from the options (only applicable for Text index options).
-    pub fn stopwords(&self) -> &Option<Vec<Arc<String>>> {
+    #[must_use]
+    pub const fn stopwords(&self) -> &Option<Vec<Arc<String>>> {
         match self {
-            IndexOptions::Text(opts) => &opts.stopwords,
+            Self::Text(opts) => &opts.stopwords,
         }
     }
 
     /// Extract per-field text options (weight, nostem, phonetic).
+    #[must_use]
     pub fn field_options(&self) -> Option<TextIndexOptions> {
         match self {
-            IndexOptions::Text(opts) => {
+            Self::Text(opts) => {
                 if opts.weight.is_some() || opts.nostem.is_some() || opts.phonetic.is_some() {
                     Some(TextIndexOptions {
                         weight: opts.weight,
@@ -181,7 +184,7 @@ impl Indexer {
                 .clone()
                 .or_else(|| label_indexes.language().cloned());
             label_indexes.create_rs_index(
-                label.clone(),
+                label,
                 effective_stopwords.as_ref(),
                 effective_language.as_ref(),
             )?;
@@ -470,7 +473,7 @@ impl Indexer {
     }
 
     pub fn set_graph(
-        &self,
+        &mut self,
         graph: Arc<AtomicRefCell<Graph>>,
     ) {
         *self.graph.lock().unwrap() = Some(graph);
