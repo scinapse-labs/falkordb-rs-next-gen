@@ -2576,7 +2576,7 @@ fn random_uuid(
 // called from fn pow and expr pow (^)
 #[inline]
 #[must_use]
-pub(crate) fn apply_pow(
+pub fn apply_pow(
     base: Value,
     exponent: Value,
 ) -> Value {
