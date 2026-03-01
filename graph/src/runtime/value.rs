@@ -39,7 +39,6 @@ use std::{
 use thin_vec::{ThinVec, thin_vec};
 
 use crate::{
-    ast::Variable,
     graph::graph::{LabelId, NodeId, RelationshipId, TypeId},
     runtime::{functions::Type, ordermap::OrderMap},
 };
@@ -597,124 +596,6 @@ impl Hash for Value {
     }
 }
 
-#[derive(Default)]
-pub struct Env(Vec<Value>, u128);
-
-impl Env {
-    pub fn insert(
-        &mut self,
-        key: &Variable,
-        value: Value,
-    ) {
-        while self.0.len() <= key.id as _ {
-            self.0.push(Value::Null);
-        }
-        self.0[key.id as usize] = value;
-        if key.id < 128 {
-            self.1 |= 1u128 << key.id;
-        } else {
-            // todo!("Support variables with id >= 128 (currently max is 127 due to bitmask tracking)")
-        }
-    }
-
-    /// Returns true if the variable was explicitly inserted (even if set to Null).
-    /// Returns false for padding Null slots that were never explicitly set.
-    #[must_use]
-    pub const fn is_bound(
-        &self,
-        key: &Variable,
-    ) -> bool {
-        if key.id < 128 {
-            self.1 & (1u128 << key.id) != 0
-        } else {
-            (key.id as usize) < self.0.len()
-        }
-    }
-
-    #[must_use]
-    pub fn get(
-        &self,
-        key: &Variable,
-    ) -> Option<&Value> {
-        self.0.get(key.id as usize)
-    }
-
-    /// Takes ownership of a value from the environment, replacing it with `Null`.
-    ///
-    /// This method is designed for aggregation optimizations where we need to transfer
-    /// ownership of large accumulated values (like lists with millions of items) without
-    /// cloning them. By replacing the environment entry with `Null`, we ensure the value
-    /// can be moved (not cloned) to the aggregation function.
-    ///
-    /// # Returns
-    /// - `Some(value)` if the key exists and contains a non-Null value
-    /// - `None` if the key doesn't exist or already contains `Null`
-    ///
-    /// # Usage
-    /// Prefer this over `get()` when:
-    /// - You need exclusive ownership of a value
-    /// - The value is expensive to clone (e.g., large collections)
-    /// - The environment slot won't be read again before being overwritten
-    pub fn take(
-        &mut self,
-        key: &Variable,
-    ) -> Option<Value> {
-        self.0.get_mut(key.id as usize).and_then(|value| {
-            match std::mem::replace(value, Value::Null) {
-                Value::Null => None,
-                v => Some(v),
-            }
-        })
-    }
-
-    pub fn len(&self) -> usize {
-        self.0.len()
-    }
-
-    pub fn merge(
-        &mut self,
-        other: Self,
-    ) {
-        while self.0.len() < other.0.len() {
-            self.0.push(Value::Null);
-        }
-        for (key, value) in other.0.into_iter().enumerate() {
-            if value == Value::Null {
-                continue;
-            }
-            self.0[key] = value;
-        }
-        self.1 |= other.1;
-    }
-}
-
-impl AsRef<Vec<Value>> for Env {
-    fn as_ref(&self) -> &Vec<Value> {
-        &self.0
-    }
-}
-
-impl Hash for Env {
-    fn hash<H: std::hash::Hasher>(
-        &self,
-        state: &mut H,
-    ) {
-        for (key, value) in self.0.iter().enumerate() {
-            if *value == Value::Null {
-                continue;
-            }
-            key.hash(state);
-            value.hash(state);
-        }
-    }
-}
-
-impl Clone for Env {
-    fn clone(&self) -> Self {
-        Self(self.0.clone(), self.1)
-    }
-}
-
 impl Add for Value {
     type Output = Result<Self, String>;
 
@@ -1042,7 +923,7 @@ impl ValueGetType for Value {
 }
 
 impl Value {
-    pub(crate) fn name(&self) -> String {
+    pub fn name(&self) -> String {
         match self {
             Self::Null => String::from("Null"),
             Self::Bool(_) => String::from("Boolean"),
