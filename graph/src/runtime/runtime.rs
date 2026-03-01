@@ -1040,6 +1040,25 @@ impl<'a> Runtime {
                         envs = next_envs;
                     }
 
+                    // Build path values for named paths in the pattern.
+                    for matched_env in &mut envs {
+                        for path in graph.paths() {
+                            let p = path
+                                .vars
+                                .iter()
+                                .map(|v| {
+                                    matched_env
+                                        .get(v)
+                                        .ok_or_else(|| {
+                                            format!("Variable {} not found", v.as_str())
+                                        })
+                                        .cloned()
+                                })
+                                .collect::<Result<_, String>>()?;
+                            matched_env.insert(&path.var, Value::Path(p));
+                        }
+                    }
+
                     // Evaluate WHERE + result expression per matched env.
                     for matched_env in &envs {
                         match self.run_expr(ir, where_idx, matched_env, agg_group_key)? {

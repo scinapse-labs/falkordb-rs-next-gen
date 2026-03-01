@@ -443,6 +443,7 @@ pub struct QueryGraph<T, L, TVar> {
     nodes: Vec<Arc<QueryNode<L, TVar>>>,
     relationships: Vec<Arc<QueryRelationship<T, L, TVar>>>,
     paths: Vec<Arc<QueryPath<TVar>>>,
+    path_var: Option<TVar>,
 }
 
 impl<T, L, TVar> Default for QueryGraph<T, L, TVar> {
@@ -451,6 +452,7 @@ impl<T, L, TVar> Default for QueryGraph<T, L, TVar> {
             nodes: Vec::default(),
             relationships: Vec::default(),
             paths: Vec::default(),
+            path_var: None,
         }
     }
 }
@@ -522,6 +524,7 @@ impl<T, L, TVar: Clone + Hash + Eq> QueryGraph<T, L, TVar> {
             .map(|n| n.alias.clone())
             .chain(self.relationships.iter().map(|r| r.alias.clone()))
             .chain(self.paths.iter().map(|p| p.var.clone()))
+            .chain(self.path_var.iter().cloned())
     }
 
     #[must_use]
@@ -537,6 +540,18 @@ impl<T, L, TVar: Clone + Hash + Eq> QueryGraph<T, L, TVar> {
     #[must_use]
     pub fn paths(&self) -> &[Arc<QueryPath<TVar>>] {
         &self.paths
+    }
+
+    pub fn set_path_var(
+        &mut self,
+        var: TVar,
+    ) {
+        self.path_var = Some(var);
+    }
+
+    #[must_use]
+    pub fn path_var(&self) -> Option<&TVar> {
+        self.path_var.as_ref()
     }
 }
 

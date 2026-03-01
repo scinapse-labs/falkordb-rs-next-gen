@@ -2396,8 +2396,8 @@ impl<'a> Parser<'a> {
             left = right;
         }
 
-        if let Some(_pv) = path_var {
-            // TODO: path variable support for pattern comprehension
+        if let Some(pv) = path_var {
+            graph.set_path_var(pv);
         }
 
         // Optional WHERE

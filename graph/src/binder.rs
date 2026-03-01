@@ -549,6 +549,23 @@ impl Binder {
             bound.add_relationship(rel);
         }
 
+        // Derive path from relationships for pattern comprehension path variables.
+        // The parser stores only the path variable name; we reconstruct the
+        // ordered element list [node0, rel0, node1, rel1, ...] from the
+        // bound relationships which preserve parsing order.
+        if let Some(pv) = graph.path_var() {
+            let alias = self.define_name_in_scope(pv.clone(), Type::Path, true)?;
+            let mut vars = Vec::new();
+            if let Some(first_rel) = bound.relationships().first() {
+                vars.push(first_rel.from.alias.clone());
+                for rel in bound.relationships() {
+                    vars.push(rel.alias.clone());
+                    vars.push(rel.to.alias.clone());
+                }
+            }
+            bound.add_path(Arc::new(QueryPath::new(alias, vars)));
+        }
+
         // Bind paths - path vars reference entities by name
         // For anonymous entities with multiple instances, we use alias_to_vars
         for raw_path in graph.paths() {
