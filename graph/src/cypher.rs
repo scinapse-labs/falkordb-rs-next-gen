@@ -181,8 +181,7 @@ impl std::fmt::Display for Token {
         f: &mut std::fmt::Formatter,
     ) -> std::fmt::Result {
         match self {
-            Self::Ident(s) => write!(f, "'{s}'"),
-            Self::Keyword(_, s) => write!(f, "'{s}'"),
+            Self::Ident(s) | Self::Keyword(_, s) => write!(f, "'{s}'"),
             Self::Parameter(s) => write!(f, "${s}"),
             Self::Integer(i) => write!(f, "{i}"),
             Self::Float(fl) => write!(f, "{fl}"),
