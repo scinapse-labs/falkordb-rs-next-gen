@@ -158,6 +158,9 @@ pub enum IR {
     ),
     /// Remove duplicate rows
     Distinct,
+    /// UNION of multiple sub-query branches.
+    /// Each child is a fully-planned branch.
+    Union,
     /// Commit write operations to graph
     Commit,
     /// CREATE INDEX operation
@@ -229,6 +232,7 @@ impl Display for IR {
             Self::Aggregate(_, _, _) => write!(f, "Aggregate"),
             Self::Project(_, _) => write!(f, "Project"),
             Self::Commit => write!(f, "Commit"),
+            Self::Union => write!(f, "Union"),
             Self::Distinct => write!(f, "Distinct"),
             Self::CreateIndex { label, attrs, .. } => {
                 write!(f, "Create Index | :{label}({attrs:?})")
@@ -249,6 +253,7 @@ impl Display for IR {
 /// - `scope_vars` holds the binder-assigned variables grouped by scope ID,
 ///   used to mint fresh variable IDs for synthetic variables introduced
 ///   during pattern-predicate decomposition without collisions.
+#[derive(Default)]
 pub struct Planner {
     /// Variable IDs that are already bound in the current execution stream.
     /// Used to decide between scanning (new variable) vs referencing (already bound).
@@ -1120,10 +1125,15 @@ impl Planner {
             }
             // Multi-clause query: plan each clause and stitch together.
             QueryIR::Query(q, write) => self.plan_query(q, write),
-            QueryIR::Union(_) => {
-                // UNION execution is not yet implemented.
-                // Currently, only column-name validation is performed (in the binder).
-                todo!("UNION execution not yet implemented")
+            QueryIR::Union(branches, all) => {
+                let mut res = tree!(IR::Union; branches.into_iter().map(|branch| {
+                    let mut planner = Self::default();
+                    planner.plan(branch)
+                }));
+                if !all {
+                    res = tree!(IR::Distinct, res);
+                }
+                res
             }
         }
     }

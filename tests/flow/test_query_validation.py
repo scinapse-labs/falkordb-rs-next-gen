@@ -549,151 +549,151 @@ class testQueryValidationFlow(FlowTestsBase):
             except redis.exceptions.ResponseError as e:
                 self.env.assertContains("All sub queries in a UNION must have the same column names", str(e))
 
-    #def test39_non_single_statement_query(self):
-    #    queries = [";",      # Error: could not parse query
-    #               " ;",     # Error: query with more than one statement is not supported.
-    #               " ",      # Error: query with more than one statement is not supported.
-    #               "cypher"] # Error: empty query.
-    #    for q in queries:
-    #        try:
-    #            self.graph.query(q)
-    #            assert(False)
-    #        except redis.exceptions.ResponseError as e:
-    #            pass
+    def test39_non_single_statement_query(self):
+        queries = [";",      # Error: could not parse query
+                   " ;",     # Error: query with more than one statement is not supported.
+                   " ",      # Error: query with more than one statement is not supported.
+                   "cypher"] # Error: empty query.
+        for q in queries:
+            try:
+                self.graph.query(q)
+                assert(False)
+            except redis.exceptions.ResponseError as e:
+                pass
         
-    #    queries = ["MATCH (n) RETURN n; MATCH"]
-    #    for q in queries:
-    #        try:
-    #            self.graph.query(q)
-    #            assert(False)
-    #        except redis.exceptions.ResponseError as e:
-    #            self.env.assertContains("query with more than one statement is not supported", str(e))
+        queries = ["MATCH (n) RETURN n; MATCH"]
+        for q in queries:
+            try:
+                self.graph.query(q)
+                assert(False)
+            except redis.exceptions.ResponseError as e:
+                self.env.assertContains("query with more than one statement is not supported", str(e))
 
-    #    queries = ["RETURN 1;",
-    #               "RETURN 1;;"]
-    #    for q in queries:
-    #        res = self.graph.query(q)
-    #        self.env.assertEqual(res.result_set, [[1]])
+        queries = ["RETURN 1;",
+                   "RETURN 1;;"]
+        for q in queries:
+            res = self.graph.query(q)
+            self.env.assertEqual(res.result_set, [[1]])
 
-    #def test40_compile_time_errors_in_star_projections(self):
-    #    # validate that parser errors are handled correctly
-    #    # in queries containing star projections
-    #    queries = ["MATCH (a)-[r:]->(b) RETURN *",
-    #               "MATCH (a)-[r:]->(b) WITH b RETURN *"]
-    #    for query in queries:
-    #        try:
-    #            self.graph.query(query)
-    #            self.env.assertTrue(False)
-    #        except redis.exceptions.ResponseError:
-    #            pass
+    def test40_compile_time_errors_in_star_projections(self):
+        # validate that parser errors are handled correctly
+        # in queries containing star projections
+        queries = ["MATCH (a)-[r:]->(b) RETURN *",
+                   "MATCH (a)-[r:]->(b) WITH b RETURN *"]
+        for query in queries:
+            try:
+                self.graph.query(query)
+                self.env.assertTrue(False)
+            except redis.exceptions.ResponseError:
+                pass
 
-    #    # check that AST validation errors are handled correctly
-    #    # in queries containing star projections
-    #    queries = ["WITH 1 RETURN *",
-    #               "RETURN *",
-    #               "CREATE () RETURN DISTINCT *",
-    #               "MATCH () WITH * RETURN z",
-    #               "MATCH () WITH * RETURN *",
-    #               "MATCH () WITH * WHERE n.v > 1 RETURN *"]
-    #    for query in queries:
-    #        try:
-    #            self.graph.query(query)
-    #            self.env.assertTrue(False)
-    #        except redis.exceptions.ResponseError:
-    #            pass
+        # check that AST validation errors are handled correctly
+        # in queries containing star projections
+        queries = ["WITH 1 RETURN *",
+                   "RETURN *",
+                   "CREATE () RETURN DISTINCT *",
+                   "MATCH () WITH * RETURN z",
+                   "MATCH () WITH * RETURN *",
+                   "MATCH () WITH * WHERE n.v > 1 RETURN *"]
+        for query in queries:
+            try:
+                self.graph.query(query)
+                self.env.assertTrue(False)
+            except redis.exceptions.ResponseError:
+                pass
 
-    ## Test returning multiple occurrence of an expression.
-    #def test41_return_duplicate_expression(self):
-    #    queries = ["""MATCH (a) RETURN max(a.val), max(a.val)""",
-    #            """MATCH (a) return max(a.val) as x, max(a.val) as x""",
-    #            """MATCH (a) RETURN a.val, a.val LIMIT 1""",
-    #            """MATCH (a) return a.val as x, a.val as x LIMIT 1""",
-    #            """WITH 1 AS a, 1 AS a RETURN a""",
-    #            """MATCH (n) WITH n, n RETURN n"""]
+    # Test returning multiple occurrence of an expression.
+    def test41_return_duplicate_expression(self):
+        queries = ["""MATCH (a) RETURN max(a.val), max(a.val)""",
+                """MATCH (a) return max(a.val) as x, max(a.val) as x""",
+                """MATCH (a) RETURN a.val, a.val LIMIT 1""",
+                """MATCH (a) return a.val as x, a.val as x LIMIT 1""",
+                """WITH 1 AS a, 1 AS a RETURN a""",
+                """MATCH (n) WITH n, n RETURN n"""]
 
-    #    for q in queries:
-    #        try:
-    #            self.graph.query(q)
-    #            assert(False)
-    #        except redis.exceptions.ResponseError as e:
-    #            self.env.assertContains("Multiple result columns with the same name are not supported", str(e))
+        for q in queries:
+            try:
+                self.graph.query(q)
+                assert(False)
+            except redis.exceptions.ResponseError as e:
+                self.env.assertContains("Multiple result columns with the same name are not supported", str(e))
 
-    ## Test fail with unknown function.
-    #def test42_unknown_function(self):
-    #    queries = ["""MATCH (a { v: x()}) RETURN a""",
-    #            """MERGE (a { v: x()}) RETURN a""",
-    #            """MERGE (a) ON CREATE SET a.v = x() RETURN a""",
-    #            """CREATE (a { v: x()}) RETURN a""",
-    #            """MATCH (n) RETURN shortestPath(n, n)""",
-    #            """MATCH p=()-[*1..5]->() RETURN shortestPath(p)""",
-    #            """RETURN ge(1, 2)"""]
+    # Test fail with unknown function.
+    def test42_unknown_function(self):
+        queries = ["""MATCH (a { v: x()}) RETURN a""",
+                """MERGE (a { v: x()}) RETURN a""",
+                """MERGE (a) ON CREATE SET a.v = x() RETURN a""",
+                """CREATE (a { v: x()}) RETURN a""",
+                """MATCH (n) RETURN shortestPath(n, n)""",
+                """MATCH p=()-[*1..5]->() RETURN shortestPath(p)""",
+                """RETURN ge(1, 2)"""]
 
-    #    for q in queries:
-    #        try:
-    #            self.graph.query(q)
-    #            assert(False)
-    #        except redis.exceptions.ResponseError as e:
-    #            self.env.assertContains("Unknown function", str(e))
+        for q in queries:
+            try:
+                self.graph.query(q)
+                assert(False)
+            except redis.exceptions.ResponseError as e:
+                self.env.assertContains("Unknown function", str(e))
     
-    ## Variable length edges are not allowed in CREATE or MERGE clauses.
-    #def test43_invalid_variable_length_edge_use(self):
-    #    queries = [
-    #        """CREATE (a:A)-[e:E1*]->(b:B)""",
-    #        """CREATE (a:A)-[e1:E1]->(b:B)-[e2:E2*]->(c:C)""",
-    #        """MERGE (a:A)-[e:E1*]->(b:B)""",
-    #        """MERGE (a:A)-[e1:E1]->(b:B)-[e2:E2*]->(c:C)""",
-    #    ]
-    #    for q in queries:
-    #        try:
-    #            self.graph.query(q)
-    #            self.env.assertTrue(False)
-    #        except redis.exceptions.ResponseError as e:
-    #            self.env.assertContains("Variable length relationships cannot be used in", str(e))
+    # Variable length edges are not allowed in CREATE or MERGE clauses.
+    def test43_invalid_variable_length_edge_use(self):
+        queries = [
+            """CREATE (a:A)-[e:E1*]->(b:B)""",
+            """CREATE (a:A)-[e1:E1]->(b:B)-[e2:E2*]->(c:C)""",
+            """MERGE (a:A)-[e:E1*]->(b:B)""",
+            """MERGE (a:A)-[e1:E1]->(b:B)-[e2:E2*]->(c:C)""",
+        ]
+        for q in queries:
+            try:
+                self.graph.query(q)
+                self.env.assertTrue(False)
+            except redis.exceptions.ResponseError as e:
+                self.env.assertContains("Variable length relationships cannot be used in", str(e))
 
-    #def test44_undefined_variables(self):
-    #    # invalid usage of undefined variables in a `WITH` clause
-    #    invalid_queries = [
-    #        "WITH a RETURN a",
-    #        "WITH a AS a RETURN a",
-    #        "WITH [a] AS a RETURN a",
-    #        "WITH [a[a[a]]] AS a RETURN a",
-    #        "WITH a AS b, b AS c, c AS a RETURN a",
-    #        "WITH {a:a} AS a RETURN a",
-    #        "WITH a RETURN 0",
-    #        "WITH 3 AS a, 4 AS b, a + b AS c RETURN c",
-    #        "WITH [x in a | x.prop1] AS a RETURN 1",
-    #        "WITH [(n)-[x:R]->(m) | a.prop1] AS a RETURN 1"
-    #    ]
-    #    for query in invalid_queries:
-    #        try:
-    #            self.graph.query(query)
-    #            self.env.assertTrue(False)
-    #        except redis.exceptions.ResponseError as e:
-    #            # Expecting an error.
-    #            self.env.assertContains("'a' not defined", str(e))
+    def test44_undefined_variables(self):
+        # invalid usage of undefined variables in a `WITH` clause
+        invalid_queries = [
+            "WITH a RETURN a",
+            "WITH a AS a RETURN a",
+            "WITH [a] AS a RETURN a",
+            "WITH [a[a[a]]] AS a RETURN a",
+            "WITH a AS b, b AS c, c AS a RETURN a",
+            "WITH {a:a} AS a RETURN a",
+            "WITH a RETURN 0",
+            "WITH 3 AS a, 4 AS b, a + b AS c RETURN c",
+            "WITH [x in a | x.prop1] AS a RETURN 1",
+            "WITH [(n)-[x:R]->(m) | a.prop1] AS a RETURN 1"
+        ]
+        for query in invalid_queries:
+            try:
+                self.graph.query(query)
+                self.env.assertTrue(False)
+            except redis.exceptions.ResponseError as e:
+                # Expecting an error.
+                self.env.assertContains("'a' not defined", str(e))
 
-    #    # invalid usage of undefined variables in a `RETURN` clause
-    #    invalid_queries = [
-    #        "RETURN a AS a",
-    #        "RETURN [a] AS a",
-    #        "RETURN [a[a[a]]] AS a",
-    #        "RETURN a AS b, b AS c, c AS a",
-    #        "RETURN {a:a} AS a",
-    #        "RETURN [x in a | x.prop1] AS a",
-    #        "RETURN [(n)-[x:R]->(m) | a.prop1] AS a"
-    #    ]
-    #    for query in invalid_queries:
-    #        try:
-    #            self.graph.query(query)
-    #            self.env.assertTrue(False)
-    #        except redis.exceptions.ResponseError as e:
-    #            # Expecting an error.
-    #            self.env.assertContains("'a' not defined", str(e))
+        # invalid usage of undefined variables in a `RETURN` clause
+        invalid_queries = [
+            "RETURN a AS a",
+            "RETURN [a] AS a",
+            "RETURN [a[a[a]]] AS a",
+            "RETURN a AS b, b AS c, c AS a",
+            "RETURN {a:a} AS a",
+            "RETURN [x in a | x.prop1] AS a",
+            "RETURN [(n)-[x:R]->(m) | a.prop1] AS a"
+        ]
+        for query in invalid_queries:
+            try:
+                self.graph.query(query)
+                self.env.assertTrue(False)
+            except redis.exceptions.ResponseError as e:
+                # Expecting an error.
+                self.env.assertContains("'a' not defined", str(e))
 
-    #def test45_union_scope(self):
-    #    # make sure OPTIONAL MATCH followed by a MATCH clause in a different
-    #    # UNION scope do not effect one another
-    #    # in case the scopes had been mixed we would encounted an error
+    def test45_union_scope(self):
+        # make sure OPTIONAL MATCH followed by a MATCH clause in a different
+        # UNION scope do not effect one another
+        # in case the scopes had been mixed we would encounted an error
 
-    #    q = "OPTIONAL MATCH (a) RETURN a UNION MATCH (a) RETURN a"
-    #    self.graph.query(q)
+        q = "OPTIONAL MATCH (a) RETURN a UNION MATCH (a) RETURN a"
+        self.graph.query(q)

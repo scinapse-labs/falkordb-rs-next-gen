@@ -177,6 +177,7 @@ impl<T: MemoryPolicy> GetVariables for DynNode<'_, IR, T> {
                 | IR::Remove(_)
                 | IR::Filter(_)
                 | IR::CartesianProduct
+                | IR::Union
                 | IR::Apply
                 | IR::SemiApply
                 | IR::AntiSemiApply
@@ -249,6 +250,7 @@ impl ReturnNames for DynNode<'_, IR> {
             IR::Sort(_) | IR::Skip(_) | IR::Limit(_) | IR::Distinct => {
                 self.child(0).get_return_names()
             }
+            IR::Union => self.child(0).get_return_names(),
             IR::Aggregate(names, _, _) => names.clone(),
             _ => vec![],
         }
@@ -914,6 +916,171 @@ impl<'a> Runtime {
 
                     res.push(Value::List(acc));
                 }
+                ExprIR::PatternComprehension(graph) => {
+                    let children: Vec<_> = node.children().map(|c| c.idx()).collect();
+                    let where_idx = children[0];
+                    let expr_idx = children[1];
+                    let mut results = ThinVec::new();
+
+                    // Iterate each relationship hop in the pattern.
+                    // For single-hop patterns (the common case), there's
+                    // exactly one relationship; multi-hop chains expand
+                    // intermediate envs through each hop.
+                    let mut envs = vec![env.clone()];
+                    for rel_pattern in graph.relationships() {
+                        let mut next_envs = Vec::new();
+                        for current_env in &envs {
+                            let from_id =
+                                current_env
+                                    .get(&rel_pattern.from.alias)
+                                    .and_then(|v| match v {
+                                        Value::Node(id) => Some(*id),
+                                        _ => None,
+                                    });
+                            let to_id =
+                                current_env
+                                    .get(&rel_pattern.to.alias)
+                                    .and_then(|v| match v {
+                                        Value::Node(id) => Some(*id),
+                                        _ => None,
+                                    });
+
+                            // Phase 1: collect matches while holding graph borrow.
+                            let matches: Vec<(NodeId, NodeId, RelationshipId)> = {
+                                let g = self.g.borrow();
+                                g.get_relationships(
+                                    &rel_pattern.types,
+                                    &rel_pattern.from.labels,
+                                    &rel_pattern.to.labels,
+                                )
+                                .filter(|(src, dst)| {
+                                    from_id.is_none_or(|fid| fid == *src)
+                                        && to_id.is_none_or(|tid| tid == *dst)
+                                })
+                                .flat_map(|(src, dst)| {
+                                    g.get_src_dest_relationships(src, dst, &rel_pattern.types)
+                                        .map(move |rid| (src, dst, rid))
+                                })
+                                .collect()
+                            };
+
+                            // Phase 2: build envs per match (graph borrow released).
+                            for (src, dst, rel_id) in matches {
+                                let mut local_env = current_env.clone();
+                                local_env.insert(
+                                    &rel_pattern.alias,
+                                    Value::Relationship(Box::new((rel_id, src, dst))),
+                                );
+                                local_env.insert(&rel_pattern.from.alias, Value::Node(src));
+                                local_env.insert(&rel_pattern.to.alias, Value::Node(dst));
+
+                                // Check inline property predicates on nodes and relationship.
+                                if !self.check_inline_node_attrs(
+                                    &rel_pattern.from.attrs,
+                                    src,
+                                    &local_env,
+                                    agg_group_key,
+                                )? || !self.check_inline_node_attrs(
+                                    &rel_pattern.to.attrs,
+                                    dst,
+                                    &local_env,
+                                    agg_group_key,
+                                )? || !self.check_inline_rel_attrs(
+                                    &rel_pattern.attrs,
+                                    rel_id,
+                                    &local_env,
+                                    agg_group_key,
+                                )? {
+                                    continue;
+                                }
+
+                                next_envs.push(local_env);
+                            }
+
+                            // Handle bidirectional: also check reverse direction.
+                            if rel_pattern.bidirectional {
+                                let rev_matches: Vec<(NodeId, NodeId, RelationshipId)> = {
+                                    let g = self.g.borrow();
+                                    g.get_relationships(
+                                        &rel_pattern.types,
+                                        &rel_pattern.to.labels,
+                                        &rel_pattern.from.labels,
+                                    )
+                                    .filter(|(src, dst)| {
+                                        // Reversed: to_id matches src, from_id matches dst
+                                        to_id.is_none_or(|tid| tid == *src)
+                                            && from_id.is_none_or(|fid| fid == *dst)
+                                    })
+                                    .flat_map(|(src, dst)| {
+                                        g.get_src_dest_relationships(src, dst, &rel_pattern.types)
+                                            .map(move |rid| (src, dst, rid))
+                                    })
+                                    .collect()
+                                };
+                                for (src, dst, rel_id) in rev_matches {
+                                    let mut local_env = current_env.clone();
+                                    local_env.insert(
+                                        &rel_pattern.alias,
+                                        Value::Relationship(Box::new((rel_id, src, dst))),
+                                    );
+                                    // Swap from/to for bidirectional reverse
+                                    local_env.insert(&rel_pattern.from.alias, Value::Node(dst));
+                                    local_env.insert(&rel_pattern.to.alias, Value::Node(src));
+
+                                    // Check inline property predicates (swapped nodes).
+                                    if !self.check_inline_node_attrs(
+                                        &rel_pattern.from.attrs,
+                                        dst,
+                                        &local_env,
+                                        agg_group_key,
+                                    )? || !self.check_inline_node_attrs(
+                                        &rel_pattern.to.attrs,
+                                        src,
+                                        &local_env,
+                                        agg_group_key,
+                                    )? || !self.check_inline_rel_attrs(
+                                        &rel_pattern.attrs,
+                                        rel_id,
+                                        &local_env,
+                                        agg_group_key,
+                                    )? {
+                                        continue;
+                                    }
+
+                                    next_envs.push(local_env);
+                                }
+                            }
+                        }
+                        envs = next_envs;
+                    }
+
+                    // Build path values for named paths in the pattern.
+                    for matched_env in &mut envs {
+                        for path in graph.paths() {
+                            let p = path
+                                .vars
+                                .iter()
+                                .map(|v| {
+                                    matched_env
+                                        .get(v)
+                                        .ok_or_else(|| format!("Variable {} not found", v.as_str()))
+                                        .cloned()
+                                })
+                                .collect::<Result<_, String>>()?;
+                            matched_env.insert(&path.var, Value::Path(p));
+                        }
+                    }
+
+                    // Evaluate WHERE + result expression per matched env.
+                    for matched_env in &envs {
+                        match self.run_expr(ir, where_idx, matched_env, agg_group_key)? {
+                            Value::Bool(true) => {}
+                            _ => continue,
+                        }
+                        results.push(self.run_expr(ir, expr_idx, matched_env, agg_group_key)?);
+                    }
+                    res.push(Value::List(results));
+                }
                 ExprIR::Paren => {
                     res.push(self.run_expr(ir, node.child(0).idx(), env, agg_group_key)?);
                 }
@@ -1073,6 +1240,9 @@ impl<'a> Runtime {
                 self.plan.node(idx).data()
             );
             unreachable!();
+        } else if matches!(self.plan.node(idx).data(), IR::Union) {
+            // Union handles all children in its match arm.
+            Box::new(empty())
         } else if let Some(child_idx) = child0_idx {
             self.run(child_idx)?
         } else {
@@ -1490,6 +1660,17 @@ impl<'a> Runtime {
                     self.record.borrow_mut().push((idx, res.clone()));
                 }))
             }
+            IR::Union => Ok(self
+                .plan
+                .node(idx)
+                .children()
+                .map(|c| self.run(c.idx()))
+                .collect::<Result<Vec<_>, String>>()?
+                .into_iter()
+                .flatten()
+                .cond_inspect(self.inspect, move |res| {
+                    self.record.borrow_mut().push((idx, res.clone()));
+                })),
             IR::Apply => {
                 // Apply = correlated join: for each row from child 0, run child 1
                 // Child 1 has Argument nodes that receive the row via argument_envs
@@ -2559,7 +2740,6 @@ impl<'a> Runtime {
                     self.g
                         .borrow()
                         .get_src_dest_relationships(src, dst, &relationship_pattern.types)
-                        .into_iter()
                         .filter(move |v| {
                             if let Value::Map(filter_attrs) = &filter_attrs
                                 && !filter_attrs.is_empty()
@@ -2815,10 +2995,10 @@ impl<'a> Runtime {
                 Some(Ok(vars))
             })))
         } else {
-            Ok(Box::new(iter.filter_map(move |v| {
+            Ok(Box::new(iter.map(move |v| {
                 let mut vars = vars.clone();
                 vars.insert(&node_pattern.alias, Value::Node(v));
-                Some(Ok(vars))
+                Ok(vars)
             })))
         }
     }
@@ -2911,16 +3091,13 @@ impl<'a> Runtime {
                     }),
             ))
         } else {
-            Ok(Box::new(
-                self.g
-                    .borrow()
-                    .get_indexed_nodes(index, q)
-                    .filter_map(move |v| {
-                        let mut vars = vars.clone();
-                        vars.insert(&node_pattern.alias, Value::Node(v));
-                        Some(Ok(vars))
-                    }),
-            ))
+            Ok(Box::new(self.g.borrow().get_indexed_nodes(index, q).map(
+                move |v| {
+                    let mut vars = vars.clone();
+                    vars.insert(&node_pattern.alias, Value::Node(v));
+                    Ok(vars)
+                },
+            )))
         }
     }
 
@@ -3298,6 +3475,58 @@ impl<'a> Runtime {
             return Some(value.clone());
         }
         self.g.borrow().get_relationship_attribute(id, attr)
+    }
+
+    /// Checks inline property predicates on a node.
+    /// Returns `true` if all properties match (or if there are no predicates).
+    fn check_inline_node_attrs(
+        &self,
+        attrs: &QueryExpr<Variable>,
+        node_id: NodeId,
+        env: &Env,
+        agg_group_key: Option<u64>,
+    ) -> Result<bool, String> {
+        if attrs.root().children().next().is_none() {
+            return Ok(true);
+        }
+        let filter = self.run_expr(attrs, attrs.root().idx(), env, agg_group_key)?;
+        if let Value::Map(filter_attrs) = &filter
+            && !filter_attrs.is_empty()
+        {
+            for (attr, avalue) in filter_attrs.iter() {
+                match self.get_node_attribute(node_id, attr) {
+                    Some(pvalue) if *avalue == pvalue => continue,
+                    _ => return Ok(false),
+                }
+            }
+        }
+        Ok(true)
+    }
+
+    /// Checks inline property predicates on a relationship.
+    /// Returns `true` if all properties match (or if there are no predicates).
+    fn check_inline_rel_attrs(
+        &self,
+        attrs: &QueryExpr<Variable>,
+        rel_id: RelationshipId,
+        env: &Env,
+        agg_group_key: Option<u64>,
+    ) -> Result<bool, String> {
+        if attrs.root().children().next().is_none() {
+            return Ok(true);
+        }
+        let filter = self.run_expr(attrs, attrs.root().idx(), env, agg_group_key)?;
+        if let Value::Map(filter_attrs) = &filter
+            && !filter_attrs.is_empty()
+        {
+            for (attr, avalue) in filter_attrs.iter() {
+                match self.get_relationship_attribute(rel_id, attr) {
+                    Some(pvalue) if *avalue == pvalue => continue,
+                    _ => return Ok(false),
+                }
+            }
+        }
+        Ok(true)
     }
 
     pub fn get_node_labels(

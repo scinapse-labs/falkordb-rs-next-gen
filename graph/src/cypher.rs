@@ -171,6 +171,7 @@ enum Token {
     DotDot,
     Pipe,
     RegexMatches,
+    Semicolon,
     EndOfFile,
 }
 
@@ -180,38 +181,38 @@ impl std::fmt::Display for Token {
         f: &mut std::fmt::Formatter,
     ) -> std::fmt::Result {
         match self {
-            Token::Ident(s) => write!(f, "'{s}'"),
-            Token::Keyword(_, s) => write!(f, "'{s}'"),
-            Token::Parameter(s) => write!(f, "${s}"),
-            Token::Integer(i) => write!(f, "{i}"),
-            Token::Float(fl) => write!(f, "{fl}"),
-            Token::String(s) => write!(f, "\"{s}\""),
-            Token::LBrace => write!(f, "'{{'"),
-            Token::RBrace => write!(f, "'}}'"),
-            Token::LBracket => write!(f, "'['"),
-            Token::RBracket => write!(f, "']'"),
-            Token::LParen => write!(f, "'('"),
-            Token::RParen => write!(f, "')'"),
-            Token::Modulo => write!(f, "'%'"),
-            Token::Power => write!(f, "'^'"),
-            Token::Star => write!(f, "'*'"),
-            Token::Slash => write!(f, "'/'"),
-            Token::Plus => write!(f, "'+'"),
-            Token::Dash => write!(f, "'-'"),
-            Token::Equal => write!(f, "'='"),
-            Token::PlusEqual => write!(f, "'+='"),
-            Token::NotEqual => write!(f, "'<>'"),
-            Token::LessThan => write!(f, "'<'"),
-            Token::LessThanOrEqual => write!(f, "'<='"),
-            Token::GreaterThan => write!(f, "'>'"),
-            Token::GreaterThanOrEqual => write!(f, "'>='"),
-            Token::Comma => write!(f, "','"),
-            Token::Colon => write!(f, "':'"),
-            Token::Dot => write!(f, "'.'"),
-            Token::DotDot => write!(f, "'..'"),
-            Token::Pipe => write!(f, "'|'"),
-            Token::RegexMatches => write!(f, "'=~'"),
-            Token::EndOfFile => write!(f, "end of input"),
+            Self::Ident(s) | Self::Keyword(_, s) => write!(f, "'{s}'"),
+            Self::Parameter(s) => write!(f, "${s}"),
+            Self::Integer(i) => write!(f, "{i}"),
+            Self::Float(fl) => write!(f, "{fl}"),
+            Self::String(s) => write!(f, "\"{s}\""),
+            Self::LBrace => write!(f, "'{{'"),
+            Self::RBrace => write!(f, "'}}'"),
+            Self::LBracket => write!(f, "'['"),
+            Self::RBracket => write!(f, "']'"),
+            Self::LParen => write!(f, "'('"),
+            Self::RParen => write!(f, "')'"),
+            Self::Modulo => write!(f, "'%'"),
+            Self::Power => write!(f, "'^'"),
+            Self::Star => write!(f, "'*'"),
+            Self::Slash => write!(f, "'/'"),
+            Self::Plus => write!(f, "'+'"),
+            Self::Dash => write!(f, "'-'"),
+            Self::Equal => write!(f, "'='"),
+            Self::PlusEqual => write!(f, "'+='"),
+            Self::NotEqual => write!(f, "'<>'"),
+            Self::LessThan => write!(f, "'<'"),
+            Self::LessThanOrEqual => write!(f, "'<='"),
+            Self::GreaterThan => write!(f, "'>'"),
+            Self::GreaterThanOrEqual => write!(f, "'>='"),
+            Self::Comma => write!(f, "','"),
+            Self::Colon => write!(f, "':'"),
+            Self::Dot => write!(f, "'.'"),
+            Self::DotDot => write!(f, "'..'"),
+            Self::Pipe => write!(f, "'|'"),
+            Self::RegexMatches => write!(f, "'=~'"),
+            Self::Semicolon => write!(f, "';'"),
+            Self::EndOfFile => write!(f, "end of input"),
         }
     }
 }
@@ -583,6 +584,7 @@ impl<'a> Lexer<'a> {
                     let id = &str[pos + 1..pos + len];
                     Ok((Token::Ident(Arc::new(String::from(id))), len + 1))
                 }
+                ';' => Ok((Token::Semicolon, 1)),
                 _ => Err((format!("Invalid input at pos: {pos} at char {char}"), 0)),
             };
         }
@@ -935,6 +937,12 @@ macro_rules! parse_operators {
     };
 }
 
+#[derive(Clone, Copy)]
+struct ParserState {
+    pos: usize,
+    anon_counter: u32,
+}
+
 /// Cypher query parser.
 ///
 /// The parser implements a recursive descent parser with operator precedence
@@ -959,6 +967,21 @@ impl<'a> Parser<'a> {
             lexer: Lexer::new(str),
             anon_counter: 0,
         }
+    }
+
+    const fn save_state(&self) -> ParserState {
+        ParserState {
+            pos: self.lexer.pos,
+            anon_counter: self.anon_counter,
+        }
+    }
+
+    fn restore_state(
+        &mut self,
+        state: ParserState,
+    ) {
+        self.lexer.set_pos(state.pos);
+        self.anon_counter = state.anon_counter;
     }
 
     /// Checks if a tree or its descendants contain an aggregate function using DFS traversal
@@ -988,14 +1011,14 @@ impl<'a> Parser<'a> {
         while let Ok(Token::Ident(id)) = self.lexer.current() {
             if id.as_str() == "CYPHER" {
                 self.lexer.next();
-                let mut pos = self.lexer.pos;
+                let mut state = self.save_state();
                 while let Ok(id) = self.parse_ident() {
                     if !optional_match_token!(self.lexer, Equal) {
-                        self.lexer.set_pos(pos);
+                        self.restore_state(state);
                         break;
                     }
                     params.insert(String::from(id.as_str()), self.parse_expr(false)?);
-                    pos = self.lexer.pos;
+                    state = self.save_state();
                 }
             } else {
                 break;
@@ -1004,21 +1027,38 @@ impl<'a> Parser<'a> {
         Ok((params, &self.lexer.str[self.lexer.pos..]))
     }
 
+    /// Consumes any trailing semicolons, then verifies end-of-file.
+    fn expect_end_of_input(&mut self) -> Result<(), String> {
+        while matches!(self.lexer.current()?, Token::Semicolon) {
+            self.lexer.next();
+        }
+        if !matches!(self.lexer.current()?, Token::EndOfFile) {
+            return Err("query with more than one statement is not supported".to_string());
+        }
+        Ok(())
+    }
+
     /// Parses a complete Cypher query.
     ///
     /// This is the main entry point for parsing. It first tries to parse index
     /// operations (CREATE INDEX, DROP INDEX), then falls back to regular queries.
+    /// Trailing semicolons are consumed; multi-statement queries (content after
+    /// a semicolon) are rejected.
     ///
     /// # Errors
     /// Returns an error string if the query has syntax errors.
     pub fn parse(&mut self) -> Result<RawQueryIR, String> {
-        let pos = self.lexer.pos;
-        if let Some(ir) = self.parse_index_ops()? {
-            Ok(ir)
+        let state = self.save_state();
+        let result = if let Some(ir) = self.parse_index_ops()? {
+            ir
         } else {
-            self.lexer.set_pos(pos);
-            self.parse_query()
-        }
+            self.restore_state(state);
+            self.parse_query()?
+        };
+
+        self.expect_end_of_input()?;
+
+        Ok(result)
     }
 
     #[allow(clippy::too_many_lines)]
@@ -1040,7 +1080,6 @@ impl<'a> Parser<'a> {
                     attrs.push(self.parse_ident()?);
                 }
                 match_token!(self.lexer, RParen);
-                match_token!(self.lexer, EndOfFile);
                 let index_type = IndexType::Range;
                 let entity_type = EntityType::Node;
                 return Ok(Some(QueryIR::CreateIndex {
@@ -1107,7 +1146,6 @@ impl<'a> Parser<'a> {
             } else {
                 None
             };
-            match_token!(self.lexer, EndOfFile);
             return Ok(Some(QueryIR::CreateIndex {
                 label,
                 attrs,
@@ -1132,7 +1170,6 @@ impl<'a> Parser<'a> {
                     attrs.push(self.parse_ident()?);
                 }
                 match_token!(self.lexer, RParen);
-                match_token!(self.lexer, EndOfFile);
                 let index_type = IndexType::Range;
                 let entity_type = EntityType::Node;
                 return Ok(Some(QueryIR::DropIndex {
@@ -1186,7 +1223,6 @@ impl<'a> Parser<'a> {
                 attrs.push(self.parse_property_name()?);
             }
             match_token!(self.lexer, RParen);
-            match_token!(self.lexer, EndOfFile);
             let index_type = if fulltext {
                 IndexType::Fulltext
             } else if vector {
@@ -1220,13 +1256,19 @@ impl<'a> Parser<'a> {
     fn parse_query(&mut self) -> Result<RawQueryIR, String> {
         let first = self.parse_single_query()?;
         if optional_match_token!(self.lexer => Union) {
+            let all = optional_match_token!(self.lexer => All);
             let mut branches = vec![first];
             branches.push(self.parse_single_query()?);
             while optional_match_token!(self.lexer => Union) {
+                let next_all = optional_match_token!(self.lexer => All);
+                if next_all != all {
+                    return Err(self
+                        .lexer
+                        .format_error("Cannot mix UNION and UNION ALL in same query"));
+                }
                 branches.push(self.parse_single_query()?);
             }
-            match_token!(self.lexer, EndOfFile);
-            return Ok(QueryIR::Union(branches));
+            return Ok(QueryIR::Union(branches, all));
         }
         Ok(first)
     }
@@ -1249,7 +1291,8 @@ impl<'a> Parser<'a> {
                 _,
             ) = self.lexer.current()?
             {
-                clauses.push(self.parse_reading_clasue()?);
+                let clause = self.parse_reading_clasue()?;
+                clauses.push(clause);
             }
             while let Token::Keyword(
                 Keyword::Create
@@ -1262,7 +1305,8 @@ impl<'a> Parser<'a> {
             ) = self.lexer.current()?
             {
                 write = true;
-                clauses.push(self.parse_writing_clause()?);
+                let clause = self.parse_writing_clause()?;
+                clauses.push(clause);
             }
             if optional_match_token!(self.lexer => With) {
                 clauses.push(self.parse_with_clause(write)?);
@@ -1274,9 +1318,9 @@ impl<'a> Parser<'a> {
         if optional_match_token!(self.lexer => Return) {
             clauses.push(self.parse_return_clause(write)?);
             write = false;
-            // After RETURN, only UNION or end-of-file may follow.
+            // After RETURN, only UNION, semicolons, or end-of-file may follow.
             match self.lexer.current()? {
-                Token::EndOfFile | Token::Keyword(Keyword::Union, _) => {}
+                Token::EndOfFile | Token::Keyword(Keyword::Union, _) | Token::Semicolon => {}
                 _ => {
                     return Err(self
                         .lexer
@@ -1284,7 +1328,10 @@ impl<'a> Parser<'a> {
                 }
             }
         }
-        if !matches!(self.lexer.current()?, Token::Keyword(Keyword::Union, _)) {
+        if !matches!(
+            self.lexer.current()?,
+            Token::Keyword(Keyword::Union, _) | Token::Semicolon
+        ) {
             match_token!(self.lexer, EndOfFile);
         }
         Ok(QueryIR::Query(clauses, write))
@@ -1473,9 +1520,10 @@ impl<'a> Parser<'a> {
     ) -> Result<RawQueryIR, String> {
         let distinct = optional_match_token!(self.lexer => Distinct);
         let (all, exprs) = if optional_match_token!(self.lexer, Star) {
+            // WITH * carries forward the current named_in_scope unchanged
             (true, vec![])
         } else {
-            (false, self.parse_named_exprs()?)
+            (false, self.parse_named_exprs(true)?)
         };
         let orderby = if optional_match_token!(self.lexer => Order) {
             self.parse_orderby()?
@@ -1546,7 +1594,7 @@ impl<'a> Parser<'a> {
         let (all, exprs) = if optional_match_token!(self.lexer, Star) {
             (true, vec![])
         } else {
-            (false, self.parse_named_exprs()?)
+            (false, self.parse_named_exprs(false)?)
         };
         let orderby = if optional_match_token!(self.lexer => Order) {
             self.parse_orderby()?
@@ -1767,7 +1815,7 @@ impl<'a> Parser<'a> {
     ) -> Result<(DynTree<ExprIR<Arc<String>>>, bool), String> {
         match self.lexer.current()? {
             Token::Ident(_) => {
-                let pos = self.lexer.pos;
+                let state = self.save_state();
                 let ident = self.parse_dotted_ident()?;
                 if optional_match_token!(self.lexer, LParen) {
                     let func = get_functions()
@@ -1838,7 +1886,7 @@ impl<'a> Parser<'a> {
                     }
                     return Ok((tree!(ExprIR::FuncInvocation(func); args), false));
                 }
-                self.lexer.set_pos(pos);
+                self.restore_state(state);
                 let ident = self.parse_ident()?;
                 Ok((tree!(ExprIR::Variable(ident)), false))
             }
@@ -1881,7 +1929,7 @@ impl<'a> Parser<'a> {
             }
             Token::LBracket => Ok((self.parse_map()?, false)),
             Token::LParen => {
-                let checkpoint = self.lexer.pos;
+                let checkpoint = self.save_state();
                 // Try to detect pattern predicate: (ident)--(...) or (ident)<--(...)
                 if allow_pattern_predicate
                     && let Ok(pattern) = self.parse_pattern(&Keyword::Match)
@@ -1891,7 +1939,7 @@ impl<'a> Parser<'a> {
                 }
 
                 // Not a pattern predicate - restore and parse normally
-                self.lexer.set_pos(checkpoint);
+                self.restore_state(checkpoint);
                 self.lexer.next(); // re-consume LParen
                 let expr = tree!(ExprIR::Paren);
                 Ok((expr, true))
@@ -2279,7 +2327,10 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_named_exprs(&mut self) -> Result<Vec<(Arc<String>, QueryExpr<Arc<String>>)>, String> {
+    fn parse_named_exprs(
+        &mut self,
+        must_alias: bool,
+    ) -> Result<Vec<(Arc<String>, QueryExpr<Arc<String>>)>, String> {
         let mut named_exprs = Vec::new();
         loop {
             let pos = self.lexer.pos(false);
@@ -2291,6 +2342,11 @@ impl<'a> Parser<'a> {
             } else if let ExprIR::Variable(id) = expr.root().data() {
                 named_exprs.push((id.clone(), expr));
             } else {
+                if must_alias {
+                    return Err(self
+                        .lexer
+                        .format_error("WITH clause projections must be aliased"));
+                }
                 named_exprs.push((
                     Arc::new(String::from(&self.lexer.str[pos..self.lexer.pos(true)])),
                     expr,
@@ -2326,18 +2382,48 @@ impl<'a> Parser<'a> {
         Ok(exprs)
     }
 
+    /// Parses the contents after an opening `[` bracket.
+    ///
+    /// Uses backtracking to distinguish between:
+    /// 1. List comprehension: `[var IN list WHERE cond | expr]`
+    /// 2. Named pattern comprehension: `[var = (pattern) WHERE cond | expr]`
+    /// 3. Unnamed pattern comprehension: `[(pattern) WHERE cond | expr]`
+    /// 4. List literal: `[1, 2, 3]` or `[]`
+    ///
+    /// Returns `(tree, recurse)` where `recurse` indicates the caller must
+    /// continue parsing comma-separated elements for a list literal.
     fn parse_list_literal_or_comprehension(
         &mut self
     ) -> Result<(DynTree<ExprIR<Arc<String>>>, bool), String> {
-        // Check if the second token is 'IN' for list comprehension
-        let pos = self.lexer.pos;
+        let saved = self.save_state();
+
+        // 1) Try list comprehension: [var IN ...]
         if let Ok(var) = self.parse_ident()
             && optional_match_token!(self.lexer => In)
         {
             return Ok((self.parse_list_comprehension(var)?, false));
         }
-        self.lexer.set_pos(pos); // Reset lexer position
+        self.restore_state(saved);
 
+        // 2) Try named pattern comprehension: [var = (pattern) ... | expr]
+        if let Ok(var) = self.parse_ident()
+            && optional_match_token!(self.lexer, Equal)
+            && self.lexer.current()? == Token::LParen
+            && let Ok(result) = self.parse_pattern_comprehension(Some(var))
+        {
+            return Ok((result, false));
+        }
+        self.restore_state(saved);
+
+        // 3) Try unnamed pattern comprehension: [(pattern) ... | expr]
+        if self.lexer.current()? == Token::LParen {
+            if let Ok(result) = self.parse_pattern_comprehension(None) {
+                return Ok((result, false));
+            }
+            self.restore_state(saved);
+        }
+
+        // 4) Default: list literal
         Ok((
             tree!(ExprIR::List),
             !optional_match_token!(self.lexer, RBrace),
@@ -2373,6 +2459,69 @@ impl<'a> Parser<'a> {
         ))
     }
 
+    /// Parses a pattern comprehension after the opening `[`.
+    ///
+    /// Grammar: `[` (path_var `=`)? relationship_pattern (`WHERE` cond)? `|` expr `]`
+    ///
+    /// Collects the graph pattern into a `PatternComprehension` node
+    /// for execution by the runtime.
+    fn parse_pattern_comprehension(
+        &mut self,
+        path_var: Option<Arc<String>>,
+    ) -> Result<DynTree<ExprIR<Arc<String>>>, String> {
+        let first_node = self.parse_node_pattern()?;
+
+        // Must have at least one relationship
+        if !matches!(self.lexer.current()?, Token::Dash | Token::LessThan) {
+            return Err("Expected relationship pattern".into());
+        }
+
+        let mut graph = QueryGraph::default();
+        graph.add_node(first_node.clone());
+
+        let mut left = first_node;
+        while matches!(self.lexer.current()?, Token::Dash | Token::LessThan) {
+            let (rel, right) = self.parse_relationship_pattern(left, &Keyword::Match)?;
+            graph.add_node(right.clone());
+            graph.add_relationship(rel);
+            left = right;
+        }
+
+        if let Some(pv) = path_var {
+            graph.add_path(Arc::new(QueryPath::new(pv, vec![])));
+        }
+
+        // Optional WHERE
+        let condition = if optional_match_token!(self.lexer => Where) {
+            self.parse_expr(false)?
+        } else {
+            tree!(ExprIR::Bool(true))
+        };
+
+        // Pipe + result expression
+        match_token!(self.lexer, Pipe);
+        let result_expr = self.parse_expr(false)?;
+        match_token!(self.lexer, RBrace);
+
+        Ok(tree!(
+            ExprIR::PatternComprehension(graph),
+            condition,
+            result_expr
+        ))
+    }
+
+    /// Parses an inline property map, preserving "Unknown function" errors
+    /// while replacing other parse errors with a generic inlined-properties message.
+    fn parse_inline_properties(&mut self) -> Result<DynTree<ExprIR<Arc<String>>>, String> {
+        self.parse_map().map_err(|e| {
+            if e.starts_with("Unknown function") {
+                e
+            } else {
+                String::from("Encountered unhandled type in inlined properties.")
+            }
+        })
+    }
+
     fn parse_node_pattern(&mut self) -> Result<Arc<QueryNode<Arc<String>, Arc<String>>>, String> {
         match_token!(self.lexer, LParen);
         let alias = if let Ok(id) = self.parse_ident() {
@@ -2387,8 +2536,7 @@ impl<'a> Parser<'a> {
             self.lexer.next();
             tree!(ExprIR::Parameter(param))
         } else if self.lexer.current()? == Token::LBracket {
-            self.parse_map()
-                .map_err(|_| String::from("Encountered unhandled type in inlined properties."))?
+            self.parse_inline_properties()?
         } else {
             tree!(ExprIR::Map)
         };
@@ -2456,13 +2604,21 @@ impl<'a> Parser<'a> {
             } else {
                 None
             };
+            if var_len.is_some() && matches!(clause, Keyword::Create | Keyword::Merge) {
+                let clause_name = if *clause == Keyword::Create {
+                    "CREATE"
+                } else {
+                    "MERGE"
+                };
+                return Err(format!(
+                    "Variable length relationships cannot be used in {clause_name} patterns."
+                ));
+            }
             let attrs = if let Token::Parameter(param) = self.lexer.current()? {
                 self.lexer.next();
                 tree!(ExprIR::Parameter(param))
             } else if self.lexer.current()? == Token::LBracket {
-                self.parse_map().map_err(|_| {
-                    String::from("Encountered unhandled type in inlined properties.")
-                })?
+                self.parse_inline_properties()?
             } else {
                 tree!(ExprIR::Map)
             };

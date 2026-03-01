@@ -122,28 +122,15 @@ impl Binder {
         ir: RawQueryIR,
     ) -> Result<BoundQueryIR, String> {
         match ir {
-            QueryIR::Union(branches) => {
+            QueryIR::Union(branches, all) => {
                 // Each UNION branch is an independent sub-query with its own
                 // variable scope, so each branch is bound with a fresh Binder.
-                //
-                // After binding, the RETURN column names of every branch must
-                // match.  For example, this is valid:
-                //
-                //   MATCH (n:Person) RETURN n.name AS name
-                //   UNION
-                //   MATCH (n:Company) RETURN n.title AS name
-                //
-                // But this is invalid (different column names):
-                //
-                //   WITH 5 AS x RETURN *
-                //   UNION
-                //   WITH 10 AS y RETURN *
                 let mut bound_branches = Vec::with_capacity(branches.len());
-                let mut first_columns: Option<Vec<Arc<String>>> = None;
+                let mut first_columns: Option<Vec<String>> = None;
                 for branch in branches {
                     let binder = Self::default();
                     let (bound, _) = binder.bind(branch)?;
-                    let columns = Self::extract_return_columns(&bound);
+                    let columns = bound.return_column_names();
                     if let Some(ref expected) = first_columns {
                         if columns != *expected {
                             return Err(String::from(
@@ -155,7 +142,7 @@ impl Binder {
                     }
                     bound_branches.push(bound);
                 }
-                Ok(QueryIR::Union(bound_branches))
+                Ok(QueryIR::Union(bound_branches, all))
             }
             QueryIR::Query(clauses, write) => {
                 let mut bound = Vec::with_capacity(clauses.len());
@@ -295,17 +282,29 @@ impl Binder {
                 skip,
                 limit,
                 write,
-            } => self.bind_projection(
-                ProjectionKind::Return,
-                distinct,
-                all,
-                &exprs,
-                &orderby,
-                skip,
-                limit,
-                None,
-                write,
-            ),
+            } => {
+                if all
+                    && !self
+                        .current_env()
+                        .iter()
+                        .any(|v| v.1.name.is_some() && !v.1.name.as_ref().unwrap().starts_with('_'))
+                {
+                    return Err(String::from(
+                        "RETURN * is not allowed when there are no variables in scope",
+                    ));
+                }
+                self.bind_projection(
+                    ProjectionKind::Return,
+                    distinct,
+                    all,
+                    &exprs,
+                    &orderby,
+                    skip,
+                    limit,
+                    None,
+                    write,
+                )
+            }
             QueryIR::Call(func, args, vars, filter) => {
                 let args = args
                     .iter()
@@ -550,21 +549,35 @@ impl Binder {
             bound.add_relationship(rel);
         }
 
-        // Bind paths - path vars reference entities by name
-        // For anonymous entities with multiple instances, we use alias_to_vars
+        // Bind paths - path vars reference entities by name.
+        // Stub paths (empty vars) come from pattern comprehension: derive
+        // the ordered element list from the bound relationships.
         for raw_path in graph.paths() {
             let alias = self.define_name_in_scope(raw_path.var.clone(), Type::Path, true)?;
 
-            let mut vars = Vec::with_capacity(raw_path.vars.len());
-
-            for name in &raw_path.vars {
-                // Try environment first (for named entities)
-                if let Some(var) = self.current_env().get(name) {
-                    vars.push(var.clone());
-                } else {
-                    vars.push(self.resolve_name(name, &[])?);
+            let vars = if raw_path.vars.is_empty() {
+                // Pattern comprehension stub: derive from bound relationships
+                let mut v = Vec::new();
+                if let Some(first_rel) = bound.relationships().first() {
+                    v.push(first_rel.from.alias.clone());
+                    for rel in bound.relationships() {
+                        v.push(rel.alias.clone());
+                        v.push(rel.to.alias.clone());
+                    }
                 }
-            }
+                v
+            } else {
+                // Regular MATCH path: resolve by name
+                let mut v = Vec::with_capacity(raw_path.vars.len());
+                for name in &raw_path.vars {
+                    if let Some(var) = self.current_env().get(name) {
+                        v.push(var.clone());
+                    } else {
+                        v.push(self.resolve_name(name, &[])?);
+                    }
+                }
+                v
+            };
             bound.add_path(Arc::new(QueryPath::new(alias, vars)));
         }
 
@@ -810,6 +823,33 @@ impl Binder {
                 }
                 Ok(new_tree)
             }
+            ExprIR::PatternComprehension(graph) => {
+                // Snapshot outer scope so pattern-local aliases can be
+                // cleaned up after binding (they must not leak outward).
+                let outer_scope_names: HashSet<Arc<String>> =
+                    self.current_env().keys().cloned().collect();
+
+                // bind_graph uses define_name_in_scope which reuses
+                // outer-scope variables (e.g. 'n' from MATCH) and creates
+                // fresh variables only for new aliases (anonymous nodes/rels).
+                let bound_graph = self.bind_graph(graph, false)?;
+
+                let children = node_ref
+                    .children()
+                    .map(|child| self.bind_expr_node(expr, &child, locals))
+                    .collect::<Result<Vec<_>, _>>()?;
+
+                // Remove pattern-local aliases so they don't leak into outer scope.
+                self.current_env_mut()
+                    .retain(|name, _| outer_scope_names.contains(name));
+
+                let mut new_tree = DynTree::new(ExprIR::PatternComprehension(bound_graph));
+                let mut root = new_tree.root_mut();
+                for child in children {
+                    root.push_child_tree(child);
+                }
+                Ok(new_tree)
+            }
             _ => {
                 let children = node_ref
                     .children()
@@ -873,7 +913,8 @@ impl Binder {
                     ExprIR::Paren => ExprIR::Paren,
                     ExprIR::Variable(_)
                     | ExprIR::Quantifier(_, _)
-                    | ExprIR::ListComprehension(_) => unreachable!("handled above"),
+                    | ExprIR::ListComprehension(_)
+                    | ExprIR::PatternComprehension(_) => unreachable!("handled above"),
                     ExprIR::Pattern(pattern) => ExprIR::Pattern(self.bind_graph(&pattern, false)?),
                 };
                 let mut new_tree = DynTree::new(new_data);
@@ -1076,7 +1117,8 @@ impl Binder {
             | ExprIR::Length
             | ExprIR::GetElement
             | ExprIR::GetElements
-            | ExprIR::ListComprehension(_) => false,
+            | ExprIR::ListComprehension(_)
+            | ExprIR::PatternComprehension(_) => false,
 
             // Boolean literals, comparisons, predicates, and runtime-typed nodes
             ExprIR::Bool(_)
@@ -1102,27 +1144,5 @@ impl Binder {
             | ExprIR::Property(_)
             | ExprIR::Pattern(_) => true,
         }
-    }
-
-    /// Extracts the RETURN column names from a bound query IR.
-    ///
-    /// Walks into `QueryIR::Query` to find the `QueryIR::Return` clause
-    /// and collects the alias names in order.  Returns an empty vec if
-    /// there is no RETURN clause (e.g. a write-only sub-query).
-    ///
-    /// Used by UNION binding to verify that all branches project the same
-    /// column names.
-    fn extract_return_columns(ir: &BoundQueryIR) -> Vec<Arc<String>> {
-        if let QueryIR::Query(clauses, _) = ir {
-            for clause in clauses.iter().rev() {
-                if let QueryIR::Return { exprs, .. } = clause {
-                    return exprs
-                        .iter()
-                        .filter_map(|(var, _)| var.name.clone())
-                        .collect();
-                }
-            }
-        }
-        Vec::new()
     }
 }
