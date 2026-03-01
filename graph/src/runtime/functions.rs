@@ -3370,24 +3370,10 @@ fn db_fulltext_create_node_index(
 }
 
 fn db_fulltext_query_nodes(
-    runtime: &Runtime,
-    args: ThinVec<Value>,
+    _: &Runtime,
+    _: ThinVec<Value>,
 ) -> Result<Value, String> {
-    let mut iter = args.iter();
-    match (iter.next(), iter.next()) {
-        (Some(Value::String(label)), Some(Value::String(query))) => {
-            let results = runtime.g.borrow().fulltext_query_nodes(&label, &query)?;
-            Ok(Value::List(
-                results
-                    .map(|(node_id, score)| {
-                        let mut map = OrderMap::default();
-                        map.insert(Arc::new(String::from("node")), Value::Node(node_id));
-                        map.insert(Arc::new(String::from("score")), Value::Float(score));
-                        Value::Map(map)
-                    })
-                    .collect(),
-            ))
-        }
-        _ => Err("fulltext queryNodes expects a string label and a string query".into()),
-    }
+    Err(String::from(
+        "db.fulltext.queryNodes() is not supported in this version",
+    ))
 }

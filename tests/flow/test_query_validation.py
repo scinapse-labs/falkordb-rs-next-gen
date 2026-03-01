@@ -281,7 +281,7 @@ class testQueryValidationFlow(FlowTestsBase):
                    RETURN n.age /* Also a block comment*/"""
         actual_result = self.graph.query(query)
         expected_result = [[34]]
-        self.env.assertEquals(actual_result.result_set, expected_result)
+        self.env.assertEqual(actual_result.result_set, expected_result)
 
         query = """/* A block comment*/ MATCH (n)  // This is a comment
                 /* This is a block comment */
@@ -289,7 +289,7 @@ class testQueryValidationFlow(FlowTestsBase):
                 RETURN n.age /* Also a block comment*/"""
         actual_result = self.graph.query(query)
         expected_result = [[34]]
-        self.env.assertEquals(actual_result.result_set, expected_result)
+        self.env.assertEqual(actual_result.result_set, expected_result)
 
         query = """// This is a comment
                 MATCH (n)  // This is a comment
@@ -298,13 +298,13 @@ class testQueryValidationFlow(FlowTestsBase):
                 RETURN n.age /* Also a block comment*/"""
         actual_result = self.graph.query(query)
         expected_result = [[34]]
-        self.env.assertEquals(actual_result.result_set, expected_result)
+        self.env.assertEqual(actual_result.result_set, expected_result)
 
         query = """MATCH (n)  /* This is a block comment */ WHERE EXISTS(n.age)
                 RETURN n.age /* Also a block comment*/"""
         actual_result = self.graph.query(query)
         expected_result = [[34]]
-        self.env.assertEquals(actual_result.result_set, expected_result)
+        self.env.assertEqual(actual_result.result_set, expected_result)
 
     # Validate procedure call refrences and definitions
     def test22_procedure_validations(self):

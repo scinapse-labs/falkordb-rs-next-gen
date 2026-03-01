@@ -172,7 +172,7 @@ class testReplication(FlowTestsBase):
         # drop fulltext index
         q = "DROP FULLTEXT INDEX FOR (n:L) ON (n.name, n.title, n.desc)"
         result = src.query(q)
-        env.assertEquals(result.indices_deleted, 1)
+        env.assertEqual(result.indices_deleted, 1)
 
         # the WAIT command forces master slave sync to complete
         source_con.execute_command("WAIT", "1", "0")
