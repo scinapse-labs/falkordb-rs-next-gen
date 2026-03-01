@@ -29,7 +29,8 @@ use itertools::Itertools;
 use orx_tree::{Dfs, DynTree, NodeRef};
 
 use crate::{
-    indexer::{EntityType, IndexType},
+    entity_type::EntityType,
+    indexer::IndexType,
     runtime::{
         functions::{GraphFn, Type},
         orderset::OrderSet,

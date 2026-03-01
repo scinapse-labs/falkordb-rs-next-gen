@@ -10,11 +10,12 @@ class testFulltextIndexQuery():
         self.populate_graph()
 
     def populate_graph(self):
-        self.graph.query("CALL db.idx.fulltext.createNodeIndex('L1', 'v')")
-        self.graph.query("CALL db.idx.fulltext.createNodeIndex({label: 'L2', stopwords: ['redis', 'world'] }, 'v')")
-        self.graph.query("CALL db.idx.fulltext.createNodeIndex('L3', { field: 'v1', weight: 1 }, { field: 'v2', weight: 2 })")
-        self.graph.query("CALL db.idx.fulltext.createNodeIndex('L4', { field: 'v', phonetic: 'dm:en' })")
-        self.graph.query("CALL db.idx.fulltext.createNodeIndex('L5', { field: 'v', nostem: true })")
+        self.graph.query("CREATE FULLTEXT INDEX FOR (n:L1) ON (n.v)")
+        self.graph.query("CREATE FULLTEXT INDEX FOR (n:L2) ON (n.v) OPTIONS {stopwords: ['redis', 'world']}")
+        self.graph.query("CREATE FULLTEXT INDEX FOR (n:L3) ON (n.v1) OPTIONS {weight: 1}")
+        self.graph.query("CREATE FULLTEXT INDEX FOR (n:L3) ON (n.v2) OPTIONS {weight: 2}")
+        self.graph.query("CREATE FULLTEXT INDEX FOR (n:L4) ON (n.v) OPTIONS {phonetic: 'dm:en'}")
+        self.graph.query("CREATE FULLTEXT INDEX FOR (n:L5) ON (n.v) OPTIONS {nostem: true}")
 
         # create full text index on relationship type E inedxing property 'name'
         self.graph.query("CREATE FULLTEXT INDEX FOR ()-[e:E]-() on (e.name)") 

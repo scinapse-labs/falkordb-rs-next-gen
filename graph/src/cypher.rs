@@ -55,7 +55,8 @@ use crate::ast::{
     ExprIR, QuantifierType, QueryExpr, QueryGraph, QueryIR, QueryNode, QueryPath,
     QueryRelationship, RawQueryIR, SetItem,
 };
-use crate::indexer::{EntityType, IndexType};
+use crate::entity_type::EntityType;
+use crate::indexer::IndexType;
 use crate::runtime::orderset::OrderSet;
 use crate::string_escape::cypher_unescape;
 use crate::{
@@ -171,6 +172,48 @@ enum Token {
     Pipe,
     RegexMatches,
     EndOfFile,
+}
+
+impl std::fmt::Display for Token {
+    fn fmt(
+        &self,
+        f: &mut std::fmt::Formatter,
+    ) -> std::fmt::Result {
+        match self {
+            Token::Ident(s) => write!(f, "'{s}'"),
+            Token::Keyword(_, s) => write!(f, "'{s}'"),
+            Token::Parameter(s) => write!(f, "${s}"),
+            Token::Integer(i) => write!(f, "{i}"),
+            Token::Float(fl) => write!(f, "{fl}"),
+            Token::String(s) => write!(f, "\"{s}\""),
+            Token::LBrace => write!(f, "'{{'"),
+            Token::RBrace => write!(f, "'}}'"),
+            Token::LBracket => write!(f, "'['"),
+            Token::RBracket => write!(f, "']'"),
+            Token::LParen => write!(f, "'('"),
+            Token::RParen => write!(f, "')'"),
+            Token::Modulo => write!(f, "'%'"),
+            Token::Power => write!(f, "'^'"),
+            Token::Star => write!(f, "'*'"),
+            Token::Slash => write!(f, "'/'"),
+            Token::Plus => write!(f, "'+'"),
+            Token::Dash => write!(f, "'-'"),
+            Token::Equal => write!(f, "'='"),
+            Token::PlusEqual => write!(f, "'+='"),
+            Token::NotEqual => write!(f, "'<>'"),
+            Token::LessThan => write!(f, "'<'"),
+            Token::LessThanOrEqual => write!(f, "'<='"),
+            Token::GreaterThan => write!(f, "'>'"),
+            Token::GreaterThanOrEqual => write!(f, "'>='"),
+            Token::Comma => write!(f, "','"),
+            Token::Colon => write!(f, "':'"),
+            Token::Dot => write!(f, "'.'"),
+            Token::DotDot => write!(f, "'..'"),
+            Token::Pipe => write!(f, "'|'"),
+            Token::RegexMatches => write!(f, "'=~'"),
+            Token::EndOfFile => write!(f, "end of input"),
+        }
+    }
 }
 
 const KEYWORDS: &[(&str, Keyword)] = &[
@@ -781,7 +824,8 @@ macro_rules! match_token {
             }
             _ => {
                 return Err($lexer.format_error(&format!(
-                    "Invalid input '{}': expected {:?}",
+                    // Return the display in error
+                    "Invalid input '{}': expected {}",
                     $lexer.current_str(),
                     Token::$token
                 )));
@@ -1023,7 +1067,13 @@ impl<'a> Parser<'a> {
                 (nkey, label, EntityType::Relationship)
             } else {
                 let nkey = self.parse_ident()?;
-                match_token!(self.lexer, Colon);
+                if !matches!(self.lexer.current()?, Token::Colon) {
+                    return Err(self.lexer.format_error(&format!(
+                        "Invalid input '{}': expected a label",
+                        self.lexer.current_str()
+                    )));
+                }
+                self.lexer.next();
                 let label = self.parse_ident()?;
                 match_token!(self.lexer, RParen);
                 (nkey, label, EntityType::Node)
@@ -1031,18 +1081,18 @@ impl<'a> Parser<'a> {
             match_token!(self.lexer => On);
             match_token!(self.lexer, LParen);
             let key = self.parse_ident()?;
+            self.match_dot_property_separator()?;
             if nkey.as_str() != key.as_str() {
                 return Err(self.lexer.format_error(&format!("'{key}' not defined")));
             }
-            match_token!(self.lexer, Dot);
-            let mut attrs = vec![self.parse_ident()?];
+            let mut attrs = vec![self.parse_property_name()?];
             while optional_match_token!(self.lexer, Comma) {
                 let key = self.parse_ident()?;
+                self.match_dot_property_separator()?;
                 if nkey.as_str() != key.as_str() {
                     return Err(self.lexer.format_error(&format!("'{key}' not defined")));
                 }
-                match_token!(self.lexer, Dot);
-                attrs.push(self.parse_ident()?);
+                attrs.push(self.parse_property_name()?);
             }
             match_token!(self.lexer, RParen);
             let index_type = if fulltext {
@@ -1052,7 +1102,7 @@ impl<'a> Parser<'a> {
             } else {
                 IndexType::Range
             };
-            let options = if vector && optional_match_token!(self.lexer => Options) {
+            let options = if (vector || fulltext) && optional_match_token!(self.lexer => Options) {
                 Some(Arc::new(self.parse_map()?))
             } else {
                 None
@@ -1108,7 +1158,13 @@ impl<'a> Parser<'a> {
                 (nkey, label, EntityType::Relationship)
             } else {
                 let nkey = self.parse_ident()?;
-                match_token!(self.lexer, Colon);
+                if !matches!(self.lexer.current()?, Token::Colon) {
+                    return Err(self.lexer.format_error(&format!(
+                        "Invalid input '{}': expected a label",
+                        self.lexer.current_str()
+                    )));
+                }
+                self.lexer.next();
                 let label = self.parse_ident()?;
                 match_token!(self.lexer, RParen);
                 (nkey, label, EntityType::Node)
@@ -1116,18 +1172,18 @@ impl<'a> Parser<'a> {
             match_token!(self.lexer => On);
             match_token!(self.lexer, LParen);
             let key = self.parse_ident()?;
+            self.match_dot_property_separator()?;
             if nkey.as_str() != key.as_str() {
                 return Err(self.lexer.format_error(&format!("'{key}' not defined")));
             }
-            match_token!(self.lexer, Dot);
-            let mut attrs = vec![self.parse_ident()?];
+            let mut attrs = vec![self.parse_property_name()?];
             while optional_match_token!(self.lexer, Comma) {
                 let key = self.parse_ident()?;
+                self.match_dot_property_separator()?;
                 if nkey.as_str() != key.as_str() {
                     return Err(self.lexer.format_error(&format!("'{key}' not defined")));
                 }
-                match_token!(self.lexer, Dot);
-                attrs.push(self.parse_ident()?);
+                attrs.push(self.parse_property_name()?);
             }
             match_token!(self.lexer, RParen);
             match_token!(self.lexer, EndOfFile);
@@ -2175,6 +2231,28 @@ impl<'a> Parser<'a> {
         unreachable!()
     }
 
+    /// Match a dot separator in index property references (e.g. `n.prop`).
+    /// Handles the edge case where `.1` is lexed as a float token instead of
+    /// dot + integer, producing "expected a property name" in that case.
+    fn match_dot_property_separator(&mut self) -> Result<(), String> {
+        match self.lexer.current()? {
+            Token::Dot => {
+                self.lexer.next();
+                Ok(())
+            }
+            Token::Float(_) if self.lexer.current_str().starts_with('.') => {
+                Err(self.lexer.format_error(&format!(
+                    "Invalid input '{}': expected a property name",
+                    &self.lexer.current_str()[1..],
+                )))
+            }
+            _ => Err(self.lexer.format_error(&format!(
+                "Invalid input '{}': expected '.'",
+                self.lexer.current_str(),
+            ))),
+        }
+    }
+
     fn parse_ident(&mut self) -> Result<Arc<String>, String> {
         match self.lexer.current() {
             Ok(Token::Ident(id) | Token::Keyword(_, id)) => {
@@ -2183,7 +2261,20 @@ impl<'a> Parser<'a> {
             }
             _ => Err(self.lexer.format_error(&format!(
                 "Invalid input '{}': expected an identifier",
-                self.lexer.current_str()
+                self.lexer.current_str(),
+            ))),
+        }
+    }
+
+    fn parse_property_name(&mut self) -> Result<Arc<String>, String> {
+        match self.lexer.current() {
+            Ok(Token::Ident(id) | Token::Keyword(_, id)) => {
+                self.lexer.next();
+                Ok(id)
+            }
+            _ => Err(self.lexer.format_error(&format!(
+                "Invalid input '{}': expected a property name",
+                self.lexer.current_str(),
             ))),
         }
     }
@@ -2492,7 +2583,7 @@ impl<'a> Parser<'a> {
                     items.push(tree!(ExprIR::MapProjection));
                 } else {
                     // .property - property shorthand
-                    let prop_name = self.parse_ident()?;
+                    let prop_name = self.parse_property_name()?;
                     items.push(tree!(ExprIR::Property(prop_name)));
                 }
             } else {
