@@ -1049,9 +1049,7 @@ impl<'a> Runtime {
                                 .map(|v| {
                                     matched_env
                                         .get(v)
-                                        .ok_or_else(|| {
-                                            format!("Variable {} not found", v.as_str())
-                                        })
+                                        .ok_or_else(|| format!("Variable {} not found", v.as_str()))
                                         .cloned()
                                 })
                                 .collect::<Result<_, String>>()?;
