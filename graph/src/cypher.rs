@@ -212,6 +212,7 @@ impl std::fmt::Display for Token {
             Token::DotDot => write!(f, "'..'"),
             Token::Pipe => write!(f, "'|'"),
             Token::RegexMatches => write!(f, "'=~'"),
+            Token::Semicolon => write!(f, "';'"),
             Token::EndOfFile => write!(f, "end of input"),
         }
     }
