@@ -188,6 +188,8 @@ pub enum ExprIR<TVar> {
     ListComprehension(TVar),
     /// Parenthesized expression (for precedence)
     Paren,
+    /// Pattern predicate should be rewritten in planner
+    Pattern(QueryGraph<Arc<String>, Arc<String>, TVar>),
     /// Map projection: base { .prop, .*, key: expr, var }
     /// First child is the base expression, remaining children are projection items
     MapProjection,
@@ -242,6 +244,7 @@ impl<TVar: Display> Display for ExprIR<TVar> {
                 write!(f, "list comp({var})")
             }
             Self::Paren => write!(f, "()"),
+            Self::Pattern(_) => write!(f, "<pattern>"),
             Self::MapProjection => write!(f, "map_projection"),
         }
     }
@@ -337,6 +340,7 @@ impl<L, TVar> QueryNode<L, TVar> {
 /// - `types` contains `KNOWS` (can have multiple for OR: `[:A|B]`)
 /// - `from` and `to` are the connected nodes
 /// - `bidirectional` is true for undirected patterns `-[]-`
+/// - `min_hops`/`max_hops` are set for variable-length patterns like `[*1..3]`
 #[derive(Debug)]
 pub struct QueryRelationship<T, L, TVar> {
     pub alias: TVar,
@@ -345,6 +349,8 @@ pub struct QueryRelationship<T, L, TVar> {
     pub from: Arc<QueryNode<L, TVar>>,
     pub to: Arc<QueryNode<L, TVar>>,
     pub bidirectional: bool,
+    pub min_hops: Option<u32>,
+    pub max_hops: Option<u32>,
 }
 
 #[cfg_attr(tarpaulin, skip)]
@@ -382,6 +388,8 @@ impl<T, L, TVar> QueryRelationship<T, L, TVar> {
         from: Arc<QueryNode<L, TVar>>,
         to: Arc<QueryNode<L, TVar>>,
         bidirectional: bool,
+        min_hops: Option<u32>,
+        max_hops: Option<u32>,
     ) -> Self {
         Self {
             alias,
@@ -390,6 +398,8 @@ impl<T, L, TVar> QueryRelationship<T, L, TVar> {
             from,
             to,
             bidirectional,
+            min_hops,
+            max_hops,
         }
     }
 }

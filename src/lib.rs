@@ -56,6 +56,10 @@
 mod allocator;
 use allocator::ThreadCountingAllocator;
 use atomic_refcell::AtomicRefCell;
+use crossfire::{
+    Rx, Tx,
+    spsc::{List, unbounded_blocking},
+};
 use graph::{
     graph::{
         graph::{Graph, Plan},
@@ -73,6 +77,7 @@ use graph::{
 };
 use lazy_static::lazy_static;
 use orx_tree::{Bfs, Collection, Dfs, NodeRef};
+use parking_lot::RwLock;
 #[cfg(feature = "pyro")]
 use pyroscope::PyroscopeAgent;
 #[cfg(feature = "pyro")]
@@ -92,9 +97,8 @@ use std::{
     os::raw::{c_char, c_int, c_void},
     ptr::null_mut,
     sync::{
-        Arc, RwLock,
+        Arc,
         atomic::{AtomicBool, Ordering},
-        mpsc::{Receiver, Sender, channel},
     },
 };
 #[cfg(feature = "fuzz")]
@@ -164,8 +168,8 @@ static GRAPH_TYPE: RedisType = RedisType::new(
 /// - `write_loop`: Atomic flag ensuring only one thread processes writes at a time
 struct ThreadedGraph {
     graph: MvccGraph,
-    sender: Sender<(BlockedClient, Arc<String>, bool)>,
-    receiver: Receiver<(BlockedClient, Arc<String>, bool)>,
+    sender: Tx<List<(BlockedClient, Arc<String>, bool)>>,
+    receiver: Rx<List<(BlockedClient, Arc<String>, bool)>>,
     write_loop: AtomicBool,
 }
 
@@ -183,7 +187,7 @@ impl ThreadedGraph {
         cache_size: usize,
         name: &str,
     ) -> Self {
-        let (sender, receiver) = channel();
+        let (sender, receiver) = unbounded_blocking();
         Self {
             graph: MvccGraph::new(16384, 16384, cache_size, name),
             sender,
@@ -880,7 +884,7 @@ fn query_mut(
             }
             let g = graph.clone();
             let graph = graph.clone();
-            let graph = graph.read().unwrap();
+            let graph = graph.read();
             let bc = bc;
             let ctx = unsafe { raw::RedisModule_GetThreadSafeContext.unwrap()(bc.inner) };
             let ctx = Context::new(ctx);
@@ -933,13 +937,13 @@ fn query_mut(
 /// This ensures proper synchronization: Acquire prevents reordering of subsequent
 /// reads, while Relaxed is sufficient for the failure case since we just retry.
 fn process_write_queued_query(graph: &Arc<RwLock<ThreadedGraph>>) {
-    let g = graph.read().unwrap();
+    let g = graph.read();
     if g.write_loop
         .compare_exchange(false, true, Ordering::Acquire, Ordering::Acquire)
         .is_ok()
     {
         drop(g);
-        let mut graph = graph.write().unwrap();
+        let mut graph = graph.write();
         while let Ok((bc, query, compact)) = { graph.receiver.try_recv() } {
             let ctx = unsafe { raw::RedisModule_GetThreadSafeContext.unwrap()(bc.inner) };
             let ctx = Context::new(ctx);
@@ -1138,7 +1142,6 @@ fn record_mut(
         plan, parameters, ..
     } = graph
         .read()
-        .unwrap()
         .graph
         .read()
         .borrow()
@@ -1150,7 +1153,7 @@ fn record_mut(
         .collect::<Result<HashMap<_, _>, String>>()
         .map_err(RedisError::String)?;
     let mut runtime = Runtime::new(
-        graph.read().unwrap().graph.read(),
+        graph.read().graph.read(),
         parameters,
         true,
         plan.clone(),
@@ -1418,7 +1421,6 @@ fn graph_explain(
         |graph| {
             let Plan { plan, .. } = graph
                 .read()
-                .unwrap()
                 .graph
                 .read()
                 .borrow()
@@ -1455,7 +1457,7 @@ fn graph_memory(
         .expect("Graph does not exist");
 
     Ok(RedisValue::Integer(
-        g.read().unwrap().graph.read().borrow().memory_usage() as i64,
+        g.read().graph.read().borrow().memory_usage() as i64,
     ))
 }
 

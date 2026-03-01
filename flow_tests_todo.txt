@@ -15,7 +15,6 @@ test_multi_label
 test_null_handling
 test_opening_node
 test_optimizations_plan
-test_optional_match
 test_order_by
 test_path_filter
 test_profile
