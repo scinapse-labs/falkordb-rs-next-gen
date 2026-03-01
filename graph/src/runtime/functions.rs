@@ -33,7 +33,7 @@
 #![allow(clippy::cast_possible_truncation)]
 
 use crate::{
-    indexer::{IndexInfo, IndexStatus, IndexType},
+    indexer::{IndexInfo, IndexType},
     runtime::{
         ordermap::OrderMap,
         runtime::Runtime,
@@ -1305,20 +1305,12 @@ pub fn init_functions() -> Result<(), Functions> {
         FnType::Procedure(vec![]),
         Type::Any,
     );
-    funcs.add(
-        "db.idx.fulltext.drop",
-        db_fulltext_drop_node_index,
-        true,
-        vec![],
-        FnType::Procedure(vec![]),
-        Type::Any,
-    );
 
     funcs.add(
         "db.idx.fulltext.queryNodes",
         db_fulltext_query_nodes,
         false,
-        vec![Type::Map],
+        vec![Type::String, Type::String],
         FnType::Procedure(vec![String::from("node"), String::from("score")]),
         Type::Any,
     );
@@ -3300,8 +3292,12 @@ fn db_indexes(
             .map(
                 |IndexInfo {
                      label,
-                     status,
+                     pending,
+                     progress,
+                     total,
                      fields,
+                     language,
+                     stopwords,
                  }| {
                     let mut map = OrderMap::default();
                     map.insert(Arc::new(String::from("label")), Value::String(label));
@@ -3323,26 +3319,35 @@ fn db_indexes(
                                 IndexType::Vector => {
                                     types.push(Value::String(Arc::new(String::from("VECTOR"))));
                                 }
-                                IndexType::Point => {
-                                    types.push(Value::String(Arc::new(String::from("POINT"))));
-                                }
                             }
                         }
                         types_map.insert(attr, Value::List(types));
                     }
                     map.insert(Arc::new(String::from("types")), Value::Map(types_map));
                     map.insert(Arc::new(String::from("options")), Value::Null);
-                    map.insert(Arc::new(String::from("language")), Value::Null);
-                    map.insert(Arc::new(String::from("stopwords")), Value::Null);
+                    map.insert(
+                        Arc::new(String::from("language")),
+                        match language {
+                            Some(lang) => Value::String(lang),
+                            None => Value::Null,
+                        },
+                    );
+                    map.insert(
+                        Arc::new(String::from("stopwords")),
+                        match stopwords {
+                            Some(sw) => Value::List(sw.into_iter().map(Value::String).collect()),
+                            None => Value::Null,
+                        },
+                    );
                     map.insert(
                         Arc::new(String::from("entitytype")),
                         Value::String(Arc::new(String::from("NODE"))),
                     );
                     map.insert(
                         Arc::new(String::from("status")),
-                        if let IndexStatus::UnderConstruction(current, total) = status {
+                        if pending > 0 {
                             Value::String(Arc::new(format!(
-                                "[Indexing] {current}/{total}: UNDER CONSTRUCTION"
+                                "[Indexing] {progress}/{total}: UNDER CONSTRUCTION"
                             )))
                         } else {
                             Value::String(Arc::new(String::from("OPERATIONAL")))
@@ -3364,16 +3369,11 @@ fn db_fulltext_create_node_index(
     Ok(Value::List(thin_vec![]))
 }
 
-fn db_fulltext_drop_node_index(
-    _runtime: &Runtime,
-    _args: ThinVec<Value>,
-) -> Result<Value, String> {
-    Ok(Value::List(thin_vec![]))
-}
-
 fn db_fulltext_query_nodes(
-    _runtime: &Runtime,
-    _args: ThinVec<Value>,
+    _: &Runtime,
+    _: ThinVec<Value>,
 ) -> Result<Value, String> {
-    Ok(Value::List(thin_vec![]))
+    Err(String::from(
+        "db.fulltext.queryNodes() is not supported in this version",
+    ))
 }

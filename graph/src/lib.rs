@@ -61,7 +61,9 @@
 pub mod ast;
 pub mod binder;
 pub mod cypher;
+pub mod entity_type;
 pub mod graph;
+pub mod index;
 pub mod indexer;
 pub mod optimizer;
 pub mod planner;

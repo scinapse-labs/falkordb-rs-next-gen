@@ -44,7 +44,8 @@ use crate::{
         BoundQueryIR, ExprIR, QueryExpr, QueryGraph, QueryIR, QueryNode, QueryPath,
         QueryRelationship, SetItem, SupportAggregation, Variable,
     },
-    indexer::{EntityType, IndexQuery, IndexType},
+    entity_type::EntityType,
+    indexer::{IndexQuery, IndexType},
     runtime::functions::GraphFn,
     tree,
 };
@@ -88,6 +89,13 @@ pub enum IR {
         node: Arc<QueryNode<Arc<String>, Variable>>,
         index: Arc<String>,
         query: Arc<IndexQuery<QueryExpr<Variable>>>,
+    },
+    /// Scan nodes using a fulltext index
+    NodeByFulltextScan {
+        node: Variable,
+        label: QueryExpr<Variable>,
+        query: QueryExpr<Variable>,
+        score: Option<Variable>,
     },
     /// Lookup node by label and id
     NodeByLabelAndIdScan {
@@ -199,6 +207,9 @@ impl Display for IR {
             }
             Self::NodeByIndexScan { node, .. } => {
                 write!(f, "Node By Index Scan | {node}")
+            }
+            Self::NodeByFulltextScan { .. } => {
+                write!(f, "Node By Fulltext Index Scan")
             }
             Self::NodeByLabelAndIdScan { node, .. } => {
                 write!(f, "Node By Label and ID Scan | {node}")
@@ -949,12 +960,6 @@ impl Planner {
             // CALL procedure: special-case fulltext index procedures into
             // native CreateIndex/DropIndex IR nodes.
             QueryIR::Call(proc, exprs, named_outputs, filter) => {
-                if let Some(filter) = filter {
-                    return tree!(
-                        IR::Filter(filter),
-                        tree!(IR::ProcedureCall(proc, exprs, named_outputs))
-                    );
-                }
                 if proc.name == "db.idx.fulltext.drop" {
                     let ExprIR::String(label) = exprs[0].root().data() else {
                         unreachable!()
@@ -966,32 +971,24 @@ impl Planner {
                         entity_type: EntityType::Node,
                     });
                 }
-                if proc.name == "db.idx.fulltext.createNodeIndex" {
-                    let label = match exprs[0].root().data() {
-                        ExprIR::String(label) => label.clone(),
-                        ExprIR::Map => {
-                            let mut ret = None;
-                            for child in exprs[0].root().children() {
-                                if let ExprIR::String(label) = child.data()
-                                    && label.as_str() == "label"
-                                {
-                                    ret = Some(label.clone());
-                                    break;
-                                }
-                            }
-                            ret.unwrap_or_else(|| {
-                                unreachable!();
-                            })
-                        }
-                        _ => unreachable!(),
-                    };
-                    return tree!(IR::CreateIndex {
-                        label,
-                        attrs: vec![],
-                        index_type: IndexType::Fulltext,
-                        entity_type: EntityType::Node,
-                        options: None,
+                if proc.name == "db.idx.fulltext.queryNodes" {
+                    let scan = tree!(IR::NodeByFulltextScan {
+                        node: named_outputs[0].clone(),
+                        label: exprs[0].clone(),
+                        query: exprs[1].clone(),
+                        score: named_outputs.get(1).cloned(),
                     });
+                    return if let Some(filter) = filter {
+                        tree!(IR::Filter(filter), scan)
+                    } else {
+                        scan
+                    };
+                }
+                if let Some(filter) = filter {
+                    return tree!(
+                        IR::Filter(filter),
+                        tree!(IR::ProcedureCall(proc, exprs, named_outputs))
+                    );
                 }
                 tree!(IR::ProcedureCall(proc, exprs, named_outputs))
             }

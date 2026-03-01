@@ -87,11 +87,18 @@ impl MvccGraph {
         new_graph: Arc<AtomicRefCell<Graph>>,
     ) {
         debug_assert_eq!(self.graph.borrow().version + 1, new_graph.borrow().version);
+        new_graph.borrow().set_indexer_graph(new_graph.clone());
         self.graph = new_graph;
         self.write.store(false, Ordering::Release);
     }
 
     pub fn rollback(&self) {
         self.write.store(false, Ordering::Release);
+    }
+}
+
+impl Drop for MvccGraph {
+    fn drop(&mut self) {
+        self.graph.borrow().cancel_indexing();
     }
 }

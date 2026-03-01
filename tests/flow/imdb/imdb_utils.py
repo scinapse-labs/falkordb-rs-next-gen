@@ -1,9 +1,11 @@
 import csv
 import os
 from datetime import date
-from falkordb import Graph, Node, Edge
+
+from falkordb import Edge, Graph, Node
 
 graph_name = "imdb"
+
 
 def populate_graph(db, graph):
     # check if graph already exists
@@ -14,20 +16,28 @@ def populate_graph(db, graph):
     movies = {}
     node_count = 0
 
-    with open(os.path.dirname(os.path.abspath(__file__)) + '/resources/movies.csv', 'r') as f:
-        reader = csv.reader(f, delimiter=',')
+    with open(
+        os.path.dirname(os.path.abspath(__file__)) + "/resources/movies.csv", "r"
+    ) as f:
+        reader = csv.reader(f, delimiter=",")
         for row in reader:
-            title  = row[0]
-            genre  = row[1]
-            votes  = int(row[2])
+            title = row[0]
+            genre = row[1]
+            votes = int(row[2])
             rating = float(row[3])
-            year   = int(row[4])
+            year = int(row[4])
 
-            node = Node(alias=f"n_{node_count}", labels="movie", properties={'title': title,
-                                                    'genre': genre,
-                                                    'votes': votes,
-                                                    'rating': rating,
-                                                    'year': year})
+            node = Node(
+                alias=f"n_{node_count}",
+                labels="movie",
+                properties={
+                    "title": title,
+                    "genre": genre,
+                    "votes": votes,
+                    "rating": rating,
+                    "year": year,
+                },
+            )
             movies[title] = node
             node_count += 1
 
@@ -35,17 +45,23 @@ def populate_graph(db, graph):
     actors = {}
 
     edges = []
-    with open(os.path.dirname(os.path.abspath(__file__)) + '/resources/actors.csv', 'r') as f:
-        reader = csv.reader(f, delimiter=',')
+    with open(
+        os.path.dirname(os.path.abspath(__file__)) + "/resources/actors.csv", "r"
+    ) as f:
+        reader = csv.reader(f, delimiter=",")
         for row in reader:
-            name        = row[0]
+            name = row[0]
             yearOfBirth = int(row[1])
-            movie       = row[2]
-            # All age calculations are done where 2019 is the the current year. 
-            age         = 2019 - yearOfBirth
+            movie = row[2]
+            # All age calculations are done where 2019 is the the current year.
+            age = 2019 - yearOfBirth
 
             if name not in actors:
-                node = Node(alias=f"n_{node_count}", labels="actor", properties={'name': name, 'age': age})
+                node = Node(
+                    alias=f"n_{node_count}",
+                    labels="actor",
+                    properties={"name": name, "age": age},
+                )
                 actors[name] = node
                 node_count += 1
 

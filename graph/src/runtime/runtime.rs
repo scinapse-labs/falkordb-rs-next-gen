@@ -39,7 +39,7 @@ use crate::{
         Variable,
     },
     graph::graph::{Graph, LabelId, NodeId, RelationshipId},
-    indexer::IndexQuery,
+    indexer::{IndexOptions, IndexQuery, IndexType, TextIndexOptions},
     planner::IR,
     runtime::{
         env::Env,
@@ -196,6 +196,12 @@ impl<T: MemoryPolicy> GetVariables for DynNode<'_, IR, T> {
                 | IR::NodeByIdSeek { node, .. } => {
                     vars.push(node.alias.clone());
                 }
+                IR::NodeByFulltextScan { node, score, .. } => {
+                    vars.push(node.clone());
+                    if let Some(score) = score {
+                        vars.push(score.clone());
+                    }
+                }
                 IR::CondTraverse(query_relationship)
                 | IR::CondVarLenTraverse(query_relationship) => {
                     vars.push(query_relationship.alias.clone());
@@ -234,6 +240,13 @@ impl ReturnNames for DynNode<'_, IR> {
                 .get_child(0)
                 .map_or(vec![], |child| child.get_return_names()),
             IR::ProcedureCall(_, _, named_outputs) => named_outputs.clone(),
+            IR::NodeByFulltextScan { node, score, .. } => {
+                let mut v = vec![node.clone()];
+                if let Some(score) = score {
+                    v.push(score.clone());
+                }
+                v
+            }
             IR::Sort(_) | IR::Skip(_) | IR::Limit(_) | IR::Distinct => {
                 self.child(0).get_return_names()
             }
@@ -1292,6 +1305,7 @@ impl<'a> Runtime {
                         "graph.RO_QUERY is to be executed only on read-only queries",
                     ));
                 }
+                func.validate_args_type(&args)?;
                 let res = (func.func)(self, args)?;
                 match res {
                     Value::List(arr) => Ok(arr
@@ -1558,6 +1572,18 @@ impl<'a> Runtime {
                 })),
             IR::NodeByIndexScan { node, index, query } => Ok(iter
                 .try_flat_map(move |vars| self.node_by_index_scan(node, index, query, vars))
+                .cond_inspect(self.inspect, move |res| {
+                    self.record.borrow_mut().push((idx, res.clone()));
+                })),
+            IR::NodeByFulltextScan {
+                node,
+                label,
+                query,
+                score,
+            } => Ok(iter
+                .try_flat_map(move |vars| {
+                    self.node_by_fulltext_scan(node, label, query, score, vars)
+                })
                 .cond_inspect(self.inspect, move |res| {
                     self.record.borrow_mut().push((idx, res.clone()));
                 })),
@@ -2017,17 +2043,31 @@ impl<'a> Runtime {
                 attrs,
                 index_type,
                 entity_type,
-                options: _,
+                options,
             } => {
                 if !self.write {
                     return Err(String::from(
                         "graph.RO_QUERY is to be executed only on read-only queries",
                     ));
                 }
+                let index_options = match options {
+                    Some(expr) => {
+                        let val = self.run_expr(expr, expr.root().idx(), &Env::default(), None)?;
+                        match val {
+                            Value::Map(map) => map_to_index_options(index_type, &map)?,
+                            _ => return Err("Index options must be a map".into()),
+                        }
+                    }
+                    None => None,
+                };
+                self.g.borrow_mut().create_index(
+                    index_type,
+                    entity_type,
+                    label,
+                    attrs,
+                    index_options,
+                )?;
                 self.stats.borrow_mut().indexes_created += attrs.len();
-                self.g
-                    .borrow_mut()
-                    .create_index(index_type, entity_type, label, attrs)?;
                 Ok(Box::new(empty()))
             }
             IR::DropIndex {
@@ -2041,10 +2081,12 @@ impl<'a> Runtime {
                         "graph.RO_QUERY is to be executed only on read-only queries",
                     ));
                 }
-                self.stats.borrow_mut().indexes_dropped += attrs.len();
-                self.g
-                    .borrow_mut()
-                    .drop_index(index_type, entity_type, label, attrs);
+
+                let dropped =
+                    self.g
+                        .borrow_mut()
+                        .drop_index(index_type, entity_type, label, attrs)?;
+                self.stats.borrow_mut().indexes_dropped += dropped;
                 Ok(Box::new(empty()))
             }
         }
@@ -3059,6 +3101,37 @@ impl<'a> Runtime {
         }
     }
 
+    fn node_by_fulltext_scan(
+        &'a self,
+        node: &'a Variable,
+        label: &QueryExpr<Variable>,
+        query: &QueryExpr<Variable>,
+        score: &'a Option<Variable>,
+        vars: Env,
+    ) -> Result<Box<dyn Iterator<Item = Result<Env, String>> + 'a>, String> {
+        let Value::String(label_str) = self.run_expr(label, label.root().idx(), &vars, None)?
+        else {
+            return Err("fulltext query expects a string label".into());
+        };
+        let Value::String(query_str) = self.run_expr(query, query.root().idx(), &vars, None)?
+        else {
+            return Err("fulltext query expects a string query".into());
+        };
+        Ok(Box::new(
+            self.g
+                .borrow()
+                .fulltext_query_nodes(&label_str, &query_str)?
+                .map(move |(node_id, s)| {
+                    let mut vars = vars.clone();
+                    vars.insert(node, Value::Node(node_id));
+                    if let Some(score) = score {
+                        vars.insert(score, Value::Float(s));
+                    }
+                    Ok(vars)
+                }),
+        ))
+    }
+
     fn evaluate_id_filter(
         &self,
         filter: &Vec<(QueryExpr<Variable>, ExprIR<Variable>)>,
@@ -3610,6 +3683,67 @@ impl<'a> Runtime {
         self.g
             .borrow()
             .get_type(self.g.borrow().get_relationship_type_id(id))
+    }
+}
+
+fn map_to_index_options(
+    index_type: &IndexType,
+    kv_map: &OrderMap<Arc<String>, Value>,
+) -> Result<Option<IndexOptions>, String> {
+    let get = |key: &str| -> Option<&Value> {
+        kv_map
+            .iter()
+            .find_map(|(k, v)| if k.as_str() == key { Some(v) } else { None })
+    };
+    match index_type {
+        IndexType::Fulltext => {
+            let weight = match get("weight") {
+                Some(Value::Float(f)) => Some(*f),
+                Some(Value::Int(i)) => Some(*i as f64),
+                None => None,
+                _ => return Err("Weight must be numeric".into()),
+            };
+            let nostem = match get("nostem") {
+                Some(Value::Bool(b)) => Some(*b),
+                None => None,
+                _ => return Err("Nostem must be bool".into()),
+            };
+            let phonetic = match get("phonetic") {
+                Some(Value::Bool(b)) => Some(*b),
+                None => None,
+                _ => return Err("Phonetic must be bool".into()),
+            };
+            let language = match get("language") {
+                Some(Value::String(s)) => Some(s.clone()),
+                None => None,
+                _ => return Err("Language must be string".into()),
+            };
+            let stopwords = match get("stopwords") {
+                Some(Value::List(list)) => {
+                    let mut words = Vec::with_capacity(list.len());
+                    for v in list.iter() {
+                        match v {
+                            Value::String(s) => words.push(s.clone()),
+                            _ => {
+                                return Err("Stopwords must be an array of strings".into());
+                            }
+                        }
+                    }
+                    Some(words)
+                }
+                None => None,
+                _ => return Err("Stopwords must be array".into()),
+            };
+            let options = IndexOptions::Text(TextIndexOptions {
+                weight,
+                nostem,
+                phonetic,
+                language,
+                stopwords,
+            });
+            Ok(Some(options))
+        }
+        _ => Ok(None),
     }
 }
 
