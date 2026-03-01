@@ -76,7 +76,7 @@ jobs:
           cargo build --release
       - name: Run unit tests
         run: |
-          cargo test -p graph
+          cargo test --release -p graph
       - name: Run tests
         run: |
           . /data/venv/bin/activate
