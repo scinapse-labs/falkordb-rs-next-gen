@@ -2397,7 +2397,7 @@ impl<'a> Parser<'a> {
         }
 
         if let Some(pv) = path_var {
-            graph.set_path_var(pv);
+            graph.add_path(Arc::new(QueryPath::new(pv, vec![])));
         }
 
         // Optional WHERE

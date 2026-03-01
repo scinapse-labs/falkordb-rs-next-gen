@@ -549,38 +549,35 @@ impl Binder {
             bound.add_relationship(rel);
         }
 
-        // Derive path from relationships for pattern comprehension path variables.
-        // The parser stores only the path variable name; we reconstruct the
-        // ordered element list [node0, rel0, node1, rel1, ...] from the
-        // bound relationships which preserve parsing order.
-        if let Some(pv) = graph.path_var() {
-            let alias = self.define_name_in_scope(pv.clone(), Type::Path, true)?;
-            let mut vars = Vec::new();
-            if let Some(first_rel) = bound.relationships().first() {
-                vars.push(first_rel.from.alias.clone());
-                for rel in bound.relationships() {
-                    vars.push(rel.alias.clone());
-                    vars.push(rel.to.alias.clone());
-                }
-            }
-            bound.add_path(Arc::new(QueryPath::new(alias, vars)));
-        }
-
-        // Bind paths - path vars reference entities by name
-        // For anonymous entities with multiple instances, we use alias_to_vars
+        // Bind paths - path vars reference entities by name.
+        // Stub paths (empty vars) come from pattern comprehension: derive
+        // the ordered element list from the bound relationships.
         for raw_path in graph.paths() {
             let alias = self.define_name_in_scope(raw_path.var.clone(), Type::Path, true)?;
 
-            let mut vars = Vec::with_capacity(raw_path.vars.len());
-
-            for name in &raw_path.vars {
-                // Try environment first (for named entities)
-                if let Some(var) = self.current_env().get(name) {
-                    vars.push(var.clone());
-                } else {
-                    vars.push(self.resolve_name(name, &[])?);
+            let vars = if raw_path.vars.is_empty() {
+                // Pattern comprehension stub: derive from bound relationships
+                let mut v = Vec::new();
+                if let Some(first_rel) = bound.relationships().first() {
+                    v.push(first_rel.from.alias.clone());
+                    for rel in bound.relationships() {
+                        v.push(rel.alias.clone());
+                        v.push(rel.to.alias.clone());
+                    }
                 }
-            }
+                v
+            } else {
+                // Regular MATCH path: resolve by name
+                let mut v = Vec::with_capacity(raw_path.vars.len());
+                for name in &raw_path.vars {
+                    if let Some(var) = self.current_env().get(name) {
+                        v.push(var.clone());
+                    } else {
+                        v.push(self.resolve_name(name, &[])?);
+                    }
+                }
+                v
+            };
             bound.add_path(Arc::new(QueryPath::new(alias, vars)));
         }
 
