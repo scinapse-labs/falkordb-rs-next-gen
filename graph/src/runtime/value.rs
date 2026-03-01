@@ -923,6 +923,7 @@ impl ValueGetType for Value {
 }
 
 impl Value {
+    #[must_use]
     pub fn name(&self) -> String {
         match self {
             Self::Null => String::from("Null"),

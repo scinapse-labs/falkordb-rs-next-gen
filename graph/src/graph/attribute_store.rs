@@ -225,14 +225,14 @@ impl AttributeStore {
         let mut nremoved = 0;
         let mut batch = self.database.batch();
 
-        for (key, attrs) in attrs.iter() {
+        for (key, attrs) in attrs {
             for (attr, value) in attrs.iter() {
                 let idx = self.attrs_name.get_index_of(attr).unwrap_or_else(|| {
                     self.attrs_name.insert(attr.clone());
                     self.attrs_name.len() - 1
                 }) as u16;
 
-                let composite_key = make_key(u64::from(*key), idx);
+                let composite_key = make_key(*key, idx);
 
                 if *value == Value::Null {
                     // Check snapshot for existence

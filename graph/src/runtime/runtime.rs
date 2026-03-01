@@ -2615,7 +2615,7 @@ impl<'a> Runtime {
                         _ => {
                             return Err(format!(
                                 "Type mismatch: expected Node but was {}",
-                                run_expr.map_or_else(|| "undefined".to_string(), |v| v.name())
+                                run_expr.map_or_else(|| "undefined".to_string(), Value::name)
                             ));
                         }
                     }
@@ -2625,6 +2625,7 @@ impl<'a> Runtime {
         Ok(())
     }
 
+    #[allow(clippy::too_many_lines)]
     fn relationship_scan(
         &'a self,
         relationship_pattern: &'a QueryRelationship<Arc<String>, Arc<String>, Variable>,
@@ -2666,37 +2667,36 @@ impl<'a> Runtime {
         if to_id.is_none() && vars.is_bound(&relationship_pattern.to.alias) {
             return Ok(Box::new(empty()));
         }
-        let bidirectional = relationship_pattern.bidirectional;
-        // Collect (src, dst, is_reverse) tuples for edge scanning
-        // Forward direction: from=src, to=dst
-        let mut pairs: Vec<(NodeId, NodeId, bool)> = self
-            .g
-            .borrow()
-            .get_relationships(
-                &relationship_pattern.types,
-                &relationship_pattern.from.labels,
-                &relationship_pattern.to.labels,
+
+        Ok(Box::new(
+            Box::new(
+                self.g
+                    .borrow()
+                    .get_relationships(
+                        &relationship_pattern.types,
+                        &relationship_pattern.from.labels,
+                        &relationship_pattern.to.labels,
+                    )
+                    .map(|(src, dst)| (src, dst, false)),
             )
-            .map(|(src, dst)| (src, dst, false))
-            .collect();
-        // For bidirectional traversals, also scan the reverse direction
-        // Skip self-loops (src == dst) as they are already included in the forward scan
-        if bidirectional {
-            let reverse: Vec<(NodeId, NodeId, bool)> = self
-                .g
-                .borrow()
-                .get_relationships(
-                    &relationship_pattern.types,
-                    &relationship_pattern.to.labels,
-                    &relationship_pattern.from.labels,
-                )
-                .filter(|(src, dst)| src != dst)
-                .map(|(src, dst)| (src, dst, true))
-                .collect();
-            pairs.extend(reverse);
-        }
-        Ok(Box::new(pairs.into_iter().flat_map(
-            move |(src, dst, is_reverse)| {
+            .chain(if relationship_pattern.bidirectional {
+                // For bidirectional traversals, also scan the reverse direction
+                // Skip self-loops (src == dst) as they are already included in the forward scan
+                Box::new(
+                    self.g
+                        .borrow()
+                        .get_relationships(
+                            &relationship_pattern.types,
+                            &relationship_pattern.to.labels,
+                            &relationship_pattern.from.labels,
+                        )
+                        .filter(|(src, dst)| src != dst)
+                        .map(|(src, dst)| (src, dst, true)),
+                ) as Box<dyn Iterator<Item = (NodeId, NodeId, bool)>>
+            } else {
+                Box::new(empty())
+            })
+            .flat_map(move |(src, dst, is_reverse)| {
                 let (from_node, to_node) = if is_reverse { (dst, src) } else { (src, dst) };
                 if from_id.is_some() && from_id.unwrap() != from_node {
                     return Box::new(empty()) as Box<dyn Iterator<Item = Result<Env, String>>>;
@@ -2711,7 +2711,7 @@ impl<'a> Runtime {
                     let g = self.g.borrow();
                     for (attr, avalue) in attrs.iter() {
                         match g.get_node_attribute(from_node, attr) {
-                            Some(pvalue) if pvalue == *avalue => continue,
+                            Some(pvalue) if pvalue == *avalue => {}
                             _ => {
                                 return Box::new(empty())
                                     as Box<dyn Iterator<Item = Result<Env, String>>>;
@@ -2726,7 +2726,7 @@ impl<'a> Runtime {
                     let g = self.g.borrow();
                     for (attr, avalue) in attrs.iter() {
                         match g.get_node_attribute(to_node, attr) {
-                            Some(pvalue) if pvalue == *avalue => continue,
+                            Some(pvalue) if pvalue == *avalue => {}
                             _ => {
                                 return Box::new(empty())
                                     as Box<dyn Iterator<Item = Result<Env, String>>>;
@@ -2768,8 +2768,8 @@ impl<'a> Runtime {
                             Ok(vars)
                         }),
                 ) as Box<dyn Iterator<Item = Result<Env, String>>>
-            },
-        )))
+            }),
+        ))
     }
 
     fn expand_into(
@@ -3495,7 +3495,7 @@ impl<'a> Runtime {
         {
             for (attr, avalue) in filter_attrs.iter() {
                 match self.get_node_attribute(node_id, attr) {
-                    Some(pvalue) if *avalue == pvalue => continue,
+                    Some(pvalue) if *avalue == pvalue => {}
                     _ => return Ok(false),
                 }
             }
@@ -3521,7 +3521,7 @@ impl<'a> Runtime {
         {
             for (attr, avalue) in filter_attrs.iter() {
                 match self.get_relationship_attribute(rel_id, attr) {
-                    Some(pvalue) if *avalue == pvalue => continue,
+                    Some(pvalue) if *avalue == pvalue => {}
                     _ => return Ok(false),
                 }
             }
@@ -3721,7 +3721,7 @@ fn map_to_index_options(
             let stopwords = match get("stopwords") {
                 Some(Value::List(list)) => {
                     let mut words = Vec::with_capacity(list.len());
-                    for v in list.iter() {
+                    for v in list {
                         match v {
                             Value::String(s) => words.push(s.clone()),
                             _ => {
