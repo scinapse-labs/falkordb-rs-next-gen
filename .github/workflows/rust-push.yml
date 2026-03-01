@@ -84,7 +84,7 @@ jobs:
       - name: Run tests
         run: |
           . /data/venv/bin/activate
-          pytest tests/test_e2e.py tests/test_functions.py tests/test_mvcc.py tests/test_concurrency.py -vv
+          RELEASE=1 pytest tests/test_e2e.py tests/test_functions.py tests/test_mvcc.py tests/test_concurrency.py -vv
       - name: Run Flow tests
         run: |
           . /data/venv/bin/activate
