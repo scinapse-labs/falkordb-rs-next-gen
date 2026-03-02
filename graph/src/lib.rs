@@ -15,27 +15,12 @@
 //!        │
 //!        ▼
 //! ┌─────────────┐
-//! │   cypher    │  Parse query into AST (ANTLR-generated parser)
+//! │   parser    │  Parse query into AST (hand-written recursive descent)
 //! └─────────────┘
 //!        │
 //!        ▼
 //! ┌─────────────┐
-//! │    ast      │  Abstract Syntax Tree nodes
-//! └─────────────┘
-//!        │
-//!        ▼
-//! ┌─────────────┐
-//! │   binder    │  Semantic analysis: resolve names, check types
-//! └─────────────┘
-//!        │
-//!        ▼
-//! ┌─────────────┐
-//! │  planner    │  Convert AST to logical execution plan (IR)
-//! └─────────────┘
-//!        │
-//!        ▼
-//! ┌─────────────┐
-//! │ optimizer   │  Optimize the execution plan
+//! │  planner    │  Bind, plan, and optimize the execution plan (IR)
 //! └─────────────┘
 //!        │
 //!        ▼
@@ -46,29 +31,19 @@
 //!
 //! ## Module Overview
 //!
-//! - [`ast`]: Abstract Syntax Tree definitions for Cypher queries
-//! - [`binder`]: Semantic analysis and name resolution
-//! - [`cypher`]: Cypher parser (visitor pattern over ANTLR-generated parser)
+//! - [`parser`]: Cypher parser, AST definitions, and string escape utilities
+//! - [`planner`]: Semantic binding, logical plan generation, and optimization
 //! - [`graph`]: Graph data structures (sparse matrices, vectors, MVCC)
-//! - [`indexer`]: Full-text and property index management
-//! - [`optimizer`]: Query plan optimization passes
-//! - [`planner`]: Logical plan generation from bound AST
-//! - [`redisearch`]: RediSearch integration for full-text indexing
+//! - [`index`]: Index types and management with RediSearch
+//! - [`redisearch`]: RediSearch FFI bindings
 //! - [`runtime`]: Query execution engine and built-in functions
 //! - [`threadpool`]: Thread pool for parallel query execution
-//! - [`tree`]: Tree utility functions
 
-pub mod ast;
-pub mod binder;
-pub mod cypher;
 pub mod entity_type;
 pub mod graph;
 pub mod index;
-pub mod indexer;
-pub mod optimizer;
+pub mod parser;
 pub mod planner;
 pub mod redisearch;
 pub mod runtime;
-pub mod string_escape;
 pub mod threadpool;
-pub mod tree;

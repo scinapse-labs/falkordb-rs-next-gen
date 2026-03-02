@@ -1,6 +1,6 @@
 use std::hash::Hash;
 
-use crate::ast::Variable;
+use crate::parser::ast::Variable;
 use crate::runtime::bitset::BitSet;
 use crate::runtime::value::Value;
 

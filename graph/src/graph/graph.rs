@@ -50,9 +50,6 @@ use orx_tree::DynTree;
 use roaring::RoaringTreemap;
 
 use crate::{
-    ast::ExprIR,
-    binder::Binder,
-    cypher::Parser,
     entity_type::EntityType,
     graph::{
         attribute_store::AttributeStore,
@@ -63,10 +60,12 @@ use crate::{
         tensor::Tensor,
         versioned_matrix::VersionedMatrix,
     },
-    index::Field,
-    indexer::{Document, IndexInfo, IndexOptions, IndexQuery, IndexType, Indexer},
-    optimizer::optimize,
-    planner::{IR, Planner},
+    index::{
+        Field,
+        indexer::{Document, IndexInfo, IndexOptions, IndexQuery, IndexType, Indexer},
+    },
+    parser::{ast::ExprIR, cypher::Parser},
+    planner::{IR, Planner, binder::Binder, optimizer::optimize},
     runtime::{ordermap::OrderMap, orderset::OrderSet, pending::PendingRelationship, value::Value},
     threadpool::spawn,
 };

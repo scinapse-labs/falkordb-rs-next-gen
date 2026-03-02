@@ -29,6 +29,10 @@
 //! - **Aggregate**: Group and aggregate tuples
 //! - **Sort/Skip/Limit**: Order and paginate results
 
+pub mod binder;
+pub mod optimizer;
+pub mod tree;
+
 use std::{
     collections::{HashMap, HashSet},
     fmt::Display,
@@ -36,18 +40,18 @@ use std::{
 };
 
 use crate::runtime::functions::Type;
+use crate::tree;
 
 use orx_tree::{DynNode, DynTree, NodeRef, Side, Traversal, Traverser};
 
 use crate::{
-    ast::{
+    entity_type::EntityType,
+    index::indexer::{IndexQuery, IndexType},
+    parser::ast::{
         BoundQueryIR, ExprIR, QueryExpr, QueryGraph, QueryIR, QueryNode, QueryPath,
         QueryRelationship, SetItem, SupportAggregation, Variable,
     },
-    entity_type::EntityType,
-    indexer::{IndexQuery, IndexType},
     runtime::functions::GraphFn,
-    tree,
 };
 
 /// Intermediate Representation (IR) for execution plan operators.

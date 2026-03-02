@@ -1,3 +1,4 @@
+pub mod indexer;
 pub mod text_index_options;
 pub use text_index_options::TextIndexOptions;
 

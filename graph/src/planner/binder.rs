@@ -25,7 +25,7 @@
 //! RETURN name          // References variable with id=2
 //! ```
 
-use crate::ast::{
+use crate::parser::ast::{
     BoundQueryIR, ExprIR, QueryExpr, QueryGraph, QueryIR, QueryNode, QueryPath, QueryRelationship,
     RawQueryIR, SetItem, Variable,
 };

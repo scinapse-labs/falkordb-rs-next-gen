@@ -33,7 +33,7 @@
 #![allow(clippy::cast_possible_truncation)]
 
 use crate::{
-    indexer::{IndexInfo, IndexType},
+    index::indexer::{IndexInfo, IndexType},
     runtime::{
         ordermap::OrderMap,
         runtime::Runtime,
