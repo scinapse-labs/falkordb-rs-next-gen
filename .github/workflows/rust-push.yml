@@ -70,7 +70,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - run: rustup default stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
         with:
           shared-key: "clippy"
       - name: Format
@@ -88,7 +88,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - run: rustup default stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
         with:
           shared-key: "release"
       - name: Build
@@ -116,13 +116,13 @@ jobs:
     if: ${{ !cancelled() }}
     steps:
       - uses: actions/checkout@v6
-      - uses: Swatinem/rust-cache@v2
+      - run: rustup default stable
+      - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
         with:
           shared-key: "coverage"
           env-vars: "RUSTFLAGS"
       - name: Run code coverage
         run: |
-          rustup default stable
           RUSTFLAGS="-C instrument-coverage" cargo build
           RUSTFLAGS="-C instrument-coverage" cargo test -p graph
           . /data/venv/bin/activate
@@ -158,6 +158,7 @@ jobs:
         continue-on-error: true
       - name: Run fuzz tests
         run: |
+          cargo build --features fuzz
           . /data/venv/bin/activate
           mkdir -p fuzz/corpus/fuzz_target_runtime/
           TCK_DONE=tck_done.txt pytest tests/tck/test_tck.py -s
@@ -210,7 +211,7 @@ jobs:
         run: |
           git config --global --add safe.directory $GITHUB_WORKSPACE
           rustup default stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
         with:
           shared-key: "release"
       - name: Build and run benchmark
