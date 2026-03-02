@@ -34,8 +34,8 @@
 //! - [`parser`]: Cypher parser, AST definitions, and string escape utilities
 //! - [`planner`]: Semantic binding, logical plan generation, and optimization
 //! - [`graph`]: Graph data structures (sparse matrices, vectors, MVCC)
-//! - [`index`]: Index types and management with RediSearch
-//! - [`redisearch`]: RediSearch FFI bindings
+//! - [`graph::graphblas`]: GraphBLAS FFI bindings (auto-generated)
+//! - [`index`]: Index types, management, and RediSearch FFI bindings
 //! - [`runtime`]: Query execution engine and built-in functions
 //! - [`threadpool`]: Thread pool for parallel query execution
 
@@ -44,6 +44,5 @@ pub mod graph;
 pub mod index;
 pub mod parser;
 pub mod planner;
-pub mod redisearch;
 pub mod runtime;
 pub mod threadpool;

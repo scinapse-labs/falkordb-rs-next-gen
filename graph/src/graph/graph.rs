@@ -53,12 +53,14 @@ use crate::{
     entity_type::EntityType,
     graph::{
         attribute_store::AttributeStore,
-        matrix::{
-            Dup, MaskedElementWiseAdd, MaskedElementWiseMultiply, Matrix, MxM, New, Remove, Set,
-            Size,
+        graphblas::{
+            matrix::{
+                Dup, MaskedElementWiseAdd, MaskedElementWiseMultiply, Matrix, MxM, New, Remove,
+                Set, Size,
+            },
+            tensor::Tensor,
+            versioned_matrix::VersionedMatrix,
         },
-        tensor::Tensor,
-        versioned_matrix::VersionedMatrix,
     },
     index::{
         Field,

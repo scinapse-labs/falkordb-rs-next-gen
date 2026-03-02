@@ -27,7 +27,7 @@
 
 use std::ops::{Deref, DerefMut};
 
-use crate::graph::matrix::Dup;
+use crate::graph::graphblas::matrix::Dup;
 
 /// Copy-on-Write wrapper that defers duplication until mutation.
 ///

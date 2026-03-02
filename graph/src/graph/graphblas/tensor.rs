@@ -22,7 +22,7 @@
 //! For example: two "KNOWS" relationships between the same people with
 //! different "since" dates.
 
-use crate::graph::{
+use super::{
     matrix::{Dup, New, Remove, Set, Size},
     versioned_matrix::{self, VersionedMatrix},
 };

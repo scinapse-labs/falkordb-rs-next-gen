@@ -1,4 +1,5 @@
 pub mod indexer;
+pub mod redisearch;
 pub mod text_index_options;
 pub use text_index_options::TextIndexOptions;
 
@@ -14,25 +15,22 @@ use std::{
     },
 };
 
-use crate::{
-    redisearch::{
-        GC_POLICY_FORK, REDISEARCH_ADD_REPLACE, RSDoc, RSFLDOPT_NONE, RSFLDOPT_TXTNOSTEM,
-        RSFLDOPT_TXTPHONETIC, RSFLDTYPE_FULLTEXT, RSFLDTYPE_GEO, RSFLDTYPE_NUMERIC, RSFLDTYPE_TAG,
-        RSFLDTYPE_VECTOR, RSGeoDistance_RS_GEO_DISTANCE_M, RSIndex, RSRANGE_INF, RSRANGE_NEG_INF,
-        RSResultsIterator, RediSearch_CreateDocument2, RediSearch_CreateField,
-        RediSearch_CreateGeoNode, RediSearch_CreateIndex, RediSearch_CreateIndexOptions,
-        RediSearch_CreateNumericNode, RediSearch_CreateTagNode, RediSearch_CreateTagTokenNode,
-        RediSearch_DeleteDocument, RediSearch_DocumentAddFieldGeo,
-        RediSearch_DocumentAddFieldNumber, RediSearch_DocumentAddFieldString,
-        RediSearch_DocumentAddFieldVector, RediSearch_DropIndex, RediSearch_FreeIndexOptions,
-        RediSearch_GetResultsIterator, RediSearch_IndexAddDocument,
-        RediSearch_IndexOptionsSetGCPolicy, RediSearch_IndexOptionsSetLanguage,
-        RediSearch_IndexOptionsSetStopwords, RediSearch_IterateQuery, RediSearch_QueryNodeAddChild,
-        RediSearch_ResultsIteratorFree, RediSearch_ResultsIteratorGetScore,
-        RediSearch_ResultsIteratorNext, RediSearch_TagFieldSetCaseSensitive,
-        RediSearch_TagFieldSetSeparator, RediSearch_TextFieldSetWeight,
-    },
-    runtime::value::Value,
+use crate::runtime::value::Value;
+use redisearch::{
+    GC_POLICY_FORK, REDISEARCH_ADD_REPLACE, RSDoc, RSFLDOPT_NONE, RSFLDOPT_TXTNOSTEM,
+    RSFLDOPT_TXTPHONETIC, RSFLDTYPE_FULLTEXT, RSFLDTYPE_GEO, RSFLDTYPE_NUMERIC, RSFLDTYPE_TAG,
+    RSFLDTYPE_VECTOR, RSGeoDistance_RS_GEO_DISTANCE_M, RSIndex, RSRANGE_INF, RSRANGE_NEG_INF,
+    RSResultsIterator, RediSearch_CreateDocument2, RediSearch_CreateField,
+    RediSearch_CreateGeoNode, RediSearch_CreateIndex, RediSearch_CreateIndexOptions,
+    RediSearch_CreateNumericNode, RediSearch_CreateTagNode, RediSearch_CreateTagTokenNode,
+    RediSearch_DeleteDocument, RediSearch_DocumentAddFieldGeo, RediSearch_DocumentAddFieldNumber,
+    RediSearch_DocumentAddFieldString, RediSearch_DocumentAddFieldVector, RediSearch_DropIndex,
+    RediSearch_FreeIndexOptions, RediSearch_GetResultsIterator, RediSearch_IndexAddDocument,
+    RediSearch_IndexOptionsSetGCPolicy, RediSearch_IndexOptionsSetLanguage,
+    RediSearch_IndexOptionsSetStopwords, RediSearch_IterateQuery, RediSearch_QueryNodeAddChild,
+    RediSearch_ResultsIteratorFree, RediSearch_ResultsIteratorGetScore,
+    RediSearch_ResultsIteratorNext, RediSearch_TagFieldSetCaseSensitive,
+    RediSearch_TagFieldSetSeparator, RediSearch_TextFieldSetWeight,
 };
 
 /// Type of index for a property.

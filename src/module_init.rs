@@ -23,8 +23,8 @@
 //! can reject loading an incomplete module.
 
 use graph::{
-    graph::matrix::init,
-    redisearch::{REDISEARCH_INIT_LIBRARY, RediSearch_Init},
+    graph::graphblas::matrix::init,
+    index::redisearch::{REDISEARCH_INIT_LIBRARY, RediSearch_Init},
     runtime::functions::init_functions,
 };
 #[cfg(feature = "pyro")]
