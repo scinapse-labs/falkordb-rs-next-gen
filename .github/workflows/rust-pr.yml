@@ -56,6 +56,24 @@ jobs:
           push: true
           tags: aviavni/falkordb-build:${{ github.event.pull_request.number }}
           context: ./build
+  lint:
+    runs-on: ubuntu-latest
+    container: aviavni/falkordb-build:${{ needs.check-files.outputs.file_changed == 'true' && github.event.pull_request.number || 'latest' }}
+    needs:
+      - check-files
+      - docker
+    if: ${{ !cancelled() }}
+    steps:
+      - uses: actions/checkout@v6
+      - run: rustup default stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: "clippy"
+      - name: Format
+        run: cargo fmt --all --check
+      - name: Lint
+        run: |
+          CXX=clang++-21 cargo clippy --all-targets
   test:
     runs-on: ubuntu-latest
     container: aviavni/falkordb-build:${{ needs.check-files.outputs.file_changed == 'true' && github.event.pull_request.number || 'latest' }}
@@ -66,11 +84,9 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - run: rustup default stable
-      - name: Format
-        run: cargo fmt --all --check
-      - name: Lint
-        run: |
-          CXX=clang++-21 cargo clippy --all-targets
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: "release"
       - name: Build
         run: |
           cargo build --release
@@ -100,6 +116,10 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@v6
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: "coverage"
+          env-vars: "RUSTFLAGS"
       - name: Run code coverage
         run: |
           rustup default stable
@@ -140,7 +160,6 @@ jobs:
         continue-on-error: true
       - name: Run fuzz tests
         run: |
-          cargo build --features fuzz
           . /data/venv/bin/activate
           mkdir -p fuzz/corpus/fuzz_target_runtime/
           TCK_DONE=tck_done.txt pytest tests/tck/test_tck.py -s
@@ -194,10 +213,15 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v6
-      - name: Run benchmark
+      - name: Setup
         run: |
           git config --global --add safe.directory $GITHUB_WORKSPACE
           rustup default stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: "release"
+      - name: Build and run benchmark
+        run: |
           cargo build --release
           . /data/venv/bin/activate
           pytest tests/test_bench.py --benchmark-json output.json -vv
@@ -228,6 +252,11 @@ jobs:
           -it
     steps:
       - uses: actions/checkout@v6
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+          cache: 'pip'
+          cache-dependency-path: tests/requirements.txt
       - name: Wait for FalkorDB to be ready
         run: |
           # Wait until port 6379 is open (max 30 seconds)
@@ -241,8 +270,5 @@ jobs:
           done
       - name: Run FalkorDB e2e tests
         run: |
-          sudo apt install -y python3-venv
-          python3 -m venv venv
-          . venv/bin/activate
-          pip install -r  tests/requirements.txt
+          pip install -r tests/requirements.txt
           pytest -v -m "not extra" tests/test_e2e.py tests/test_functions.py -vv
