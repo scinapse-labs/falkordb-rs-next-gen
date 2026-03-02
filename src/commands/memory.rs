@@ -24,7 +24,7 @@ pub fn graph_memory(
 
     let g = key
         .get_value::<Arc<RwLock<ThreadedGraph>>>(&GRAPH_TYPE)?
-        .expect("Graph does not exist");
+        .ok_or(RedisError::Str("Graph does not exist"))?;
 
     Ok(RedisValue::Integer(
         g.read().graph.read().borrow().memory_usage() as i64,

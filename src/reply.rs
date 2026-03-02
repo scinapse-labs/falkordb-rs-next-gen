@@ -407,12 +407,8 @@ pub fn reply_verbose_value(
                 }
             } else {
                 let bg = runtime.g.borrow();
-                let rel_type = bg.get_type(bg.get_relationship_type_id(rel.0)).unwrap();
-                raw::reply_with_string_buffer(
-                    ctx.ctx,
-                    rel_type.as_ptr().cast::<c_char>(),
-                    rel_type.len(),
-                );
+                let rel_type = bg.get_relationship_type_id(rel.0);
+                raw::reply_with_long_long(ctx.ctx, usize::from(rel_type) as _);
                 raw::reply_with_long_long(ctx.ctx, u64::from(rel.1) as _);
                 raw::reply_with_long_long(ctx.ctx, u64::from(rel.2) as _);
                 raw::reply_with_array(ctx.ctx, raw::REDISMODULE_POSTPONED_LEN as _);
