@@ -32,7 +32,7 @@ use roaring::RoaringTreemap;
 use crate::{
     graph::{
         graph::{Graph, LabelId, NodeId, RelationshipId},
-        matrix::{Matrix, New, Remove, Set, Size},
+        graphblas::matrix::{Matrix, New, Remove, Set, Size},
     },
     runtime::{
         functions::Type,

@@ -22,15 +22,11 @@
 //! ## GraphBLAS Integration
 //!
 //! The underlying sparse matrix operations use GraphBLAS, a high-performance
-//! library for graph algorithms using linear algebra. The [`GraphBLAS`] module
-//! contains the FFI bindings (auto-generated).
+//! library for graph algorithms using linear algebra. The [`graphblas`]
+//! submodule contains the FFI bindings (auto-generated).
 
-pub mod GraphBLAS;
 pub mod attribute_store;
 pub mod cow;
 pub mod graph;
-pub mod matrix;
+pub mod graphblas;
 pub mod mvcc_graph;
-pub mod tensor;
-pub mod vector;
-pub mod versioned_matrix;

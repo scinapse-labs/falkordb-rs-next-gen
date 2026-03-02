@@ -34,12 +34,12 @@
 #![allow(clippy::cast_possible_truncation)]
 #![allow(clippy::cast_precision_loss)]
 use crate::{
-    ast::{
+    graph::graph::{Graph, LabelId, NodeId, RelationshipId},
+    index::indexer::{IndexOptions, IndexQuery, IndexType, TextIndexOptions},
+    parser::ast::{
         ExprIR, QuantifierType, QueryExpr, QueryGraph, QueryNode, QueryRelationship, SetItem,
         Variable,
     },
-    graph::graph::{Graph, LabelId, NodeId, RelationshipId},
-    indexer::{IndexOptions, IndexQuery, IndexType, TextIndexOptions},
     planner::IR,
     runtime::{
         env::Env,

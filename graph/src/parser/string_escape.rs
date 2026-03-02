@@ -29,7 +29,7 @@
 ///
 /// # Examples
 /// ```
-/// use graph::string_escape::cypher_unescape;
+/// use graph::parser::string_escape::cypher_unescape;
 ///
 /// assert_eq!(cypher_unescape(r"hello\nworld").unwrap(), "hello\nworld");
 /// assert_eq!(cypher_unescape(r"single \' char").unwrap(), "single ' char");
@@ -94,7 +94,7 @@ pub fn cypher_unescape(input: &str) -> Result<String, String> {
 ///
 /// # Examples
 /// ```
-/// use graph::string_escape::cypher_escape;
+/// use graph::parser::string_escape::cypher_escape;
 ///
 /// assert_eq!(cypher_escape("hello\nworld"), r"hello\nworld");
 /// assert_eq!(cypher_escape("single ' char"), r"single \' char");

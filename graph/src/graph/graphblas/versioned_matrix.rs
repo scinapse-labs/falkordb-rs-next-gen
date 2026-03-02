@@ -21,11 +21,11 @@
 //! - Writers accumulate changes in `dp` and `dm`
 //! - On commit, deltas merge into base; on rollback, deltas are discarded
 
-use crate::graph::{
-    GraphBLAS::GxB_Print_Level,
-    cow::Cow,
+use super::{
+    GxB_Print_Level,
     matrix::{self, Dup, Get, MaskedElementWiseAdd, Matrix, New, Remove, Set, Size, Transpose},
 };
+use crate::graph::cow::Cow;
 
 /// A matrix with MVCC delta tracking for snapshot isolation.
 ///

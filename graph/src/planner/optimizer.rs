@@ -35,13 +35,14 @@ use std::sync::Arc;
 use orx_tree::{Bfs, Dyn, DynNode, DynTree, NodeIdx, NodeRef};
 
 use crate::{
-    ast::{ExprIR, QueryExpr, QueryNode, Variable},
     graph::graph::Graph,
-    indexer::IndexQuery,
-    planner::IR,
+    index::indexer::IndexQuery,
+    parser::ast::{ExprIR, QueryExpr, QueryNode, Variable},
     runtime::runtime::GetVariables,
     tree,
 };
+
+use super::IR;
 
 type IndexScanResult = Option<(
     Arc<QueryNode<Arc<String>, Variable>>,

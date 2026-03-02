@@ -2,7 +2,7 @@
 //!
 //! This module implements a hand-written recursive descent parser for the Cypher
 //! query language. It converts Cypher query strings into an Abstract Syntax Tree
-//! (AST) defined in [`crate::ast`].
+//! (AST) defined in [`crate::parser::ast`].
 //!
 //! ## Architecture
 //!
@@ -51,21 +51,21 @@
 //! Parse errors return `Err(String)` with a descriptive message including
 //! the position in the query where the error occurred.
 
-use crate::ast::{
+use crate::entity_type::EntityType;
+use crate::index::indexer::IndexType;
+use crate::parser::ast::{
     ExprIR, QuantifierType, QueryExpr, QueryGraph, QueryIR, QueryNode, QueryPath,
     QueryRelationship, RawQueryIR, SetItem,
 };
-use crate::entity_type::EntityType;
-use crate::indexer::IndexType;
+use crate::parser::string_escape::cypher_unescape;
 use crate::runtime::orderset::OrderSet;
-use crate::string_escape::cypher_unescape;
+use crate::tree;
 use crate::{
-    cypher::Token::RParen,
+    parser::cypher::Token::RParen,
     runtime::{
         functions::{FnType, get_functions},
         value::Value,
     },
-    tree,
 };
 use itertools::Itertools;
 use orx_tree::{DynTree, NodeRef};

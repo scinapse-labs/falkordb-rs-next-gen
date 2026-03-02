@@ -2,8 +2,8 @@ use std::collections::HashMap;
 
 use graph::{
     graph::{
-        GraphBLAS::{GrB_Mode, GrB_init},
         graph::Plan,
+        graphblas::{GrB_Mode, GrB_init},
         mvcc_graph::MvccGraph,
     },
     runtime::{

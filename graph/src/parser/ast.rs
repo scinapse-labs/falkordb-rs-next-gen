@@ -1,8 +1,8 @@
 //! Abstract Syntax Tree (AST) definitions for Cypher queries.
 //!
 //! This module defines the intermediate representation (IR) for parsed Cypher queries.
-//! The AST is produced by the parser ([`crate::cypher`]) and consumed by the binder
-//! ([`crate::binder`]) and planner ([`crate::planner`]).
+//! The AST is produced by the parser ([`crate::parser::cypher`]) and consumed by the binder
+//! ([`crate::planner::binder`]) and planner ([`crate::planner`]).
 //!
 //! ## Key Types
 //!
@@ -30,7 +30,7 @@ use orx_tree::{Dfs, DynTree, NodeRef};
 
 use crate::{
     entity_type::EntityType,
-    indexer::IndexType,
+    index::indexer::IndexType,
     runtime::{
         functions::{GraphFn, Type},
         orderset::OrderSet,

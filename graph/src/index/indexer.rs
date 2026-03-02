@@ -43,11 +43,12 @@ use std::{
 use atomic_refcell::AtomicRefCell;
 use roaring::RoaringTreemap;
 
-pub use crate::index::{
+use super::Index;
+pub use super::{
     Document, Field, IdIter, IndexInfo, IndexQuery, IndexResultsIter, IndexType, ScoredIdIter,
     TextIndexOptions,
 };
-use crate::{graph::graph::Graph, index::Index, runtime::value::Value};
+use crate::{graph::graph::Graph, runtime::value::Value};
 
 pub enum IndexOptions {
     Text(TextIndexOptions),
