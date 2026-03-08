@@ -27,12 +27,9 @@
 
 #![allow(clippy::doc_markdown)]
 
-use std::{
-    mem::MaybeUninit,
-    os::raw::c_void,
-    ptr::null_mut,
-    sync::{Arc, Mutex},
-};
+use std::{mem::MaybeUninit, os::raw::c_void, ptr::null_mut, sync::Arc};
+
+use parking_lot::Mutex;
 
 use super::{
     GrB_BOOL, GrB_DESC_C, GrB_DESC_CT0, GrB_DESC_CT0T1, GrB_DESC_CT1, GrB_DESC_R, GrB_DESC_RC,
@@ -404,7 +401,7 @@ impl Matrix {
     }
 
     pub fn wait(&self) {
-        let lock = self.lock.lock().unwrap();
+        let lock = self.lock.lock();
         unsafe {
             let info = GrB_Matrix_wait(*self.m, GrB_WaitMode::GrB_MATERIALIZE as _);
             debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);

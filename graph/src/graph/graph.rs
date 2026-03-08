@@ -37,7 +37,7 @@ use std::{
     collections::HashMap,
     hash::Hash,
     num::NonZeroUsize,
-    sync::{Arc, Mutex},
+    sync::Arc,
     time::{Duration, Instant},
 };
 
@@ -47,6 +47,7 @@ use itertools::Itertools;
 use lru::LruCache;
 use once_cell::sync::OnceCell;
 use orx_tree::DynTree;
+use parking_lot::Mutex;
 use roaring::RoaringTreemap;
 
 use crate::{
@@ -273,38 +274,30 @@ fn populate_index_batch(
             // finishes.  This guarantees no concurrent index mutations.
             {
                 let lock = node_indexer.write_lock();
-                let guard = lock.lock().unwrap();
+                let guard = lock.lock();
 
-                let graph = node_indexer.get_graph();
                 let mut batch = Vec::with_capacity(BATCH_SIZE);
 
-                if let Some(graph) = graph {
-                    let g = graph.borrow();
-                    if let Some(lm) = g.get_label_matrix(&label) {
-                        let mut iter = lm.iter(min_row, u64::MAX);
-                        while batch.len() < BATCH_SIZE {
-                            match iter.next() {
-                                Some((n, _)) => {
-                                    next_min_row = n + 1;
-                                    let mut doc = Document::new(n);
-                                    let mut has_fields = false;
-                                    for (attr, fields) in &attrs {
-                                        if let Some(value) = g.get_node_attribute(NodeId(n), attr) {
-                                            for field in fields {
-                                                doc.set(field.clone(), value.clone());
-                                            }
-                                            has_fields = true;
-                                        }
-                                    }
-                                    if has_fields {
-                                        batch.push(doc);
-                                    }
+                if let Some(graph) = node_indexer.get_graph()
+                    && let Some(lm) = graph.borrow().get_label_matrix(&label)
+                {
+                    for (n, _) in lm.iter(min_row, u64::MAX).take(BATCH_SIZE) {
+                        let mut doc = Document::new(n);
+                        let mut has_fields = false;
+                        for (attr, fields) in &attrs {
+                            let value = graph.borrow().get_node_attribute(NodeId(n), attr);
+                            if let Some(value) = value {
+                                for field in fields {
+                                    doc.set(field.clone(), value.clone());
                                 }
-                                None => break,
+                                has_fields = true;
                             }
                         }
+                        if has_fields {
+                            batch.push(doc);
+                        }
                     }
-                    drop(g);
+                    next_min_row = batch.last().map_or(next_min_row, |doc| doc.id() + 1);
                 } else {
                     // Graph not yet committed — reschedule this batch.
                     // MvccGraph::commit() will set the indexer's graph
@@ -325,7 +318,7 @@ fn populate_index_batch(
                     node_indexer.commit(&mut add_docs, &mut HashMap::new());
                     node_indexer.update_progress(&label, progress);
                 }
-                // _guard dropped here — lock released between batches
+                // guard dropped here — lock released between batches
             }
 
             if exhausted {
@@ -527,46 +520,40 @@ impl Graph {
         let mut parser = Parser::new(query);
         let (parameters, query) = parser.parse_parameters()?;
 
-        match self.cache.lock() {
-            Ok(mut cache) => {
-                if let Some(plan) = cache.get(query) {
-                    let optimize_plan = optimize(&plan.0, self);
-                    Ok(Plan::new(
-                        Arc::new(optimize_plan),
-                        true,
-                        parameters,
-                        parse_duration,
-                        plan_duration,
-                    ))
-                } else {
-                    drop(cache);
-                    let start = Instant::now();
-                    let raw_ir = parser.parse()?;
-                    let (ir, scope_vars) = Binder::default().bind(raw_ir)?;
-                    ir.validate()?;
-                    parse_duration = start.elapsed();
-
-                    let mut planner = Planner::new(scope_vars);
-                    let start = Instant::now();
-                    let plan = planner.plan(ir);
-                    let optimize_plan = optimize(&plan, self);
-                    plan_duration = start.elapsed();
-
-                    self.cache
-                        .lock()
-                        .unwrap()
-                        .push(query.to_string(), PlanTree(plan));
-                    Ok(Plan::new(
-                        Arc::new(optimize_plan),
-                        false,
-                        parameters,
-                        parse_duration,
-                        plan_duration,
-                    ))
-                }
+        {
+            let mut cache = self.cache.lock();
+            if let Some(plan) = cache.get(query) {
+                let optimize_plan = optimize(&plan.0, self);
+                return Ok(Plan::new(
+                    Arc::new(optimize_plan),
+                    true,
+                    parameters,
+                    parse_duration,
+                    plan_duration,
+                ));
             }
-            Err(_) => Err("Failed to acquire read lock on cache".to_string()),
         }
+
+        let start = Instant::now();
+        let raw_ir = parser.parse()?;
+        let (ir, scope_vars) = Binder::default().bind(raw_ir)?;
+        ir.validate()?;
+        parse_duration = start.elapsed();
+
+        let mut planner = Planner::new(scope_vars);
+        let start = Instant::now();
+        let plan = planner.plan(ir);
+        let optimize_plan = optimize(&plan, self);
+        plan_duration = start.elapsed();
+
+        self.cache.lock().push(query.to_string(), PlanTree(plan));
+        Ok(Plan::new(
+            Arc::new(optimize_plan),
+            false,
+            parameters,
+            parse_duration,
+            plan_duration,
+        ))
     }
 
     fn get_label_matrix(
@@ -1216,7 +1203,7 @@ impl Graph {
         remove_docs: &mut HashMap<Arc<String>, RoaringTreemap>,
     ) {
         let lock = self.node_indexer.write_lock();
-        let _guard = lock.lock().unwrap();
+        let _guard = lock.lock();
 
         let mut add_docs = HashMap::new();
         for (label, ids) in index_add_docs.drain() {
