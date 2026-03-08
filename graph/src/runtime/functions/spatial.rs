@@ -37,7 +37,7 @@ pub fn register(funcs: &mut Functions) {
                 Some(Value::List(vec)) => {
                     for v in &vec {
                         if !matches!(v, Value::Int(_) | Value::Float(_)) {
-                            return Err("vectorf32 expects an array of numbers".to_string());
+                            return Err("vecf32 expects an array of numbers".to_string());
                         }
                     }
                     Ok(Value::VecF32(
