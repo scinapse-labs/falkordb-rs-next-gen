@@ -63,20 +63,24 @@ impl Iterator for NodeByLabelAndIdScanOp<'_> {
             };
             match self.runtime.evaluate_id_filter(self.filter, &vars) {
                 Ok(Some(range)) => {
-                    let g = self.runtime.g.borrow();
-                    let node_pattern = self.node_pattern;
-                    self.current = Some(Box::new(
-                        g.get_nodes(&node_pattern.labels, range.min().unwrap())
-                            .filter_map(move |nid| {
-                                if range.contains(u64::from(nid)) {
-                                    let mut vars = vars.clone();
-                                    vars.insert(&node_pattern.alias, Value::Node(nid));
-                                    Some(Ok(vars))
-                                } else {
-                                    None
-                                }
-                            }),
-                    ));
+                    if let Some(min_id) = range.min() {
+                        let g = self.runtime.g.borrow();
+                        let node_pattern = self.node_pattern;
+                        self.current = Some(Box::new(
+                            g.get_nodes(&node_pattern.labels, min_id)
+                                .filter_map(move |nid| {
+                                    if range.contains(u64::from(nid)) {
+                                        let mut vars = vars.clone();
+                                        vars.insert(&node_pattern.alias, Value::Node(nid));
+                                        Some(Ok(vars))
+                                    } else {
+                                        None
+                                    }
+                                }),
+                        ));
+                    } else {
+                        self.current = Some(Box::new(std::iter::empty()));
+                    }
                 }
                 Ok(None) => {
                     self.current = Some(Box::new(std::iter::empty()));

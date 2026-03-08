@@ -37,7 +37,14 @@ impl Iterator for SkipOp<'_> {
     fn next(&mut self) -> Option<Self::Item> {
         while self.remaining_skip > 0 {
             self.remaining_skip -= 1;
-            let _ = self.iter.next()?;
+            match self.iter.next()? {
+                Ok(_) => {}
+                Err(e) => {
+                    let result = Err(e);
+                    self.runtime.inspect_result(self.idx, &result);
+                    return Some(result);
+                }
+            }
         }
         let result = self.iter.next()?;
         self.runtime.inspect_result(self.idx, &result);

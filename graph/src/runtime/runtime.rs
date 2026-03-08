@@ -200,7 +200,6 @@ impl<T: MemoryPolicy> GetVariables for DynNode<'_, IR, T> {
                     }
                 }
                 IR::Delete(_, _)
-                | IR::Empty
                 | IR::Argument
                 | IR::Set(_)
                 | IR::Remove(_)
@@ -1177,7 +1176,6 @@ impl Runtime {
         };
         let iter = Box::new(iter);
         match self.plan.node(idx).data() {
-            IR::Empty => Ok(OpIter::Empty(EmptyOp)),
             IR::Argument => Ok(OpIter::Argument(ArgumentOp::new())),
             IR::Optional(vars) => Ok(OpIter::Optional(OptionalOp::new(self, iter, vars, idx))),
             IR::ProcedureCall(func, trees, name_outputs) => Ok(OpIter::ProcedureCall(

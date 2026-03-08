@@ -1,7 +1,8 @@
 //! Empty operator — yields no rows.
 //!
-//! Acts as a terminal leaf in execution plans that require no input,
-//! such as standalone `CREATE` statements with no preceding `MATCH`.
+//! Used as a placeholder child for operators that manage their own
+//! children (e.g. `Union`), and as the return value for DDL
+//! operations (`CreateIndex`, `DropIndex`) that produce no result rows.
 //! Always returns `None` on the first call to `next()`.
 
 use crate::runtime::env::Env;

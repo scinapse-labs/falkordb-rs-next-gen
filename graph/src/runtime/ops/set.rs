@@ -220,6 +220,27 @@ impl Runtime {
                                 )?;
                             } else {
                                 match run_expr {
+                                    Value::Map(map) => {
+                                        let g = self.g.borrow();
+                                        if *replace {
+                                            for key in g.get_relationship_attrs(target_rel.0) {
+                                                self.pending
+                                                    .borrow_mut()
+                                                    .set_relationship_attribute(
+                                                        target_rel.0,
+                                                        key,
+                                                        Value::Null,
+                                                    )?;
+                                            }
+                                        }
+                                        for (key, value) in map.iter() {
+                                            self.pending.borrow_mut().set_relationship_attribute(
+                                                target_rel.0,
+                                                key.clone(),
+                                                value.clone(),
+                                            )?;
+                                        }
+                                    }
                                     Value::Node(sid) => {
                                         let g = self.g.borrow();
                                         let attrs = self.get_node_attrs(sid);

@@ -296,9 +296,8 @@ impl Iterator for MergeOp<'_> {
             }
 
             // Process matches: merge each with parent env, apply ON MATCH
-            // Pop the last match so we can move env into it instead of cloning
-            let last = matches.pop().unwrap();
-            for v in matches {
+            // Iterate in reverse and push so pop() yields results in original order
+            for v in matches.into_iter().rev() {
                 let mut vars = env.clone();
                 vars.merge(v);
                 let resolved = self.resolve_on_match_set_items();
@@ -306,28 +305,11 @@ impl Iterator for MergeOp<'_> {
                     Ok(()) => self.pending.push(vars),
                     Err(e) => {
                         self.is_error = true;
+                        self.pending.clear();
                         let result = Err(e);
                         self.runtime.inspect_result(self.idx, &result);
                         return Some(result);
                     }
-                }
-            }
-            // Move env for the last match (no clone)
-            let mut vars = env;
-            vars.merge(last);
-            let resolved = self.resolve_on_match_set_items();
-            match self.runtime.set(resolved, &vars) {
-                Ok(()) => {
-                    // Reverse so pop returns results in original order
-                    self.pending.reverse();
-                    self.pending.push(vars);
-                }
-                Err(e) => {
-                    self.is_error = true;
-                    self.pending.clear();
-                    let result = Err(e);
-                    self.runtime.inspect_result(self.idx, &result);
-                    return Some(result);
                 }
             }
         }
