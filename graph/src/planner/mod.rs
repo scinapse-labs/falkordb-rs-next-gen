@@ -60,8 +60,6 @@ use crate::{
 /// The plan forms a tree where data flows from leaves to root.
 #[derive(Clone, Debug)]
 pub enum IR {
-    /// Empty result set (used as placeholder)
-    Empty,
     /// Receives input from parent operator
     Argument,
     /// OPTIONAL MATCH - returns nulls if no match
@@ -191,7 +189,6 @@ impl Display for IR {
         f: &mut std::fmt::Formatter<'_>,
     ) -> std::fmt::Result {
         match self {
-            Self::Empty => write!(f, "Empty"),
             Self::Argument => write!(f, "Argument"),
             Self::Optional(_) => write!(f, "Optional"),
             Self::ProcedureCall(_, _, _) => write!(f, "ProcedureCall"),
