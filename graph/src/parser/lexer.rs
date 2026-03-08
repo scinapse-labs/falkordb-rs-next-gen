@@ -227,7 +227,7 @@ const MIN_I64: [&str; 5] = [
 
 pub struct Lexer<'a> {
     pub str: &'a str,
-    pub pos: usize,
+    pos: usize,
     cached_current: Result<(Token, usize), (String, usize)>,
 }
 
