@@ -275,16 +275,9 @@ impl Iterator for AggregateOp<'_> {
         // Finalize next cache entry
         let (_hash, (key, mut acc)) = self.cache.next()?;
         let result: Result<Env, String> = (|| {
-            // Evaluate agg expressions before merging key values into acc.
-            // Key variables may share the same Env slot indices as
-            // accumulator variables (due to per-scope variable ID
-            // allocation), and merging key values first would overwrite
-            // accumulator values that the finalization needs to read.
-            let mut agg_results = Vec::with_capacity(self.agg.len());
-            for (_name, tree) in self.agg {
-                agg_results.push(self.runtime.run_expr(tree, tree.root().idx(), &acc, None)?);
-            }
-            // Copy original variable refs from keys
+            // Copy original variable refs from keys into acc so that
+            // aggregation expressions can reference parent-scope variables
+            // (e.g., map projections like n{.*, x: COLLECT(...)}).
             for (name, tree) in self.keys {
                 if let ExprIR::Variable(original_var) = tree.root().data()
                     && let Some(value) = key.get(name)
@@ -294,9 +287,12 @@ impl Iterator for AggregateOp<'_> {
             }
             // Merge key into acc
             acc.merge(key);
-            // Store finalized agg results under their projected names
-            for ((name, _), value) in self.agg.iter().zip(agg_results) {
-                acc.insert(name, value);
+            // Evaluate and store finalized agg results
+            for (name, tree) in self.agg {
+                acc.insert(
+                    name,
+                    self.runtime.run_expr(tree, tree.root().idx(), &acc, None)?,
+                );
             }
             Ok(acc)
         })();
