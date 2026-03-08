@@ -23,7 +23,7 @@
 
 use std::thread::{self, JoinHandle};
 
-use crossfire::{Tx, spsc::List};
+use crossfire::{BlockingTxTrait, Tx, spsc::Array};
 use once_cell::sync::OnceCell;
 
 /// A closure that can be sent to a worker thread.
@@ -32,7 +32,7 @@ type Job = Box<dyn FnOnce() + Send + 'static>;
 /// A pool of worker threads for executing jobs.
 struct ThreadPool {
     workers: Vec<JoinHandle<()>>,
-    sender: Vec<Tx<List<Job>>>,
+    sender: Vec<Tx<Array<Job>>>,
 }
 
 unsafe impl Sync for ThreadPool {}
@@ -42,7 +42,7 @@ impl ThreadPool {
         let mut workers = Vec::with_capacity(size);
         let mut sender = Vec::with_capacity(size);
         for _ in 0..size {
-            let (tx, rx) = crossfire::spsc::unbounded_blocking::<Job>();
+            let (tx, rx) = crossfire::spsc::bounded_blocking::<Job>(1024);
             sender.push(tx);
             let worker = thread::spawn(move || {
                 while let Ok(job) = rx.recv() {
@@ -61,8 +61,24 @@ impl ThreadPool {
     ) where
         F: FnOnce() + Send + 'static,
     {
-        let idx = idx.unwrap_or_else(|| rand::random::<u32>() as usize) % self.workers.len();
-        self.sender[idx].send(Box::new(job)).unwrap();
+        let sender = if let Some(i) = idx {
+            &self.sender[i % self.workers.len()]
+        } else {
+            let mut min_tx = &self.sender[0];
+            let mut min_len = usize::MAX;
+            for tx in &self.sender {
+                if tx.is_empty() {
+                    return tx.send(Box::new(job)).unwrap();
+                }
+                let len = tx.len();
+                if len < min_len {
+                    min_len = len;
+                    min_tx = tx;
+                }
+            }
+            min_tx
+        };
+        sender.send(Box::new(job)).unwrap();
     }
 }
 
