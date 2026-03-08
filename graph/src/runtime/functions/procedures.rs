@@ -181,7 +181,7 @@ pub fn register(funcs: &mut Functions) {
         ret: Type::Any,
         procedure: ["node", "score"],
         fn db_fulltext_query_nodes(_, _) {
-            Err(String::from("db.fulltext.queryNodes() is not supported in this version"))
+            Err(String::from("db.idx.fulltext.queryNodes() is not supported in this version"))
         }
     );
 }
