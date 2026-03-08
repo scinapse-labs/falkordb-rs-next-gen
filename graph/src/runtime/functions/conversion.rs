@@ -111,7 +111,7 @@ pub fn register(funcs: &mut Functions) {
     );
 
     cypher_fn!(funcs, "tostring",
-        args: [Type::Union(vec![Type::Datetime, Type::Duration, Type::String, Type::Bool, Type::Int, Type::Float, Type::Null, Type::Point])],
+        args: [Type::Union(vec![Type::Datetime, Type::Date, Type::Time, Type::Duration, Type::String, Type::Bool, Type::Int, Type::Float, Type::Null, Type::Point])],
         ret: Type::Union(vec![Type::String, Type::Null]),
         fn value_to_string(_runtime, args) {
             match args.into_iter().next() {
