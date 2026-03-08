@@ -237,11 +237,12 @@ pub fn register(funcs: &mut Functions) {
                     }
                 }
                 Some(Value::Float(f)) => {
-                    if f > 0f64 {
+                    if f >= 0f64 {
                         Ok(Value::Float(f.sqrt()))
                     } else {
                         Ok(Value::Float(f64::NAN))
                     }
+                }
                 }
                 Some(Value::Null) => Ok(Value::Null),
 
