@@ -243,7 +243,6 @@ pub fn register(funcs: &mut Functions) {
                         Ok(Value::Float(f64::NAN))
                     }
                 }
-                }
                 Some(Value::Null) => Ok(Value::Null),
 
                 _ => unreachable!(),

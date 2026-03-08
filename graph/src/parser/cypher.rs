@@ -124,9 +124,9 @@ impl<'a> Parser<'a> {
         }
     }
 
-    const fn save_state(&self) -> ParserState {
+    fn save_state(&self) -> ParserState {
         ParserState {
-            pos: self.lexer.pos,
+            pos: self.lexer.pos(true),
             anon_counter: self.anon_counter,
         }
     }
@@ -179,7 +179,7 @@ impl<'a> Parser<'a> {
                 break;
             }
         }
-        Ok((params, &self.lexer.str[self.lexer.pos..]))
+        Ok((params, &self.lexer.str[self.lexer.pos(true)..]))
     }
 
     /// Consumes any trailing semicolons, then verifies end-of-file.
