@@ -1,0 +1,163 @@
+//! Internal-only operator functions.
+//!
+//! These functions are **not** exposed to users via Cypher syntax
+//! directly.  Instead, the parser rewires higher-level Cypher
+//! constructs into calls to these internal helpers:
+//!
+//! ```text
+//!  Cypher syntax            Internal function       Registered as
+//! ────────────────────────────────────────────────────────────────
+//!  x STARTS WITH y          internal_starts_with()  FnType::Internal
+//!  x ENDS WITH y            internal_ends_with()    FnType::Internal
+//!  x CONTAINS y             internal_contains()     FnType::Internal
+//!  x IS [NOT] NULL          internal_is_null()      FnType::Internal
+//!  x =~ pattern             internal_regex_matches() FnType::Internal
+//!  CASE ... WHEN ... END    internal_case()         FnType::Internal
+//! ```
+//!
+//! Because they are registered with `FnType::Internal`, they cannot
+//! be invoked by name in user queries (the parser's function lookup
+//! filters by `FnType`).
+//!
+//! `internal_case` supports both simple (`CASE expr WHEN v1 THEN ...`)
+//! and generic (`CASE WHEN cond THEN ...`) forms, encoded as a list
+//! of `[condition, result]` pairs plus an optional else clause.
+
+#![allow(clippy::unnecessary_wraps)]
+
+use super::{FnType, Functions, Type};
+use crate::runtime::{runtime::Runtime, value::Value};
+use thin_vec::ThinVec;
+
+pub fn register(funcs: &mut Functions) {
+    cypher_fn!(funcs, "starts_with",
+        args: [
+            Type::Union(vec![Type::String, Type::Null]),
+            Type::Union(vec![Type::String, Type::Null]),
+        ],
+        ret: Type::Union(vec![Type::Bool, Type::Null]),
+        internal,
+        fn internal_starts_with(_, args) {
+            let mut iter = args.into_iter();
+            match (iter.next(), iter.next()) {
+                (Some(Value::String(s)), Some(Value::String(prefix))) => {
+                    Ok(Value::Bool(s.starts_with(prefix.as_str())))
+                }
+                (_, Some(Value::Null)) | (Some(Value::Null), _) => Ok(Value::Null),
+                _ => unreachable!(),
+            }
+        }
+    );
+
+    cypher_fn!(funcs, "ends_with",
+        args: [
+            Type::Union(vec![Type::String, Type::Null]),
+            Type::Union(vec![Type::String, Type::Null]),
+        ],
+        ret: Type::Union(vec![Type::Bool, Type::Null]),
+        internal,
+        fn internal_ends_with(_, args) {
+            let mut iter = args.into_iter();
+            match (iter.next(), iter.next()) {
+                (Some(Value::String(s)), Some(Value::String(suffix))) => {
+                    Ok(Value::Bool(s.ends_with(suffix.as_str())))
+                }
+                (_, Some(Value::Null)) | (Some(Value::Null), _) => Ok(Value::Null),
+                _ => unreachable!(),
+            }
+        }
+    );
+
+    cypher_fn!(funcs, "contains",
+        args: [
+            Type::Union(vec![Type::String, Type::Null]),
+            Type::Union(vec![Type::String, Type::Null]),
+        ],
+        ret: Type::Union(vec![Type::Bool, Type::Null]),
+        internal,
+        fn internal_contains(_, args) {
+            let mut iter = args.into_iter();
+            match (iter.next(), iter.next()) {
+                (Some(Value::String(s)), Some(Value::String(substring))) => {
+                    Ok(Value::Bool(s.contains(substring.as_str())))
+                }
+                (_, Some(Value::Null)) | (Some(Value::Null), _) => Ok(Value::Null),
+                _ => unreachable!(),
+            }
+        }
+    );
+
+    cypher_fn!(funcs, "is_null",
+        args: [Type::Union(vec![Type::Bool]), Type::Any],
+        ret: Type::Union(vec![Type::Bool, Type::Null]),
+        internal,
+        fn internal_is_null(_, args) {
+            let mut iter = args.into_iter();
+            match (iter.next(), iter.next()) {
+                (Some(Value::Bool(is_not)), Some(Value::Null)) => Ok(Value::Bool(!is_not)),
+                (Some(Value::Bool(is_not)), Some(_)) => Ok(Value::Bool(is_not)),
+                _ => unreachable!(),
+            }
+        }
+    );
+
+    cypher_fn!(funcs, "regex_matches",
+        args: [
+            Type::Union(vec![Type::String, Type::Null]),
+            Type::Union(vec![Type::String, Type::Null]),
+        ],
+        ret: Type::Union(vec![Type::Bool, Type::Null]),
+        internal,
+        fn internal_regex_matches(_, args) {
+            let mut iter = args.into_iter();
+            match (iter.next(), iter.next()) {
+                (Some(Value::String(s)), Some(Value::String(pattern))) => {
+                    match regex::Regex::new(pattern.as_str()) {
+                        Ok(re) => Ok(Value::Bool(re.is_match(s.as_str()))),
+                        Err(e) => Err(format!("Invalid regex pattern: {e}")),
+                    }
+                }
+                (Some(Value::Null), _) | (_, Some(Value::Null)) => Ok(Value::Null),
+                _ => unreachable!(),
+            }
+        }
+    );
+
+    cypher_fn!(funcs, "case",
+        args: [
+            Type::Any,
+            Type::Optional(Box::new(Type::Any)),
+            Type::Optional(Box::new(Type::Any)),
+        ],
+        ret: Type::Any,
+        internal,
+        fn internal_case(_, args) {
+            let mut iter = args.into_iter();
+            match (iter.next(), iter.next(), iter.next()) {
+                (Some(Value::List(alts)), Some(else_), None) => {
+                    for pair in alts.chunks(2) {
+                        match (&pair[0], &pair[1]) {
+                            (Value::Bool(false) | Value::Null, _) => {}
+                            (_, result) => return Ok(result.clone()),
+                        }
+                    }
+                    Ok(else_)
+                }
+                (Some(value), Some(alt), Some(else_)) => {
+                    let Value::List(alts) = alt else {
+                        unreachable!()
+                    };
+                    for pair in alts.chunks(2) {
+                        if let [condition, result] = pair
+                            && *condition == value
+                        {
+                            return Ok(result.clone());
+                        }
+                    }
+                    Ok(else_)
+                }
+                _ => unreachable!(),
+            }
+        }
+    );
+}

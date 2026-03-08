@@ -2240,7 +2240,7 @@ class testFunctionCallsFlow(FlowTestsBase):
             "CREATE ()-[r:R]->() RETURN hasLabels(r, ['abc', 'def'])": "Type mismatch: expected Node or Null but was Edge",
             "RETURN toBoolean(1.2)": "Type mismatch: expected String, Boolean, Integer, or Null but was Float",
             "RETURN isEmpty(1)": "Type mismatch: expected Map, List, String, or Null but was Integer",
-            "CREATE ()-[r:R]->() RETURN toString(r)": "Type mismatch: expected Datetime, Duration, String, Boolean, Integer, Float, Null, or Point but was Edge",
+            "CREATE ()-[r:R]->() RETURN toString(r)": "Type mismatch: expected Datetime, Date, Time, Duration, String, Boolean, Integer, Float, Null, or Point but was Edge",
         }
         for query, error in queries_with_errors.items():
             self.expect_error(query, error)
@@ -2786,7 +2786,7 @@ class testFunctionCallsFlow(FlowTestsBase):
 
     def test94_vector(self):
         # Test invalid inputs
-        err_msg = "vectorf32 expects an array of numbers"
+        err_msg = "vecf32 expects an array of numbers"
         queries_with_errors = [
                 "RETURN vecf32([1.2, 'a'])",
                 "RETURN vecf32([1.2, NULL])",
