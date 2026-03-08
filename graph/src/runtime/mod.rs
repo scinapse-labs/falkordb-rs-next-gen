@@ -26,6 +26,7 @@ pub mod bitset;
 pub mod env;
 pub mod functions;
 pub mod iter;
+pub mod ops;
 pub mod ordermap;
 pub mod orderset;
 pub mod pending;
