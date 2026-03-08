@@ -31,7 +31,7 @@ pub struct CartesianProductOp<'a> {
     child_idx: NodeIdx<Dyn<IR>>,
     idx: Option<NodeIdx<Dyn<IR>>>,
     is_error: bool,
-    pub(crate) argument_env: Option<Env>,
+    pub argument_env: Option<Env>,
 }
 
 impl<'a> CartesianProductOp<'a> {

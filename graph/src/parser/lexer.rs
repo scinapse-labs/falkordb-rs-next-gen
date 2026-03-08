@@ -16,7 +16,7 @@ use std::sync::Arc;
 use std::{num::IntErrorKind, str::Chars};
 
 #[derive(Debug, PartialEq, Clone)]
-pub(crate) enum Keyword {
+pub enum Keyword {
     Call,
     Yield,
     Optional,
@@ -78,7 +78,7 @@ pub(crate) enum Keyword {
 }
 
 #[derive(Debug, PartialEq, Clone)]
-pub(crate) enum Token {
+pub enum Token {
     Ident(Arc<String>),
     Keyword(Keyword, Arc<String>),
     Parameter(String),
@@ -225,14 +225,14 @@ const MIN_I64: [&str; 5] = [
     "0x8000000000000000",                                                 // hex
 ];
 
-pub(crate) struct Lexer<'a> {
-    pub(crate) str: &'a str,
-    pub(crate) pos: usize,
+pub struct Lexer<'a> {
+    pub str: &'a str,
+    pub pos: usize,
     cached_current: Result<(Token, usize), (String, usize)>,
 }
 
 impl<'a> Lexer<'a> {
-    pub(crate) fn new(str: &'a str) -> Self {
+    pub fn new(str: &'a str) -> Self {
         Self {
             str,
             pos: 0,
@@ -240,14 +240,14 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    pub(crate) fn next(&mut self) {
+    pub fn next(&mut self) {
         self.pos += Self::read_spaces(self.str, self.pos);
         self.pos += self.cached_current.as_ref().map_or(0, |t| t.1);
         let pos = self.pos + Self::read_spaces(self.str, self.pos);
         self.cached_current = Self::get_token(self.str, pos);
     }
 
-    pub(crate) fn pos(
+    pub fn pos(
         &self,
         before_whitespaces: bool,
     ) -> usize {
@@ -319,14 +319,14 @@ impl<'a> Lexer<'a> {
         len
     }
 
-    pub(crate) fn current(&self) -> Result<Token, String> {
+    pub fn current(&self) -> Result<Token, String> {
         self.cached_current
             .as_ref()
             .map(|t| t.0.clone())
             .map_err(|e| e.0.clone())
     }
 
-    pub(crate) fn current_str(&self) -> &str {
+    pub fn current_str(&self) -> &str {
         let pos = self.pos(false);
         &self.str[pos..pos + self.cached_current.as_ref().map_or(0, |t| t.1)]
     }
@@ -722,14 +722,14 @@ impl<'a> Lexer<'a> {
         )
     }
 
-    pub(crate) fn format_error(
+    pub fn format_error(
         &self,
         err: &str,
     ) -> String {
         format!("{}, errCtx: {}, pos {}", err, self.str, self.pos)
     }
 
-    pub(crate) fn set_pos(
+    pub fn set_pos(
         &mut self,
         pos: usize,
     ) {
