@@ -26,7 +26,7 @@ use crate::parser::ast::{QueryExpr, Variable};
 use crate::planner::IR;
 use crate::runtime::{env::Env, ordermap::OrderMap, runtime::Runtime, value::Value};
 use orx_tree::{Dyn, NodeIdx, NodeRef};
-use reqwest::blocking::get;
+use ureq;
 
 pub struct LoadCsvOp<'a> {
     runtime: &'a Runtime,
@@ -147,7 +147,11 @@ impl<'a> LoadCsvOp<'a> {
         var: &'a Variable,
         vars: &Env,
     ) -> Result<Box<dyn Iterator<Item = Result<Env, String>> + 'a>, String> {
-        let response = get(path).map_err(|e| format!("Failed to fetch CSV file: {e}"))?;
+        let response = ureq::get(path)
+            .call()
+            .map_err(|e| format!("Failed to fetch CSV file: {e}"))?
+            .into_body()
+            .into_reader();
         let mut reader = csv::ReaderBuilder::new()
             .has_headers(headers)
             .delimiter(delimiter.as_bytes()[0])
