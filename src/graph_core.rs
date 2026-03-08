@@ -34,7 +34,7 @@ use crate::{
 use atomic_refcell::AtomicRefCell;
 use crossfire::{
     Rx, Tx,
-    spsc::{List, unbounded_blocking},
+    spsc::{Array, bounded_blocking},
 };
 use graph::{
     graph::{
@@ -63,8 +63,8 @@ use crate::allocator::{current_thread_usage, disable_tracking, enable_tracking, 
 
 pub struct ThreadedGraph {
     pub graph: MvccGraph,
-    pub sender: Tx<List<(BlockedClient, Arc<String>, bool)>>,
-    pub receiver: Rx<List<(BlockedClient, Arc<String>, bool)>>,
+    pub sender: Tx<Array<(BlockedClient, Arc<String>, bool)>>,
+    pub receiver: Rx<Array<(BlockedClient, Arc<String>, bool)>>,
     pub write_loop: AtomicBool,
 }
 
@@ -76,7 +76,7 @@ impl ThreadedGraph {
         cache_size: usize,
         name: &str,
     ) -> Self {
-        let (sender, receiver) = unbounded_blocking();
+        let (sender, receiver) = bounded_blocking(1024);
         Self {
             graph: MvccGraph::new(16384, 16384, cache_size, name),
             sender,
