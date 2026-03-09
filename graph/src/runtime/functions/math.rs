@@ -266,7 +266,7 @@ pub fn register(funcs: &mut Functions) {
                         ));
                     }
                     if (start > end && step > 0) || (start < end && step < 0) {
-                        return Ok(Value::List(thin_vec![]));
+                        return Ok(Value::List(Arc::new(thin_vec![])));
                     }
 
                     let length = (end - start) / step + 1;
@@ -275,20 +275,20 @@ pub fn register(funcs: &mut Functions) {
                         return Err(String::from("Range too large"));
                     }
                     if step > 0 {
-                        return Ok(Value::Arc(Arc::new(Value::List(
+                        return Ok(Value::List(Arc::new(
                             (start..=end)
                                 .step_by(step as usize)
                                 .map(Value::Int)
                                 .collect(),
-                        ))));
+                        )));
                     }
-                    Ok(Value::Arc(Arc::new(Value::List(
+                    Ok(Value::List(Arc::new(
                         (end..=start)
                             .rev()
                             .step_by((-step) as usize)
                             .map(Value::Int)
                             .collect(),
-                    ))))
+                    )))
                 }
 
                 _ => unreachable!(),

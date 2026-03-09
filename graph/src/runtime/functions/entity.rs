@@ -39,7 +39,7 @@ pub fn register(funcs: &mut Functions) {
             match args.into_iter().next() {
                 Some(Value::Node(id)) => {
                     let labels = runtime.get_node_labels(id);
-                    Ok(Value::List(labels.into_iter().map(Value::String).collect()))
+                    Ok(Value::List(Arc::new(labels.into_iter().map(Value::String).collect())))
                 }
                 Some(Value::Null) => Ok(Value::Null),
 
@@ -59,14 +59,6 @@ pub fn register(funcs: &mut Functions) {
                 Some(Value::Float(_)) => "Float",
                 Some(Value::String(_)) => "String",
                 Some(Value::List(_)) => "List",
-                Some(Value::Arc(v)) => {
-                    // Handle Arc-wrapped values
-                    match &*v {
-                        Value::List(_) => "List",
-                        Value::Map(_) => "Map",
-                        _ => "Unknown",
-                    }
-                }
                 Some(Value::Map(_)) => "Map",
                 Some(Value::Node(_)) => "Node",
                 Some(Value::Relationship(_)) => "Edge",
@@ -94,7 +86,7 @@ pub fn register(funcs: &mut Functions) {
             match (iter.next(), iter.next()) {
                 (Some(Value::Node(id)), Some(Value::List(required_labels))) => {
                     // Validate that all items in the list are strings
-                    for label_value in &required_labels {
+                    for label_value in required_labels.iter() {
                         match label_value {
                             Value::String(_) => {}
                             Value::Int(_) => {
@@ -160,9 +152,9 @@ pub fn register(funcs: &mut Functions) {
             let mut iter = args.into_iter();
             match iter.next() {
                 Some(Value::Map(map)) => Ok(Value::Map(map)),
-                Some(Value::Node(id)) => Ok(Value::Map(runtime.get_node_attrs(id).collect())),
+                Some(Value::Node(id)) => Ok(Value::Map(Arc::new(runtime.get_node_attrs(id).collect()))),
                 Some(Value::Relationship(rel)) => {
-                    Ok(Value::Map(runtime.get_relationship_attrs(rel.0).collect()))
+                    Ok(Value::Map(Arc::new(runtime.get_relationship_attrs(rel.0).collect())))
                 }
                 Some(Value::Null) => Ok(Value::Null),
 
@@ -221,21 +213,21 @@ pub fn register(funcs: &mut Functions) {
         ret: Type::Union(vec![Type::List(Box::new(Type::String)), Type::Null]),
         fn keys(runtime, args) {
             match args.into_iter().next() {
-                Some(Value::Map(map)) => Ok(Value::List(
+                Some(Value::Map(map)) => Ok(Value::List(Arc::new(
                     map.keys().cloned().map(Value::String).collect(),
-                )),
-                Some(Value::Node(id)) => Ok(Value::List(
+                ))),
+                Some(Value::Node(id)) => Ok(Value::List(Arc::new(
                     runtime
                         .get_node_attrs(id)
                         .map(|(k, _)| Value::String(k))
                         .collect::<ThinVec<_>>(),
-                )),
-                Some(Value::Relationship(rel)) => Ok(Value::List(
+                ))),
+                Some(Value::Relationship(rel)) => Ok(Value::List(Arc::new(
                     runtime
                         .get_relationship_attrs(rel.0)
                         .map(|(k, _)| Value::String(k))
                         .collect::<ThinVec<_>>(),
-                )),
+                ))),
                 Some(Value::Null) => Ok(Value::Null),
 
                 _ => unreachable!(),

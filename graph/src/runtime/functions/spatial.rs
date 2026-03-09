@@ -22,6 +22,7 @@ use crate::runtime::{
     runtime::Runtime,
     value::{Point, Value},
 };
+use std::sync::Arc;
 use thin_vec::ThinVec;
 
 pub fn register(funcs: &mut Functions) {
@@ -35,14 +36,14 @@ pub fn register(funcs: &mut Functions) {
             let mut iter = args.into_iter();
             match iter.next() {
                 Some(Value::List(vec)) => {
-                    for v in &vec {
+                    for v in vec.iter() {
                         if !matches!(v, Value::Int(_) | Value::Float(_)) {
                             return Err("vecf32 expects an array of numbers".to_string());
                         }
                     }
-                    Ok(Value::VecF32(
-                        vec.into_iter().map(|v| v.get_numeric() as f32).collect(),
-                    ))
+                    Ok(Value::VecF32(Arc::new(
+                        vec.iter().map(|v| v.get_numeric() as f32).collect(),
+                    )))
                 }
                 Some(Value::Null) => Ok(Value::Null),
                 _ => unreachable!(),

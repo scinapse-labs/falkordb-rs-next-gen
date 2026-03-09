@@ -96,22 +96,22 @@ pub fn register(funcs: &mut Functions) {
             match (iter.next(), iter.next()) {
                 (Some(Value::String(string)), Some(Value::String(delimiter))) => {
                     if string.is_empty() {
-                        Ok(Value::List(thin_vec![Value::String(Arc::new(
+                        Ok(Value::List(Arc::new(thin_vec![Value::String(Arc::new(
                             String::new()
-                        ))]))
+                        ))])))
                     } else if delimiter.is_empty() {
                         // split string to characters
                         let parts = string
                             .chars()
                             .map(|c| Value::String(Arc::new(String::from(c))))
                             .collect();
-                        Ok(Value::List(parts))
+                        Ok(Value::List(Arc::new(parts)))
                     } else {
                         let parts = string
                             .split(delimiter.as_str())
                             .map(|s| Value::String(Arc::new(String::from(s))))
                             .collect();
-                        Ok(Value::List(parts))
+                        Ok(Value::List(Arc::new(parts)))
                     }
                 }
                 (Some(Value::Null), Some(_)) | (Some(_), Some(Value::Null)) => Ok(Value::Null),
@@ -370,11 +370,7 @@ pub fn register(funcs: &mut Functions) {
 
             let mut iter = args.into_iter();
 
-            // Unwrap Arc if present (handles range() returning Arc-wrapped lists)
-            let first = match iter.next().unwrap() {
-                Value::Arc(arc) => Arc::unwrap_or_clone(arc),
-                v => v,
-            };
+            let first = iter.next().unwrap();
 
             match (first, iter.next()) {
                 (Value::List(vec), Some(Value::String(s))) => {
@@ -422,14 +418,14 @@ pub fn register(funcs: &mut Functions) {
                                     }
                                 }
                                 // Add this match's captures as a sub-list
-                                all_matches.push(Value::List(match_list));
+                                all_matches.push(Value::List(Arc::new(match_list)));
                             }
-                            Ok(Value::List(all_matches))
+                            Ok(Value::List(Arc::new(all_matches)))
                         }
                         Err(e) => Err(format!("Invalid regex, {e}")),
                     }
                 }
-                (Some(Value::Null), Some(_)) | (Some(_), Some(Value::Null)) => Ok(Value::List(thin_vec![])),
+                (Some(Value::Null), Some(_)) | (Some(_), Some(Value::Null)) => Ok(Value::List(Arc::new(thin_vec![]))),
 
                 _ => unreachable!(),
             }

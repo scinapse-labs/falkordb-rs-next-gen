@@ -88,7 +88,7 @@ impl<'a> LoadCsvOp<'a> {
                         let mut env = vars.clone();
                         env.insert(
                             var,
-                            Value::Map(
+                            Value::Map(Arc::new(
                                 record
                                     .iter()
                                     .enumerate()
@@ -105,7 +105,7 @@ impl<'a> LoadCsvOp<'a> {
                                         }
                                     })
                                     .collect::<OrderMap<_, _>>(),
-                            ),
+                            )),
                         );
                         Ok(env)
                     }
@@ -119,7 +119,7 @@ impl<'a> LoadCsvOp<'a> {
                         let mut env = vars.clone();
                         env.insert(
                             var,
-                            Value::List(
+                            Value::List(Arc::new(
                                 record
                                     .iter()
                                     .map(|field| {
@@ -130,7 +130,7 @@ impl<'a> LoadCsvOp<'a> {
                                         }
                                     })
                                     .collect(),
-                            ),
+                            )),
                         );
                         Ok(env)
                     }
@@ -171,7 +171,7 @@ impl<'a> LoadCsvOp<'a> {
                         let mut env = vars.clone();
                         env.insert(
                             var,
-                            Value::Map(
+                            Value::Map(Arc::new(
                                 record
                                     .iter()
                                     .enumerate()
@@ -188,7 +188,7 @@ impl<'a> LoadCsvOp<'a> {
                                         }
                                     })
                                     .collect::<OrderMap<_, _>>(),
-                            ),
+                            )),
                         );
                         Ok(env)
                     }
@@ -202,7 +202,7 @@ impl<'a> LoadCsvOp<'a> {
                         let mut env = vars.clone();
                         env.insert(
                             var,
-                            Value::List(
+                            Value::List(Arc::new(
                                 record
                                     .iter()
                                     .map(|field| {
@@ -213,7 +213,7 @@ impl<'a> LoadCsvOp<'a> {
                                         }
                                     })
                                     .collect(),
-                            ),
+                            )),
                         );
                         Ok(env)
                     }

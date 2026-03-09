@@ -40,22 +40,23 @@
 
 use super::{FnType, Functions, Type};
 use crate::runtime::{runtime::Runtime, value::Value};
+use std::sync::Arc;
 use thin_vec::{ThinVec, thin_vec};
 
 pub fn register(funcs: &mut Functions) {
     cypher_fn!(funcs, "collect",
         args: [Type::Any],
         ret: Type::Union(vec![Type::List(Box::new(Type::Any)), Type::Null]),
-        agg_init: Value::List(thin_vec![]),
+        agg_init: Value::List(Arc::new(thin_vec![])),
         fn collect(_, args) {
             let mut iter = args.into_iter();
             match (iter.next(), iter.next()) {
-                (Some(a), Some(Value::Null)) => Ok(Value::List(thin_vec![a])),
+                (Some(a), Some(Value::Null)) => Ok(Value::List(Arc::new(thin_vec![a]))),
                 (Some(a), Some(Value::List(mut l))) => {
                     if a == Value::Null {
                         return Ok(Value::List(l));
                     }
-                    l.push(a);
+                    Arc::make_mut(&mut l).push(a);
                     Ok(Value::List(l))
                 }
 
@@ -154,7 +155,7 @@ pub fn register(funcs: &mut Functions) {
     cypher_fn!(funcs, "avg",
         args: [Type::Union(vec![Type::Int, Type::Float, Type::Null])],
         ret: Type::Union(vec![Type::Float, Type::Null]),
-        agg_init: Value::List(thin_vec![Value::Float(0.0), Value::Int(0), Value::Bool(false)]),
+        agg_init: Value::List(Arc::new(thin_vec![Value::Float(0.0), Value::Int(0), Value::Bool(false)])),
         finalizer: finalize_avg,
         fn avg(_, args) {
             let mut iter = args.into_iter();
@@ -171,7 +172,8 @@ pub fn register(funcs: &mut Functions) {
 
                     // Use split_at_mut to get mutable references to all three elements safely
                     // vec = [sum, count, had_overflow]
-                    let (first, rest) = vec.split_at_mut(1);
+                    let vec_mut = Arc::make_mut(&mut vec);
+                    let (first, rest) = vec_mut.split_at_mut(1);
                     let (second, third) = rest.split_at_mut(1);
 
                     let (Value::Float(sum), Value::Int(count), Value::Bool(had_overflow)) =
@@ -216,7 +218,7 @@ pub fn register(funcs: &mut Functions) {
             Type::Union(vec![Type::Int, Type::Float]),
         ],
         ret: Type::Union(vec![Type::Float, Type::Null]),
-        agg_init: Value::List(thin_vec![Value::Float(0.0), Value::List(thin_vec![])]),
+        agg_init: Value::List(Arc::new(thin_vec![Value::Float(0.0), Value::List(Arc::new(thin_vec![]))])),
         finalizer: finalize_percentile_disc,
         fn percentile(_, mut args) {
             let val = args.remove(0);
@@ -236,16 +238,19 @@ pub fn register(funcs: &mut Functions) {
                 unreachable!("Context must be a List");
             };
 
-            let Value::List(mut collected_values) = std::mem::take(&mut state[1]) else {
+            let state_mut = Arc::make_mut(&mut state);
+            let (first, rest) = state_mut.split_at_mut(1);
+            let Value::Float(stored_percentile) = &mut first[0] else {
+                unreachable!("First element of state must be the percentile")
+            };
+            let Value::List(collected_values) = &mut rest[0] else {
                 unreachable!("Second element of state must be a List")
             };
 
-            collected_values.push(Value::Float(val.get_numeric()));
+            *stored_percentile = percentile;
+            Arc::make_mut(collected_values).push(Value::Float(val.get_numeric()));
 
-            Ok(Value::List(thin_vec![
-                Value::Float(percentile),
-                Value::List(collected_values),
-            ]))
+            Ok(Value::List(state))
         }
     );
 
@@ -258,7 +263,10 @@ pub fn register(funcs: &mut Functions) {
             Type::Union(vec![Type::Int, Type::Float]),
         ],
         FnType::Aggregation(
-            Value::List(thin_vec![Value::Float(0.0), Value::List(thin_vec![])]),
+            Value::List(Arc::new(thin_vec![
+                Value::Float(0.0),
+                Value::List(Arc::new(thin_vec![]))
+            ])),
             Some(Box::new(finalize_percentile_cont)),
         ),
         Type::Union(vec![Type::Float, Type::Null]),
@@ -267,7 +275,7 @@ pub fn register(funcs: &mut Functions) {
     cypher_fn!(funcs, "stDev",
         args: [Type::Union(vec![Type::Int, Type::Float, Type::Null])],
         ret: Type::Union(vec![Type::Float, Type::Null]),
-        agg_init: Value::List(thin_vec![Value::Float(0.0), Value::List(thin_vec![])]),
+        agg_init: Value::List(Arc::new(thin_vec![Value::Float(0.0), Value::List(Arc::new(thin_vec![]))])),
         finalizer: finalize_stdev,
         fn stdev(_, args) {
             let mut iter = args.into_iter();
@@ -279,14 +287,15 @@ pub fn register(funcs: &mut Functions) {
                     let val = val.get_numeric();
 
                     // Use split_at_mut to get mutable references to both elements safely
-                    let (first, rest) = vec.split_at_mut(1);
+                    let vec_mut = Arc::make_mut(&mut vec);
+                    let (first, rest) = vec_mut.split_at_mut(1);
                     let (Value::Float(sum), Value::List(values)) = (&mut first[0], &mut rest[0]) else {
                         unreachable!("stdev accumulator should be [sum, values]")
                     };
 
                     // Mutate in-place:  update sum and push value to list (avoids O(n²) cloning)
                     *sum += val;
-                    values.push(Value::Float(val));
+                    Arc::make_mut(values).push(Value::Float(val));
 
                     Ok(Value::List(vec))
                 }
@@ -301,7 +310,10 @@ pub fn register(funcs: &mut Functions) {
         false,
         vec![Type::Union(vec![Type::Int, Type::Float, Type::Null])],
         FnType::Aggregation(
-            Value::List(thin_vec![Value::Float(0.0), Value::List(thin_vec![])]),
+            Value::List(Arc::new(thin_vec![
+                Value::Float(0.0),
+                Value::List(Arc::new(thin_vec![]))
+            ])),
             Some(Box::new(finalize_stdevp)),
         ),
         Type::Union(vec![Type::Float, Type::Null]),
@@ -338,7 +350,8 @@ pub fn finalize_percentile_disc(ctx: Value) -> Value {
         unreachable!()
     };
 
-    let [Value::Float(percentile), Value::List(values)] = state.as_mut_slice() else {
+    let [Value::Float(percentile), Value::List(values)] = Arc::make_mut(&mut state).as_mut_slice()
+    else {
         unreachable!()
     };
 
@@ -346,7 +359,7 @@ pub fn finalize_percentile_disc(ctx: Value) -> Value {
         return Value::Null;
     }
 
-    values.sort_by(|a, b| {
+    Arc::make_mut(values).sort_by(|a, b| {
         a.get_numeric()
             .partial_cmp(&b.get_numeric())
             .unwrap_or(std::cmp::Ordering::Equal)
@@ -367,7 +380,8 @@ pub fn finalize_percentile_cont(ctx: Value) -> Value {
         unreachable!()
     };
 
-    let [Value::Float(percentile), Value::List(values)] = state.as_mut_slice() else {
+    let [Value::Float(percentile), Value::List(values)] = Arc::make_mut(&mut state).as_mut_slice()
+    else {
         unreachable!()
     };
 
@@ -375,7 +389,7 @@ pub fn finalize_percentile_cont(ctx: Value) -> Value {
         return Value::Null;
     }
 
-    values.sort_by(|a, b| {
+    Arc::make_mut(values).sort_by(|a, b| {
         a.get_numeric()
             .partial_cmp(&b.get_numeric())
             .unwrap_or(std::cmp::Ordering::Equal)

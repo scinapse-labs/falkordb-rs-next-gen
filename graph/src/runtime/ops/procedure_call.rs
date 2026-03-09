@@ -62,7 +62,7 @@ impl<'a> ProcedureCallOp<'a> {
         match res {
             Value::List(arr) => {
                 let results: Vec<Env> = arr
-                    .into_iter()
+                    .iter()
                     .map(|v| {
                         let mut env = Env::default();
                         if let Value::Map(map) = v {

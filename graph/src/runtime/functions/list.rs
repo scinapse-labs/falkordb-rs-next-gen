@@ -33,13 +33,6 @@ pub fn register(funcs: &mut Functions) {
             match args.into_iter().next() {
                 Some(Value::String(s)) => Ok(Value::Int(s.chars().count() as i64)),
                 Some(Value::List(v)) => Ok(Value::Int(v.len() as i64)),
-                Some(Value::Arc(v)) => {
-                    if let Value::List(v) = &*v {
-                        Ok(Value::Int(v.len() as i64))
-                    } else {
-                        unreachable!()
-                    }
-                }
                 Some(Value::Null) => Ok(Value::Null),
                 _ => unreachable!(),
             }
@@ -92,9 +85,9 @@ pub fn register(funcs: &mut Functions) {
             match args.into_iter().next() {
                 Some(Value::List(v)) => {
                     if v.is_empty() {
-                        Ok(Value::List(thin_vec![]))
+                        Ok(Value::List(Arc::new(thin_vec![])))
                     } else {
-                        Ok(Value::List(v[1..].iter().cloned().collect::<ThinVec<_>>()))
+                        Ok(Value::List(Arc::new(v[1..].iter().cloned().collect::<ThinVec<_>>())))
                     }
                 }
                 Some(Value::Null) => Ok(Value::Null),
@@ -117,7 +110,7 @@ pub fn register(funcs: &mut Functions) {
         fn reverse(_, args) {
             match args.into_iter().next() {
                 Some(Value::List(mut v)) => {
-                    v.reverse();
+                    Arc::make_mut(&mut v).reverse();
                     Ok(Value::List(v))
                 }
                 Some(Value::String(s)) => Ok(Value::String(Arc::new(s.chars().rev().collect()))),

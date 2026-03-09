@@ -20,6 +20,7 @@
 
 use super::{FnType, Functions, Type};
 use crate::runtime::{runtime::Runtime, value::Value};
+use std::sync::Arc;
 use thin_vec::ThinVec;
 
 pub fn register(funcs: &mut Functions) {
@@ -29,7 +30,7 @@ pub fn register(funcs: &mut Functions) {
         fn nodes(_, args) {
             let mut iter = args.into_iter();
             match iter.next() {
-                Some(Value::Path(values)) => Ok(Value::List(
+                Some(Value::Path(values)) => Ok(Value::List(Arc::new(
                     values
                         .iter()
                         .filter_map(|v| {
@@ -40,7 +41,7 @@ pub fn register(funcs: &mut Functions) {
                             }
                         })
                         .collect(),
-                )),
+                ))),
                 Some(Value::Null) => Ok(Value::Null),
                 _ => unreachable!(),
             }
@@ -53,7 +54,7 @@ pub fn register(funcs: &mut Functions) {
         fn relationships(_, args) {
             let mut iter = args.into_iter();
             match iter.next() {
-                Some(Value::Path(values)) => Ok(Value::List(
+                Some(Value::Path(values)) => Ok(Value::List(Arc::new(
                     values
                         .iter()
                         .filter_map(|v| {
@@ -64,7 +65,7 @@ pub fn register(funcs: &mut Functions) {
                             }
                         })
                         .collect(),
-                )),
+                ))),
                 Some(Value::Null) => Ok(Value::Null),
                 _ => unreachable!(),
             }
