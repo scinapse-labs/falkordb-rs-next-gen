@@ -77,7 +77,7 @@ pub fn reply_compact_value(
         Value::List(values) => {
             raw::reply_with_long_long(ctx.ctx, 6);
             raw::reply_with_array(ctx.ctx, values.len() as _);
-            for v in values {
+            for v in values.iter() {
                 raw::reply_with_array(ctx.ctx, 2);
                 reply_compact_value(ctx, runtime, v);
             }
@@ -185,7 +185,7 @@ pub fn reply_compact_value(
 
             let mut nodes = 0;
             let mut rels = 0;
-            for node in path {
+            for node in path.iter() {
                 match node {
                     Value::Node(_) => nodes += 1,
                     Value::Relationship(_) => rels += 1,
@@ -196,7 +196,7 @@ pub fn reply_compact_value(
             raw::reply_with_array(ctx.ctx, 2);
             raw::reply_with_long_long(ctx.ctx, 6);
             raw::reply_with_array(ctx.ctx, nodes);
-            for node in path {
+            for node in path.iter() {
                 match node {
                     Value::Node(_) => {
                         raw::reply_with_array(ctx.ctx, 2);
@@ -210,7 +210,7 @@ pub fn reply_compact_value(
             raw::reply_with_array(ctx.ctx, 2);
             raw::reply_with_long_long(ctx.ctx, 6);
             raw::reply_with_array(ctx.ctx, rels);
-            for node in path {
+            for node in path.iter() {
                 match node {
                     Value::Node(_) => {}
                     Value::Relationship(_) => {
@@ -224,7 +224,7 @@ pub fn reply_compact_value(
         Value::VecF32(vec) => {
             raw::reply_with_long_long(ctx.ctx, 12);
             raw::reply_with_array(ctx.ctx, vec.len() as _);
-            for f in vec {
+            for f in vec.iter() {
                 raw::reply_with_double(ctx.ctx, f64::from(*f));
             }
         }
@@ -247,9 +247,6 @@ pub fn reply_compact_value(
                 lon_str.as_ptr().cast::<c_char>(),
                 lon_str.len(),
             );
-        }
-        Value::Arc(inner) => {
-            reply_compact_value(ctx, runtime, inner);
         }
     }
 }
@@ -312,7 +309,7 @@ pub fn reply_verbose_value(
         }
         Value::List(values) => {
             raw::reply_with_array(ctx.ctx, values.len() as _);
-            for v in values {
+            for v in values.iter() {
                 reply_verbose_value(ctx, runtime, v);
             }
         }
@@ -432,7 +429,7 @@ pub fn reply_verbose_value(
         Value::Path(path) => {
             raw::reply_with_array(ctx.ctx, path.len() as _);
 
-            for node in path {
+            for node in path.iter() {
                 match node {
                     Value::Relationship(_) | Value::Node(_) => {
                         reply_verbose_value(ctx, runtime, node);
@@ -443,7 +440,7 @@ pub fn reply_verbose_value(
         }
         Value::VecF32(vec) => {
             raw::reply_with_array(ctx.ctx, vec.len() as _);
-            for f in vec {
+            for f in vec.iter() {
                 raw::reply_with_double(ctx.ctx, f64::from(*f));
             }
         }
@@ -453,9 +450,6 @@ pub fn reply_verbose_value(
                 point.latitude, point.longitude
             );
             raw::reply_with_string_buffer(ctx.ctx, str.as_ptr().cast::<c_char>(), str.len());
-        }
-        Value::Arc(inner) => {
-            reply_verbose_value(ctx, runtime, inner);
         }
     }
 }

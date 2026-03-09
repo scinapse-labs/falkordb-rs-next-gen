@@ -73,17 +73,18 @@ impl Runtime {
     ) -> Result<(), String> {
         for tree in trees {
             let value = self.run_expr(tree, tree.root().idx(), vars, None)?;
-            self.delete_entity(value)?;
+            self.delete_entity(&value)?;
         }
         Ok(())
     }
 
     pub fn delete_entity(
         &self,
-        value: Value,
+        value: &Value,
     ) -> Result<(), String> {
         match value {
             Value::Node(id) => {
+                let id = *id;
                 if !self.g.borrow().is_node_deleted(id) {
                     for (src, dest, id) in self.g.borrow().get_node_relationships(id) {
                         self.pending
@@ -99,19 +100,20 @@ impl Runtime {
                 }
             }
             Value::Relationship(rel) => {
-                if !self.g.borrow().is_relationship_deleted(rel.0) {
+                let (rel_id, src, dest) = **rel;
+                if !self.g.borrow().is_relationship_deleted(rel_id) {
                     self.pending
                         .borrow_mut()
-                        .deleted_relationship(rel.0, rel.1, rel.2);
-                    let type_id = self.g.borrow().get_relationship_type_id(rel.0);
-                    let attrs = self.get_relationship_attrs(rel.0).collect();
+                        .deleted_relationship(rel_id, src, dest);
+                    let type_id = self.g.borrow().get_relationship_type_id(rel_id);
+                    let attrs = self.get_relationship_attrs(rel_id).collect();
                     self.deleted_relationships
                         .borrow_mut()
-                        .insert(rel.0, DeletedRelationship::new(type_id, attrs));
+                        .insert(rel_id, DeletedRelationship::new(type_id, attrs));
                 }
             }
             Value::Path(values) => {
-                for value in values {
+                for value in values.iter() {
                     self.delete_entity(value)?;
                 }
             }

@@ -165,7 +165,9 @@ impl Runtime {
             let attrs = self.run_expr(&node.attrs, node.attrs.root().idx(), vars, None)?;
             match attrs {
                 Value::Map(attrs) => {
-                    self.pending.borrow_mut().set_node_attributes(id, attrs)?;
+                    self.pending
+                        .borrow_mut()
+                        .set_node_attributes(id, Arc::unwrap_or_clone(attrs))?;
                 }
                 _ => unreachable!(),
             }
@@ -215,7 +217,7 @@ impl Runtime {
                 Value::Map(attrs) => {
                     self.pending
                         .borrow_mut()
-                        .set_relationship_attributes(id, attrs)?;
+                        .set_relationship_attributes(id, Arc::unwrap_or_clone(attrs))?;
                 }
                 _ => {
                     return Err(String::from("Invalid relationship properties"));

@@ -351,10 +351,14 @@ impl Binder {
 
         // If `all` is true, project all variables from the current env
         if all {
-            let env_copy = self.current_env().clone(); // Clone to avoid borrowing issues
+            let env_copy = self
+                .current_env()
+                .iter()
+                .map(|(a, b)| (a.clone(), b.clone()))
+                .collect::<Vec<_>>(); // Clone to avoid borrowing issues
             self.push_scope();
-            for (name, var) in &env_copy {
-                let bound_var = self.project_name(name, var.ty.clone());
+            for (name, var) in env_copy {
+                let bound_var = self.project_name(&name, var.ty.clone());
                 // Create an expression that refers to the variable
                 let expr = Arc::new(DynTree::new(ExprIR::Variable(var.clone())));
                 projected.push((bound_var, expr));

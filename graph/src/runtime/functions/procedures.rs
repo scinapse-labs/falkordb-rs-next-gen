@@ -17,7 +17,7 @@ pub fn register(funcs: &mut Functions) {
         ret: Type::Any,
         procedure: ["label"],
         fn db_labels(runtime, _args) {
-            Ok(Value::List(
+            Ok(Value::List(Arc::new(
                 runtime
                     .g
                     .borrow()
@@ -26,10 +26,10 @@ pub fn register(funcs: &mut Functions) {
                     .map(|l| {
                         let mut map = OrderMap::default();
                         map.insert(Arc::new(String::from("label")), Value::String(l.clone()));
-                        Value::Map(map)
+                        Value::Map(Arc::new(map))
                     })
                     .collect(),
-            ))
+            )))
         }
     );
 
@@ -39,7 +39,7 @@ pub fn register(funcs: &mut Functions) {
         ret: Type::Any,
         procedure: ["relationshipType"],
         fn db_types(runtime, _args) {
-            Ok(Value::List(
+            Ok(Value::List(Arc::new(
                 runtime
                     .g
                     .borrow()
@@ -51,10 +51,10 @@ pub fn register(funcs: &mut Functions) {
                             Arc::new(String::from("relationshipType")),
                             Value::String(t.clone()),
                         );
-                        Value::Map(map)
+                        Value::Map(Arc::new(map))
                     })
                     .collect(),
-            ))
+            )))
         }
     );
 
@@ -64,7 +64,7 @@ pub fn register(funcs: &mut Functions) {
         ret: Type::Any,
         procedure: ["propertyKey"],
         fn db_properties(runtime, _args) {
-            Ok(Value::List(
+            Ok(Value::List(Arc::new(
                 runtime
                     .g
                     .borrow()
@@ -75,10 +75,10 @@ pub fn register(funcs: &mut Functions) {
                             Arc::new(String::from("propertyKey")),
                             Value::String(p.clone()),
                         );
-                        Value::Map(map)
+                        Value::Map(Arc::new(map))
                     })
                     .collect(),
-            ))
+            )))
         }
     );
 
@@ -88,7 +88,7 @@ pub fn register(funcs: &mut Functions) {
         ret: Type::Any,
         procedure: ["label", "properties", "types", "options", "language", "stopwords", "entitytype", "status", "info"],
         fn db_indexes(runtime, _args) {
-            Ok(Value::List(
+            Ok(Value::List(Arc::new(
                 runtime
                     .g
                     .borrow()
@@ -108,7 +108,7 @@ pub fn register(funcs: &mut Functions) {
                             map.insert(Arc::new(String::from("label")), Value::String(label));
                             map.insert(
                                 Arc::new(String::from("properties")),
-                                Value::List(fields.keys().map(|f| Value::String(f.clone())).collect()),
+                                Value::List(Arc::new(fields.keys().map(|f| Value::String(f.clone())).collect())),
                             );
                             let mut types_map = OrderMap::default();
                             for (attr, fields) in fields {
@@ -126,9 +126,9 @@ pub fn register(funcs: &mut Functions) {
                                         }
                                     }
                                 }
-                                types_map.insert(attr, Value::List(types));
+                                types_map.insert(attr, Value::List(Arc::new(types)));
                             }
-                            map.insert(Arc::new(String::from("types")), Value::Map(types_map));
+                            map.insert(Arc::new(String::from("types")), Value::Map(Arc::new(types_map)));
                             map.insert(Arc::new(String::from("options")), Value::Null);
                             map.insert(
                                 Arc::new(String::from("language")),
@@ -138,7 +138,7 @@ pub fn register(funcs: &mut Functions) {
                                 Arc::new(String::from("stopwords")),
                                 stopwords.map_or_else(
                                     || Value::Null,
-                                    |sw| Value::List(sw.into_iter().map(Value::String).collect()),
+                                    |sw| Value::List(Arc::new(sw.into_iter().map(Value::String).collect())),
                                 ),
                             );
                             map.insert(
@@ -157,11 +157,11 @@ pub fn register(funcs: &mut Functions) {
                             );
                             map.insert(Arc::new(String::from("info")), Value::Null);
 
-                            Value::Map(map)
+                            Value::Map(Arc::new(map))
                         },
                     )
                     .collect(),
-            ))
+            )))
         }
     );
 
@@ -171,7 +171,7 @@ pub fn register(funcs: &mut Functions) {
         ret: Type::Any,
         write procedure: [],
         fn db_fulltext_create_node_index(_runtime, _args) {
-            Ok(Value::List(thin_vec![]))
+            Ok(Value::List(Arc::new(thin_vec![])))
         }
     );
 

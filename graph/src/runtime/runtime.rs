@@ -382,7 +382,7 @@ impl Runtime {
                 );
             }
             ExprIR::Map => {
-                return Ok(Value::Map(
+                return Ok(Value::Map(Arc::new(
                     ir.node(idx)
                         .children()
                         .map(|child| {
@@ -396,7 +396,7 @@ impl Runtime {
                             ))
                         })
                         .collect::<Result<_, String>>()?,
-                ));
+                )));
             }
             ExprIR::MapProjection => {
                 return self.eval_map_projection(ir, idx, env, agg_group_key);
@@ -428,14 +428,14 @@ impl Runtime {
                         for _ in 0..node.num_children() {
                             list.push(res.pop().unwrap());
                         }
-                        res.push(Value::List(list));
+                        res.push(Value::List(Arc::new(list)));
                     } else if node.num_children() > 0 {
                         stack.push((idx, true));
                         for idx in node.children().map(|c| c.idx()) {
                             stack.push((idx, false));
                         }
                     } else {
-                        res.push(Value::List(thin_vec![]));
+                        res.push(Value::List(Arc::new(thin_vec![])));
                     }
                 }
                 ExprIR::Length => {
@@ -714,9 +714,9 @@ impl Runtime {
                         .entry(format!("{idx:?}_{group_id}"))
                         .or_default();
                     if value_deduper.is_seen(&values) {
-                        res.push(Value::List(thin_vec![Value::Null]));
+                        res.push(Value::List(Arc::new(thin_vec![Value::Null])));
                     } else {
-                        res.push(Value::List(values));
+                        res.push(Value::List(Arc::new(values)));
                     }
                 }
                 ExprIR::Property(attr) => {
@@ -756,7 +756,7 @@ impl Runtime {
                     {
                         let arg = &args[0];
                         if let Value::List(values) = arg {
-                            let mut values = values.clone();
+                            let mut values: ThinVec<Value> = (**values).clone();
                             args.remove(0);
                             values.append(&mut args);
                             args = values;
@@ -774,7 +774,7 @@ impl Runtime {
 
                     res.push((func.func)(self, args)?);
                 }
-                ExprIR::Map => res.push(Value::Map(
+                ExprIR::Map => res.push(Value::Map(Arc::new(
                     node.children()
                         .map(|child| {
                             Ok((
@@ -787,7 +787,7 @@ impl Runtime {
                             ))
                         })
                         .collect::<Result<_, String>>()?,
-                )),
+                ))),
                 ExprIR::MapProjection => {
                     res.push(self.eval_map_projection(ir, idx, env, agg_group_key)?);
                 }
@@ -799,7 +799,7 @@ impl Runtime {
                             let mut t = 0;
                             let mut f = 0;
                             let mut n = 0;
-                            for value in values {
+                            for value in values.iter().cloned() {
                                 env.insert(var, value);
 
                                 match self.run_expr(ir, node.child(1).idx(), &env, agg_group_key)? {
@@ -839,7 +839,7 @@ impl Runtime {
                         acc.push(self.run_expr(ir, node.child(2).idx(), &env, agg_group_key)?);
                     }
 
-                    res.push(Value::List(acc));
+                    res.push(Value::List(Arc::new(acc)));
                 }
                 ExprIR::PatternComprehension(graph) => {
                     let children: Vec<_> = node.children().map(|c| c.idx()).collect();
@@ -991,8 +991,8 @@ impl Runtime {
                                         .ok_or_else(|| format!("Variable {} not found", v.as_str()))
                                         .cloned()
                                 })
-                                .collect::<Result<_, String>>()?;
-                            matched_env.insert(&path.var, Value::Path(p));
+                                .collect::<Result<ThinVec<_>, String>>()?;
+                            matched_env.insert(&path.var, Value::Path(Arc::new(p)));
                         }
                     }
 
@@ -1004,7 +1004,7 @@ impl Runtime {
                         }
                         results.push(self.run_expr(ir, expr_idx, matched_env, agg_group_key)?);
                     }
-                    res.push(Value::List(results));
+                    res.push(Value::List(Arc::new(results)));
                 }
                 ExprIR::Paren => {
                     res.push(self.run_expr(ir, node.child(0).idx(), env, agg_group_key)?);
@@ -1032,7 +1032,7 @@ impl Runtime {
                     || Ok(Value::Int(1)),
                     |c| self.run_expr(ir, c.idx(), env, None),
                 )?;
-                func.validate_args_type(&[start.clone(), end.clone(), step.clone()])?;
+                func.validate_args_type(&[&start, &end, &step])?;
                 match (start, end, step) {
                     (Value::Int(start), Value::Int(end), Value::Int(step)) => {
                         if step == 0 {
@@ -1070,7 +1070,7 @@ impl Runtime {
             _ => {
                 let res = self.run_expr(ir, idx, env, None)?;
                 match res {
-                    Value::List(arr) => Ok(ValueIter::List(arr.into_iter())),
+                    Value::List(arr) => Ok(ValueIter::List(Arc::unwrap_or_clone(arr).into_iter())),
                     Value::Null => Ok(ValueIter::Empty),
                     _ => Ok(ValueIter::Once(Some(res))),
                 }
@@ -1593,7 +1593,7 @@ impl Runtime {
             }
         }
 
-        Ok(Value::Map(result))
+        Ok(Value::Map(Arc::new(result)))
     }
 
     pub fn get_node_attrs(
@@ -1601,7 +1601,12 @@ impl Runtime {
         id: NodeId,
     ) -> impl Iterator<Item = (Arc<String>, Value)> {
         if let Some(dn) = self.deleted_nodes.borrow().get(&id) {
-            return dn.attrs.clone().into_iter();
+            let attrs: OrderMap<Arc<String>, Value> = dn
+                .attrs
+                .iter()
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect();
+            return attrs.into_iter();
         }
         let mut actual = self.g.borrow().get_node_all_attrs(id).collect();
         self.pending.borrow().update_node_attrs(id, &mut actual);
@@ -1613,7 +1618,12 @@ impl Runtime {
         id: RelationshipId,
     ) -> impl Iterator<Item = (Arc<String>, Value)> {
         if let Some(dr) = self.deleted_relationships.borrow().get(&id) {
-            return dr.attrs.clone().into_iter();
+            let attrs: OrderMap<Arc<String>, Value> = dr
+                .attrs
+                .iter()
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect();
+            return attrs.into_iter();
         }
         let mut actual = self.g.borrow().get_relationship_all_attrs(id).collect();
         self.pending
@@ -1673,7 +1683,7 @@ fn map_to_index_options(
             let stopwords = match get("stopwords") {
                 Some(Value::List(list)) => {
                     let mut words = Vec::with_capacity(list.len());
-                    for v in list {
+                    for v in list.iter() {
                         match v {
                             Value::String(s) => words.push(s.clone()),
                             _ => {
@@ -1706,12 +1716,12 @@ pub fn evaluate_param(expr: &DynNode<ExprIR<Arc<String>>>) -> Result<Value, Stri
         ExprIR::Integer(x) => Ok(Value::Int(*x)),
         ExprIR::Float(x) => Ok(Value::Float(*x)),
         ExprIR::String(x) => Ok(Value::String(x.clone())),
-        ExprIR::List => Ok(Value::List(
+        ExprIR::List => Ok(Value::List(Arc::new(
             expr.children()
                 .map(|c| evaluate_param(&c))
                 .collect::<Result<ThinVec<_>, _>>()?,
-        )),
-        ExprIR::Map => Ok(Value::Map(
+        ))),
+        ExprIR::Map => Ok(Value::Map(Arc::new(
             expr.children()
                 .map(|ir| match ir.data() {
                     ExprIR::String(key) => {
@@ -1720,7 +1730,7 @@ pub fn evaluate_param(expr: &DynNode<ExprIR<Arc<String>>>) -> Result<Value, Stri
                     _ => todo!(),
                 })
                 .collect::<Result<OrderMap<_, _>, _>>()?,
-        )),
+        ))),
         ExprIR::Negate => {
             let v = evaluate_param(&expr.child(0))?;
             match v {
@@ -1751,14 +1761,14 @@ fn get_elements(
                 end = end.min(values.len() as i64);
             }
             if start > end {
-                return Ok(Value::List(thin_vec![]));
+                return Ok(Value::List(Arc::new(thin_vec![])));
             }
-            Ok(Value::List(
+            Ok(Value::List(Arc::new(
                 values[start as usize..end as usize]
                     .iter()
                     .cloned()
                     .collect::<ThinVec<_>>(),
-            ))
+            )))
         }
         (_, Value::Null, _) | (_, _, Value::Null) => Ok(Value::Null),
         _ => Err(String::from("Invalid array range parameters.")),
@@ -1770,7 +1780,7 @@ fn list_contains(
     value: Value,
 ) -> Result<Value, String> {
     match list {
-        Value::List(l) => Ok(Contains::contains(l, value)),
+        Value::List(l) => Ok(Contains::contains(l.as_ref(), value)),
         Value::Null => Ok(Value::Null),
         _ => Err(format!(
             "Type mismatch: expected List or Null but was {}",

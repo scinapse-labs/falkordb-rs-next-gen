@@ -10,6 +10,7 @@ use crate::planner::IR;
 use crate::runtime::{env::Env, runtime::Runtime, value::Value};
 use orx_tree::{Dyn, NodeIdx};
 use std::sync::Arc;
+use thin_vec::ThinVec;
 
 pub struct PathBuilderOp<'a> {
     runtime: &'a Runtime,
@@ -42,7 +43,7 @@ impl Iterator for PathBuilderOp<'_> {
             Ok(mut vars) => {
                 let mut paths = self.paths.to_vec();
                 for path in &mut paths {
-                    let p: Result<_, String> = path
+                    let p: Result<ThinVec<Value>, String> = path
                         .vars
                         .iter()
                         .map(|v| {
@@ -55,7 +56,7 @@ impl Iterator for PathBuilderOp<'_> {
                         })
                         .collect();
                     match p {
-                        Ok(p) => vars.insert(&path.var, Value::Path(p)),
+                        Ok(p) => vars.insert(&path.var, Value::Path(Arc::new(p))),
                         Err(e) => {
                             let result = Err(e);
                             self.runtime.inspect_result(self.idx, &result);

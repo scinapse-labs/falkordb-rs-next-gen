@@ -266,6 +266,7 @@ use crate::runtime::{
     value::{Value, ValueTypeOf},
 };
 use std::{
+    borrow::Borrow,
     collections::HashMap,
     fmt::{Debug, Display},
     sync::{Arc, OnceLock},
@@ -477,9 +478,9 @@ impl GraphFn {
 }
 
 impl GraphFn {
-    pub fn validate_args_type(
+    pub fn validate_args_type<V: Borrow<Value>>(
         &self,
-        args: &[Value],
+        args: &[V],
     ) -> Result<(), String> {
         match &self.args_type {
             FnArguments::Fixed(args_type) => {
@@ -493,7 +494,9 @@ impl GraphFn {
                                 arg_type
                             ));
                         }
-                    } else if let Some((actual, expected)) = args[i].value_of_type(arg_type) {
+                    } else if let Some((actual, expected)) =
+                        args[i].borrow().value_of_type(arg_type)
+                    {
                         return Err(format!(
                             "Type mismatch: expected {expected} but was {actual}"
                         ));

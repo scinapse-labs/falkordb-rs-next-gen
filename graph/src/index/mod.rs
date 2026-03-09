@@ -223,8 +223,8 @@ impl Document {
 
     pub fn set(
         &mut self,
-        field: Arc<Field>,
-        value: Value,
+        field: &Field,
+        value: &Value,
     ) {
         unsafe {
             match value {
@@ -232,7 +232,7 @@ impl Document {
                     RediSearch_DocumentAddFieldNumber(
                         self.rs_doc,
                         field.name.as_ptr(),
-                        f64::from(i),
+                        f64::from(*i),
                         RSFLDTYPE_NUMERIC,
                     );
                 }
@@ -240,7 +240,7 @@ impl Document {
                     RediSearch_DocumentAddFieldNumber(
                         self.rs_doc,
                         field.name.as_ptr(),
-                        i as f64,
+                        *i as f64,
                         RSFLDTYPE_NUMERIC,
                     );
                 }
@@ -248,7 +248,7 @@ impl Document {
                     RediSearch_DocumentAddFieldNumber(
                         self.rs_doc,
                         field.name.as_ptr(),
-                        i,
+                        *i,
                         RSFLDTYPE_NUMERIC,
                     );
                 }
@@ -269,7 +269,7 @@ impl Document {
                     RediSearch_DocumentAddFieldNumber(
                         self.rs_doc,
                         field.name.as_ptr().cast::<c_char>(),
-                        ts as f64,
+                        *ts as f64,
                         RSFLDTYPE_NUMERIC,
                     );
                 }
@@ -296,8 +296,7 @@ impl Document {
                 | Value::Map(_)
                 | Value::Node(_)
                 | Value::Relationship(_)
-                | Value::Path(_)
-                | Value::Arc(_) => unreachable!(),
+                | Value::Path(_) => unreachable!(),
             }
         }
     }
@@ -337,7 +336,7 @@ impl Index {
     /// Should only be called when `!self.has_rs_index()`.
     pub fn create_rs_index(
         &mut self,
-        label: Arc<String>,
+        label: &Arc<String>,
         stopwords: Option<&Vec<Arc<String>>>,
         language: Option<&Arc<String>>,
     ) -> Result<(), String> {
@@ -749,7 +748,7 @@ impl Index {
 
     pub fn recreate_index(
         &mut self,
-        label: Arc<String>,
+        label: &Arc<String>,
     ) -> Result<(), String> {
         unsafe {
             if !self.rs_idx.is_null() {

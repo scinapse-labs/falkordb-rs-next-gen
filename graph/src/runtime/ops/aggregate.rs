@@ -192,7 +192,7 @@ impl<'a> AggregateOp<'a> {
                 if num_children == 2 && matches!(ir.node(idx).child(0).data(), ExprIR::Distinct) {
                     let arg = args.remove(0);
                     if let Value::List(values) = arg {
-                        args = values;
+                        args = (*values).clone();
                     } else {
                         // Restore accumulator before returning error
                         acc.insert(key, prev_value);
