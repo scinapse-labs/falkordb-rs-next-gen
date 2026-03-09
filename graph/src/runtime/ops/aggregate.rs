@@ -27,6 +27,7 @@ use crate::runtime::{env::Env, functions::FnType, runtime::Runtime, value::Value
 use orx_tree::{Dyn, DynNode, DynTree, NodeIdx, NodeRef};
 use std::collections::HashMap;
 use std::hash::{DefaultHasher, Hash, Hasher};
+use std::sync::Arc;
 use thin_vec::ThinVec;
 
 pub struct AggregateOp<'a> {
@@ -192,7 +193,7 @@ impl<'a> AggregateOp<'a> {
                 if num_children == 2 && matches!(ir.node(idx).child(0).data(), ExprIR::Distinct) {
                     let arg = args.remove(0);
                     if let Value::List(values) = arg {
-                        args = (*values).clone();
+                        args = Arc::unwrap_or_clone(values);
                     } else {
                         // Restore accumulator before returning error
                         acc.insert(key, prev_value);

@@ -754,14 +754,13 @@ impl Runtime {
                         .collect::<Result<ThinVec<_>, _>>()?;
                     if node.num_children() == 2 && matches!(node.child(0).data(), ExprIR::Distinct)
                     {
-                        let arg = &args[0];
-                        if let Value::List(values) = arg {
-                            let mut values: ThinVec<Value> = (**values).clone();
-                            args.remove(0);
-                            values.append(&mut args);
-                            args = values;
-                        } else {
-                            unreachable!();
+                        match args.remove(0) {
+                            Value::List(values) => {
+                                let mut values = Arc::unwrap_or_clone(values);
+                                values.append(&mut args);
+                                args = values;
+                            }
+                            _ => unreachable!(),
                         }
                     }
 

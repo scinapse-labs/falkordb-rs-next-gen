@@ -113,15 +113,6 @@ impl<K: PartialEq, V> OrderMap<K, V> {
     pub fn values(&self) -> impl Iterator<Item = &V> {
         self.vec.iter().map(|(_, v)| v)
     }
-
-    pub fn extend<I: IntoIterator<Item = (K, V)>>(
-        &mut self,
-        iter: I,
-    ) {
-        for (k, v) in iter {
-            self.insert(k, v);
-        }
-    }
 }
 
 // Specialized implementation for Arc<String> keys
@@ -193,5 +184,16 @@ impl<K, V> IntoIterator for OrderMap<K, V> {
 
     fn into_iter(self) -> Self::IntoIter {
         self.vec.into_iter()
+    }
+}
+
+impl<K: PartialEq, V> Extend<(K, V)> for OrderMap<K, V> {
+    fn extend<I: IntoIterator<Item = (K, V)>>(
+        &mut self,
+        iter: I,
+    ) {
+        for (k, v) in iter {
+            self.insert(k, v);
+        }
     }
 }

@@ -109,10 +109,9 @@ pub fn register(funcs: &mut Functions) {
         ]),
         fn reverse(_, args) {
             match args.into_iter().next() {
-                Some(Value::List(v)) => {
-                    let mut v = Arc::unwrap_or_clone(v);
-                    v.reverse();
-                    Ok(Value::List(Arc::new(v)))
+                Some(Value::List(mut v)) => {
+                    Arc::make_mut(&mut v).reverse();
+                    Ok(Value::List(v))
                 }
                 Some(Value::String(s)) => Ok(Value::String(Arc::new(s.chars().rev().collect()))),
                 Some(Value::Null) => Ok(Value::Null),

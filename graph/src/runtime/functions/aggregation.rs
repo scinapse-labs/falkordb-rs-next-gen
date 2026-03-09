@@ -238,16 +238,19 @@ pub fn register(funcs: &mut Functions) {
                 unreachable!("Context must be a List");
             };
 
-            let Value::List(mut collected_values) = std::mem::take(&mut Arc::make_mut(&mut state)[1]) else {
+            let state_mut = Arc::make_mut(&mut state);
+            let (first, rest) = state_mut.split_at_mut(1);
+            let Value::Float(stored_percentile) = &mut first[0] else {
+                unreachable!("First element of state must be the percentile")
+            };
+            let Value::List(collected_values) = &mut rest[0] else {
                 unreachable!("Second element of state must be a List")
             };
 
-            Arc::make_mut(&mut collected_values).push(Value::Float(val.get_numeric()));
+            *stored_percentile = percentile;
+            Arc::make_mut(collected_values).push(Value::Float(val.get_numeric()));
 
-            Ok(Value::List(Arc::new(thin_vec![
-                Value::Float(percentile),
-                Value::List(collected_values),
-            ])))
+            Ok(Value::List(state))
         }
     );
 
