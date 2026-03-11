@@ -7,6 +7,9 @@
 //! Uses `batch.env_ref()` to evaluate expressions without cloning input rows,
 //! and only clones when producing output rows.
 
+use std::collections::VecDeque;
+use std::sync::Arc;
+
 use crate::parser::ast::{QueryExpr, Variable};
 use crate::planner::IR;
 use crate::runtime::{
@@ -16,24 +19,20 @@ use crate::runtime::{
     value::Value,
 };
 use orx_tree::{Dyn, NodeIdx, NodeRef};
-use std::sync::Arc;
 
 pub struct UnwindOp<'a> {
     pub(crate) runtime: &'a Runtime<'a>,
     pub(crate) child: Box<BatchOp<'a>>,
     list: &'a QueryExpr<Variable>,
     name: &'a Variable,
-    /// Buffered output rows that didn't fit in the previous batch.
-    buffer: Vec<Env<'a>>,
-    /// Buffered input batch with remaining rows to process.
-    /// Stored as (batch, remaining_active_indices) when we had to stop mid-batch
-    /// because the output was full.
-    pending_input: Option<(Batch<'a>, Vec<usize>)>,
+    pending: VecDeque<Env<'a>>,
+    current_batch: Option<Batch<'a>>,
+    current_pos: usize,
     pub(crate) idx: NodeIdx<Dyn<IR>>,
 }
 
 impl<'a> UnwindOp<'a> {
-    pub const fn new(
+    pub fn new(
         runtime: &'a Runtime<'a>,
         child: Box<BatchOp<'a>>,
         list: &'a QueryExpr<Variable>,
@@ -45,68 +44,59 @@ impl<'a> UnwindOp<'a> {
             child,
             list,
             name,
-            buffer: Vec::new(),
-            pending_input: None,
+            pending: VecDeque::new(),
+            current_batch: None,
+            current_pos: 0,
             idx,
         }
     }
 
-    /// Processes rows from a batch starting at `start_pos` in the active indices list.
-    /// Returns `Err(error_string)` on expression evaluation failure, or
-    /// `Ok(next_pos)` — the index into `active` where processing stopped.
-    /// If `next_pos == active.len()`, all rows were processed.
-    fn expand_batch(
-        &mut self,
-        batch: &Batch<'a>,
-        active: &[usize],
-        start_pos: usize,
-        envs: &mut Vec<Env<'a>>,
-    ) -> Result<usize, String> {
+    fn expand_row(
+        &self,
+        env: &Env<'a>,
+        out: &mut Vec<Env<'a>>,
+    ) -> Result<(), String> {
         let pool = self.runtime.env_pool;
+        let value = self
+            .runtime
+            .run_expr(self.list, self.list.root().idx(), env, None)?;
 
-        for (pos, &row) in active.iter().enumerate().skip(start_pos) {
-            // Use env_ref to evaluate the expression without cloning the input row.
-            let env_ref = batch.env_ref(row);
-            let value = self
-                .runtime
-                .run_expr(self.list, self.list.root().idx(), env_ref, None)?;
-
-            match value {
-                Value::Null => {
-                    // Null produces zero output rows — skip without cloning.
-                }
-                Value::List(list) => {
-                    let items: Vec<Value> = Arc::unwrap_or_clone(list).into();
-                    for item in items {
-                        let mut out_row = env_ref.clone_pooled(pool);
-                        out_row.insert(self.name, item);
-                        if envs.len() < BATCH_SIZE {
-                            envs.push(out_row);
-                        } else {
-                            self.buffer.push(out_row);
-                        }
-                    }
-                }
-                other => {
-                    // Scalar value — produces exactly one output row.
-                    let mut out_row = env_ref.clone_pooled(pool);
-                    out_row.insert(self.name, other);
-                    if envs.len() < BATCH_SIZE {
-                        envs.push(out_row);
-                    } else {
-                        self.buffer.push(out_row);
-                    }
+        match value {
+            Value::Null => {
+                // Null produces zero output rows — skip without cloning.
+            }
+            Value::List(list) => {
+                let items: Vec<Value> = Arc::unwrap_or_clone(list).into();
+                for item in items {
+                    let mut out_row = env.clone_pooled(pool);
+                    out_row.insert(self.name, item);
+                    out.push(out_row);
                 }
             }
-
-            if envs.len() >= BATCH_SIZE {
-                // Return the position *after* the current row so we resume
-                // from the next unprocessed row.
-                return Ok(pos + 1);
+            other => {
+                // Scalar value — produces exactly one output row.
+                let mut out_row = env.clone_pooled(pool);
+                out_row.insert(self.name, other);
+                out.push(out_row);
             }
         }
 
-        Ok(active.len())
+        Ok(())
+    }
+
+    /// Drains rows from `self.pending` into `envs` until `BATCH_SIZE` is reached
+    /// or all pending rows are exhausted.
+    fn drain_pending(
+        &mut self,
+        envs: &mut Vec<Env<'a>>,
+    ) {
+        while envs.len() < BATCH_SIZE {
+            if let Some(row) = self.pending.pop_front() {
+                envs.push(row);
+            } else {
+                break;
+            }
+        }
     }
 }
 
@@ -116,46 +106,52 @@ impl<'a> Iterator for UnwindOp<'a> {
     fn next(&mut self) -> Option<Self::Item> {
         let mut envs = Vec::with_capacity(BATCH_SIZE);
 
-        // Drain any buffered output rows from a previous partial expansion.
-        if !self.buffer.is_empty() {
-            let drain_count = self.buffer.len().min(BATCH_SIZE);
-            envs.extend(self.buffer.drain(..drain_count));
-        }
+        // Drain leftover rows from previous call.
+        self.drain_pending(&mut envs);
 
-        // Resume processing a pending input batch if we stopped mid-batch.
-        if envs.len() < BATCH_SIZE
-            && let Some((batch, active)) = self.pending_input.take()
-        {
-            // We resume from position 0 in the remaining active indices.
-            match self.expand_batch(&batch, &active, 0, &mut envs) {
-                Err(e) => return Some(Err(e)),
-                Ok(next_pos) => {
-                    if next_pos < active.len() {
-                        // Still didn't finish this batch — save remainder.
-                        self.pending_input = Some((batch, active[next_pos..].to_vec()));
+        loop {
+            if envs.len() >= BATCH_SIZE {
+                break;
+            }
+
+            if self.current_batch.is_none() {
+                match self.child.next() {
+                    Some(Ok(b)) => {
+                        self.current_batch = Some(b);
+                        self.current_pos = 0;
+                    }
+                    Some(Err(e)) => return Some(Err(e)),
+                    None => break,
+                }
+            }
+
+            {
+                let batch = self.current_batch.as_ref().unwrap();
+                let active: Vec<usize> = batch.active_indices().collect();
+
+                while self.current_pos < active.len() {
+                    let row_idx = active[self.current_pos];
+                    self.current_pos += 1;
+                    let env = batch.env_ref(row_idx);
+                    let mut expanded = Vec::new();
+                    if let Err(e) = self.expand_row(env, &mut expanded) {
+                        return Some(Err(e));
+                    }
+                    self.pending.extend(expanded);
+
+                    if self.pending.len() >= BATCH_SIZE {
+                        break;
                     }
                 }
             }
-        }
 
-        // Pull from child until we fill a batch or exhaust input.
-        while envs.len() < BATCH_SIZE {
-            let batch = match self.child.next() {
-                Some(Ok(b)) => b,
-                Some(Err(e)) => return Some(Err(e)),
-                None => break,
-            };
+            self.drain_pending(&mut envs);
 
-            let active: Vec<usize> = batch.active_indices().collect();
-            match self.expand_batch(&batch, &active, 0, &mut envs) {
-                Err(e) => return Some(Err(e)),
-                Ok(next_pos) => {
-                    if next_pos < active.len() {
-                        // Output is full but input batch has remaining rows.
-                        // Save them so we process them on the next call.
-                        self.pending_input = Some((batch, active[next_pos..].to_vec()));
-                        break;
-                    }
+            // Check if batch is exhausted.
+            if let Some(ref batch) = self.current_batch {
+                let active_len = batch.active_indices().count();
+                if self.current_pos >= active_len {
+                    self.current_batch = None;
                 }
             }
         }
