@@ -355,6 +355,11 @@ impl<'a> AggregateOp<'a> {
 
                     let args = thin_vec![input_val, prev];
 
+                    if let Err(e) = agg.func.validate_args_type(&args[..1]) {
+                        errors.push(e);
+                        break;
+                    }
+
                     match (agg.func.func)(self.runtime, args) {
                         Ok(new_val) => acc.insert(&agg.acc_var, new_val),
                         Err(e) => {
