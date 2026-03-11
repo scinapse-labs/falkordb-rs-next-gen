@@ -340,6 +340,38 @@ fn push_filters_down(optimized_plan: &mut DynTree<IR>) {
             let IR::Filter(filter) = optimized_plan.node(idx).data() else {
                 continue;
             };
+
+            // Merge stacked filters: if this filter's child is also a filter,
+            // combine their conjuncts into a single AND filter.
+            if let Some(child) = optimized_plan.node(idx).get_child(0)
+                && let IR::Filter(child_filter) = child.data()
+            {
+                let child_filter = child_filter.clone();
+                let filter = filter.clone();
+                let child_idx = child.idx();
+
+                // Flatten conjuncts from both filters
+                let mut conjuncts: Vec<DynTree<ExprIR<Variable>>> = vec![];
+                for f in [&filter, &child_filter] {
+                    if matches!(f.root().data(), ExprIR::And) {
+                        conjuncts.extend(f.root().children().map(|c| c.clone_as_tree()));
+                    } else {
+                        conjuncts.push((**f).clone());
+                    }
+                }
+
+                let merged = if conjuncts.len() == 1 {
+                    Arc::new(conjuncts.into_iter().next().unwrap())
+                } else {
+                    Arc::new(tree!(ExprIR::And; conjuncts))
+                };
+                *optimized_plan.node_mut(idx).data_mut() = IR::Filter(merged);
+                optimized_plan.node_mut(child_idx).take_out();
+
+                changed = true;
+                break;
+            }
+
             if !optimized_plan
                 .node(idx)
                 .children()
