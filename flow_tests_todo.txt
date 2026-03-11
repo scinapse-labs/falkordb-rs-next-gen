@@ -27,4 +27,3 @@ test_social
 test_star_projections
 test_timeout
 test_traversal_construction
-test_union

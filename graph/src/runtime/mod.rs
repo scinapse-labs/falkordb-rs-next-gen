@@ -21,6 +21,7 @@
 //! - [`ordermap::OrderMap`]: Insertion-ordered map for consistent iteration
 //! - [`orderset::OrderSet`]: Insertion-ordered set for label/type collections
 
+pub mod batch;
 pub mod bitset;
 pub mod env;
 pub mod functions;
@@ -28,5 +29,7 @@ pub mod ops;
 pub mod ordermap;
 pub mod orderset;
 pub mod pending;
+pub mod pool;
 pub mod runtime;
 pub mod value;
+pub mod vectorized;
