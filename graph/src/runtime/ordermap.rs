@@ -186,3 +186,14 @@ impl<K, V> IntoIterator for OrderMap<K, V> {
         self.vec.into_iter()
     }
 }
+
+impl<K: PartialEq, V> Extend<(K, V)> for OrderMap<K, V> {
+    fn extend<I: IntoIterator<Item = (K, V)>>(
+        &mut self,
+        iter: I,
+    ) {
+        for (k, v) in iter {
+            self.insert(k, v);
+        }
+    }
+}

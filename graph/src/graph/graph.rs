@@ -37,7 +37,7 @@ use std::{
     collections::HashMap,
     hash::Hash,
     num::NonZeroUsize,
-    sync::{Arc, Mutex},
+    sync::Arc,
     time::{Duration, Instant},
 };
 
@@ -47,6 +47,7 @@ use itertools::Itertools;
 use lru::LruCache;
 use once_cell::sync::OnceCell;
 use orx_tree::DynTree;
+use parking_lot::Mutex;
 use roaring::RoaringTreemap;
 
 use crate::{
@@ -244,7 +245,7 @@ fn populate_index(
     label: Arc<String>,
     node_indexer: Indexer,
 ) {
-    let attrs = node_indexer.get_fields(label.clone());
+    let attrs = node_indexer.get_fields(&label);
     populate_index_batch(label, node_indexer, attrs, 0, 0);
 }
 
@@ -260,8 +261,8 @@ fn populate_index_batch(
         move || {
             const BATCH_SIZE: usize = 10_000;
 
-            if node_indexer.is_cancelled() || node_indexer.pending_changes(label.clone()) > 1 {
-                node_indexer.enable(label);
+            if node_indexer.is_cancelled() || node_indexer.pending_changes(&label) > 1 {
+                node_indexer.enable(&label);
                 return;
             }
 
@@ -273,38 +274,30 @@ fn populate_index_batch(
             // finishes.  This guarantees no concurrent index mutations.
             {
                 let lock = node_indexer.write_lock();
-                let guard = lock.lock().unwrap();
+                let guard = lock.lock();
 
-                let graph = node_indexer.get_graph();
                 let mut batch = Vec::with_capacity(BATCH_SIZE);
 
-                if let Some(graph) = graph {
-                    let g = graph.borrow();
-                    if let Some(lm) = g.get_label_matrix(&label) {
-                        let mut iter = lm.iter(min_row, u64::MAX);
-                        while batch.len() < BATCH_SIZE {
-                            match iter.next() {
-                                Some((n, _)) => {
-                                    next_min_row = n + 1;
-                                    let mut doc = Document::new(n);
-                                    let mut has_fields = false;
-                                    for (attr, fields) in &attrs {
-                                        if let Some(value) = g.get_node_attribute(NodeId(n), attr) {
-                                            for field in fields {
-                                                doc.set(field.clone(), value.clone());
-                                            }
-                                            has_fields = true;
-                                        }
-                                    }
-                                    if has_fields {
-                                        batch.push(doc);
-                                    }
+                if let Some(graph) = node_indexer.get_graph()
+                    && let Some(lm) = graph.borrow().get_label_matrix(&label)
+                {
+                    for (n, _) in lm.iter(min_row, u64::MAX).take(BATCH_SIZE) {
+                        let mut doc = Document::new(n);
+                        let mut has_fields = false;
+                        for (attr, fields) in &attrs {
+                            let value = graph.borrow().get_node_attribute(NodeId(n), attr);
+                            if let Some(value) = value {
+                                for field in fields {
+                                    doc.set(field, &value);
                                 }
-                                None => break,
+                                has_fields = true;
                             }
                         }
+                        if has_fields {
+                            batch.push(doc);
+                        }
                     }
-                    drop(g);
+                    next_min_row = batch.last().map_or(next_min_row, |doc| doc.id() + 1);
                 } else {
                     // Graph not yet committed — reschedule this batch.
                     // MvccGraph::commit() will set the indexer's graph
@@ -325,11 +318,11 @@ fn populate_index_batch(
                     node_indexer.commit(&mut add_docs, &mut HashMap::new());
                     node_indexer.update_progress(&label, progress);
                 }
-                // _guard dropped here — lock released between batches
+                // guard dropped here — lock released between batches
             }
 
             if exhausted {
-                node_indexer.enable(label);
+                node_indexer.enable(&label);
             } else {
                 populate_index_batch(label, node_indexer, attrs, progress, next_min_row);
             }
@@ -344,7 +337,7 @@ fn drop_index_bg(
 ) {
     spawn(
         move || {
-            node_indexer.remove(label);
+            node_indexer.remove(&label);
         },
         Some(0),
     );
@@ -527,46 +520,40 @@ impl Graph {
         let mut parser = Parser::new(query);
         let (parameters, query) = parser.parse_parameters()?;
 
-        match self.cache.lock() {
-            Ok(mut cache) => {
-                if let Some(plan) = cache.get(query) {
-                    let optimize_plan = optimize(&plan.0, self);
-                    Ok(Plan::new(
-                        Arc::new(optimize_plan),
-                        true,
-                        parameters,
-                        parse_duration,
-                        plan_duration,
-                    ))
-                } else {
-                    drop(cache);
-                    let start = Instant::now();
-                    let raw_ir = parser.parse()?;
-                    let (ir, scope_vars) = Binder::default().bind(raw_ir)?;
-                    ir.validate()?;
-                    parse_duration = start.elapsed();
-
-                    let mut planner = Planner::new(scope_vars);
-                    let start = Instant::now();
-                    let plan = planner.plan(ir);
-                    let optimize_plan = optimize(&plan, self);
-                    plan_duration = start.elapsed();
-
-                    self.cache
-                        .lock()
-                        .unwrap()
-                        .push(query.to_string(), PlanTree(plan));
-                    Ok(Plan::new(
-                        Arc::new(optimize_plan),
-                        false,
-                        parameters,
-                        parse_duration,
-                        plan_duration,
-                    ))
-                }
+        {
+            let mut cache = self.cache.lock();
+            if let Some(plan) = cache.get(query) {
+                let optimize_plan = optimize(&plan.0, self);
+                return Ok(Plan::new(
+                    Arc::new(optimize_plan),
+                    true,
+                    parameters,
+                    parse_duration,
+                    plan_duration,
+                ));
             }
-            Err(_) => Err("Failed to acquire read lock on cache".to_string()),
         }
+
+        let start = Instant::now();
+        let raw_ir = parser.parse()?;
+        let (ir, scope_vars) = Binder::default().bind(raw_ir)?;
+        ir.validate()?;
+        parse_duration = start.elapsed();
+
+        let mut planner = Planner::new(scope_vars);
+        let start = Instant::now();
+        let plan = planner.plan(ir);
+        let optimize_plan = optimize(&plan, self);
+        plan_duration = start.elapsed();
+
+        self.cache.lock().push(query.to_string(), PlanTree(plan));
+        Ok(Plan::new(
+            Arc::new(optimize_plan),
+            false,
+            parameters,
+            parse_duration,
+            plan_duration,
+        ))
     }
 
     fn get_label_matrix(
@@ -683,18 +670,17 @@ impl Graph {
     pub fn set_nodes_attributes(
         &mut self,
         attrs: &HashMap<u64, OrderMap<Arc<String>, Value>>,
-        index_add_docs: &mut HashMap<Arc<String>, RoaringTreemap>,
+        index_add_docs: &mut HashMap<u64, RoaringTreemap>,
     ) -> Result<usize, String> {
         let nremoved = self.node_attrs.insert_attrs(attrs)?;
 
         if self.node_indexer.has_indices() {
             for (id, attrs) in attrs {
-                let keys = attrs.keys().cloned().collect::<Vec<_>>();
                 for (_, label_id) in self.node_labels_matrix.iter(*id, *id) {
-                    for key in &keys {
-                        let label = self.node_labels[label_id as usize].clone();
-                        if self.node_indexer.has_indexed_attr(&label, key) {
-                            index_add_docs.entry(label).or_default().insert(*id);
+                    let label = &self.node_labels[label_id as usize];
+                    for key in attrs.keys() {
+                        if self.node_indexer.has_indexed_attr(label, key) {
+                            index_add_docs.entry(label_id).or_default().insert(*id);
                         }
                     }
                 }
@@ -706,16 +692,16 @@ impl Graph {
     pub fn set_nodes_labels(
         &mut self,
         nodes_labels: &mut Matrix,
-        index_add_docs: &mut HashMap<Arc<String>, RoaringTreemap>,
+        index_add_docs: &mut HashMap<u64, RoaringTreemap>,
     ) {
         self.resize();
 
         for (id, label_id) in nodes_labels.iter(0, u64::MAX) {
             self.node_labels_matrix.set(id, label_id, true);
             self.labels_matices[label_id as usize].set(id, id, true);
-            let label = self.node_labels[label_id as usize].clone();
-            if self.node_indexer.has_index(&label) && self.node_attrs.has_attributes(id) {
-                index_add_docs.entry(label.clone()).or_default().insert(id);
+            let label = &self.node_labels[label_id as usize];
+            if self.node_indexer.has_index(label) && self.node_attrs.has_attributes(id) {
+                index_add_docs.entry(label_id).or_default().insert(id);
             }
         }
     }
@@ -723,16 +709,16 @@ impl Graph {
     pub fn remove_nodes_labels(
         &mut self,
         nodes_labels: &mut Matrix,
-        remove_docs: &mut HashMap<Arc<String>, RoaringTreemap>,
+        remove_docs: &mut HashMap<u64, RoaringTreemap>,
     ) {
         self.resize();
 
         for (id, label_id) in nodes_labels.iter(0, u64::MAX) {
             self.node_labels_matrix.remove(id, label_id);
             self.labels_matices[label_id as usize].remove(id, id);
-            let label = self.node_labels[label_id as usize].clone();
-            if self.node_indexer.has_index(&label) {
-                remove_docs.entry(label.clone()).or_default().insert(id);
+            let label = &self.node_labels[label_id as usize];
+            if self.node_indexer.has_index(label) {
+                remove_docs.entry(label_id).or_default().insert(id);
             }
         }
     }
@@ -740,7 +726,7 @@ impl Graph {
     pub fn delete_nodes(
         &mut self,
         deleted_nodes: &RoaringTreemap,
-        remove_docs: &mut HashMap<Arc<String>, RoaringTreemap>,
+        remove_docs: &mut HashMap<u64, RoaringTreemap>,
     ) -> Result<(), String> {
         self.deleted_nodes |= deleted_nodes;
         self.node_count -= deleted_nodes.len();
@@ -749,12 +735,12 @@ impl Graph {
             self.all_nodes_matrix.remove(id, id);
 
             for (_, label_id) in self.node_labels_matrix.iter(id, id) {
-                let label = self.node_labels[label_id as usize].clone();
+                let label = &self.node_labels[label_id as usize];
                 self.labels_matices[label_id as usize].remove(id, id);
-                if self.node_indexer.has_index(&label) {
+                if self.node_indexer.has_index(label) {
                     for attr in self.node_attrs.get_attrs(id) {
-                        if self.node_indexer.has_indexed_attr(&label, &attr) {
-                            remove_docs.entry(label.clone()).or_default().insert(id);
+                        if self.node_indexer.has_indexed_attr(label, &attr) {
+                            remove_docs.entry(label_id).or_default().insert(id);
                             break;
                         }
                     }
@@ -967,11 +953,11 @@ impl Graph {
         }
 
         for (type_id, rels) in r {
-            let label = self.relationship_types.get(type_id.0).cloned().unwrap();
             for (id, _, _) in &rels {
                 self.relationship_type_matrix.remove(*id, type_id.0 as u64);
                 self.relationship_attrs.remove(*id)?;
             }
+            let label = self.relationship_types[type_id.0].clone();
             self.get_relationship_matrix_mut(&label).remove_all(rels);
         }
         Ok(())
@@ -1190,7 +1176,7 @@ impl Graph {
             EntityType::Node => {
                 let len = self.get_label_matrix_mut(label).nvals();
                 self.node_indexer
-                    .create_index(index_type, label.clone(), attrs, len, options)?;
+                    .create_index(index_type, label, attrs, len, options)?;
                 self.start_populate_index(label);
             }
             EntityType::Relationship => {}
@@ -1212,31 +1198,38 @@ impl Graph {
 
     pub fn commit_index(
         &mut self,
-        index_add_docs: &mut HashMap<Arc<String>, RoaringTreemap>,
-        remove_docs: &mut HashMap<Arc<String>, RoaringTreemap>,
+        index_add_docs: &mut HashMap<u64, RoaringTreemap>,
+        remove_docs: &mut HashMap<u64, RoaringTreemap>,
     ) {
         let lock = self.node_indexer.write_lock();
-        let _guard = lock.lock().unwrap();
+        let _guard = lock.lock();
 
         let mut add_docs = HashMap::new();
-        for (label, ids) in index_add_docs.drain() {
-            let fields = self.node_indexer.get_fields(label.clone());
+        for (label_id, ids) in index_add_docs.drain() {
+            let label = &self.node_labels[label_id as usize];
+            let fields = self.node_indexer.get_fields(label);
             let mut docs = vec![];
             for id in ids {
                 let mut doc = Document::new(id);
                 for (key, fields) in &fields {
                     if let Some(value) = self.node_attrs.get_attr(id, key) {
                         for field in fields {
-                            doc.set(field.clone(), value.clone());
+                            doc.set(field, &value);
                         }
                     }
                 }
                 docs.push(doc);
             }
-            add_docs.insert(label, docs);
+            add_docs.insert(label.clone(), docs);
         }
 
-        self.node_indexer.commit(&mut add_docs, remove_docs);
+        let mut remove = HashMap::new();
+        for (label_id, ids) in remove_docs.drain() {
+            let label = &self.node_labels[label_id as usize];
+            remove.insert(label.clone(), ids);
+        }
+
+        self.node_indexer.commit(&mut add_docs, &mut remove);
     }
 
     pub fn drop_index(
@@ -1251,12 +1244,12 @@ impl Graph {
                 let total = self.get_label_matrix(label).unwrap().nvals();
                 let reindex = self
                     .node_indexer
-                    .drop_index(label.clone(), attrs, index_type, total);
+                    .drop_index(label, attrs, index_type, total);
 
                 if let Some((dropped, remaining)) = reindex {
                     if dropped > 0 {
                         if remaining > 0 {
-                            self.node_indexer.recreate_index(label.clone())?;
+                            self.node_indexer.recreate_index(label)?;
                             self.start_populate_index(label);
                         } else {
                             drop_index_bg(label.clone(), self.node_indexer.clone());
@@ -1276,8 +1269,7 @@ impl Graph {
         label: &Arc<String>,
         field: &Arc<String>,
     ) -> bool {
-        self.node_indexer
-            .is_attr_indexed(label.clone(), field.clone())
+        self.node_indexer.is_attr_indexed(label, field)
     }
 
     pub fn get_indexed_nodes(
@@ -1285,7 +1277,7 @@ impl Graph {
         label: &Arc<String>,
         query: IndexQuery<Value>,
     ) -> impl Iterator<Item = NodeId> + use<> {
-        self.node_indexer.query(label.clone(), query).map(NodeId)
+        self.node_indexer.query(label, query).map(NodeId)
     }
 
     pub fn fulltext_query_nodes(
@@ -1294,7 +1286,7 @@ impl Graph {
         query: &str,
     ) -> Result<impl Iterator<Item = (NodeId, f64)> + use<>, String> {
         self.node_indexer
-            .fulltext_query(label.clone(), query)
+            .fulltext_query(label, query)
             .map(|r| r.map(|(id, score)| (NodeId(id), score)))
     }
 

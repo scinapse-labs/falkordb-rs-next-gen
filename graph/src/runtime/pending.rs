@@ -86,10 +86,10 @@ pub struct Pending {
     set_node_labels: Matrix,
     /// Labels to remove
     remove_node_labels: Matrix,
-    /// Documents to add to indexes
-    index_add_docs: HashMap<Arc<String>, RoaringTreemap>,
-    /// Documents to remove from indexes
-    index_remove_docs: HashMap<Arc<String>, RoaringTreemap>,
+    /// Documents to add to indexes (keyed by label id)
+    index_add_docs: HashMap<u64, RoaringTreemap>,
+    /// Documents to remove from indexes (keyed by label id)
+    index_remove_docs: HashMap<u64, RoaringTreemap>,
 }
 
 impl Default for Pending {

@@ -8,7 +8,6 @@
 //! - [`runtime::Runtime`]: The main execution engine that processes plan operators
 //! - [`value::Value`]: Runtime representation of Cypher values
 //! - [`functions`]: Built-in Cypher function implementations
-//! - [`iter`]: Iterator types for lazy evaluation
 //! - [`pending`]: Deferred operations for write batching
 //!
 //! ## Execution Model
@@ -25,7 +24,7 @@
 pub mod bitset;
 pub mod env;
 pub mod functions;
-pub mod iter;
+pub mod ops;
 pub mod ordermap;
 pub mod orderset;
 pub mod pending;

@@ -178,18 +178,18 @@ pub enum Value {
     Float(f64),
     /// Unicode string (shared via Arc for efficiency)
     String(Arc<String>),
-    /// Ordered list of values
-    List(ThinVec<Self>),
-    /// Key-value map with string keys
-    Map(OrderMap<Arc<String>, Self>),
+    /// Ordered list of values (Arc-wrapped for O(1) clone)
+    List(Arc<ThinVec<Self>>),
+    /// Key-value map with string keys (Arc-wrapped for O(1) clone)
+    Map(Arc<OrderMap<Arc<String>, Self>>),
     /// Reference to a graph node (by ID)
     Node(NodeId),
     /// Reference to a relationship: (edge_id, source_node, target_node)
     Relationship(Box<(RelationshipId, NodeId, NodeId)>),
     /// A path through the graph (alternating nodes and relationships)
-    Path(ThinVec<Self>),
+    Path(Arc<ThinVec<Self>>),
     /// Float32 vector (for vector similarity operations)
-    VecF32(ThinVec<f32>),
+    VecF32(Arc<ThinVec<f32>>),
     /// Geographic point (latitude, longitude)
     Point(Point),
     /// DateTime as Unix timestamp in milliseconds
@@ -200,8 +200,6 @@ pub enum Value {
     Time(i64),
     /// Duration in milliseconds
     Duration(i64),
-    /// Shared value reference (for lazy evaluation)
-    Arc(Arc<Self>),
 }
 
 impl Value {
@@ -564,7 +562,7 @@ impl Hash for Value {
             }
             Self::VecF32(x) => {
                 9.hash(state);
-                for f in x {
+                for f in x.iter() {
                     f.to_bits().hash(state);
                 }
             }
@@ -589,9 +587,6 @@ impl Hash for Value {
                 14.hash(state);
                 x.hash(state);
             }
-            Self::Arc(x) => {
-                x.hash(state);
-            }
         }
     }
 }
@@ -609,22 +604,43 @@ impl Add for Value {
             (Self::Float(a), Self::Float(b)) => Ok(Self::Float(a + b)),
             (Self::Float(a), Self::Int(b)) => Ok(Self::Float(a + b as f64)),
             (Self::Int(a), Self::Float(b)) => Ok(Self::Float(a as f64 + b)),
-            (Self::List(a), Self::List(b)) => Ok(Self::List(a.into_iter().chain(b).collect())),
+            (Self::List(a), Self::List(b)) => {
+                let mut list = match Arc::try_unwrap(a) {
+                    Ok(l) => l,
+                    Err(arc) => (*arc).clone(),
+                };
+                match Arc::try_unwrap(b) {
+                    Ok(b_owned) => list.extend(b_owned),
+                    Err(arc) => list.extend(arc.iter().cloned()),
+                }
+                Ok(Self::List(Arc::new(list)))
+            }
             (Self::List(mut l), rhs) => {
-                l.push(rhs);
+                Arc::make_mut(&mut l).push(rhs);
                 Ok(Self::List(l))
             }
             (lhs, Self::List(l)) => {
                 let mut new_list = thin_vec![lhs];
-                new_list.extend(l);
-                Ok(Self::List(new_list))
+                match Arc::try_unwrap(l) {
+                    Ok(l_owned) => new_list.extend(l_owned),
+                    Err(arc) => new_list.extend(arc.iter().cloned()),
+                }
+                Ok(Self::List(Arc::new(new_list)))
             }
             (Self::Map(a), Self::Map(b)) => {
-                let mut new_map = a;
-                for (k, v) in b.iter() {
-                    new_map.insert(k.clone(), v.clone());
+                let mut map = match Arc::try_unwrap(a) {
+                    Ok(m) => m,
+                    Err(arc) => (*arc).clone(),
+                };
+                match Arc::try_unwrap(b) {
+                    Ok(b_owned) => map.extend(b_owned),
+                    Err(arc) => {
+                        for (k, v) in arc.iter() {
+                            map.insert(k.clone(), v.clone());
+                        }
+                    }
                 }
-                Ok(Self::Map(new_map))
+                Ok(Self::Map(Arc::new(map)))
             }
             (Self::String(a), Self::String(b)) => Ok(Self::String(Arc::new(format!("{a}{b}")))),
             (Self::String(s), Self::Int(i)) => Ok(Self::String(Arc::new(format!("{s}{i}")))),
@@ -777,8 +793,6 @@ impl OrderedEnum for Value {
             Self::Time(_) => 1 << 8,
             Self::Duration(_) => 1 << 10,
             Self::VecF32(_) => 1 << 18,
-
-            Self::Arc(inner) => inner.order(),
         }
     }
 }
@@ -856,7 +870,7 @@ impl ValueTypeOf for Value {
     ) -> Option<(Type, Type)> {
         match (self, arg_type) {
             (Self::List(vs), Type::List(ty)) => {
-                for v in vs {
+                for v in vs.iter() {
                     if let Some(res) = v.value_of_type(ty) {
                         return Some(res);
                     }
@@ -878,10 +892,6 @@ impl ValueTypeOf for Value {
             | (Self::Time(_), Type::Time)
             | (Self::Duration(_), Type::Duration)
             | (_, Type::Any) => None,
-            (Self::Arc(inner), ty) => {
-                // If the inner value is a Rc, we need to check its type
-                inner.value_of_type(ty)
-            }
             (v, Type::Optional(ty)) => v.value_of_type(ty),
             (v, Type::Union(tys)) => {
                 for ty in tys {
@@ -917,7 +927,6 @@ impl ValueGetType for Value {
             Self::Date(_) => Type::Date,
             Self::Time(_) => Type::Time,
             Self::Duration(_) => Type::Duration,
-            Self::Arc(inner) => inner.get_type(),
         }
     }
 }
@@ -942,7 +951,6 @@ impl Value {
             Self::Date(_) => String::from("Date"),
             Self::Time(_) => String::from("Time"),
             Self::Duration(_) => String::from("Duration"),
-            Self::Arc(inner) => inner.name(),
         }
     }
 
@@ -1182,7 +1190,6 @@ impl DisplayJson for Value {
                 let formatted = Self::format_duration(*dur);
                 write_json_string(f, &formatted)
             }
-            Self::Arc(inner) => inner.fmt_json(f, runtime),
         }
     }
 }
@@ -1390,7 +1397,7 @@ impl Value {
             Self::List(list) => {
                 buf.push(ValueTypeTag::List.into());
                 buf.extend_from_slice(&(list.len() as u32).to_be_bytes());
-                for v in list {
+                for v in list.iter() {
                     v.write_bytes(buf);
                 }
             }
@@ -1407,7 +1414,7 @@ impl Value {
             Self::VecF32(vec) => {
                 buf.push(ValueTypeTag::VecF32.into());
                 buf.extend_from_slice(&(vec.len() as u32).to_be_bytes());
-                for f in vec {
+                for f in vec.iter() {
                     buf.extend_from_slice(&f.to_be_bytes());
                 }
             }
@@ -1431,10 +1438,6 @@ impl Value {
             Self::Duration(ms) => {
                 buf.push(ValueTypeTag::Duration.into());
                 buf.extend_from_slice(&ms.to_be_bytes());
-            }
-            Self::Arc(inner) => {
-                buf.push(ValueTypeTag::Arc.into());
-                inner.write_bytes(buf);
             }
             _ => {
                 unreachable!()
@@ -1475,7 +1478,7 @@ impl Value {
                     list.push(v);
                     offset += consumed;
                 }
-                Some((Self::List(list), offset))
+                Some((Self::List(Arc::new(list)), offset))
             }
             ValueTypeTag::Map => {
                 let len = u32::from_be_bytes(rest.get(..4)?.try_into().ok()?) as usize;
@@ -1491,7 +1494,7 @@ impl Value {
                     map.insert(Arc::new(k.to_owned()), v);
                     offset += consumed;
                 }
-                Some((Self::Map(map), offset))
+                Some((Self::Map(Arc::new(map)), offset))
             }
             ValueTypeTag::VecF32 => {
                 let len = u32::from_be_bytes(rest.get(..4)?.try_into().ok()?) as usize;
@@ -1502,7 +1505,7 @@ impl Value {
                     vec.push(f32::from_be_bytes(bytes));
                     offset += 4;
                 }
-                Some((Self::VecF32(vec), offset))
+                Some((Self::VecF32(Arc::new(vec)), offset))
             }
             ValueTypeTag::Point => {
                 let lat: [u8; 4] = rest.get(..4)?.try_into().ok()?;
@@ -1530,7 +1533,7 @@ impl Value {
             }
             ValueTypeTag::Arc => {
                 let (v, consumed) = Self::from_bytes(rest)?;
-                Some((Self::Arc(Arc::new(v)), 1 + consumed))
+                Some((v, 1 + consumed))
             }
         }
     }

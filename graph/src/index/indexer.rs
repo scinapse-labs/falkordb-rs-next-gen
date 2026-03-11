@@ -35,12 +35,13 @@ use std::{
     collections::HashMap,
     ffi::CString,
     sync::{
-        Arc, Mutex, RwLock,
+        Arc,
         atomic::{AtomicBool, Ordering},
     },
 };
 
 use atomic_refcell::AtomicRefCell;
+use parking_lot::{Mutex, RwLock};
 use roaring::RoaringTreemap;
 
 use super::Index;
@@ -109,18 +110,18 @@ unsafe impl Sync for Indexer {}
 impl Indexer {
     #[must_use]
     pub fn has_indices(&self) -> bool {
-        !self.index.read().unwrap().is_empty()
+        !self.index.read().is_empty()
     }
 
     pub fn create_index(
         &mut self,
         index_type: &IndexType,
-        label: Arc<String>,
+        label: &Arc<String>,
         attrs: &Vec<Arc<String>>,
         total: u64,
         options: Option<IndexOptions>,
     ) -> Result<(), String> {
-        let mut index = self.index.write().unwrap();
+        let mut index = self.index.write();
         let label_indexes = index.entry(label.clone()).or_default();
 
         let (language, stopwords, field_options) = match options {
@@ -217,13 +218,13 @@ impl Indexer {
     /// Returns `None` if the label has no index.
     pub fn drop_index(
         &mut self,
-        label: Arc<String>,
+        label: &Arc<String>,
         attrs: &Vec<Arc<String>>,
         index_type: &IndexType,
         total: u64,
     ) -> Option<(usize, usize)> {
-        let mut index = self.index.write().unwrap();
-        if let Some(index) = index.get_mut(&label) {
+        let mut index = self.index.write();
+        if let Some(index) = index.get_mut(label) {
             let before = index.index_count();
             let mut removed = false;
             for attr in attrs {
@@ -253,17 +254,17 @@ impl Indexer {
 
     pub fn remove(
         &mut self,
-        label: Arc<String>,
+        label: &Arc<String>,
     ) {
-        self.index.write().unwrap().remove(&label);
+        self.index.write().remove(label);
     }
 
     #[must_use]
     pub fn is_label_indexed(
         &self,
-        label: Arc<String>,
+        label: &Arc<String>,
     ) -> bool {
-        if let Some(index) = self.index.read().unwrap().get(&label)
+        if let Some(index) = self.index.read().get(label)
             && index.is_operational()
         {
             return true;
@@ -274,13 +275,13 @@ impl Indexer {
     #[must_use]
     pub fn is_attr_indexed(
         &self,
-        label: Arc<String>,
-        field: Arc<String>,
+        label: &Arc<String>,
+        field: &Arc<String>,
     ) -> bool {
-        if let Some(index) = self.index.read().unwrap().get(&label)
+        if let Some(index) = self.index.read().get(label)
             && index.is_operational()
         {
-            return index.contains_field(&field);
+            return index.contains_field(field);
         }
         false
     }
@@ -288,10 +289,10 @@ impl Indexer {
     #[must_use]
     pub fn query(
         &self,
-        label: Arc<String>,
+        label: &Arc<String>,
         query: IndexQuery<Value>,
     ) -> IdIter {
-        if let Some(index) = self.index.read().unwrap().get(&label) {
+        if let Some(index) = self.index.read().get(label) {
             return index.query(query);
         }
         IndexResultsIter::empty()
@@ -299,10 +300,10 @@ impl Indexer {
 
     pub fn fulltext_query(
         &self,
-        label: Arc<String>,
+        label: &Arc<String>,
         query: &str,
     ) -> Result<ScoredIdIter, String> {
-        if let Some(index) = self.index.read().unwrap().get(&label) {
+        if let Some(index) = self.index.read().get(label) {
             return index.fulltext_query(query);
         }
         Ok(IndexResultsIter::empty_scored())
@@ -310,10 +311,10 @@ impl Indexer {
 
     pub fn enable(
         &mut self,
-        label: Arc<String>,
+        label: &Arc<String>,
     ) -> bool {
-        let index = self.index.read().unwrap();
-        if let Some(index) = index.get(&label) {
+        let index = self.index.read();
+        if let Some(index) = index.get(label) {
             let res = index.decrement_pending();
             debug_assert!(res > 0);
             return res == 1;
@@ -323,10 +324,10 @@ impl Indexer {
 
     pub fn disable(
         &mut self,
-        label: Arc<String>,
+        label: &Arc<String>,
     ) {
-        let mut index = self.index.write().unwrap();
-        if let Some(index) = index.get_mut(&label) {
+        let mut index = self.index.write();
+        if let Some(index) = index.get_mut(label) {
             index.increment_pending();
         }
     }
@@ -334,9 +335,9 @@ impl Indexer {
     #[must_use]
     pub fn enabled(
         &self,
-        label: Arc<String>,
+        label: &Arc<String>,
     ) -> bool {
-        if let Some(index) = self.index.read().unwrap().get(&label) {
+        if let Some(index) = self.index.read().get(label) {
             return index.pending_count() == 0;
         }
         false
@@ -345,9 +346,9 @@ impl Indexer {
     #[must_use]
     pub fn pending_changes(
         &self,
-        label: Arc<String>,
+        label: &Arc<String>,
     ) -> i32 {
-        if let Some(index) = self.index.read().unwrap().get(&label) {
+        if let Some(index) = self.index.read().get(label) {
             return index.pending_count();
         }
         0
@@ -358,7 +359,7 @@ impl Indexer {
         add_docs: &mut HashMap<Arc<String>, Vec<Document>>,
         remove_docs: &mut HashMap<Arc<String>, RoaringTreemap>,
     ) {
-        let mut index = self.index.write().unwrap();
+        let mut index = self.index.write();
         for (label, add_docs) in add_docs {
             let Some(index) = index.get_mut(label) else {
                 continue;
@@ -380,12 +381,11 @@ impl Indexer {
     #[must_use]
     pub fn get_fields(
         &self,
-        label: Arc<String>,
+        label: &Arc<String>,
     ) -> HashMap<Arc<String>, Vec<Arc<Field>>> {
         self.index
             .read()
-            .unwrap()
-            .get(&label)
+            .get(label)
             .map(|index| index.fields().clone())
             .unwrap_or_default()
     }
@@ -394,7 +394,6 @@ impl Indexer {
     pub fn index_info(&self) -> Vec<IndexInfo> {
         self.index
             .read()
-            .unwrap()
             .iter()
             .map(|(label, index)| {
                 let (progress, total) = index.progress();
@@ -416,7 +415,7 @@ impl Indexer {
         &self,
         label: &Arc<String>,
     ) -> bool {
-        self.index.read().unwrap().contains_key(label)
+        self.index.read().contains_key(label)
     }
 
     #[must_use]
@@ -425,7 +424,7 @@ impl Indexer {
         label: &Arc<String>,
         field: &Arc<String>,
     ) -> bool {
-        if let Some(index) = self.index.read().unwrap().get(label) {
+        if let Some(index) = self.index.read().get(label) {
             return index.contains_field(field);
         }
         false
@@ -436,7 +435,7 @@ impl Indexer {
         label: &Arc<String>,
         progress: u64,
     ) {
-        let mut index = self.index.write().unwrap();
+        let mut index = self.index.write();
         if let Some(index) = index.get_mut(label) {
             let (_, total) = index.progress();
             index.set_progress(progress, total);
@@ -464,10 +463,10 @@ impl Indexer {
 
     pub fn recreate_index(
         &mut self,
-        label: Arc<String>,
+        label: &Arc<String>,
     ) -> Result<(), String> {
-        let mut index = self.index.write().unwrap();
-        if let Some(index) = index.get_mut(&label) {
+        let mut index = self.index.write();
+        if let Some(index) = index.get_mut(label) {
             index.recreate_index(label)?;
         }
         Ok(())
@@ -477,11 +476,11 @@ impl Indexer {
         &mut self,
         graph: Arc<AtomicRefCell<Graph>>,
     ) {
-        *self.graph.lock().unwrap() = Some(graph);
+        *self.graph.lock() = Some(graph);
     }
 
     #[must_use]
     pub fn get_graph(&self) -> Option<Arc<AtomicRefCell<Graph>>> {
-        self.graph.lock().unwrap().clone()
+        self.graph.lock().clone()
     }
 }
