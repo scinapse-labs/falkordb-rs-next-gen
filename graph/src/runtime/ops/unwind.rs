@@ -32,7 +32,7 @@ pub struct UnwindOp<'a> {
 }
 
 impl<'a> UnwindOp<'a> {
-    pub fn new(
+    pub const fn new(
         runtime: &'a Runtime<'a>,
         child: Box<BatchOp<'a>>,
         list: &'a QueryExpr<Variable>,

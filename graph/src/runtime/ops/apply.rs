@@ -101,14 +101,14 @@ impl<'a> ApplyOp<'a> {
                 Some(Err(e)) => return Err(e),
                 None => {
                     // Sub-plan exhausted. Emit fallback if optional and no results.
-                    if let Some(ref vars) = self.optional_vars {
-                        if !p.had_result {
-                            let mut fallback = p.env.clone_pooled(self.runtime.env_pool);
-                            for v in vars {
-                                fallback.insert(v, Value::Null);
-                            }
-                            envs.push(fallback);
+                    if let Some(ref vars) = self.optional_vars
+                        && !p.had_result
+                    {
+                        let mut fallback = p.env.clone_pooled(self.runtime.env_pool);
+                        for v in vars {
+                            fallback.insert(v, Value::Null);
                         }
+                        envs.push(fallback);
                     }
                     self.pending.pop_front();
                 }
