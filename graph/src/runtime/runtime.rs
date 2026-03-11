@@ -443,6 +443,9 @@ impl<'a> Runtime<'a> {
                 else {
                     return Err(String::from("Skip operator requires an integer argument"));
                 };
+                if skip < 0 {
+                    return Err(format!("SKIP must be a non-negative integer, got {skip}"));
+                }
                 Ok(BatchOp::Skip(SkipOp::new(
                     self,
                     Box::new(child),
@@ -457,6 +460,9 @@ impl<'a> Runtime<'a> {
                 else {
                     return Err(String::from("Limit operator requires an integer argument"));
                 };
+                if limit < 0 {
+                    return Err(format!("LIMIT must be a non-negative integer, got {limit}"));
+                }
                 Ok(BatchOp::Limit(LimitOp::new(
                     self,
                     Box::new(child),
@@ -1632,13 +1638,7 @@ impl<'a> Runtime<'a> {
     ) -> (Column, NullBitmap) {
         let g = self.g.borrow();
 
-        let attr_idx = if let Some(idx) = g.get_node_attribute_id(attr) {
-            idx as u16
-        } else {
-            // Attribute name not known at all — all values are Null
-            let values = vec![Value::Null; node_ids.len()];
-            return classify_column(values);
-        };
+        let attr_idx = g.get_node_attribute_id(attr).map(|idx| idx as u16);
 
         let deleted = self.deleted_nodes.borrow();
         let pending = self.pending.borrow();
@@ -1649,7 +1649,8 @@ impl<'a> Runtime<'a> {
                 || {
                     pending.get_node_attribute(id, attr).map_or_else(
                         || {
-                            g.get_node_attribute_by_idx(id, attr_idx)
+                            attr_idx
+                                .and_then(|idx| g.get_node_attribute_by_idx(id, idx))
                                 .unwrap_or(Value::Null)
                         },
                         Clone::clone,

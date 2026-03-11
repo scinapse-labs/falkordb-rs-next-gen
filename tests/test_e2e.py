@@ -1812,3 +1812,58 @@ def test_load_csv():
         [["Charlie", "35"]],
     ]
     assert res.result_set == expected
+
+
+def test_optional_match_null_merge():
+    """Test that explicitly-bound Null values from OPTIONAL MATCH survive
+    correctly through env merge operations.
+
+    When OPTIONAL MATCH produces no results, the unmatched variables are
+    explicitly bound to Null.  The env merge function must propagate these
+    bound-Null values (instead of skipping them because the value is Null),
+    so that downstream operators see the correct Null rather than a stale
+    value from a prior operation.
+    """
+    # Create two :A nodes; only the first has an outgoing :R edge.
+    query(
+        "CREATE (:A {v: 1})-[:R]->(:B {v: 10}), (:A {v: 2})",
+        write=True,
+    )
+
+    # OPTIONAL MATCH binds b to a Node for v=1 and to Null for v=2.
+    # The MERGE clause triggers env.merge() internally when joining the
+    # match result env back into the input env.
+    res = query(
+        """
+        MATCH (a:A)
+        OPTIONAL MATCH (a)-[:R]->(b)
+        MERGE (c:C {v: a.v})
+        RETURN a.v AS av, b.v AS bv, c.v AS cv
+        ORDER BY av
+        """,
+        write=True,
+        compare_results=False,
+    )
+
+    assert res.result_set == [
+        [1, 10, 1],
+        [2, None, 2],
+    ]
+
+    # Also test aggregation with an optional-match variable as a grouping key.
+    # The aggregate operator calls acc.merge(&key) during finalization; if
+    # bound-Null is not propagated correctly the Null group may show a stale
+    # value instead of Null.
+    res = query(
+        """
+        MATCH (a:A)
+        OPTIONAL MATCH (a)-[:R]->(b)
+        RETURN b.v AS bv, collect(a.v) AS vs
+        ORDER BY vs
+        """,
+    )
+
+    assert res.result_set == [
+        [10, [1]],
+        [None, [2]],
+    ]

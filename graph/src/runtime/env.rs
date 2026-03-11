@@ -146,10 +146,11 @@ impl<'a> Env<'a> {
             self.values.push(Value::Null);
         }
         for (key, value) in other.values.iter().enumerate() {
-            if *value == Value::Null {
+            if !other.bound.test(key) {
                 continue;
             }
             self.values[key] = value.clone();
+            self.bound.set(key);
         }
         self.bound.union(&other.bound);
     }

@@ -77,10 +77,10 @@ impl<'a> ProcedureCallOp<'a> {
                                 let mut env = Env::new(self.runtime.env_pool);
                                 if let Value::Map(map) = v {
                                     for output in self.name_outputs {
-                                        env.insert(
-                                            output,
-                                            map.get(output.name.as_ref().unwrap()).unwrap().clone(),
-                                        );
+                                        let field_name = output.name.as_ref().unwrap();
+                                        let value =
+                                            map.get(field_name).cloned().unwrap_or(Value::Null);
+                                        env.insert(output, value);
                                     }
                                 }
                                 env

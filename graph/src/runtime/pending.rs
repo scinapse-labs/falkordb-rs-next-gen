@@ -136,6 +136,9 @@ impl Pending {
         if let Some(max_id) = max_id {
             let mut cap = self.set_node_labels.nrows();
             if cap <= max_id {
+                if cap == 0 {
+                    cap = 1;
+                }
                 while cap <= max_id {
                     cap *= 2;
                 }
