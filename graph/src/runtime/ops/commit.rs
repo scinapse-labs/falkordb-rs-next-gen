@@ -65,13 +65,11 @@ impl<'a> Iterator for CommitOp<'a> {
             {
                 return Some(Err(e));
             }
+            // Reverse once so we can pop from the end in O(1) while preserving order.
+            self.results.reverse();
         }
 
         // Yield collected batches one at a time.
-        if self.results.is_empty() {
-            None
-        } else {
-            Some(Ok(self.results.remove(0)))
-        }
+        self.results.pop().map(Ok)
     }
 }

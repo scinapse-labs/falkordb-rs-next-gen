@@ -2,7 +2,27 @@
 //!
 //! For each active row in the input batch, extracts the source node and scans
 //! matching relationships, producing output rows with relationship and endpoint
-//! bindings. Uses per-row fallback through the row-based traversal logic.
+//! bindings.
+//!
+//! ```text
+//!  Input batch (1 parent row with n=Node(5)):
+//!  ┌──────┐
+//!  │ n=5  │  ──expand_row──►  ┌─────────────────────┐
+//!  └──────┘                   │ n=5, r=Rel(1,5,7)   │
+//!                             │ n=5, r=Rel(2,5,9)   │
+//!                             │ ...                  │
+//!                             └─────────────────────┘
+//!                             (buffered in `pending`, drained to output batches)
+//! ```
+//!
+//! ## State Machine
+//!
+//! The operator maintains three pieces of state across `next()` calls:
+//! - `current_batch` / `current_pos`: position within the current input batch
+//! - `pending`: VecDeque of already-expanded output rows awaiting emission
+//!
+//! Each `next()` drains pending rows, then continues expanding input rows
+//! until `BATCH_SIZE` output rows are collected or input is exhausted.
 
 use std::collections::VecDeque;
 use std::sync::Arc;
@@ -77,22 +97,62 @@ impl<'a> CondTraverseOp<'a> {
         }
 
         let g = runtime.g.borrow();
-        let forward = g.get_relationships(&rp.types, &rp.from.labels, &rp.to.labels);
-        let pairs: Vec<_> = forward
-            .map(|(src, dst)| (src, dst, false))
-            .chain(if rp.bidirectional {
-                let rev: Vec<_> = g
-                    .get_relationships(&rp.types, &rp.to.labels, &rp.from.labels)
-                    .filter(|(s, d)| s != d)
-                    .map(|(s, d)| (s, d, true))
-                    .collect();
-                rev.into_iter()
-            } else {
-                Vec::new().into_iter()
-            })
-            .collect();
 
-        for (src, dst, is_reverse) in pairs {
+        // Process forward relationships without collecting into a Vec.
+        Self::process_pairs(
+            g.get_relationships(&rp.types, &rp.from.labels, &rp.to.labels),
+            false,
+            from_id,
+            to_id,
+            &from_node_attrs,
+            &to_node_attrs,
+            &filter_attrs,
+            &g,
+            rp,
+            env,
+            runtime,
+            out,
+        );
+
+        // Process reverse relationships for bidirectional patterns.
+        if rp.bidirectional {
+            Self::process_pairs(
+                g.get_relationships(&rp.types, &rp.to.labels, &rp.from.labels)
+                    .filter(|(s, d)| s != d),
+                true,
+                from_id,
+                to_id,
+                &from_node_attrs,
+                &to_node_attrs,
+                &filter_attrs,
+                &g,
+                rp,
+                env,
+                runtime,
+                out,
+            );
+        }
+
+        Ok(())
+    }
+
+    /// Processes relationship pairs from an iterator without materializing them.
+    #[allow(clippy::too_many_arguments)]
+    fn process_pairs(
+        pairs: impl Iterator<Item = (crate::graph::graph::NodeId, crate::graph::graph::NodeId)>,
+        is_reverse: bool,
+        from_id: Option<crate::graph::graph::NodeId>,
+        to_id: Option<crate::graph::graph::NodeId>,
+        from_node_attrs: &Value,
+        to_node_attrs: &Value,
+        filter_attrs: &Value,
+        g: &crate::graph::graph::Graph,
+        rp: &QueryRelationship<Arc<String>, Arc<String>, Variable>,
+        env: &Env<'a>,
+        runtime: &'a Runtime<'a>,
+        out: &mut Vec<Env<'a>>,
+    ) {
+        for (src, dst) in pairs {
             let (from_node, to_node) = if is_reverse { (dst, src) } else { (src, dst) };
             if from_id.is_some() && from_id.unwrap() != from_node {
                 continue;
@@ -101,7 +161,7 @@ impl<'a> CondTraverseOp<'a> {
                 continue;
             }
             // Check from node attrs
-            if let Value::Map(ref attrs) = from_node_attrs
+            if let Value::Map(attrs) = from_node_attrs
                 && !attrs.is_empty()
             {
                 let mut skip = false;
@@ -119,7 +179,7 @@ impl<'a> CondTraverseOp<'a> {
                 }
             }
             // Check to node attrs
-            if let Value::Map(ref attrs) = to_node_attrs
+            if let Value::Map(attrs) = to_node_attrs
                 && !attrs.is_empty()
             {
                 let mut skip = false;
@@ -138,7 +198,7 @@ impl<'a> CondTraverseOp<'a> {
             }
             // Scan edges
             for id in g.get_src_dest_relationships(src, dst, &rp.types) {
-                if let Value::Map(ref filter_map) = filter_attrs
+                if let Value::Map(filter_map) = filter_attrs
                     && !filter_map.is_empty()
                 {
                     let mut matches = true;
@@ -164,7 +224,6 @@ impl<'a> CondTraverseOp<'a> {
                 out.push(row);
             }
         }
-        Ok(())
     }
 
     /// Drains rows from `self.pending` into `envs` until `BATCH_SIZE` is reached
@@ -232,11 +291,10 @@ impl<'a> Iterator for CondTraverseOp<'a> {
             self.drain_pending(&mut envs);
 
             // Check if batch is exhausted.
-            if let Some(ref batch) = self.current_batch {
-                let active_len = batch.active_indices().count();
-                if self.current_pos >= active_len {
-                    self.current_batch = None;
-                }
+            if let Some(ref batch) = self.current_batch
+                && self.current_pos >= batch.active_len()
+            {
+                self.current_batch = None;
             }
         }
 

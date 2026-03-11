@@ -75,17 +75,21 @@ fn record_mut(
                 raw::reply_with_long_long(ctx.ctx, 0);
                 raw::reply_with_string_buffer(ctx.ctx, err.as_ptr().cast::<c_char>(), err.len());
             }
-            Ok((values, _bound)) => {
+            Ok((values, bound)) => {
                 raw::reply_with_long_long(ctx.ctx, 1);
                 let vars = plan.node(*idx).get_variables();
                 raw::reply_with_array(ctx.ctx, vars.len() as _);
                 for name in &vars {
-                    match values.get(name.id as usize) {
-                        None => {
-                            raw::reply_with_null(ctx.ctx);
-                        }
-                        Some(value) => {
-                            reply_verbose_value(ctx, &runtime, value);
+                    if !bound.test(name.id as usize) {
+                        raw::reply_with_null(ctx.ctx);
+                    } else {
+                        match values.get(name.id as usize) {
+                            None => {
+                                raw::reply_with_null(ctx.ctx);
+                            }
+                            Some(value) => {
+                                reply_verbose_value(ctx, &runtime, value);
+                            }
                         }
                     }
                 }

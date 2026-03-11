@@ -1,7 +1,18 @@
 //! Batch-mode filter operator — evaluates a boolean predicate on each row.
 //!
 //! Pulls a batch from the child operator, evaluates the predicate for each
-//! active row, and returns only the passing rows.
+//! active row, and returns only the passing rows via a selection vector
+//! (zero-copy filtering).
+//!
+//! ```text
+//!  Evaluation paths (chosen on first batch, cached thereafter):
+//!
+//!  1. Vectorized (simple predicates like `n.age > 30`):
+//!     node_ids ──► materialize_node_property ──► compare_i64_column ──► selection
+//!
+//!  2. Per-row fallback (complex expressions):
+//!     for each active row: run_expr(predicate, env) ──► collect passing indices
+//! ```
 //!
 //! When the filter expression matches a vectorizable pattern (e.g.,
 //! `n.age > 30`), the operator uses the fast columnar path:

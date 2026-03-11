@@ -22,7 +22,8 @@ pub struct SortOp<'a> {
     pub(crate) runtime: &'a Runtime<'a>,
     pub(crate) child: Option<Box<BatchOp<'a>>>,
     trees: &'a [(QueryExpr<Variable>, bool)],
-    results: Vec<SortItem<'a>>,
+    /// Sorted results stored in reverse order so we can pop from the end in O(1).
+    results: Vec<Env<'a>>,
     pub(crate) idx: NodeIdx<Dyn<IR>>,
 }
 
@@ -90,22 +91,20 @@ impl<'a> Iterator for SortOp<'a> {
                     })
             });
 
-            self.results = items;
+            // Reverse so we can pop from the end in O(1) while preserving
+            // sorted order, and drop sort keys immediately (no longer needed).
+            self.results = items.into_iter().rev().map(|(env, _keys)| env).collect();
         }
 
-        // Emit sorted rows in batches.
-        let mut envs = Vec::with_capacity(BATCH_SIZE);
-
-        envs.extend(
-            self.results
-                .drain(0..BATCH_SIZE.min(self.results.len()))
-                .map(|(env, _)| env),
-        );
-
-        if envs.is_empty() {
-            None
-        } else {
-            Some(Ok(Batch::from_envs(envs)))
+        // Emit sorted rows in batches by popping from the end.
+        if self.results.is_empty() {
+            return None;
         }
+
+        let n = BATCH_SIZE.min(self.results.len());
+        let mut envs = self.results.split_off(self.results.len() - n);
+        envs.reverse();
+
+        Some(Ok(Batch::from_envs(envs)))
     }
 }

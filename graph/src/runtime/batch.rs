@@ -1,14 +1,41 @@
 //! Columnar batch representation for vectorized query execution.
 //!
-//! A [`Batch`] stores multiple rows in columnar format, where each column
-//! corresponds to a variable slot (indexed by `Variable.id`). This enables:
+//! A [`Batch`] stores multiple rows (up to [`BATCH_SIZE`] = 1024), enabling
+//! operators to amortize per-row dispatch overhead and exploit data locality.
 //!
-//! - **Reduced dispatch overhead**: process up to [`BATCH_SIZE`] rows per
-//!   operator invocation instead of one at a time
-//! - **Zero-copy filtering**: a selection vector marks active rows without
-//!   copying column data
-//! - **Future SIMD**: typed columns (`Ints`, `Floats`, `NodeIds`) can be
-//!   processed with vectorized instructions
+//! ```text
+//!  Batch (env-backed mode)
+//! ┌────────────────────────────────────────────────────────┐
+//! │  len: 4                                                │
+//! │  selection: Some([0, 2, 3])   ← only these rows active │
+//! │                                                        │
+//! │  envs: [ Env0, Env1, Env2, Env3 ]                     │
+//! │         ^^^^         ^^^^  ^^^^                         │
+//! │         active       active active                     │
+//! └────────────────────────────────────────────────────────┘
+//!
+//!  Batch (columnar mode, future)
+//! ┌────────────────────────────────────────────────────────┐
+//! │  columns[0]: NodeIds  [n1, n2, n3, n4]                 │
+//! │  columns[1]: Ints     [10, 20, 30, 40]   ← SIMD ops   │
+//! │  columns[2]: Values   ["a","b","c","d"]                │
+//! │  selection:  None     ← all rows active                │
+//! └────────────────────────────────────────────────────────┘
+//! ```
+//!
+//! ## Dual Storage Model
+//!
+//! The batch supports two storage modes:
+//! - **Env-backed** (`envs` field): row-oriented via `Vec<Env>`. Used by most
+//!   operators today. Access via `env_ref()`, `get()`, `set()`, `read_columns()`.
+//! - **Columnar** (`columns` field): typed columns for vectorized kernels.
+//!   Used by `FilterOp`/`ProjectOp` for bulk property comparison.
+//!
+//! ## Zero-Copy Filtering
+//!
+//! Instead of removing filtered-out rows, operators set a **selection vector**
+//! (`Vec<u16>`) listing active row indices. Downstream operators iterate only
+//! the active rows via `active_indices()` / `active_env_iter()`.
 
 use crate::graph::graph::{NodeId, RelationshipId};
 use crate::planner::IR;

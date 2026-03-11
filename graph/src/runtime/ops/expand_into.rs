@@ -1,9 +1,19 @@
 //! Batch-mode expand-into operator — checks for relationships between
 //! two already-bound nodes.
 //!
-//! For each active row in the input batch where both endpoints are bound,
-//! scans edges between them and filters by type and attributes. Uses
-//! per-row fallback through the existing expand logic.
+//! Unlike `CondTraverse` (which scans all relationships for a label pair),
+//! `ExpandInto` only checks edges between two specific already-bound endpoints.
+//! This is used when both sides of a relationship pattern have been resolved
+//! by prior operators.
+//!
+//! ```text
+//!  Input: row where from=Node(5), to=Node(7)
+//!  ──expand_row──►  checks edges between 5→7 (and 7→5 if bidirectional)
+//!                   emits one output row per matching edge
+//! ```
+//!
+//! Uses the same `pending` / `current_batch` / `current_pos` state machine
+//! as [`CondTraverseOp`] for buffered batch emission.
 
 use std::collections::VecDeque;
 use std::sync::Arc;
@@ -183,11 +193,10 @@ impl<'a> Iterator for ExpandIntoOp<'a> {
             self.drain_pending(&mut envs);
 
             // Check if batch is exhausted.
-            if let Some(ref batch) = self.current_batch {
-                let active_len = batch.active_indices().count();
-                if self.current_pos >= active_len {
-                    self.current_batch = None;
-                }
+            if let Some(ref batch) = self.current_batch
+                && self.current_pos >= batch.active_len()
+            {
+                self.current_batch = None;
             }
         }
 

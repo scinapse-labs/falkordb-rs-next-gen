@@ -56,15 +56,19 @@ impl<'a> Iterator for PathBuilderOp<'a> {
 
             let path_values: Result<Vec<Value>, String> = rows
                 .iter()
-                .map(|row| {
+                .zip(batch.active_indices())
+                .map(|(row, row_idx)| {
                     let elems: Result<ThinVec<Value>, String> = row
                         .iter()
                         .enumerate()
                         .map(|(i, val)| {
-                            if matches!(val, Value::Null) {
-                                Err(format!("Variable {} not found", path.vars[i].as_str()))
-                            } else {
+                            // Check the bound bitset to distinguish unbound variables
+                            // from variables explicitly set to Null (e.g. OPTIONAL MATCH).
+                            let env = batch.env_ref(row_idx);
+                            if env.is_bound(&path.vars[i]) {
                                 Ok((*val).clone())
+                            } else {
+                                Err(format!("Variable {} not found", path.vars[i].as_str()))
                             }
                         })
                         .collect();

@@ -1,10 +1,25 @@
 //! Per-query object pool for `Vec<T>` buffers.
 //!
-//! [`Pool`] provides per-query recycling of `Vec<T>` buffers.
-//! Instead of allocating a fresh `Vec` on every `Env::clone()`, scan
-//! and traversal operators use `env.clone_pooled(&pool)` to reuse
-//! previously released buffers, amortising allocation cost across
-//! millions of clones.
+//! [`Pool`] recycles `Vec<T>` buffers to amortize allocation cost across
+//! millions of `Env` clones that occur during scan and traversal operators.
+//!
+//! ```text
+//!  Pool lifecycle during a query
+//!
+//!  acquire()        ┌──────────┐
+//!  ─────────────►   │ Pooled   │   (RAII wrapper)
+//!                   │ Vec<T>   │
+//!                   └────┬─────┘
+//!                        │ Drop
+//!  release()             ▼
+//!  ◄─────────────   free_vecs.push(vec)
+//!
+//!  Next acquire() pops from free_vecs instead of allocating.
+//! ```
+//!
+//! The pool uses `RefCell` for interior mutability, which is safe because
+//! each query runs on a single thread. A fresh pool is created per query
+//! in `graph_core.rs` / `record.rs`.
 
 use std::cell::RefCell;
 use std::ops::{Deref, DerefMut};

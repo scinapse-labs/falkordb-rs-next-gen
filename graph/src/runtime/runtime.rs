@@ -1,33 +1,38 @@
 //! Query execution engine.
 //!
-//! This module contains the [`Runtime`] struct which executes query plans against
-//! the graph. The runtime implements a pull-based iterator model where each
-//! operator requests tuples from its children.
+//! This module contains the [`Runtime`] struct which executes query plans
+//! against the graph. The runtime builds a tree of [`BatchOp`] operators
+//! that process data in batches of up to 1024 rows.
 //!
 //! ## Execution Model
 //!
 //! ```text
-//! Plan Tree (IR)          Runtime Execution
-//!     Return               → Iterator yielding Env tuples
-//!       │                        │
-//!     Filter               → Filters tuples via predicate
-//!       │                        │
-//!     Expand               → Traverses relationships
-//!       │                        │
-//!     NodeScan             → Scans nodes by label
+//!  IR Plan Tree                BatchOp Tree (built by run_batch)
+//! ┌──────────┐               ┌──────────────────┐
+//! │  Return  │  ────────►    │  ProjectOp        │◄── yields Batch<'a>
+//! │    │     │               │    │              │
+//! │  Filter  │               │  FilterOp         │◄── sets selection vector
+//! │    │     │               │    │              │
+//! │  Expand  │               │  CondTraverseOp   │◄── expands per-row
+//! │    │     │               │    │              │
+//! │ NodeScan │               │  NodeByLabelScan  │◄── produces BATCH_SIZE rows
+//! └──────────┘               └──────────────────┘
+//!
+//!  query() drives the root BatchOp, collecting Env rows into ResultSummary.
 //! ```
 //!
 //! ## Key Types
 //!
-//! - [`Runtime`]: Main execution context
-//! - [`ResultSummary`]: Query result with statistics
-//! - [`QueryStatistics`]: Mutation counts and timing
-//! - [`Env`]: Tuple of variable bindings during execution
+//! - [`Runtime`]: Main execution context (carries `Pool`, graph ref, plan)
+//! - [`ResultSummary`]: Query result with collected rows and statistics
+//! - [`BatchOp`]: Enum-dispatch operator tree (28+ variants)
+//! - [`Batch`]: Columnar/env-backed batch of up to 1024 rows
+//! - [`Env`]: Tuple of variable bindings (pool-backed)
 //!
 //! ## Write Operations
 //!
-//! Write operations (CREATE, DELETE, SET) are batched in [`Pending`] and applied
-//! at the end of the query. This allows reads to see a consistent snapshot.
+//! Write operations (CREATE, DELETE, SET) are batched in [`Pending`] and
+//! applied atomically by [`CommitOp`] at the end of the query.
 
 #![allow(clippy::cast_sign_loss)]
 #![allow(clippy::cast_possible_wrap)]

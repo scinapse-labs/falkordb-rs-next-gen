@@ -148,11 +148,10 @@ impl<'a> Iterator for UnwindOp<'a> {
             self.drain_pending(&mut envs);
 
             // Check if batch is exhausted.
-            if let Some(ref batch) = self.current_batch {
-                let active_len = batch.active_indices().count();
-                if self.current_pos >= active_len {
-                    self.current_batch = None;
-                }
+            if let Some(ref batch) = self.current_batch
+                && self.current_pos >= batch.active_len()
+            {
+                self.current_batch = None;
             }
         }
 

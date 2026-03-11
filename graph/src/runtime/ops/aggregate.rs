@@ -356,6 +356,10 @@ impl<'a> AggregateOp<'a> {
                     let args = thin_vec![input_val, prev];
 
                     if let Err(e) = agg.func.validate_args_type(&args[..1]) {
+                        // Restore the accumulator that was taken above.
+                        if let Some(prev_val) = args.into_iter().nth(1) {
+                            acc.insert(&agg.acc_var, prev_val);
+                        }
                         errors.push(e);
                         break;
                     }
