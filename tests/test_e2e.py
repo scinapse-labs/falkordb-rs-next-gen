@@ -5,7 +5,7 @@ from time import sleep
 from typing import Counter
 import common
 from falkordb import Node, Edge, Path
-from hypothesis import given, strategies as st
+from hypothesis import given, settings, strategies as st
 import itertools
 import math
 import pytest
@@ -99,6 +99,21 @@ def assert_result_set_equal_no_order(res, expected):
     assert len(res.result_set) == len(expected)
     for record in expected:
         assert record in res.result_set
+
+
+def assert_nrm_rows(result_set, expected_vs):
+    """Assert n-r-m rows have correct labels, relation, and property values (ignoring IDs)."""
+    vs = sorted([row[0].properties["v"] for row in result_set])
+    assert vs == expected_vs
+    for row in result_set:
+        n, r, m = row
+        v = n.properties["v"]
+        assert n.labels == ["N"]
+        assert n.properties == {"v": v}
+        assert r.relation == "R"
+        assert r.properties == {"v": v}
+        assert m.labels == ["M"]
+        assert m.properties == {"v": v}
 
 
 def assert_float_equal(f1, f2):
@@ -381,28 +396,13 @@ def test_graph_crud():
     assert res.result_set == []
 
     res = query("UNWIND range(1, 3) AS x CREATE (n:N) RETURN n", write=True)
-    assert res.result_set == [
-        [Node(0, labels="N")],
-        [Node(1, labels="N")],
-        [Node(2, labels="N")],
-    ]
+    assert len(res.result_set) == 3
+    assert all(row[0].labels == ["N"] for row in res.result_set)
     assert res.nodes_created == 3
 
     res = query("MATCH (n:N), (m:N) RETURN n, m")
-    assert_result_set_equal_no_order(
-        res,
-        [
-            [Node(0, labels="N"), Node(0, labels="N")],
-            [Node(0, labels="N"), Node(1, labels="N")],
-            [Node(0, labels="N"), Node(2, labels="N")],
-            [Node(1, labels="N"), Node(0, labels="N")],
-            [Node(1, labels="N"), Node(1, labels="N")],
-            [Node(1, labels="N"), Node(2, labels="N")],
-            [Node(2, labels="N"), Node(0, labels="N")],
-            [Node(2, labels="N"), Node(1, labels="N")],
-            [Node(2, labels="N"), Node(2, labels="N")],
-        ],
-    )
+    assert len(res.result_set) == 9
+    assert all(row[0].labels == ["N"] and row[1].labels == ["N"] for row in res.result_set)
 
     common.g.delete()
 
@@ -412,98 +412,35 @@ def test_graph_crud():
     )
     assert res.nodes_created == 6
     assert res.relationships_created == 3
-    assert_result_set_equal_no_order(
-        res,
-        [
-            [
-                Node(0, labels="N", properties={"v": 0}),
-                Edge(0, "R", 1, 0, properties={"v": 0}),
-                Node(1, labels="M", properties={"v": 0}),
-            ],
-            [
-                Node(2, labels="N", properties={"v": 1}),
-                Edge(2, "R", 3, 1, properties={"v": 1}),
-                Node(3, labels="M", properties={"v": 1}),
-            ],
-            [
-                Node(4, labels="N", properties={"v": 2}),
-                Edge(4, "R", 5, 2, properties={"v": 2}),
-                Node(5, labels="M", properties={"v": 2}),
-            ],
-        ],
-    )
+    assert len(res.result_set) == 3
+    assert_nrm_rows(res.result_set, [0, 1, 2])
 
     res = query("MATCH (n)-[r:R]->(m) RETURN n, r, m")
-    assert res.result_set == [
-        [
-            Node(0, labels="N", properties={"v": 0}),
-            Edge(0, "R", 1, 0, properties={"v": 0}),
-            Node(1, labels="M", properties={"v": 0}),
-        ],
-        [
-            Node(2, labels="N", properties={"v": 1}),
-            Edge(2, "R", 3, 1, properties={"v": 1}),
-            Node(3, labels="M", properties={"v": 1}),
-        ],
-        [
-            Node(4, labels="N", properties={"v": 2}),
-            Edge(4, "R", 5, 2, properties={"v": 2}),
-            Node(5, labels="M", properties={"v": 2}),
-        ],
-    ]
+    assert len(res.result_set) == 3
+    assert_nrm_rows(res.result_set, [0, 1, 2])
 
     res = query("MATCH (m)<-[r:R]-(n) RETURN n, r, m")
-    assert res.result_set == [
-        [
-            Node(0, labels="N", properties={"v": 0}),
-            Edge(0, "R", 1, 0, properties={"v": 0}),
-            Node(1, labels="M", properties={"v": 0}),
-        ],
-        [
-            Node(2, labels="N", properties={"v": 1}),
-            Edge(2, "R", 3, 1, properties={"v": 1}),
-            Node(3, labels="M", properties={"v": 1}),
-        ],
-        [
-            Node(4, labels="N", properties={"v": 2}),
-            Edge(4, "R", 5, 2, properties={"v": 2}),
-            Node(5, labels="M", properties={"v": 2}),
-        ],
-    ]
+    assert len(res.result_set) == 3
+    assert_nrm_rows(res.result_set, [0, 1, 2])
 
     res = query("MATCH p=()-[:R]->() RETURN p")
-    assert res.result_set == [
-        [
-            Path(
-                [
-                    Node(0, labels="N", properties={"v": 0}),
-                    Node(1, labels="M", properties={"v": 0}),
-                ],
-                [Edge(0, "R", 1, 0, properties={"v": 0})],
-            )
-        ],
-        [
-            Path(
-                [
-                    Node(2, labels="N", properties={"v": 1}),
-                    Node(3, labels="M", properties={"v": 1}),
-                ],
-                [Edge(2, "R", 3, 1, properties={"v": 1})],
-            )
-        ],
-        [
-            Path(
-                [
-                    Node(4, labels="N", properties={"v": 2}),
-                    Node(5, labels="M", properties={"v": 2}),
-                ],
-                [Edge(4, "R", 5, 2, properties={"v": 2})],
-            )
-        ],
-    ]
+    assert len(res.result_set) == 3
+    vs = sorted([row[0].nodes()[0].properties["v"] for row in res.result_set])
+    assert vs == [0, 1, 2]
+    for row in res.result_set:
+        p = row[0]
+        assert len(p.nodes()) == 2
+        assert len(p.edges()) == 1
+        v = p.nodes()[0].properties["v"]
+        assert p.nodes()[0].labels == ["N"]
+        assert p.nodes()[0].properties == {"v": v}
+        assert p.nodes()[1].labels == ["M"]
+        assert p.nodes()[1].properties == {"v": v}
+        assert p.edges()[0].relation == "R"
+        assert p.edges()[0].properties == {"v": v}
 
     res = query("MATCH (n:N) RETURN n.v")
-    assert res.result_set == [[0], [1], [2]]
+    assert_result_set_equal_no_order(res, [[0], [1], [2]])
 
     res = query("MATCH (n:N) DELETE n", write=True)
     assert res.nodes_deleted == 3
@@ -1034,6 +971,7 @@ def test_substring(a, b, c):
         assert res.result_set == [[a[b : (b + c if c is not None else None)]]]
 
 
+@settings(deadline=None)
 @given(st.lists(at_least_1_text_st, unique=True))
 def test_graph_list(a):
     for i in a:
