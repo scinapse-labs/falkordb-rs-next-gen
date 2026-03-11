@@ -245,6 +245,55 @@ impl Display for IR {
     }
 }
 
+/// Extracts inline attributes from a node pattern into a filter expression.
+///
+/// Given a node like `(n:Person {name: 'Alice', age: 30})`, returns a new node
+/// with empty attrs and an equivalent filter expression `n.name = 'Alice' AND n.age = 30`.
+/// Returns `None` for the filter if the node has no inline attributes.
+fn inline_node_attrs_to_filter(
+    node: &Arc<QueryNode<Arc<String>, Variable>>
+) -> (
+    Arc<QueryNode<Arc<String>, Variable>>,
+    Option<DynTree<ExprIR<Variable>>>,
+) {
+    let mut filters: Vec<DynTree<ExprIR<Variable>>> = vec![];
+
+    for attr in node.attrs.root().children() {
+        let ExprIR::String(attr_str) = attr.data() else {
+            unreachable!("inline attrs map children must be ExprIR::String keys");
+        };
+        let eq = tree!(
+            ExprIR::Eq,
+            tree!(
+                ExprIR::Property(attr_str.clone()),
+                tree!(ExprIR::Variable(node.alias.clone()))
+            ),
+            attr.child(0).as_cloned_subtree()
+        );
+        filters.push(eq);
+    }
+
+    let filter = if filters.is_empty() {
+        None
+    } else if filters.len() == 1 {
+        Some(filters.pop().unwrap())
+    } else {
+        Some(tree!(ExprIR::And; filters))
+    };
+
+    filter.map_or_else(
+        || (node.clone(), None),
+        |f| {
+            let clean_node = Arc::new(QueryNode::new(
+                node.alias.clone(),
+                node.labels.clone(),
+                Arc::new(tree!(ExprIR::Map)),
+            ));
+            (clean_node, Some(f))
+        },
+    )
+}
+
 /// Converts a bound Cypher AST into a logical execution plan (IR tree).
 ///
 /// The planner maintains state across clauses:
@@ -642,11 +691,15 @@ impl Planner {
                     // Already bound - just use Argument (no scan needed)
                     vec.push(tree!(IR::Argument));
                 } else {
-                    let mut res = if node.labels.is_empty() {
-                        tree!(IR::AllNodeScan(node.clone()))
+                    let (clean_node, attr_filter) = inline_node_attrs_to_filter(&node);
+                    let mut res = if clean_node.labels.is_empty() {
+                        tree!(IR::AllNodeScan(clean_node))
                     } else {
-                        tree!(IR::NodeByLabelScan(node.clone()))
+                        tree!(IR::NodeByLabelScan(clean_node))
                     };
+                    if let Some(filter_expr) = attr_filter {
+                        res = tree!(IR::Filter(Arc::new(filter_expr)), res);
+                    }
                     self.visited.insert(node.alias.id);
                     let paths = component.paths();
                     if !paths.is_empty() {
@@ -663,11 +716,15 @@ impl Planner {
             //   - Variable-length path: CondVarLenTraverse (BFS)
             //   - Otherwise: CondTraverse (fixed-length traversal)
             let mut res = if relationship.from.alias.id == relationship.to.alias.id {
-                let scan = if relationship.from.labels.is_empty() {
-                    tree!(IR::AllNodeScan(relationship.from.clone()))
+                let (clean_node, attr_filter) = inline_node_attrs_to_filter(&relationship.from);
+                let mut scan = if clean_node.labels.is_empty() {
+                    tree!(IR::AllNodeScan(clean_node))
                 } else {
-                    tree!(IR::NodeByLabelScan(relationship.from.clone()))
+                    tree!(IR::NodeByLabelScan(clean_node))
                 };
+                if let Some(filter_expr) = attr_filter {
+                    scan = tree!(IR::Filter(Arc::new(filter_expr)), scan);
+                }
                 tree!(IR::ExpandInto(relationship.clone()), scan)
             } else if self.visited.contains(&relationship.from.alias.id)
                 && self.visited.contains(&relationship.to.alias.id)
@@ -685,11 +742,15 @@ impl Planner {
             // stacking on top of the previous result using the same logic.
             for relationship in iter {
                 res = if relationship.from.alias.id == relationship.to.alias.id {
-                    let scan = if relationship.from.labels.is_empty() {
-                        tree!(IR::AllNodeScan(relationship.from.clone()))
+                    let (clean_node, attr_filter) = inline_node_attrs_to_filter(&relationship.from);
+                    let mut scan = if clean_node.labels.is_empty() {
+                        tree!(IR::AllNodeScan(clean_node))
                     } else {
-                        tree!(IR::NodeByLabelScan(relationship.from.clone()))
+                        tree!(IR::NodeByLabelScan(clean_node))
                     };
+                    if let Some(filter_expr) = attr_filter {
+                        scan = tree!(IR::Filter(Arc::new(filter_expr)), scan);
+                    }
                     tree!(IR::ExpandInto(relationship.clone()), scan, res)
                 } else if self.visited.contains(&relationship.from.alias.id)
                     && self.visited.contains(&relationship.to.alias.id)

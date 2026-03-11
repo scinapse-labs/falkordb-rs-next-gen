@@ -1,15 +1,14 @@
-//! Sort operator — orders result rows by one or more expressions.
+//! Batch-mode sort operator — orders result rows by one or more expressions.
 //!
-//! Implements Cypher `ORDER BY`. This is a *blocking* operator: it
-//! consumes all child rows on the first `next()` call, evaluates the
-//! sort-key expressions for each row, sorts in-memory using a stable
-//! sort with per-key ascending/descending control, and then yields
-//! rows in sorted order.
+//! This is a *blocking* operator: it consumes all batches from the child on
+//! the first `next()` call, evaluates sort-key expressions for each
+//! row, sorts in-memory using a stable sort with per-key ascending/descending
+//! control, and then yields rows in sorted batches.
 
-use super::OpIter;
 use crate::parser::ast::{QueryExpr, Variable};
 use crate::planner::IR;
 use crate::runtime::{
+    batch::{BATCH_SIZE, Batch, BatchOp},
     env::Env,
     runtime::Runtime,
     value::{CompareValue, Value},
@@ -17,58 +16,64 @@ use crate::runtime::{
 use orx_tree::{Dyn, NodeIdx, NodeRef};
 use std::cmp::Ordering;
 
-type SortItem = (Env, Vec<(Value, bool)>);
+type SortItem<'a> = (Env<'a>, Vec<(Value, bool)>);
 
 pub struct SortOp<'a> {
-    runtime: &'a Runtime,
-    iter: Option<Box<OpIter<'a>>>,
+    pub(crate) runtime: &'a Runtime<'a>,
+    pub(crate) child: Option<Box<BatchOp<'a>>>,
     trees: &'a [(QueryExpr<Variable>, bool)],
-    results: std::vec::IntoIter<SortItem>,
-    idx: NodeIdx<Dyn<IR>>,
+    results: Vec<SortItem<'a>>,
+    pub(crate) idx: NodeIdx<Dyn<IR>>,
 }
 
 impl<'a> SortOp<'a> {
-    pub fn new(
-        runtime: &'a Runtime,
-        iter: Box<OpIter<'a>>,
+    pub const fn new(
+        runtime: &'a Runtime<'a>,
+        child: Box<BatchOp<'a>>,
         trees: &'a [(QueryExpr<Variable>, bool)],
         idx: NodeIdx<Dyn<IR>>,
     ) -> Self {
         Self {
             runtime,
-            iter: Some(iter),
+            child: Some(child),
             trees,
-            results: Vec::new().into_iter(),
+            results: Vec::new(),
             idx,
         }
     }
 }
 
-impl Iterator for SortOp<'_> {
-    type Item = Result<Env, String>;
+impl<'a> Iterator for SortOp<'a> {
+    type Item = Result<Batch<'a>, String>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if let Some(iter) = self.iter.take() {
-            let mut items: Vec<SortItem> = match iter
-                .map(|item| {
-                    let env = item?;
-                    let sort_keys = self
+        // Consume all input on first call.
+        if let Some(child) = self.child.take() {
+            let mut items: Vec<SortItem<'a>> = Vec::new();
+            for batch_result in child {
+                let batch = match batch_result {
+                    Ok(b) => b,
+                    Err(e) => return Some(Err(e)),
+                };
+                for env in batch.active_env_iter() {
+                    let sort_keys = match self
                         .trees
                         .iter()
                         .map(|(tree, desc)| {
                             Ok((
-                                self.runtime.run_expr(tree, tree.root().idx(), &env, None)?,
+                                self.runtime.run_expr(tree, tree.root().idx(), env, None)?,
                                 *desc,
                             ))
                         })
-                        .collect::<Result<Vec<_>, String>>()?;
-                    Ok((env, sort_keys))
-                })
-                .collect::<Result<_, String>>()
-            {
-                Ok(items) => items,
-                Err(e) => return Some(Err(e)),
-            };
+                        .collect::<Result<Vec<_>, String>>()
+                    {
+                        Ok(keys) => keys,
+                        Err(e) => return Some(Err(e)),
+                    };
+                    items.push((env.clone_pooled(self.runtime.env_pool), sort_keys));
+                }
+            }
+
             items.sort_by(|(_, a), (_, b)| {
                 a.iter()
                     .zip(b)
@@ -84,11 +89,23 @@ impl Iterator for SortOp<'_> {
                         }
                     })
             });
-            self.results = items.into_iter();
+
+            self.results = items;
         }
-        let (env, _) = self.results.next()?;
-        let result = Ok(env);
-        self.runtime.inspect_result(self.idx, &result);
-        Some(result)
+
+        // Emit sorted rows in batches.
+        let mut envs = Vec::with_capacity(BATCH_SIZE);
+
+        envs.extend(
+            self.results
+                .drain(0..BATCH_SIZE.min(self.results.len()))
+                .map(|(env, _)| env),
+        );
+
+        if envs.is_empty() {
+            None
+        } else {
+            Some(Ok(Batch::from_envs(envs)))
+        }
     }
 }
