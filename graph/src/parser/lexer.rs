@@ -453,11 +453,19 @@ impl<'a> Lexer<'a> {
                     };
                     let id = if first == '`' {
                         len += 1;
+                        let mut end = false;
                         for ch in chars {
                             len += 1;
                             if ch == '`' {
+                                end = true;
                                 break;
                             }
+                        }
+                        if !end {
+                            return Err((
+                                format!("Unterminated backtick-quoted parameter at pos: {pos}"),
+                                len,
+                            ));
                         }
                         &str[pos + 2..pos + len - 1]
                     } else if let 'a'..='z' | 'A'..='Z' | '0'..='9' | '_' = first {
