@@ -58,21 +58,39 @@ impl<'a> Iterator for PathBuilderOp<'a> {
                 .iter()
                 .zip(batch.active_indices())
                 .map(|(row, row_idx)| {
-                    let elems: Result<ThinVec<Value>, String> = row
-                        .iter()
-                        .enumerate()
-                        .map(|(i, val)| {
-                            // Check the bound bitset to distinguish unbound variables
-                            // from variables explicitly set to Null (e.g. OPTIONAL MATCH).
-                            let env = batch.env_ref(row_idx);
-                            if env.is_bound(&path.vars[i]) {
-                                Ok((*val).clone())
-                            } else {
-                                Err(format!("Variable {} not found", path.vars[i].as_str()))
+                    let mut elems = ThinVec::new();
+                    let mut skip_next = false;
+                    for (i, val) in row.iter().enumerate() {
+                        if skip_next {
+                            skip_next = false;
+                            continue;
+                        }
+                        let env = batch.env_ref(row_idx);
+                        if !env.is_bound(&path.vars[i]) {
+                            return Err(format!("Variable {} not found", path.vars[i].as_str()));
+                        }
+                        // Variable-length relationship: expand the list of
+                        // relationships into alternating [rel, intermediate_node, rel, ...].
+                        if let Value::List(edges) = val {
+                            if !edges.is_empty() {
+                                for edge in edges.iter() {
+                                    elems.push(edge.clone());
+                                    // Insert intermediate node between consecutive edges.
+                                    if let Value::Relationship(rel) = edge {
+                                        elems.push(Value::Node(rel.2));
+                                    }
+                                }
                             }
-                        })
-                        .collect();
-                    Ok(Value::Path(Arc::new(elems?)))
+                            // 0-hop: skip the following endpoint node since it
+                            // duplicates the preceding node already in elems.
+                            // The last edge's destination is the same as the
+                            // following endpoint node, so skip it.
+                            skip_next = true;
+                        } else {
+                            elems.push((*val).clone());
+                        }
+                    }
+                    Ok(Value::Path(Arc::new(elems)))
                 })
                 .collect();
 
