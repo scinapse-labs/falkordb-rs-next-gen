@@ -1339,8 +1339,9 @@ impl Graph {
         &self,
         label: &Arc<String>,
         field: &Arc<String>,
+        index_type: &IndexType,
     ) -> bool {
-        self.node_indexer.is_attr_indexed(label, field)
+        self.node_indexer.is_label_indexed(label, field, index_type)
     }
 
     pub fn get_indexed_nodes(
