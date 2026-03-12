@@ -679,6 +679,11 @@ impl Planner {
     ) -> DynTree<IR> {
         // Each connected component of the pattern becomes a separate sub-plan.
         let mut vec = vec![];
+        // Collect extra filters for bound variables with new constraints
+        // (labels or inline properties). These are applied as top-level
+        // filters rather than as plan components, so they don't interfere
+        // with stitching.
+        let mut bound_filters: Vec<DynTree<ExprIR<Variable>>> = vec![];
         for component in pattern.connected_components() {
             let relationships = component.relationships();
             let mut iter = relationships.iter();
@@ -688,7 +693,29 @@ impl Planner {
                 debug_assert_eq!(nodes.len(), 1);
                 let node = nodes[0].clone();
                 if self.visited.contains(&node.alias.id) {
-                    // Already bound - just use Argument (no scan needed)
+                    // Already bound: check if the pattern introduces new
+                    // constraints (labels or inline properties) that must be
+                    // verified against the bound value.
+                    let has_new_labels = !node.labels.is_empty();
+                    let (_, attr_filter) = inline_node_attrs_to_filter(&node);
+                    if has_new_labels {
+                        use crate::runtime::functions::{FnType, get_functions};
+                        let has_labels_fn = get_functions()
+                            .get("hasLabels", &FnType::Function)
+                            .expect("hasLabels function must exist");
+                        let labels_list = tree!(ExprIR::List;
+                            node.labels.iter().map(|l| tree!(ExprIR::String(l.clone())))
+                        );
+                        bound_filters.push(tree!(
+                            ExprIR::FuncInvocation(has_labels_fn),
+                            tree!(ExprIR::Variable(node.alias.clone())),
+                            labels_list
+                        ));
+                    }
+                    if let Some(filter_expr) = attr_filter {
+                        bound_filters.push(filter_expr);
+                    }
+                    // Always push Argument so stitching has a target.
                     vec.push(tree!(IR::Argument));
                 } else {
                     let (clean_node, attr_filter) = inline_node_attrs_to_filter(&node);
@@ -813,6 +840,18 @@ impl Planner {
                     res = tree!(IR::SemiApply, res, sub_plan);
                 }
             }
+        }
+        // Apply filters for bound variables with new label/property
+        // constraints. These are collected during component planning and
+        // applied here so they sit above the stitching target, ensuring
+        // the bound variable's env is available when the filter runs.
+        if !bound_filters.is_empty() {
+            let filter_expr = if bound_filters.len() == 1 {
+                bound_filters.pop().unwrap()
+            } else {
+                tree!(ExprIR::And; bound_filters)
+            };
+            res = tree!(IR::Filter(Arc::new(filter_expr)), res);
         }
         res
     }
@@ -1080,7 +1119,19 @@ impl Planner {
                         tree!(IR::Optional(optional_vars), match_plan)
                     }
                 } else {
-                    self.plan_match(&pattern, filter)
+                    let all_visited = pattern.variables().all(|v| self.visited.contains(&v.id));
+                    let match_plan = self.plan_match(&pattern, filter);
+                    // If all pattern variables are already bound, we need
+                    // Apply so each incoming row feeds the inner plan via
+                    // set_argument_env (Argument leaves are runtime-only
+                    // leaf nodes that don't pull from children).
+                    if all_visited {
+                        let mut inner = match_plan;
+                        Self::add_argument_to_leaves(&mut inner);
+                        tree!(IR::Apply, inner)
+                    } else {
+                        match_plan
+                    }
                 }
             }
             QueryIR::Unwind(expr, alias) => tree!(IR::Unwind(expr, alias)),
