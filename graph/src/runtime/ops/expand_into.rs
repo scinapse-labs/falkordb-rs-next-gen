@@ -90,11 +90,16 @@ impl<'a> ExpandIntoOp<'a> {
 
         let filter_attrs = runtime.run_expr(&rp.attrs, rp.attrs.root().idx(), env, None)?;
 
-        // Self-loop label check: when both endpoints are the same node and
-        // the destination has label constraints, verify labels instead of
-        // checking edges.  This supports multi-label node patterns like
-        // MATCH (a:A:B:C) which the planner splits into LabelScan + ExpandInto.
-        if rp.from.alias.id == rp.to.alias.id && !rp.to.labels.is_empty() {
+        // Synthetic multi-label check: the planner splits MATCH (a:A:B:C) into
+        // LabelScan(:A) + ExpandInto(self-loop) to verify remaining labels.
+        // In that synthetic case from.labels is empty and to.labels holds the
+        // remaining labels.  We must NOT take this shortcut for real self-loop
+        // relationship patterns like MATCH (a:A)-[r]->(a) where from.labels
+        // is non-empty, because those need actual edge matching.
+        if rp.from.alias.id == rp.to.alias.id
+            && rp.from.labels.is_empty()
+            && !rp.to.labels.is_empty()
+        {
             let g = runtime.g.borrow();
             let has_all_labels = rp
                 .to
