@@ -74,10 +74,23 @@ impl<'a> Iterator for PathBuilderOp<'a> {
                         if let Value::List(edges) = val {
                             if !edges.is_empty() {
                                 for edge in edges.iter() {
+                                    // Determine the next node: whichever endpoint
+                                    // differs from the preceding node in the path.
+                                    // This handles incoming/bidirectional edges where
+                                    // the stored edge direction may oppose the
+                                    // traversal direction.
+                                    let prev_id = elems.iter().rev().find_map(|v| {
+                                        if let Value::Node(id) = v {
+                                            Some(*id)
+                                        } else {
+                                            None
+                                        }
+                                    });
                                     elems.push(edge.clone());
-                                    // Insert intermediate node between consecutive edges.
                                     if let Value::Relationship(rel) = edge {
-                                        elems.push(Value::Node(rel.2));
+                                        let next =
+                                            if prev_id == Some(rel.1) { rel.2 } else { rel.1 };
+                                        elems.push(Value::Node(next));
                                     }
                                 }
                             }

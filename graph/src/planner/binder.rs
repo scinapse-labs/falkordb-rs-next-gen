@@ -858,6 +858,15 @@ impl Binder {
                 let outer_scope_names: HashSet<Arc<String>> =
                     self.current_env().keys().cloned().collect();
 
+                // Temporarily inject local comprehension variables into
+                // the current env so bind_graph can resolve them (e.g.
+                // a list comprehension variable used in the pattern).
+                for scope in locals.iter() {
+                    for (name, var) in scope {
+                        self.current_env_mut().insert(name.clone(), var.clone());
+                    }
+                }
+
                 // bind_graph uses define_name_in_scope which reuses
                 // outer-scope variables (e.g. 'n' from MATCH) and creates
                 // fresh variables only for new aliases (anonymous nodes/rels).
@@ -949,25 +958,27 @@ impl Binder {
                     | ExprIR::ListComprehension(_)
                     | ExprIR::PatternComprehension(_) => unreachable!("handled above"),
                     ExprIR::Pattern(pattern) => {
+                        // Snapshot outer scope so pattern-local aliases can be
+                        // cleaned up after binding (they must not leak outward).
+                        let outer_scope_names: HashSet<Arc<String>> =
+                            self.current_env().keys().cloned().collect();
+
                         // Temporarily inject local comprehension variables into
                         // the current env so bind_graph can resolve them.
-                        let mut injected: Vec<(Arc<String>, Option<Variable>)> = Vec::new();
                         for scope in locals.iter() {
                             for (name, var) in scope {
-                                let prev = self.current_env().get(name).cloned();
                                 self.current_env_mut().insert(name.clone(), var.clone());
-                                injected.push((name.clone(), prev));
                             }
                         }
                         let result = self.bind_graph(&pattern, false);
-                        // Restore the original env entries.
-                        for (name, prev) in injected.into_iter().rev() {
-                            if let Some(v) = prev {
-                                self.current_env_mut().insert(name, v);
-                            } else {
-                                self.current_env_mut().remove(&name);
-                            }
-                        }
+
+                        // Remove pattern-local aliases so they don't leak into
+                        // the outer scope.  Keep anonymous variables (_anon_*)
+                        // since their IDs must remain visible in scope_vars.
+                        self.current_env_mut().retain(|name, _| {
+                            outer_scope_names.contains(name) || name.starts_with("_anon")
+                        });
+
                         ExprIR::Pattern(result?)
                     }
                 };
