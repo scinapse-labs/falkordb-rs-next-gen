@@ -1155,7 +1155,7 @@ impl Planner {
                 res.node_mut(insert_idx).push_child_tree(chain);
             }
         }
-        if distinct {
+        if distinct && !matches!(res.root().data(), IR::Aggregate(..)) {
             res = tree!(IR::Distinct, res);
         }
         if !orderby.is_empty() {
