@@ -73,6 +73,7 @@ pub enum Keyword {
     Vector,
     Options,
     For,
+    Foreach,
     On,
     Union,
 }
@@ -213,6 +214,7 @@ const KEYWORDS: &[(&str, Keyword)] = &[
     ("VECTOR", Keyword::Vector),
     ("OPTIONS", Keyword::Options),
     ("FOR", Keyword::For),
+    ("FOREACH", Keyword::Foreach),
     ("ON", Keyword::On),
     ("UNION", Keyword::Union),
 ];

@@ -56,6 +56,7 @@ use super::ops::delete::DeleteOp;
 use super::ops::distinct::DistinctOp;
 use super::ops::expand_into::ExpandIntoOp;
 use super::ops::filter::FilterOp;
+use super::ops::foreach::ForEachOp;
 use super::ops::limit::LimitOp;
 use super::ops::load_csv::LoadCsvOp;
 use super::ops::merge::MergeOp;
@@ -109,7 +110,7 @@ impl NullBitmap {
         let num_words = len.div_ceil(64);
         let mut words = vec![0u64; num_words];
         for (i, v) in values.iter().enumerate() {
-            if *v == Value::Null {
+            if let Value::Null = v {
                 words[i / 64] |= 1u64 << (i % 64);
             }
         }
@@ -661,6 +662,8 @@ pub enum BatchOp<'a> {
     CondVarLenTraverse(CondVarLenTraverseOp<'a>),
     /// OR-apply multiplexer for disjunctive patterns.
     OrApplyMultiplexer(OrApplyMultiplexerOp<'a>),
+    /// FOREACH loop operator.
+    ForEach(ForEachOp<'a>),
 }
 
 impl<'a> BatchOp<'a> {
@@ -723,6 +726,69 @@ impl<'a> BatchOp<'a> {
             Self::NodeByLabelAndIdScan(op) => op.child.set_argument_env(env, value_pool),
             Self::CondVarLenTraverse(op) => op.child.set_argument_env(env, value_pool),
             Self::OrApplyMultiplexer(op) => op.child.set_argument_env(env, value_pool),
+            Self::ForEach(op) => op.child.set_argument_env(env, value_pool),
+        }
+    }
+
+    /// Like `set_argument_env`, but sets a pre-built multi-row batch on
+    /// `Argument` leaves instead of a single env. Used by FOREACH to pass
+    /// all loop items at once for eager execution.
+    pub fn set_argument_batch(
+        &mut self,
+        batch: Batch<'a>,
+    ) {
+        match self {
+            Self::Argument(slot) => {
+                *slot = Some(batch);
+            }
+            Self::Once(_) | Self::ProcedureCall(_) => {}
+            Self::NodeByLabelScan(op) => op.child.set_argument_batch(batch),
+            Self::Filter(op) => op.child.set_argument_batch(batch),
+            Self::Project(op) => op.child.set_argument_batch(batch),
+            Self::Skip(op) => op.child.set_argument_batch(batch),
+            Self::Limit(op) => op.child.set_argument_batch(batch),
+            Self::Distinct(op) => op.child.set_argument_batch(batch),
+            Self::Sort(op) => {
+                if let Some(ref mut c) = op.child {
+                    c.set_argument_batch(batch);
+                }
+            }
+            Self::Aggregate(op) => {
+                if let Some(ref mut c) = op.child {
+                    c.set_argument_batch(batch);
+                }
+            }
+            Self::Unwind(op) => op.child.set_argument_batch(batch),
+            Self::CondTraverse(op) => op.child.set_argument_batch(batch),
+            Self::ExpandInto(op) => op.child.set_argument_batch(batch),
+            Self::NodeByIdSeek(op) => op.child.set_argument_batch(batch),
+            Self::NodeByIndexScan(op) => op.child.set_argument_batch(batch),
+            Self::CartesianProduct(op) => op.child.set_argument_batch(batch),
+            Self::Apply(op) => op.child.set_argument_batch(batch),
+            Self::SemiApply(op) => op.child.set_argument_batch(batch),
+            Self::Optional(op) => op.child.set_argument_batch(batch),
+            Self::Create(op) => op.child.set_argument_batch(batch),
+            Self::Delete(op) => op.child.set_argument_batch(batch),
+            Self::Set(op) => op.child.set_argument_batch(batch),
+            Self::Remove(op) => op.child.set_argument_batch(batch),
+            Self::Merge(op) => op.child.set_argument_batch(batch),
+            Self::Commit(op) => {
+                if let Some(ref mut c) = op.child {
+                    c.set_argument_batch(batch);
+                }
+            }
+            Self::Union(op) => {
+                if let Some(ref mut c) = op.current {
+                    c.set_argument_batch(batch);
+                }
+            }
+            Self::PathBuilder(op) => op.child.set_argument_batch(batch),
+            Self::LoadCsv(op) => op.child.set_argument_batch(batch),
+            Self::NodeByFulltextScan(op) => op.child.set_argument_batch(batch),
+            Self::NodeByLabelAndIdScan(op) => op.child.set_argument_batch(batch),
+            Self::CondVarLenTraverse(op) => op.child.set_argument_batch(batch),
+            Self::OrApplyMultiplexer(op) => op.child.set_argument_batch(batch),
+            Self::ForEach(op) => op.child.set_argument_batch(batch),
         }
     }
 
@@ -763,6 +829,7 @@ impl<'a> BatchOp<'a> {
             Self::NodeByLabelAndIdScan(op) => Some((op.runtime, op.idx)),
             Self::CondVarLenTraverse(op) => Some((op.runtime, op.idx)),
             Self::OrApplyMultiplexer(op) => Some((op.runtime, op.idx)),
+            Self::ForEach(op) => Some((op.runtime, op.idx)),
         }
     }
 }
@@ -804,6 +871,7 @@ impl<'a> Iterator for BatchOp<'a> {
             Self::NodeByLabelAndIdScan(op) => op.next(),
             Self::CondVarLenTraverse(op) => op.next(),
             Self::OrApplyMultiplexer(op) => op.next(),
+            Self::ForEach(op) => op.next(),
         };
         if let Some(ref res) = result
             && let Some((runtime, idx)) = self.inspect_context()

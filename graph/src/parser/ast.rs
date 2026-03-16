@@ -748,6 +748,8 @@ pub enum QueryIR<TVar> {
     /// `bool` is true for UNION ALL (keep duplicates), false for UNION (deduplicate).
     Union(Vec<Self>, bool),
     Query(Vec<Self>, bool),
+    /// FOREACH(var IN list_expr | body_clauses)
+    ForEach(QueryExpr<TVar>, TVar, Vec<Self>),
 }
 
 #[cfg_attr(tarpaulin, skip)]
@@ -847,6 +849,13 @@ impl<TVar: Display + std::fmt::Debug + Eq + Hash> Display for QueryIR<TVar> {
                     write!(f, "{branch}")?;
                 }
                 Ok(())
+            }
+            Self::ForEach(list, var, body) => {
+                write!(f, "FOREACH({var} IN {list} | ")?;
+                for clause in body {
+                    write!(f, "{clause}")?;
+                }
+                write!(f, ")")
             }
         }
     }
@@ -985,6 +994,13 @@ impl<TVar: Eq + Hash + Display> QueryIR<TVar> {
                     }
                 }
                 Ok(())
+            }
+            Self::ForEach(_, _, body) => {
+                for clause in body {
+                    clause.validate()?;
+                }
+                iter.next()
+                    .map_or(Ok(()), |first| first.inner_validate(iter))
             }
         }
     }

@@ -188,7 +188,9 @@ impl Hash for Env<'_> {
         state: &mut H,
     ) {
         for (key, value) in self.values.iter().enumerate() {
-            if *value == Value::Null {
+            if let Value::Null = value
+                && !self.bound.test(key)
+            {
                 continue;
             }
             key.hash(state);

@@ -109,6 +109,7 @@ pub struct AggregateOp<'a> {
     pub(crate) child: Option<Box<BatchOp<'a>>>,
     keys: &'a [(Variable, QueryExpr<Variable>)],
     agg: &'a [(Variable, QueryExpr<Variable>)],
+    copy_from_parent: &'a [(Variable, Variable)],
     default_acc: Option<Env<'a>>,
     errors: std::vec::IntoIter<String>,
     groups: std::collections::hash_map::IntoIter<GroupKey, (Env<'a>, Env<'a>)>,
@@ -123,6 +124,7 @@ impl<'a> AggregateOp<'a> {
         child: Box<BatchOp<'a>>,
         keys: &'a [(Variable, QueryExpr<Variable>)],
         agg: &'a [(Variable, QueryExpr<Variable>)],
+        copy_from_parent: &'a [(Variable, Variable)],
         idx: NodeIdx<Dyn<IR>>,
     ) -> Self {
         let mut default_acc = Env::new(runtime.env_pool);
@@ -135,6 +137,7 @@ impl<'a> AggregateOp<'a> {
             child: Some(child),
             keys,
             agg,
+            copy_from_parent,
             default_acc: Some(default_acc),
             errors: Vec::new().into_iter(),
             groups: HashMap::new().into_iter(),
@@ -306,6 +309,7 @@ impl<'a> AggregateOp<'a> {
                     self.runtime,
                     self.keys,
                     self.agg,
+                    self.copy_from_parent,
                     &batch,
                     &default_acc,
                     &mut groups,
@@ -322,6 +326,7 @@ impl<'a> AggregateOp<'a> {
                     self.runtime,
                     self.keys,
                     self.agg,
+                    self.copy_from_parent,
                     &batch,
                     &default_acc,
                     &mut groups,
@@ -341,17 +346,27 @@ impl<'a> AggregateOp<'a> {
                     for (ki, (name, _tree)) in self.keys.iter().enumerate() {
                         key_env.insert(name, key_columns[ki][row_idx].clone());
                     }
+                    // Capture copy_from_parent values from the first row of this group.
+                    for (old_var, new_var) in self.copy_from_parent {
+                        let val = batch.get(active[row_idx], old_var.id);
+                        key_env.insert(new_var, val.clone());
+                    }
                     (key_env, default_acc.clone_pooled(self.runtime.env_pool))
                 });
 
                 let acc = &mut entry.1;
                 for (agg_idx, agg) in analysis.agg_kinds.iter().enumerate() {
-                    let prev = acc.take(&agg.acc_var).unwrap_or(Value::Null);
-
                     let input_val = match &agg.input {
                         Some(_) => agg_input_columns[agg_idx][row_idx].clone(),
                         None => Value::Bool(true), // count(*)
                     };
+
+                    // Skip Null inputs for aggregation — standard Cypher behavior.
+                    if matches!(input_val, Value::Null) {
+                        continue;
+                    }
+
+                    let prev = acc.take(&agg.acc_var).unwrap_or(Value::Null);
 
                     let args = thin_vec![input_val, prev];
 
@@ -472,6 +487,7 @@ impl<'a> AggregateOp<'a> {
                 self.runtime,
                 self.keys,
                 self.agg,
+                self.copy_from_parent,
                 &batch,
                 &default_acc,
                 &mut groups,
@@ -490,6 +506,7 @@ impl<'a> AggregateOp<'a> {
         runtime: &'a Runtime<'a>,
         keys: &[(Variable, QueryExpr<Variable>)],
         agg: &[(Variable, QueryExpr<Variable>)],
+        copy_from_parent: &[(Variable, Variable)],
         batch: &Batch<'a>,
         default_acc: &Env<'a>,
         groups: &mut HashMap<GroupKey, (Env<'a>, Env<'a>)>,
@@ -503,6 +520,12 @@ impl<'a> AggregateOp<'a> {
                     let value = runtime.run_expr(tree, tree.root().idx(), vars, None)?;
                     key_env.insert(name, value.clone());
                     key_values.push(value);
+                }
+                // Capture copy_from_parent values from the input row.
+                for (old_var, new_var) in copy_from_parent {
+                    if let Some(val) = vars.get(old_var) {
+                        key_env.insert(new_var, val.clone());
+                    }
                 }
                 Ok::<(Vec<Value>, Env<'_>), String>((key_values, key_env))
             })() {
@@ -582,6 +605,14 @@ impl<'a> AggregateOp<'a> {
                         return Err(e);
                     }
                 };
+
+                // Skip Null inputs for aggregation — standard Cypher behavior.
+                // count(*) has no explicit args so num_children == 2 with Distinct
+                // or 1 arg child; for functions with a single input, skip if Null.
+                if args.len() == 1 && matches!(args[0], Value::Null) {
+                    acc.insert(key, prev_value);
+                    return Ok(());
+                }
 
                 if num_children == 2 && matches!(ir.node(idx).child(0).data(), ExprIR::Distinct) {
                     let arg = args.remove(0);
@@ -681,20 +712,41 @@ impl<'a> Iterator for AggregateOp<'a> {
                 break;
             };
             match (|| {
+                // Build a combined env with key values at both post-projection
+                // (name) and pre-projection (original_var) IDs, plus all
+                // accumulator values.  Acc values take precedence on collision.
+                let mut combined = key.clone_pooled(self.runtime.env_pool);
                 for (name, tree) in self.keys {
                     if let ExprIR::Variable(original_var) = tree.root().data()
                         && let Some(value) = key.get(name)
+                    {
+                        combined.insert(original_var, value.clone());
+                    }
+                }
+                combined.merge(&acc);
+                for (name, tree) in self.agg {
+                    let val = self
+                        .runtime
+                        .run_expr(tree, tree.root().idx(), &combined, None)?;
+                    acc.insert(name, val.clone());
+                    combined.insert(name, val);
+                }
+                // Insert pre-projection key variable values into acc so
+                // downstream operators can find them, but skip any slot that
+                // is already occupied by an aggregation output to avoid
+                // overwriting computed results (e.g., a MapProjection result).
+                for (name, tree) in self.keys {
+                    if let ExprIR::Variable(original_var) = tree.root().data()
+                        && let Some(value) = key.get(name)
+                        && !self
+                            .agg
+                            .iter()
+                            .any(|(agg_name, _)| agg_name.id == original_var.id)
                     {
                         acc.insert(original_var, value.clone());
                     }
                 }
                 acc.merge(&key);
-                for (name, tree) in self.agg {
-                    acc.insert(
-                        name,
-                        self.runtime.run_expr(tree, tree.root().idx(), &acc, None)?,
-                    );
-                }
                 Ok::<Env<'_>, String>(acc)
             })() {
                 Ok(env) => envs.push(env),

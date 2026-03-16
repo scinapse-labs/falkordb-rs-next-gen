@@ -165,7 +165,7 @@ impl Point {
 ///
 /// Values are cloneable and use Arc for large data (strings, shared values)
 /// to minimize copying during query execution.
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default)]
 pub enum Value {
     /// Cypher NULL value - represents missing or unknown data
     #[default]
@@ -836,6 +836,15 @@ pub trait CompareValue {
         &self,
         other: &Self,
     ) -> (Ordering, DisjointOrNull);
+}
+
+impl PartialEq for Value {
+    fn eq(
+        &self,
+        other: &Self,
+    ) -> bool {
+        self.compare_value(other).0 == Ordering::Equal
+    }
 }
 
 impl CompareValue for Value {

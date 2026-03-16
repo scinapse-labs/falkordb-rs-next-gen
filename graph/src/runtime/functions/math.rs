@@ -302,7 +302,7 @@ pub fn register(funcs: &mut Functions) {
         fn coalesce(_, args) {
             let iter = args.into_iter();
             for arg in iter {
-                if arg == Value::Null {
+                if let Value::Null = arg {
                     continue;
                 }
                 return Ok(arg);

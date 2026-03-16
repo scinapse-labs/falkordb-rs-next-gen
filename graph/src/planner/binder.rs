@@ -329,6 +329,15 @@ impl Binder {
                 }
                 Ok(QueryIR::Call(func, args, bound_vars, filter))
             }
+            QueryIR::ForEach(list_expr, var_name, body) => {
+                let bound_list = self.bind_expr(&list_expr)?;
+                let var = self.define_name_in_scope(var_name, Type::Any, true)?;
+                let mut bound_body = Vec::with_capacity(body.len());
+                for clause in body {
+                    bound_body.push(self.bind_ir(clause)?);
+                }
+                Ok(QueryIR::ForEach(bound_list, var, bound_body))
+            }
         }
     }
 
