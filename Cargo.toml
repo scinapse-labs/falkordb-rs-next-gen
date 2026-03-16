@@ -30,8 +30,6 @@ parking_lot = "0.12"
 redis-module = { git = "https://github.com/AviAvni/redismodule-rs", branch = "master" }
 ryu = "1.0.23"
 orx-tree = "2.2.0"
-pyroscope = { version = "1.0.2", optional = true }
-pyroscope_pprofrs = { version = "0.2.10", optional = true }
 
 [build-dependencies]
 redis-module-macros = { git = "https://github.com/AviAvni/redismodule-rs", branch = "master" }
@@ -43,5 +41,4 @@ lto = true
 # strip = false
 
 [features]
-pyro = ["pyroscope", "pyroscope_pprofrs"]
 fuzz = []

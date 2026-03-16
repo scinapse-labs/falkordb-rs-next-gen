@@ -27,17 +27,11 @@ use graph::{
     index::redisearch::{REDISEARCH_INIT_LIBRARY, RediSearch_Init},
     runtime::functions::init_functions,
 };
-#[cfg(feature = "pyro")]
-use pyroscope::PyroscopeAgent;
-#[cfg(feature = "pyro")]
-use pyroscope_pprofrs::{PprofConfig, pprof_backend};
 use redis_module::{
     Context, REDISMODULE_OK, RedisModule_Alloc, RedisModule_Calloc, RedisModule_Free,
     RedisModule_Realloc, RedisModule_SubscribeToServerEvent, RedisModuleCtx, RedisModuleEvent,
     Status,
 };
-#[cfg(feature = "pyro")]
-use std::mem;
 use std::{os::raw::c_int, os::raw::c_void, panic};
 
 /// Redis event ID for FlushDB event (database flush/clear).
@@ -52,15 +46,6 @@ pub fn graph_init(
         eprintln!("FalkorDB panic: {info}");
         std::process::exit(1);
     }));
-    #[cfg(feature = "pyro")]
-    {
-        let agent = PyroscopeAgent::builder("http://localhost:4040", "falkordb")
-            .backend(pprof_backend(PprofConfig::new().sample_rate(100)))
-            .build()
-            .unwrap();
-        let agent_running = agent.start().unwrap();
-        mem::forget(agent_running);
-    }
     unsafe {
         let result = RediSearch_Init(ctx.ctx.cast(), REDISEARCH_INIT_LIBRARY as c_int);
         if result == REDISMODULE_OK as c_int {
