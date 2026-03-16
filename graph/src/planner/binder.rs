@@ -331,11 +331,18 @@ impl Binder {
             }
             QueryIR::ForEach(list_expr, var_name, body) => {
                 let bound_list = self.bind_expr(&list_expr)?;
+                // Save the current env so that names defined inside the
+                // FOREACH body (loop variable, CREATE'd nodes, etc.) don't
+                // leak into subsequent clauses after the FOREACH.
+                let saved_env = self.current_env().clone();
                 let var = self.define_name_in_scope(var_name, Type::Any, true)?;
                 let mut bound_body = Vec::with_capacity(body.len());
                 for clause in body {
                     bound_body.push(self.bind_ir(clause)?);
                 }
+                // Restore the outer scope — keep next_var_id advanced to
+                // avoid ID collisions with variables allocated inside the body.
+                *self.current_env_mut() = saved_env;
                 Ok(QueryIR::ForEach(bound_list, var, bound_body))
             }
         }

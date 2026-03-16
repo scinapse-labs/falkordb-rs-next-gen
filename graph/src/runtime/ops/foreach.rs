@@ -8,6 +8,7 @@
 //! The original input row is passed through unchanged — FOREACH is purely
 //! a side-effect clause.
 
+use std::collections::VecDeque;
 use std::sync::Arc;
 
 use crate::parser::ast::{QueryExpr, Variable};
@@ -26,6 +27,9 @@ pub struct ForEachOp<'a> {
     list: &'a QueryExpr<Variable>,
     var: &'a Variable,
     body_idx: NodeIdx<Dyn<IR>>,
+    pending: VecDeque<Env<'a>>,
+    current_batch: Option<Batch<'a>>,
+    current_pos: usize,
     pub(crate) idx: NodeIdx<Dyn<IR>>,
 }
 
@@ -48,6 +52,9 @@ impl<'a> ForEachOp<'a> {
             list,
             var,
             body_idx,
+            pending: VecDeque::new(),
+            current_batch: None,
+            current_pos: 0,
             idx,
         }
     }
@@ -65,7 +72,7 @@ impl<'a> ForEachOp<'a> {
             return Ok(());
         }
 
-        let loop_envs: Vec<Env<'a>> = items
+        let mut loop_envs: Vec<Env<'a>> = items
             .into_iter()
             .map(|item| {
                 let mut loop_env = env.clone_pooled(self.runtime.env_pool);
@@ -74,14 +81,32 @@ impl<'a> ForEachOp<'a> {
             })
             .collect();
 
-        let batch = Batch::from_envs(loop_envs);
-        let mut body = self.runtime.run_batch(self.body_idx)?;
-        body.set_argument_batch(batch);
-        // Drain the body sub-plan completely — we only care about side effects.
-        for result in body {
-            result?;
+        while !loop_envs.is_empty() {
+            let chunk: Vec<Env<'a>> = loop_envs.drain(..BATCH_SIZE.min(loop_envs.len())).collect();
+            let batch = Batch::from_envs(chunk);
+            let mut body = self.runtime.run_batch(self.body_idx)?;
+            body.set_argument_batch(batch);
+            // Drain the body sub-plan completely — we only care about side effects.
+            for result in body {
+                result?;
+            }
         }
         Ok(())
+    }
+
+    /// Drains rows from `self.pending` into `envs` until `BATCH_SIZE` is reached
+    /// or all pending rows are exhausted.
+    fn drain_pending(
+        &mut self,
+        envs: &mut Vec<Env<'a>>,
+    ) {
+        while envs.len() < BATCH_SIZE {
+            if let Some(row) = self.pending.pop_front() {
+                envs.push(row);
+            } else {
+                break;
+            }
+        }
     }
 }
 
@@ -91,44 +116,79 @@ impl<'a> Iterator for ForEachOp<'a> {
     fn next(&mut self) -> Option<Self::Item> {
         let mut envs = Vec::with_capacity(BATCH_SIZE);
 
-        while envs.len() < BATCH_SIZE {
-            let batch = match self.child.next() {
-                Some(Ok(b)) => b,
-                Some(Err(e)) => return Some(Err(e)),
-                None => break,
-            };
+        // Drain leftover rows from previous call.
+        self.drain_pending(&mut envs);
 
-            for env in batch.active_env_iter() {
-                // Evaluate the list expression for this row.
-                let list_value =
-                    match self
-                        .runtime
-                        .run_expr(self.list, self.list.root().idx(), env, None)
-                    {
-                        Ok(v) => v,
-                        Err(e) => return Some(Err(e)),
-                    };
+        loop {
+            if envs.len() >= BATCH_SIZE {
+                break;
+            }
 
-                match list_value {
-                    Value::List(list) => {
-                        let items: Vec<Value> = Arc::unwrap_or_clone(list).into();
-                        if let Err(e) = self.execute_list(items, env) {
-                            return Some(Err(e));
+            if self.current_batch.is_none() {
+                match self.child.next() {
+                    Some(Ok(b)) => {
+                        self.current_batch = Some(b);
+                        self.current_pos = 0;
+                    }
+                    Some(Err(e)) => return Some(Err(e)),
+                    None => break,
+                }
+            }
+
+            {
+                let batch = self.current_batch.as_ref().unwrap();
+                let active: Vec<usize> = batch.active_indices().collect();
+
+                while self.current_pos < active.len() {
+                    let row_idx = active[self.current_pos];
+                    self.current_pos += 1;
+                    let env = batch.env_ref(row_idx);
+
+                    // Evaluate the list expression for this row.
+                    let list_value =
+                        match self
+                            .runtime
+                            .run_expr(self.list, self.list.root().idx(), env, None)
+                        {
+                            Ok(v) => v,
+                            Err(e) => return Some(Err(e)),
+                        };
+
+                    match list_value {
+                        Value::List(list) => {
+                            let items: Vec<Value> = Arc::unwrap_or_clone(list).into();
+                            if let Err(e) = self.execute_list(items, env) {
+                                return Some(Err(e));
+                            }
+                        }
+                        Value::Null => {
+                            // Null list produces no iterations — skip.
+                        }
+                        _ => {
+                            return Some(Err(format!(
+                                "Type mismatch: expected List but was {}",
+                                list_value.name()
+                            )));
                         }
                     }
-                    Value::Null => {
-                        // Null list produces no iterations — skip.
-                    }
-                    _ => {
-                        return Some(Err(format!(
-                            "Type mismatch: expected List but was {}",
-                            list_value.name()
-                        )));
+
+                    // Pass through the original input row unchanged.
+                    self.pending
+                        .push_back(env.clone_pooled(self.runtime.env_pool));
+
+                    if self.pending.len() >= BATCH_SIZE {
+                        break;
                     }
                 }
+            }
 
-                // Pass through the original input row unchanged.
-                envs.push(env.clone_pooled(self.runtime.env_pool));
+            self.drain_pending(&mut envs);
+
+            // Check if batch is exhausted.
+            if let Some(ref batch) = self.current_batch
+                && self.current_pos >= batch.active_len()
+            {
+                self.current_batch = None;
             }
         }
 

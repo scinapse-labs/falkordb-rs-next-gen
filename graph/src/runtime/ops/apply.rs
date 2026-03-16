@@ -28,6 +28,11 @@ struct ActiveSubPlan<'a> {
     subtree: BatchOp<'a>,
     /// Tracks which origin_rows have produced at least one result (for optional fallback).
     matched_origins: HashSet<u32>,
+    /// Partially consumed sub-batch and current index into its active rows.
+    current_batch: Option<(Batch<'a>, usize)>,
+    /// When `Some`, the subtree is exhausted; value is the next index into
+    /// `input_envs` for optional fallback emission.
+    fallback_idx: Option<usize>,
 }
 
 /// Per-row sub-plan state (used when batching is not possible).
@@ -112,37 +117,61 @@ impl<'a> ApplyOp<'a> {
                 break;
             };
 
-            match plan.subtree.next() {
-                Some(Ok(sub_batch)) => {
-                    for env in sub_batch.active_env_iter() {
-                        let origin = env.origin_row as usize;
-                        plan.matched_origins.insert(env.origin_row);
-                        let mut merged =
-                            plan.input_envs[origin].clone_pooled(self.runtime.env_pool);
-                        merged.merge(env);
-                        envs.push(merged);
-                        if envs.len() >= BATCH_SIZE {
-                            return Ok(());
+            // Drain partially consumed sub-batch first.
+            if let Some((ref batch, ref mut pos)) = plan.current_batch {
+                let active: Vec<usize> = batch.active_indices().collect();
+                while *pos < active.len() && envs.len() < BATCH_SIZE {
+                    let env = batch.env_ref(active[*pos]);
+                    let origin = env.origin_row as usize;
+                    plan.matched_origins.insert(env.origin_row);
+                    let mut merged = plan.input_envs[origin].clone_pooled(self.runtime.env_pool);
+                    merged.merge(env);
+                    envs.push(merged);
+                    *pos += 1;
+                }
+                if *pos >= active.len() {
+                    plan.current_batch = None;
+                } else {
+                    return Ok(());
+                }
+            }
+
+            // Emit optional fallbacks for unmatched origins.
+            if let Some(ref mut fb_idx) = plan.fallback_idx {
+                if let Some(ref vars) = self.optional_vars {
+                    while *fb_idx < plan.input_envs.len() {
+                        let i = *fb_idx;
+                        *fb_idx += 1;
+                        if !plan.matched_origins.contains(&(i as u32)) {
+                            let mut fallback =
+                                plan.input_envs[i].clone_pooled(self.runtime.env_pool);
+                            for v in vars {
+                                fallback.insert(v, Value::Null);
+                            }
+                            envs.push(fallback);
+                            if envs.len() >= BATCH_SIZE {
+                                return Ok(());
+                            }
                         }
                     }
                 }
+                self.active = None;
+                break;
+            }
+
+            // Pull next sub-batch from the subtree.
+            match plan.subtree.next() {
+                Some(Ok(sub_batch)) => {
+                    plan.current_batch = Some((sub_batch, 0));
+                }
                 Some(Err(e)) => return Err(e),
                 None => {
-                    if let Some(ref vars) = self.optional_vars {
-                        let plan = self.active.take().unwrap();
-                        for (i, input_env) in plan.input_envs.iter().enumerate() {
-                            if !plan.matched_origins.contains(&(i as u32)) {
-                                let mut fallback = input_env.clone_pooled(self.runtime.env_pool);
-                                for v in vars {
-                                    fallback.insert(v, Value::Null);
-                                }
-                                envs.push(fallback);
-                            }
-                        }
+                    if self.optional_vars.is_some() {
+                        plan.fallback_idx = Some(0);
                     } else {
                         self.active = None;
+                        break;
                     }
-                    break;
                 }
             }
         }
@@ -195,6 +224,8 @@ impl<'a> ApplyOp<'a> {
                 input_envs,
                 subtree,
                 matched_origins: HashSet::new(),
+                current_batch: None,
+                fallback_idx: None,
             }));
 
             if let Err(e) = self.drain_active(&mut envs) {

@@ -342,14 +342,30 @@ impl<'a> Iterator for MergeOp<'a> {
                         }
                     }
                 } else {
-                    // Check if all nodes in the pattern are already bound.
-                    let all_nodes_bound = self
-                        .resolve_pattern()
+                    // Check if all pattern variables are already bound.
+                    // All nodes must be bound, and every *named* relationship
+                    // alias must also be bound. Anonymous relationships
+                    // (_anon_* prefix) are not individually tracked, so when
+                    // all nodes are bound the pattern is fully constrained.
+                    // Only when a user-named relationship variable is unbound
+                    // do we need to iterate all matches.
+                    let pattern = self.resolve_pattern();
+                    let all_vars_bound = pattern
                         .nodes()
                         .iter()
-                        .all(|node| input_env.get(&node.alias).is_some());
+                        .all(|node| input_env.get(&node.alias).is_some())
+                        && pattern
+                            .relationships()
+                            .iter()
+                            .filter(|rel| {
+                                rel.alias
+                                    .name
+                                    .as_ref()
+                                    .is_some_and(|n| !n.starts_with("_anon_"))
+                            })
+                            .all(|rel| input_env.get(&rel.alias).is_some());
 
-                    if all_nodes_bound {
+                    if all_vars_bound {
                         // Only first match needed.
                         let first = &matches[0];
                         let mut vars = input_env.clone_pooled(self.runtime.env_pool);
