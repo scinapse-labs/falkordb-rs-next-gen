@@ -195,9 +195,7 @@ impl Hash for Env<'_> {
         state: &mut H,
     ) {
         for (key, value) in self.values.iter().enumerate() {
-            if let Value::Null = value
-                && !self.bound.test(key)
-            {
+            if matches!(value, Value::Null) && !self.bound.test(key) {
                 continue;
             }
             key.hash(state);
@@ -205,14 +203,3 @@ impl Hash for Env<'_> {
         }
     }
 }
-
-impl PartialEq for Env<'_> {
-    fn eq(
-        &self,
-        other: &Self,
-    ) -> bool {
-        self.values.as_slice() == other.values.as_slice()
-    }
-}
-
-impl Eq for Env<'_> {}

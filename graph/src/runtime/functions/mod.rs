@@ -530,7 +530,7 @@ impl GraphFn {
         if self.name.to_lowercase().starts_with("percentile") {
             // percentile is at index 1 (after the value argument)
             if args.len() >= 2 {
-                if let Value::Null = args[1] {
+                if matches!(args[1], Value::Null) {
                     return Err("Type mismatch: expected Integer or Float but was Null".to_string());
                 }
                 let percentile = args[1].get_numeric();

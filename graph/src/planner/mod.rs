@@ -982,22 +982,19 @@ impl Planner {
                     scan = tree!(IR::Filter(Arc::new(filter_expr)), scan);
                 }
                 tree!(
-                    IR::ExpandInto(relationship.clone(), emit_rel(&relationship)),
+                    IR::ExpandInto(relationship.clone(), emit_rel(relationship)),
                     scan
                 )
             } else if self.visited.contains(&relationship.from.alias.id)
                 && self.visited.contains(&relationship.to.alias.id)
             {
-                tree!(IR::ExpandInto(
-                    relationship.clone(),
-                    emit_rel(&relationship)
-                ))
+                tree!(IR::ExpandInto(relationship.clone(), emit_rel(relationship)))
             } else if relationship.min_hops.is_some() {
                 tree!(IR::CondVarLenTraverse(relationship.clone()))
             } else {
                 tree!(IR::CondTraverse(
                     relationship.clone(),
-                    emit_rel(&relationship)
+                    emit_rel(relationship)
                 ))
             };
             // Check destination node for inline attributes (e.g., (b {val: 'v2'}))
@@ -1025,7 +1022,7 @@ impl Planner {
                         scan = tree!(IR::Filter(Arc::new(filter_expr)), scan);
                     }
                     tree!(
-                        IR::ExpandInto(relationship.clone(), emit_rel(&relationship)),
+                        IR::ExpandInto(relationship.clone(), emit_rel(relationship)),
                         scan,
                         res
                     )
@@ -1033,14 +1030,14 @@ impl Planner {
                     && self.visited.contains(&relationship.to.alias.id)
                 {
                     tree!(
-                        IR::ExpandInto(relationship.clone(), emit_rel(&relationship)),
+                        IR::ExpandInto(relationship.clone(), emit_rel(relationship)),
                         res
                     )
                 } else if relationship.min_hops.is_some() {
                     tree!(IR::CondVarLenTraverse(relationship.clone()), res)
                 } else {
                     tree!(
-                        IR::CondTraverse(relationship.clone(), emit_rel(&relationship)),
+                        IR::CondTraverse(relationship.clone(), emit_rel(relationship)),
                         res
                     )
                 };

@@ -189,7 +189,7 @@ impl<'a> MergeOp<'a> {
 
                 if let Value::Map(ref map) = attrs {
                     for (key, value) in map.iter() {
-                        if let Value::Null = value {
+                        if matches!(value, Value::Null) {
                             return Err(format!(
                                 "Cannot merge node using null property value for key '{key}'"
                             ));
@@ -218,7 +218,7 @@ impl<'a> MergeOp<'a> {
 
             if let Value::Map(ref map) = attrs {
                 for (key, value) in map.iter() {
-                    if let Value::Null = value {
+                    if matches!(value, Value::Null) {
                         return Err(format!(
                             "Cannot merge relationship using null property value for key '{key}'"
                         ));

@@ -109,7 +109,7 @@ impl NullBitmap {
         let num_words = len.div_ceil(64);
         let mut words = vec![0u64; num_words];
         for (i, v) in values.iter().enumerate() {
-            if let Value::Null = v {
+            if matches!(v, Value::Null) {
                 words[i / 64] |= 1u64 << (i % 64);
             }
         }

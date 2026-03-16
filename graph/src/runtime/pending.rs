@@ -245,7 +245,7 @@ impl Pending {
     ) {
         if let Some(added) = self.set_nodes_attrs.get(&id.into()) {
             for (key, value) in added.iter() {
-                if let Value::Null = value {
+                if matches!(value, Value::Null) {
                     attrs.remove(key);
                 } else {
                     attrs.insert(key.clone(), value.clone());
@@ -407,7 +407,7 @@ impl Pending {
     ) {
         if let Some(added) = self.set_relationships_attrs.get(&id.into()) {
             for (key, value) in added.iter() {
-                if let Value::Null = value {
+                if matches!(value, Value::Null) {
                     attrs.remove(key);
                 } else {
                     attrs.insert(key.clone(), value.clone());
