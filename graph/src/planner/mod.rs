@@ -156,11 +156,12 @@ pub enum IR {
     Skip(QueryExpr<Variable>),
     /// Limit to N rows
     Limit(QueryExpr<Variable>),
-    /// Aggregate with grouping keys, aggregations, and projections
+    /// Aggregate with grouping keys, aggregations, copy_from_parent, and projections
     Aggregate(
         Vec<Variable>,
         Vec<(Variable, QueryExpr<Variable>)>,
         Vec<(Variable, QueryExpr<Variable>)>,
+        Vec<(Variable, Variable)>,
     ),
     /// Project expressions to new variables
     Project(
@@ -174,6 +175,9 @@ pub enum IR {
     Union,
     /// Commit write operations to graph
     Commit,
+    /// FOREACH(var IN list | body_plan)
+    /// Children: child(0) = body sub-plan
+    ForEach(QueryExpr<Variable>, Variable),
     /// CREATE INDEX operation
     CreateIndex {
         label: Arc<String>,
@@ -239,9 +243,10 @@ impl Display for IR {
             Self::Sort(_) => write!(f, "Sort"),
             Self::Skip(_) => write!(f, "Skip"),
             Self::Limit(_) => write!(f, "Limit"),
-            Self::Aggregate(_, _, _) => write!(f, "Aggregate"),
+            Self::Aggregate(..) => write!(f, "Aggregate"),
             Self::Project(_, _) => write!(f, "Project"),
             Self::Commit => write!(f, "Commit"),
+            Self::ForEach(_, var) => write!(f, "ForEach | {var}"),
             Self::Union => write!(f, "Union"),
             Self::Distinct => write!(f, "Distinct"),
             Self::CreateIndex { label, attrs, .. } => {
@@ -353,17 +358,39 @@ impl Planner {
     /// When a sub-plan is used inside a correlated join (Apply, SemiApply, etc.),
     /// its leaves must receive the current row from the outer stream.  `Argument`
     /// is the operator that feeds the outer row into the sub-plan.
+    ///
+    /// MERGE nodes are treated specially: their last child is the match sub-plan
+    /// which has its own Argument taps managed by MERGE planning. We must NOT
+    /// descend into it. If MERGE has 2+ children, child(0) is the input pipeline
+    /// and we descend into that. If MERGE has only 1 child (match branch), the
+    /// runtime creates an inline Argument for the input.
     fn add_argument_to_leaves(tree: &mut DynTree<IR>) {
-        let mut tr = Traversal.bfs().over_nodes();
+        let mut leaves = Vec::new();
 
-        let leaves: Vec<_> = tree
-            .root()
-            .walk_with(&mut tr)
-            .filter(|n| n.is_leaf() && !matches!(n.data(), IR::Argument))
-            .map(|x| x.idx())
-            .collect();
+        // DFS walk, but skip MERGE's internal match-branch sub-plan.
+        let mut stack = vec![tree.root().idx()];
+        while let Some(idx) = stack.pop() {
+            let node = tree.node(idx);
+            if matches!(node.data(), IR::Merge(..)) {
+                // Only descend into the input pipeline (child 0), not the
+                // match branch (last child). If MERGE has only 1 child
+                // (match-only), skip entirely — the runtime creates an
+                // inline Argument for its input.
+                if node.num_children() > 1 {
+                    stack.push(node.child(0).idx());
+                }
+                continue;
+            }
+            if node.is_leaf() && !matches!(node.data(), IR::Argument) {
+                leaves.push(idx);
+            } else {
+                for i in 0..node.num_children() {
+                    stack.push(node.child(i).idx());
+                }
+            }
+        }
 
-        // Add Argument node as a child to each leaf
+        // Add Argument node as a child to each leaf.
         for leaf_idx in leaves {
             tree.node_mut(leaf_idx).push_child(IR::Argument);
         }
@@ -496,7 +523,12 @@ impl Planner {
 
         // Create Aggregate node: names=[var], group_by_keys=[], aggregations=[(var, collect(expr))]
         let aggregate = tree!(
-            IR::Aggregate(vec![var.clone()], vec![], vec![(var.clone(), collect_expr)]),
+            IR::Aggregate(
+                vec![var.clone()],
+                vec![],
+                vec![(var.clone(), collect_expr)],
+                vec![]
+            ),
             sub_plan
         );
 
@@ -950,22 +982,19 @@ impl Planner {
                     scan = tree!(IR::Filter(Arc::new(filter_expr)), scan);
                 }
                 tree!(
-                    IR::ExpandInto(relationship.clone(), emit_rel(&relationship)),
+                    IR::ExpandInto(relationship.clone(), emit_rel(relationship)),
                     scan
                 )
             } else if self.visited.contains(&relationship.from.alias.id)
                 && self.visited.contains(&relationship.to.alias.id)
             {
-                tree!(IR::ExpandInto(
-                    relationship.clone(),
-                    emit_rel(&relationship)
-                ))
+                tree!(IR::ExpandInto(relationship.clone(), emit_rel(relationship)))
             } else if relationship.min_hops.is_some() {
                 tree!(IR::CondVarLenTraverse(relationship.clone()))
             } else {
                 tree!(IR::CondTraverse(
                     relationship.clone(),
-                    emit_rel(&relationship)
+                    emit_rel(relationship)
                 ))
             };
             // Check destination node for inline attributes (e.g., (b {val: 'v2'}))
@@ -993,7 +1022,7 @@ impl Planner {
                         scan = tree!(IR::Filter(Arc::new(filter_expr)), scan);
                     }
                     tree!(
-                        IR::ExpandInto(relationship.clone(), emit_rel(&relationship)),
+                        IR::ExpandInto(relationship.clone(), emit_rel(relationship)),
                         scan,
                         res
                     )
@@ -1001,14 +1030,14 @@ impl Planner {
                     && self.visited.contains(&relationship.to.alias.id)
                 {
                     tree!(
-                        IR::ExpandInto(relationship.clone(), emit_rel(&relationship)),
+                        IR::ExpandInto(relationship.clone(), emit_rel(relationship)),
                         res
                     )
                 } else if relationship.min_hops.is_some() {
                     tree!(IR::CondVarLenTraverse(relationship.clone()), res)
                 } else {
                     tree!(
-                        IR::CondTraverse(relationship.clone(), emit_rel(&relationship)),
+                        IR::CondTraverse(relationship.clone(), emit_rel(relationship)),
                         res
                     )
                 };
@@ -1203,7 +1232,12 @@ impl Planner {
                     group_by_keys.push((name, expr));
                 }
             }
-            tree!(IR::Aggregate(names, group_by_keys, aggregations))
+            tree!(IR::Aggregate(
+                names,
+                group_by_keys,
+                aggregations,
+                copy_from_parent
+            ))
         } else {
             tree!(IR::Project(exprs, copy_from_parent))
         };
@@ -1332,6 +1366,7 @@ impl Planner {
         if matches!(res.node(idx).data(), |IR::Project(_, _)| IR::Aggregate(
             _,
             _,
+            _,
             _
         )) && res.node(idx).num_children() > 0
         {
@@ -1371,6 +1406,7 @@ impl Planner {
                 idx = res.node(idx).child(0).idx();
             }
             if matches!(res.node(idx).data(), |IR::Project(_, _)| IR::Aggregate(
+                _,
                 _,
                 _,
                 _
@@ -1497,7 +1533,7 @@ impl Planner {
                     let match_plan = self.plan_match(&pattern, filter);
                     // If all pattern variables are already bound, we need
                     // Apply so each incoming row feeds the inner plan via
-                    // set_argument_env (Argument leaves are runtime-only
+                    // set_argument_batch (Argument leaves are runtime-only
                     // leaf nodes that don't pull from children).
                     if all_visited {
                         let mut inner = match_plan;
@@ -1524,7 +1560,13 @@ impl Planner {
             }
             // CREATE: only create entities not already bound.
             QueryIR::Create(pattern) => {
-                tree!(IR::Create(pattern.filter_visited(&self.visited)))
+                let filtered = pattern.filter_visited(&self.visited);
+                // Add created variables to visited so subsequent clauses
+                // (e.g. FOREACH body) know they're already bound.
+                for v in pattern.variables() {
+                    self.visited.insert(v.id);
+                }
+                tree!(IR::Create(filtered))
             }
             QueryIR::Delete(exprs, is_detach) => tree!(IR::Delete(exprs, is_detach)),
             QueryIR::Set(items) => tree!(IR::Set(items)),
@@ -1621,6 +1663,40 @@ impl Planner {
                     res = tree!(IR::Distinct, res);
                 }
                 res
+            }
+            QueryIR::ForEach(list_expr, var, body) => {
+                // Add the loop variable to visited so body clauses (MERGE, CREATE)
+                // know it's already bound and don't create new entities for it.
+                let saved_visited = self.visited.clone();
+                self.visited.insert(var.id);
+
+                // Plan the body clauses as a sub-plan
+                let mut body_plans: Vec<DynTree<IR>> =
+                    body.into_iter().map(|clause| self.plan(clause)).collect();
+
+                // Restore visited to pre-FOREACH state
+                self.visited = saved_visited;
+
+                // Stitch body plans together (same as plan_query stitching)
+                let mut body_iter = body_plans.drain(..).rev();
+                let mut body_plan = body_iter.next().unwrap();
+                let mut idx = body_plan.root().idx();
+                for n in body_iter {
+                    if body_plan.node(idx).num_children() > 0 {
+                        idx = body_plan
+                            .node_mut(idx)
+                            .child_mut(0)
+                            .push_sibling_tree(Side::Left, n);
+                    } else {
+                        idx = body_plan.node_mut(idx).push_child_tree(n);
+                    }
+                }
+                // Do NOT wrap in Commit — mutations accumulate in pending
+                // across all iterations and are committed by the outer Commit
+                // after the entire FOREACH completes.
+                // Add Argument leaves so the body gets the loop env
+                Self::add_argument_to_leaves(&mut body_plan);
+                tree!(IR::ForEach(list_expr, var), body_plan)
             }
         }
     }

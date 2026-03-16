@@ -38,7 +38,7 @@ fn main() {
                 return;
             };
             let pool = Pool::new();
-            let mut runtime = Runtime::new(
+            let runtime = Runtime::new(
                 g.read(),
                 parameters,
                 true,

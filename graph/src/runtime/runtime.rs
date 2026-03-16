@@ -50,11 +50,11 @@ use crate::{
         functions::{FnType, apply_pow},
         ops::{
             AggregateOp, ApplyOp, CartesianProductOp, CommitOp, CondTraverseOp,
-            CondVarLenTraverseOp, CreateOp, DeleteOp, DistinctOp, ExpandIntoOp, FilterOp, LimitOp,
-            LoadCsvOp, MergeOp, NodeByFulltextScanOp, NodeByIdSeekOp, NodeByIndexScanOp,
-            NodeByLabelAndIdScanOp, NodeByLabelScanOp, OptionalOp, OrApplyMultiplexerOp,
-            PathBuilderOp, ProcedureCallOp, ProjectOp, RemoveOp, SemiApplyOp, SetOp, SkipOp,
-            SortOp, UnionOp, UnwindOp,
+            CondVarLenTraverseOp, CreateOp, DeleteOp, DistinctOp, ExpandIntoOp, FilterOp,
+            ForEachOp, LimitOp, LoadCsvOp, MergeOp, NodeByFulltextScanOp, NodeByIdSeekOp,
+            NodeByIndexScanOp, NodeByLabelAndIdScanOp, NodeByLabelScanOp, OptionalOp,
+            OrApplyMultiplexerOp, PathBuilderOp, ProcedureCallOp, ProjectOp, RemoveOp, SemiApplyOp,
+            SetOp, SkipOp, SortOp, UnionOp, UnwindOp,
         },
         ordermap::OrderMap,
         orderset::OrderSet,
@@ -210,6 +210,9 @@ impl<T: MemoryPolicy> GetVariables for DynNode<'_, IR, T> {
                         vars.push(path.var.clone());
                     }
                 }
+                IR::ForEach(_, var) | IR::LoadCsv { var, .. } => {
+                    vars.push(var.clone());
+                }
                 IR::Delete(_, _)
                 | IR::Argument
                 | IR::Set(_)
@@ -253,10 +256,7 @@ impl<T: MemoryPolicy> GetVariables for DynNode<'_, IR, T> {
                         vars.push(path.var.clone());
                     }
                 }
-                IR::LoadCsv { var, .. } => {
-                    vars.push(var.clone());
-                }
-                IR::Aggregate(variables, _, _) => {
+                IR::Aggregate(variables, _, _, _) => {
                     vars.extend(variables.iter().cloned());
                 }
                 IR::Project(items, _) => {
@@ -292,7 +292,7 @@ impl ReturnNames for DynNode<'_, IR> {
                 self.child(0).get_return_names()
             }
             IR::Union => self.child(0).get_return_names(),
-            IR::Aggregate(names, _, _) => names.clone(),
+            IR::Aggregate(names, _, _, _) => names.clone(),
             _ => vec![],
         }
     }
@@ -489,13 +489,14 @@ impl<'a> Runtime<'a> {
                     idx,
                 )))
             }
-            IR::Aggregate(_, keys, agg) => {
+            IR::Aggregate(_, keys, agg, copy_from_parent) => {
                 let child = self.child_batch_op(idx)?;
                 Ok(BatchOp::Aggregate(AggregateOp::new(
                     self,
                     Box::new(child),
                     keys,
                     agg,
+                    copy_from_parent,
                     idx,
                 )))
             }
@@ -620,7 +621,7 @@ impl<'a> Runtime<'a> {
                 let child = if self.plan.node(idx).num_children() > 1 {
                     self.run_batch(self.plan.node(idx).child(0).idx())?
                 } else {
-                    BatchOp::Once(Some(self.default_batch()))
+                    BatchOp::Argument(Some(self.default_batch()))
                 };
                 Ok(BatchOp::Merge(MergeOp::new(
                     self,
@@ -634,6 +635,25 @@ impl<'a> Runtime<'a> {
             IR::Commit => {
                 let child = self.child_batch_op(idx)?;
                 Ok(BatchOp::Commit(CommitOp::new(self, Box::new(child), idx)?))
+            }
+            IR::ForEach(list, var) => {
+                // ForEach has 1 or 2 children:
+                //   - If 2 children: child(0) = input from preceding clause, child(1) = body sub-plan
+                //   - If 1 child: child(0) = body sub-plan, input comes via Argument
+                //     (Argument allows set_argument_batch to inject the parent env)
+                let node = self.plan.node(idx);
+                let child = if node.num_children() > 1 {
+                    self.run_batch(node.child(0).idx())?
+                } else {
+                    BatchOp::Argument(Some(self.default_batch()))
+                };
+                Ok(BatchOp::ForEach(ForEachOp::new(
+                    self,
+                    Box::new(child),
+                    list,
+                    var,
+                    idx,
+                )))
             }
             IR::Union => Ok(BatchOp::Union(UnionOp::new(self, idx))),
             IR::PathBuilder(paths) => {

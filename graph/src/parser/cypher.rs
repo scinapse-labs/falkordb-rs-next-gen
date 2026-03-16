@@ -139,22 +139,6 @@ impl<'a> Parser<'a> {
         self.anon_counter = state.anon_counter;
     }
 
-    /// Checks if a tree or its descendants contain an aggregate function using DFS traversal
-    fn contains_nested_aggregate(tree: &DynTree<ExprIR<Arc<String>>>) -> bool {
-        use orx_tree::Dfs;
-
-        // Traverse all nodes in the tree using DFS
-        for idx in tree.root().indices::<Dfs>() {
-            if let ExprIR::FuncInvocation(func) = tree.node(idx).data()
-                && func.is_aggregate()
-            {
-                return true;
-            }
-        }
-
-        false
-    }
-
     /// Parses query parameters from CYPHER prefix.
     ///
     /// Handles queries like: `CYPHER param1=value1 param2=value2 MATCH ...`
@@ -455,7 +439,8 @@ impl<'a> Parser<'a> {
                 | Keyword::Delete
                 | Keyword::Detach
                 | Keyword::Set
-                | Keyword::Remove,
+                | Keyword::Remove
+                | Keyword::Foreach,
                 _,
             ) = self.lexer.current()?
             {
@@ -466,6 +451,32 @@ impl<'a> Parser<'a> {
             if optional_match_token!(self.lexer => With) {
                 clauses.push(self.parse_with_clause(write)?);
             } else {
+                // After updating clauses, a reading clause requires WITH.
+                if write {
+                    match self.lexer.current()? {
+                        Token::Keyword(Keyword::Match | Keyword::Optional, _) => {
+                            return Err(self.lexer.format_error(
+                                "A WITH clause is required to introduce MATCH after an updating clause.",
+                            ));
+                        }
+                        Token::Keyword(Keyword::Unwind, _) => {
+                            return Err(self.lexer.format_error(
+                                "A WITH clause is required to introduce UNWIND after an updating clause.",
+                            ));
+                        }
+                        Token::Keyword(Keyword::Call, _) => {
+                            return Err(self.lexer.format_error(
+                                "A WITH clause is required to introduce CALL after an updating clause.",
+                            ));
+                        }
+                        Token::Keyword(Keyword::Load, _) => {
+                            return Err(self.lexer.format_error(
+                                "A WITH clause is required to introduce LOAD CSV after an updating clause.",
+                            ));
+                        }
+                        _ => {}
+                    }
+                }
                 break;
             }
             write = false;
@@ -558,6 +569,10 @@ impl<'a> Parser<'a> {
             Token::Keyword(Keyword::Remove, _) => {
                 self.lexer.next();
                 self.parse_remove_clause()
+            }
+            Token::Keyword(Keyword::Foreach, _) => {
+                self.lexer.next();
+                self.parse_foreach_clause()
             }
             _ => unreachable!(),
         }
@@ -1023,7 +1038,7 @@ impl<'a> Parser<'a> {
 
                         // Check for nested aggregate functions
                         for arg in &args {
-                            if Self::contains_nested_aggregate(arg) {
+                            if Self::find_aggregate_name(arg).is_some() {
                                 return Err(self.lexer.format_error(
                                     "Can't use aggregate functions inside of aggregate functions",
                                 ));
@@ -2049,5 +2064,71 @@ impl<'a> Parser<'a> {
             }
         }
         Ok(QueryIR::Remove(remove_items))
+    }
+
+    fn parse_foreach_clause(&mut self) -> Result<RawQueryIR, String> {
+        // FOREACH ( var IN list_expr | body_clauses )
+        match_token!(self.lexer, LParen);
+        let var = self.parse_ident()?;
+        match_token!(self.lexer => In);
+        let list_expr = self.parse_expr(false)?;
+        // Check for aggregate functions in the list expression
+        if let Some(func) = Self::find_aggregate_name(&list_expr) {
+            return Err(self
+                .lexer
+                .format_error(&format!("Invalid use of aggregating function '{func}'")));
+        }
+        match_token!(self.lexer, Pipe);
+        // Parse body clauses: CREATE, MERGE, SET, DELETE, DETACH DELETE, REMOVE, FOREACH
+        let mut body = Vec::new();
+        loop {
+            match self.lexer.current()? {
+                Token::Keyword(Keyword::Create, _) => {
+                    self.lexer.next();
+                    body.push(self.parse_create_clause()?);
+                }
+                Token::Keyword(Keyword::Merge, _) => {
+                    self.lexer.next();
+                    body.push(self.parse_merge_clause()?);
+                }
+                Token::Keyword(Keyword::Detach | Keyword::Delete, _) => {
+                    let is_detach = optional_match_token!(self.lexer => Detach);
+                    match_token!(self.lexer => Delete);
+                    body.push(self.parse_delete_clause(is_detach)?);
+                }
+                Token::Keyword(Keyword::Set, _) => {
+                    self.lexer.next();
+                    body.push(self.parse_set_clause()?);
+                }
+                Token::Keyword(Keyword::Remove, _) => {
+                    self.lexer.next();
+                    body.push(self.parse_remove_clause()?);
+                }
+                Token::Keyword(Keyword::Foreach, _) => {
+                    self.lexer.next();
+                    body.push(self.parse_foreach_clause()?);
+                }
+                _ => break,
+            }
+        }
+        match_token!(self.lexer, RParen);
+        if body.is_empty() {
+            return Err(self
+                .lexer
+                .format_error("FOREACH body must contain at least one clause"));
+        }
+        Ok(QueryIR::ForEach(Arc::new(list_expr), var, body))
+    }
+
+    fn find_aggregate_name(tree: &DynTree<ExprIR<Arc<String>>>) -> Option<&str> {
+        use orx_tree::Dfs;
+        for idx in tree.root().indices::<Dfs>() {
+            if let ExprIR::FuncInvocation(func) = tree.node(idx).data()
+                && func.is_aggregate()
+            {
+                return Some(&func.name);
+            }
+        }
+        None
     }
 }

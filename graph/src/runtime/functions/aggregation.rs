@@ -39,8 +39,11 @@
 #![allow(clippy::cast_possible_wrap)]
 
 use super::{FnType, Functions, Type};
-use crate::runtime::{runtime::Runtime, value::Value};
-use std::sync::Arc;
+use crate::runtime::{
+    runtime::Runtime,
+    value::{CompareValue, DisjointOrNull, Value},
+};
+use std::{cmp::Ordering, sync::Arc};
 use thin_vec::{ThinVec, thin_vec};
 
 pub fn register(funcs: &mut Functions) {
@@ -53,7 +56,7 @@ pub fn register(funcs: &mut Functions) {
             match (iter.next(), iter.next()) {
                 (Some(a), Some(Value::Null)) => Ok(Value::List(Arc::new(thin_vec![a]))),
                 (Some(a), Some(Value::List(mut l))) => {
-                    if a == Value::Null {
+                    if let Value::Null = a {
                         return Ok(Value::List(l));
                     }
                     Arc::make_mut(&mut l).push(a);
@@ -116,10 +119,8 @@ pub fn register(funcs: &mut Functions) {
             let mut iter = args.into_iter();
             match (iter.next(), iter.next()) {
                 (Some(a), Some(b)) => {
-                    if b == Value::Null {
-                        return Ok(a);
-                    }
-                    if a.partial_cmp(&b) == Some(std::cmp::Ordering::Greater) {
+                    if let (ord, cmp) = b.compare_value(&a) &&
+                    (ord == Ordering::Less || cmp == DisjointOrNull::ComparedNull) {
                         return Ok(a);
                     }
                     Ok(b)
@@ -138,10 +139,8 @@ pub fn register(funcs: &mut Functions) {
             let mut iter = args.into_iter();
             match (iter.next(), iter.next()) {
                 (Some(a), Some(b)) => {
-                    if b == Value::Null {
-                        return Ok(a);
-                    }
-                    if a.partial_cmp(&b) == Some(std::cmp::Ordering::Less) {
+                    if let (ord, cmp) = b.compare_value(&a) &&
+                    (ord == Ordering::Greater || cmp == DisjointOrNull::ComparedNull) {
                         return Ok(a);
                     }
                     Ok(b)

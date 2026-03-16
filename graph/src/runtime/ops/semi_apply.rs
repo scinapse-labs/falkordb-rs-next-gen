@@ -1,8 +1,10 @@
 //! Batch-mode semi-apply operator — existence-based filtering via a sub-plan.
 //!
-//! For each active row in the input batch, runs the right sub-plan. If it
-//! produces at least one result, the row is included (or excluded for
-//! anti mode).
+//! For each input batch, runs the right sub-plan once with all active rows as
+//! the argument batch. Uses `origin_row` on each output env to determine which
+//! input rows had matches, then builds a selection vector accordingly.
+
+use std::collections::HashSet;
 
 use crate::planner::IR;
 use crate::runtime::{
@@ -48,31 +50,45 @@ impl<'a> Iterator for SemiApplyOp<'a> {
                 Err(e) => return Some(Err(e)),
             };
 
-            let mut passing = Vec::new();
+            let active: Vec<usize> = batch.active_indices().collect();
 
-            for row in batch.active_indices() {
-                let env = batch.env_ref(row);
-                let has_result = match self.runtime.run_batch(self.right_child_idx) {
-                    Ok(mut subtree) => {
-                        subtree.set_argument_env(env, self.runtime.env_pool);
-                        let mut found = false;
-                        'outer: for sub_result in subtree.by_ref() {
-                            match sub_result {
-                                Ok(sub_batch) => {
-                                    if sub_batch.active_len() > 0 {
-                                        found = true;
-                                        break 'outer;
-                                    }
-                                }
-                                Err(e) => return Some(Err(e)),
-                            }
+            // Build argument batch with origin_row stamped on each env.
+            let arg_envs: Vec<_> = active
+                .iter()
+                .enumerate()
+                .map(|(i, &row_idx)| {
+                    let mut e = batch.env_ref(row_idx).clone_pooled(self.runtime.env_pool);
+                    e.origin_row = i as u32;
+                    e
+                })
+                .collect();
+
+            // Create ONE subtree for all rows.
+            let mut subtree = match self.runtime.run_batch(self.right_child_idx) {
+                Ok(s) => s,
+                Err(e) => return Some(Err(e)),
+            };
+            subtree.set_argument_batch(Batch::from_envs(arg_envs));
+
+            // Collect which origin_rows produced at least one result.
+            let mut matched = HashSet::new();
+            for sub_result in subtree.by_ref() {
+                match sub_result {
+                    Ok(sub_batch) => {
+                        for env in sub_batch.active_env_iter() {
+                            matched.insert(env.origin_row);
                         }
-                        found
                     }
                     Err(e) => return Some(Err(e)),
-                };
+                }
+            }
+
+            // Build selection based on match/anti semantics.
+            let mut passing = Vec::new();
+            for (i, &row_idx) in active.iter().enumerate() {
+                let has_result = matched.contains(&(i as u32));
                 if has_result ^ self.is_anti {
-                    passing.push(row as u16);
+                    passing.push(row_idx as u16);
                 }
             }
 

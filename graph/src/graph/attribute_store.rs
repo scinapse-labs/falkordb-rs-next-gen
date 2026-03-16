@@ -246,7 +246,7 @@ impl AttributeStore {
 
                 let composite_key = make_key(*key, idx);
 
-                if *value == Value::Null {
+                if matches!(value, Value::Null) {
                     // Check snapshot for existence
                     if self
                         .snapshot

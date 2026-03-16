@@ -1,9 +1,10 @@
 //! Batch-mode merge operator — implements Cypher `MERGE` (match-or-create).
 //!
-//! For each active row in each input batch, executes the match sub-plan.
-//! If matches are found, applies `ON MATCH SET` clauses; otherwise creates
-//! the pattern and applies `ON CREATE SET` clauses. A pattern hash cache
-//! prevents duplicate creates within the same query.
+//! For each input batch, runs the match sub-plan once with all active rows as a
+//! multi-row argument batch. Uses `origin_row` on output envs to group matches
+//! by input row. For input rows with matches, applies `ON MATCH SET`; for rows
+//! without matches, creates the pattern and applies `ON CREATE SET`. A pattern
+//! hash cache prevents duplicate creates within the same query.
 
 use std::cell::OnceCell;
 use std::collections::VecDeque;
@@ -21,16 +22,12 @@ use crate::runtime::{
 };
 use orx_tree::{Dyn, NodeIdx, NodeRef};
 
-/// Pending merge sub-plan state for a single input row.
-/// We already know this subtree produced at least one match,
-/// so we lazily drain remaining matches applying ON MATCH SET.
+/// Pending merge results for a single input row (multiple matches to drain lazily).
 struct PendingMerge<'a> {
     /// The input env to merge with each match result.
     env: Env<'a>,
-    /// The sub-plan iterator producing match batches.
-    subtree: BatchOp<'a>,
-    /// Remaining rows from the current sub-batch being drained.
-    current_batch: Option<(Batch<'a>, usize)>,
+    /// Remaining match envs to process.
+    matches: VecDeque<Env<'a>>,
 }
 
 pub struct MergeOp<'a> {
@@ -192,7 +189,7 @@ impl<'a> MergeOp<'a> {
 
                 if let Value::Map(ref map) = attrs {
                     for (key, value) in map.iter() {
-                        if *value == Value::Null {
+                        if matches!(value, Value::Null) {
                             return Err(format!(
                                 "Cannot merge node using null property value for key '{key}'"
                             ));
@@ -221,7 +218,7 @@ impl<'a> MergeOp<'a> {
 
             if let Value::Map(ref map) = attrs {
                 for (key, value) in map.iter() {
-                    if *value == Value::Null {
+                    if matches!(value, Value::Null) {
                         return Err(format!(
                             "Cannot merge relationship using null property value for key '{key}'"
                         ));
@@ -236,47 +233,24 @@ impl<'a> MergeOp<'a> {
     }
 
     /// Drains rows from `self.pending` into `envs` until `BATCH_SIZE` is reached
-    /// or all pending sub-plans are exhausted.
+    /// or all pending are exhausted.
     fn drain_pending(
         &mut self,
         envs: &mut Vec<Env<'a>>,
     ) -> Result<(), String> {
         while envs.len() < BATCH_SIZE && !self.pending.is_empty() {
-            // Take current_batch out to avoid borrow conflicts.
-            let mut current_batch = self.pending[0].current_batch.take();
+            let p = self.pending.front_mut().unwrap();
 
-            if let Some((ref batch, ref mut pos)) = current_batch {
-                let active: Vec<usize> = batch.active_indices().collect();
-                while *pos < active.len() && envs.len() < BATCH_SIZE {
-                    let match_env = batch
-                        .env_ref(active[*pos])
-                        .clone_pooled(self.runtime.env_pool);
-                    let mut vars = self.pending[0].env.clone_pooled(self.runtime.env_pool);
-                    vars.merge(&match_env);
-                    let resolved = self.resolve_on_match_set_items();
-                    let result_batch = Batch::from_envs(vec![vars]);
-                    self.runtime.set_batch(resolved, &result_batch)?;
-                    let mut envs_vec = result_batch.into_envs();
-                    envs.push(envs_vec.pop().unwrap());
-                    *pos += 1;
-                }
-                if *pos < active.len() {
-                    // Not fully drained, put it back and wait for next call.
-                    self.pending[0].current_batch = current_batch;
-                    return Ok(());
-                }
-                // Fully drained, fall through to pull next sub-batch.
-            }
-
-            // Pull next sub-batch from the subtree.
-            match self.pending[0].subtree.next() {
-                Some(Ok(sub_batch)) => {
-                    self.pending[0].current_batch = Some((sub_batch, 0));
-                }
-                Some(Err(e)) => return Err(e),
-                None => {
-                    self.pending.pop_front();
-                }
+            if let Some(match_env) = p.matches.pop_front() {
+                let mut vars = p.env.clone_pooled(self.runtime.env_pool);
+                vars.merge(&match_env);
+                let resolved = self.resolve_on_match_set_items();
+                let result_batch = Batch::from_envs(vec![vars]);
+                self.runtime.set_batch(resolved, &result_batch)?;
+                let mut envs_vec = result_batch.into_envs();
+                envs.push(envs_vec.pop().unwrap());
+            } else {
+                self.pending.pop_front();
             }
         }
         Ok(())
@@ -293,7 +267,7 @@ impl<'a> Iterator for MergeOp<'a> {
 
         let mut envs = Vec::with_capacity(BATCH_SIZE);
 
-        // Drain leftover match sub-plans from previous call.
+        // Drain leftover match results from previous call.
         if let Err(e) = self.drain_pending(&mut envs) {
             self.is_error = true;
             return Some(Err(e));
@@ -309,62 +283,111 @@ impl<'a> Iterator for MergeOp<'a> {
                 None => break,
             };
 
-            for env in batch.active_env_iter() {
-                // Check if all nodes in the pattern are already bound
-                let all_nodes_bound = self
-                    .resolve_pattern()
-                    .nodes()
-                    .iter()
-                    .all(|node| env.get(&node.alias).is_some());
+            // Build argument batch with origin_row stamped.
+            let input_envs: Vec<Env<'a>> = batch
+                .active_env_iter()
+                .enumerate()
+                .map(|(i, env)| {
+                    let mut e = env.clone_pooled(self.runtime.env_pool);
+                    e.origin_row = i as u32;
+                    e
+                })
+                .collect();
 
-                let mut subtree = match self.runtime.run_batch(self.merge_child_idx) {
-                    Ok(iter) => iter,
+            let arg_envs: Vec<Env<'a>> = input_envs
+                .iter()
+                .map(|e| e.clone_pooled(self.runtime.env_pool))
+                .collect();
+
+            // Create ONE match subtree for all input rows.
+            let mut subtree = match self.runtime.run_batch(self.merge_child_idx) {
+                Ok(s) => s,
+                Err(e) => {
+                    self.is_error = true;
+                    return Some(Err(e));
+                }
+            };
+            subtree.set_argument_batch(Batch::from_envs(arg_envs));
+
+            // Materialize all matches grouped by origin_row.
+            let num_inputs = input_envs.len();
+            let mut match_groups: Vec<Vec<Env<'a>>> = (0..num_inputs).map(|_| Vec::new()).collect();
+
+            for sub_result in subtree.by_ref() {
+                match sub_result {
+                    Ok(sub_batch) => {
+                        for env in sub_batch.active_env_iter() {
+                            let origin = env.origin_row as usize;
+                            match_groups[origin].push(env.clone_pooled(self.runtime.env_pool));
+                        }
+                    }
                     Err(e) => {
                         self.is_error = true;
                         return Some(Err(e));
                     }
-                };
-                subtree.set_argument_env(env, self.runtime.env_pool);
+                }
+            }
 
-                // Try to get the first match to determine match vs create.
-                let first_match = 'first: {
-                    for sub_result in subtree.by_ref() {
-                        match sub_result {
-                            Ok(sub_batch) => {
-                                let mut active = sub_batch.active_env_iter();
-                                if let Some(first) = active.next() {
-                                    let first = first.clone_pooled(self.runtime.env_pool);
-                                    // If all_nodes_bound, we only need the first match.
-                                    if all_nodes_bound {
-                                        break 'first Some((first, None, None));
-                                    }
-                                    // Collect remaining from this batch, store subtree for lazy drain.
-                                    break 'first Some((first, Some(sub_batch), Some(subtree)));
-                                }
+            // Process each input row in order.
+            for (i, input_env) in input_envs.iter().enumerate() {
+                let matches = std::mem::take(&mut match_groups[i]);
+
+                if matches.is_empty() {
+                    // No matches found, do create fallback.
+                    match self.do_create_fallback(input_env.clone_pooled(self.runtime.env_pool)) {
+                        Ok(result_env) => envs.push(result_env),
+                        Err(e) => {
+                            self.is_error = true;
+                            return Some(Err(e));
+                        }
+                    }
+                } else {
+                    // Check if all pattern variables are already bound.
+                    // All nodes must be bound, and every *named* relationship
+                    // alias must also be bound. Anonymous relationships
+                    // (_anon_* prefix) are not individually tracked, so when
+                    // all nodes are bound the pattern is fully constrained.
+                    // Only when a user-named relationship variable is unbound
+                    // do we need to iterate all matches.
+                    let pattern = self.resolve_pattern();
+                    let all_vars_bound = pattern
+                        .nodes()
+                        .iter()
+                        .all(|node| input_env.get(&node.alias).is_some())
+                        && pattern
+                            .relationships()
+                            .iter()
+                            .filter(|rel| {
+                                rel.alias
+                                    .name
+                                    .as_ref()
+                                    .is_some_and(|n| !n.starts_with("_anon_"))
+                            })
+                            .all(|rel| input_env.get(&rel.alias).is_some());
+
+                    if all_vars_bound {
+                        // Only first match needed.
+                        let first = &matches[0];
+                        let mut vars = input_env.clone_pooled(self.runtime.env_pool);
+                        vars.merge(first);
+                        let resolved = self.resolve_on_match_set_items();
+                        let result_batch = Batch::from_envs(vec![vars]);
+                        match self.runtime.set_batch(resolved, &result_batch) {
+                            Ok(()) => {
+                                let mut envs_vec = result_batch.into_envs();
+                                envs.push(envs_vec.pop().unwrap());
                             }
                             Err(e) => {
                                 self.is_error = true;
                                 return Some(Err(e));
                             }
                         }
-                    }
-                    None
-                };
+                    } else {
+                        // Process first match inline, queue remaining for lazy drain.
+                        let mut match_iter = matches.into_iter();
+                        let first = match_iter.next().unwrap();
 
-                match first_match {
-                    None => {
-                        // No matches found, do create fallback.
-                        match self.do_create_fallback(env.clone_pooled(self.runtime.env_pool)) {
-                            Ok(result_env) => envs.push(result_env),
-                            Err(e) => {
-                                self.is_error = true;
-                                return Some(Err(e));
-                            }
-                        }
-                    }
-                    Some((first, remaining_batch, remaining_subtree)) => {
-                        // Apply ON MATCH to the first result.
-                        let mut vars = env.clone_pooled(self.runtime.env_pool);
+                        let mut vars = input_env.clone_pooled(self.runtime.env_pool);
                         vars.merge(&first);
                         let resolved = self.resolve_on_match_set_items();
                         let result_batch = Batch::from_envs(vec![vars]);
@@ -379,23 +402,11 @@ impl<'a> Iterator for MergeOp<'a> {
                             }
                         }
 
-                        // If there are remaining matches, store them for lazy drain.
-                        if let Some(subtree) = remaining_subtree {
-                            // The remaining_batch still has rows after the first.
-                            // We need to figure the position: first was index 0 of active,
-                            // so start from position 1.
-                            let batch = remaining_batch.unwrap();
-                            let active_len = batch.active_env_iter().len();
-                            let current_batch = if active_len > 1 {
-                                Some((batch, 1))
-                            } else {
-                                None
-                            };
-
+                        let remaining: VecDeque<Env<'a>> = match_iter.collect();
+                        if !remaining.is_empty() {
                             self.pending.push_back(PendingMerge {
-                                env: env.clone_pooled(self.runtime.env_pool),
-                                subtree,
-                                current_batch,
+                                env: input_env.clone_pooled(self.runtime.env_pool),
+                                matches: remaining,
                             });
                         }
                     }
