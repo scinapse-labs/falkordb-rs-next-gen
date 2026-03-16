@@ -101,7 +101,13 @@ pub struct IndexInfo {
 #[derive(Debug)]
 pub enum IndexQuery<T> {
     Equal(Arc<String>, T),
-    Range(Arc<String>, Option<T>, Option<T>),
+    Range {
+        key: Arc<String>,
+        min: Option<T>,
+        max: Option<T>,
+        include_min: bool,
+        include_max: bool,
+    },
     And(Vec<Self>),
     Or(Vec<Self>),
     Point {
@@ -460,7 +466,13 @@ impl Index {
 
                 query
             },
-            IndexQuery::Range(key, min, max) => {
+            IndexQuery::Range {
+                key,
+                min,
+                max,
+                include_min,
+                include_max,
+            } => {
                 let (min, max) = match (min, max) {
                     (Some(Value::Float(min)), None) => (min, RSRANGE_INF),
                     (None, Some(Value::Float(max))) => (RSRANGE_NEG_INF, max),
@@ -472,7 +484,14 @@ impl Index {
                 };
                 unsafe {
                     let field = &self.fields.get(&key).unwrap()[0];
-                    RediSearch_CreateNumericNode(self.rs_idx, field.name.as_ptr(), max, min, 0, 0)
+                    RediSearch_CreateNumericNode(
+                        self.rs_idx,
+                        field.name.as_ptr(),
+                        max,
+                        min,
+                        include_max as i32,
+                        include_min as i32,
+                    )
                 }
             }
             IndexQuery::Point {
