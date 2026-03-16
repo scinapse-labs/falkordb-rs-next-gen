@@ -66,8 +66,7 @@ impl<'a> CartesianProductOp<'a> {
 
         for &child_idx in &self.right_child_indices {
             let mut subtree = self.runtime.run_batch(child_idx)?;
-            let default_env = Env::new(pool);
-            subtree.set_argument_env(&default_env, pool);
+            subtree.set_argument_batch(Batch::from_envs(vec![Env::new(pool)]));
 
             let mut branch_envs = Vec::new();
             for result in &mut subtree {

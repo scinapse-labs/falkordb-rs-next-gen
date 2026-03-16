@@ -640,7 +640,7 @@ impl<'a> Runtime<'a> {
                 // ForEach has 1 or 2 children:
                 //   - If 2 children: child(0) = input from preceding clause, child(1) = body sub-plan
                 //   - If 1 child: child(0) = body sub-plan, input comes via Argument
-                //     (Argument allows set_argument_env to inject the parent env)
+                //     (Argument allows set_argument_batch to inject the parent env)
                 let node = self.plan.node(idx);
                 let child = if node.num_children() > 1 {
                     self.run_batch(node.child(0).idx())?

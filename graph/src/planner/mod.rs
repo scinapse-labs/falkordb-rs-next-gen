@@ -1536,7 +1536,7 @@ impl Planner {
                     let match_plan = self.plan_match(&pattern, filter);
                     // If all pattern variables are already bound, we need
                     // Apply so each incoming row feeds the inner plan via
-                    // set_argument_env (Argument leaves are runtime-only
+                    // set_argument_batch (Argument leaves are runtime-only
                     // leaf nodes that don't pull from children).
                     if all_visited {
                         let mut inner = match_plan;

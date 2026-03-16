@@ -40,7 +40,6 @@
 use crate::graph::graph::{NodeId, RelationshipId};
 use crate::planner::IR;
 use crate::runtime::env::Env;
-use crate::runtime::pool::Pool;
 use crate::runtime::runtime::Runtime;
 use crate::runtime::value::Value;
 use orx_tree::{Dyn, NodeIdx};
@@ -597,8 +596,8 @@ pub enum BatchOp<'a> {
     /// Yields a single batch containing one default Env row. Used as the
     /// leaf of operator trees when no child exists (e.g. `RETURN 1`).
     Once(Option<Batch<'a>>),
-    /// Argument leaf for correlated sub-plans. Receives an env via
-    /// `set_argument_env` and yields it as a single-row batch.
+    /// Argument leaf for correlated sub-plans. Receives a batch via
+    /// `set_argument_batch` and yields it.
     Argument(Option<Batch<'a>>),
     /// Scan nodes by label.
     NodeByLabelScan(NodeByLabelScanOp<'a>),
@@ -667,72 +666,9 @@ pub enum BatchOp<'a> {
 }
 
 impl<'a> BatchOp<'a> {
-    /// Propagates an argument environment down to `Argument` leaves in the
-    /// operator tree. Each operator delegates to its child(ren) until an
-    /// `Argument` leaf is reached, where the env is installed.
-    pub fn set_argument_env(
-        &mut self,
-        env: &Env<'a>,
-        value_pool: &'a Pool<Value>,
-    ) {
-        match self {
-            Self::Argument(slot) => {
-                *slot = Some(Batch::from_envs(vec![env.clone_pooled(value_pool)]));
-            }
-            Self::Once(_) | Self::ProcedureCall(_) => {}
-            Self::NodeByLabelScan(op) => op.child.set_argument_env(env, value_pool),
-            Self::Filter(op) => op.child.set_argument_env(env, value_pool),
-            Self::Project(op) => op.child.set_argument_env(env, value_pool),
-            Self::Skip(op) => op.child.set_argument_env(env, value_pool),
-            Self::Limit(op) => op.child.set_argument_env(env, value_pool),
-            Self::Distinct(op) => op.child.set_argument_env(env, value_pool),
-            Self::Sort(op) => {
-                if let Some(ref mut c) = op.child {
-                    c.set_argument_env(env, value_pool);
-                }
-            }
-            Self::Aggregate(op) => {
-                if let Some(ref mut c) = op.child {
-                    c.set_argument_env(env, value_pool);
-                }
-            }
-            Self::Unwind(op) => op.child.set_argument_env(env, value_pool),
-            Self::CondTraverse(op) => op.child.set_argument_env(env, value_pool),
-            Self::ExpandInto(op) => op.child.set_argument_env(env, value_pool),
-            Self::NodeByIdSeek(op) => op.child.set_argument_env(env, value_pool),
-            Self::NodeByIndexScan(op) => op.child.set_argument_env(env, value_pool),
-            Self::CartesianProduct(op) => op.child.set_argument_env(env, value_pool),
-            Self::Apply(op) => op.child.set_argument_env(env, value_pool),
-            Self::SemiApply(op) => op.child.set_argument_env(env, value_pool),
-            Self::Optional(op) => op.child.set_argument_env(env, value_pool),
-            Self::Create(op) => op.child.set_argument_env(env, value_pool),
-            Self::Delete(op) => op.child.set_argument_env(env, value_pool),
-            Self::Set(op) => op.child.set_argument_env(env, value_pool),
-            Self::Remove(op) => op.child.set_argument_env(env, value_pool),
-            Self::Merge(op) => op.child.set_argument_env(env, value_pool),
-            Self::Commit(op) => {
-                if let Some(ref mut c) = op.child {
-                    c.set_argument_env(env, value_pool);
-                }
-            }
-            Self::Union(op) => {
-                if let Some(ref mut c) = op.current {
-                    c.set_argument_env(env, value_pool);
-                }
-            }
-            Self::PathBuilder(op) => op.child.set_argument_env(env, value_pool),
-            Self::LoadCsv(op) => op.child.set_argument_env(env, value_pool),
-            Self::NodeByFulltextScan(op) => op.child.set_argument_env(env, value_pool),
-            Self::NodeByLabelAndIdScan(op) => op.child.set_argument_env(env, value_pool),
-            Self::CondVarLenTraverse(op) => op.child.set_argument_env(env, value_pool),
-            Self::OrApplyMultiplexer(op) => op.child.set_argument_env(env, value_pool),
-            Self::ForEach(op) => op.child.set_argument_env(env, value_pool),
-        }
-    }
-
-    /// Like `set_argument_env`, but sets a pre-built multi-row batch on
-    /// `Argument` leaves instead of a single env. Used by FOREACH to pass
-    /// all loop items at once for eager execution.
+    /// Propagates a batch down to `Argument` leaves in the operator tree.
+    /// Each operator delegates to its child(ren) until an `Argument` leaf
+    /// is reached, where the batch is installed.
     pub fn set_argument_batch(
         &mut self,
         batch: Batch<'a>,

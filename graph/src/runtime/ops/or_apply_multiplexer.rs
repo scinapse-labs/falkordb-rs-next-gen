@@ -1,10 +1,12 @@
 //! Batch-mode OR-apply multiplexer operator — evaluates multiple existence-check branches.
 //!
 //! Implements disjunctive patterns like `WHERE EXISTS {...} OR EXISTS {...}`.
-//! For each active row in each input batch, iterates through branch sub-plans.
-//! A row is emitted when any branch produces a result (or, for `anti` branches,
-//! when a branch produces NO results). The `anti_flags` array controls whether
-//! each branch uses normal or anti-semi-join semantics.
+//! For each input batch, runs each branch sub-plan once with all active rows.
+//! Uses `origin_row` on output envs to determine which input rows matched
+//! each branch. A row is emitted when any branch produces a result (or, for
+//! `anti` branches, when a branch produces NO results).
+
+use std::collections::HashSet;
 
 use crate::planner::IR;
 use crate::runtime::{
@@ -56,41 +58,61 @@ impl<'a> Iterator for OrApplyMultiplexerOp<'a> {
                 Err(e) => return Some(Err(e)),
             };
 
-            let mut passing = Vec::new();
+            let active: Vec<usize> = batch.active_indices().collect();
 
-            for row in batch.active_indices() {
-                let env = batch.env_ref(row);
-                let mut matched = false;
+            // Build argument envs with origin_row stamped.
+            let arg_envs: Vec<_> = active
+                .iter()
+                .enumerate()
+                .map(|(i, &row_idx)| {
+                    let mut e = batch.env_ref(row_idx).clone_pooled(self.runtime.env_pool);
+                    e.origin_row = i as u32;
+                    e
+                })
+                .collect();
 
-                for (branch_num, branch_idx) in self.branch_indices.iter().enumerate() {
-                    let has_result = match self.runtime.run_batch(*branch_idx) {
-                        Ok(mut subtree) => {
-                            subtree.set_argument_env(env, self.runtime.env_pool);
-                            let mut found = false;
-                            'outer: for sub_result in subtree.by_ref() {
-                                match sub_result {
-                                    Ok(sub_batch) => {
-                                        if sub_batch.active_len() > 0 {
-                                            found = true;
-                                            break 'outer;
-                                        }
-                                    }
-                                    Err(e) => return Some(Err(e)),
-                                }
+            // Track which origin_rows are matched across all branches.
+            let mut overall_matched: HashSet<u32> = HashSet::new();
+
+            for (branch_num, branch_idx) in self.branch_indices.iter().enumerate() {
+                // Clone arg_envs for each branch (each subtree consumes the batch).
+                let branch_envs: Vec<_> = arg_envs
+                    .iter()
+                    .map(|e| e.clone_pooled(self.runtime.env_pool))
+                    .collect();
+
+                let mut subtree = match self.runtime.run_batch(*branch_idx) {
+                    Ok(s) => s,
+                    Err(e) => return Some(Err(e)),
+                };
+                subtree.set_argument_batch(Batch::from_envs(branch_envs));
+
+                // Collect which origin_rows this branch matched.
+                let mut branch_matched: HashSet<u32> = HashSet::new();
+                for sub_result in subtree.by_ref() {
+                    match sub_result {
+                        Ok(sub_batch) => {
+                            for env in sub_batch.active_env_iter() {
+                                branch_matched.insert(env.origin_row);
                             }
-                            found
                         }
                         Err(e) => return Some(Err(e)),
-                    };
-                    let is_anti = self.anti_flags[branch_num];
-                    if has_result ^ is_anti {
-                        matched = true;
-                        break;
                     }
                 }
 
-                if matched {
-                    passing.push(row as u16);
+                let is_anti = self.anti_flags[branch_num];
+                for (i, _) in active.iter().enumerate() {
+                    let has_result = branch_matched.contains(&(i as u32));
+                    if has_result ^ is_anti {
+                        overall_matched.insert(i as u32);
+                    }
+                }
+            }
+
+            let mut passing = Vec::new();
+            for (i, &row_idx) in active.iter().enumerate() {
+                if overall_matched.contains(&(i as u32)) {
+                    passing.push(row_idx as u16);
                 }
             }
 

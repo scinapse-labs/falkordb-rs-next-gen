@@ -25,6 +25,10 @@ use crate::runtime::value::Value;
 pub struct Env<'a> {
     values: Pooled<'a, Value>,
     bound: BitSet,
+    /// Tracks which input row this env originated from in batched correlated
+    /// sub-plans (Apply, SemiApply, Optional, etc.). Set by the parent
+    /// operator before passing to the sub-plan; preserved through clone_pooled.
+    pub origin_row: u32,
 }
 
 impl<'a> Env<'a> {
@@ -34,6 +38,7 @@ impl<'a> Env<'a> {
         Self {
             values: pool.acquire(0),
             bound: BitSet::default(),
+            origin_row: 0,
         }
     }
 
@@ -46,6 +51,7 @@ impl<'a> Env<'a> {
         Self {
             values: pool.acquire(num_vars),
             bound: BitSet::default(),
+            origin_row: 0,
         }
     }
 
@@ -166,6 +172,7 @@ impl<'a> Env<'a> {
         Env {
             values: new_values,
             bound: self.bound.clone(),
+            origin_row: self.origin_row,
         }
     }
 
