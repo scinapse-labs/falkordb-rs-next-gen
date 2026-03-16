@@ -1,20 +1,22 @@
-# Profiling using pyroscope
+# Profiling using samply
 
-To profile the code to find performance bottelnecks we use pyroscope
+To profile the code to find performance bottlenecks we use [samply](https://github.com/mstange/samply).
 
-1. Compile the code using the pyro feature
+1. Install samply
    ```
-   cargo build -F pyro
+   cargo install samply
    ```
 
-2. Run the pyroscope docker container
+2. Build the code in release mode with debug info
    ```
-    docker network create pyroscope-demo
-    docker run --rm --name pyroscope --network=pyroscope-demo -p 4040:4040 grafana/pyroscope:latest
-    ```
+   cargo build --release
+   ```
 
-3. Run the database and your query
+3. Run the database under samply
+   ```
+   samply record redis-server --loadmodule ./target/release/libfalkordb.dylib
+   ```
 
-4. Navigate to the pyroscope UI at https://localhost:4040
+4. Run your query against the database
 
-5. use the falkordb application
+5. Stop the database and samply will open the Firefox Profiler UI in your browser
