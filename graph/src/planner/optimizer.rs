@@ -208,6 +208,10 @@ fn try_distance_index_scan(
 /// Merges two index queries on the same attribute into a single Range query.
 ///
 /// For example, `year >= 1980` and `year < 1990` become `Range { min: 1980, max: 1990, include_min: true, include_max: false }`.
+///
+/// When both queries specify the same bound (both min or both max), we cannot
+/// determine at plan time which is stricter (the values are expression trees),
+/// so we fall back to `And` and let the index engine intersect them.
 fn merge_range_queries(
     a: IndexQuery<QueryExpr<Variable>>,
     b: IndexQuery<QueryExpr<Variable>>,
@@ -228,13 +232,47 @@ fn merge_range_queries(
                 include_max: inc_max_b,
                 ..
             },
-        ) => IndexQuery::Range {
-            key,
-            min: min_a.or(min_b),
-            max: max_a.or(max_b),
-            include_min: inc_min_a || inc_min_b,
-            include_max: inc_max_a || inc_max_b,
-        },
+        ) => {
+            // If both specify the same bound, we can't compare expression
+            // values at plan time to pick the stricter one — fall back to And.
+            if min_a.is_some() && min_b.is_some() || max_a.is_some() && max_b.is_some() {
+                return IndexQuery::And(vec![
+                    IndexQuery::Range {
+                        key: key.clone(),
+                        min: min_a,
+                        max: max_a,
+                        include_min: inc_min_a,
+                        include_max: inc_max_a,
+                    },
+                    IndexQuery::Range {
+                        key,
+                        min: min_b,
+                        max: max_b,
+                        include_min: inc_min_b,
+                        include_max: inc_max_b,
+                    },
+                ]);
+            }
+            // Complementary bounds: one provides min, the other max.
+            // The unused include flag is always false, so or/select works.
+            let (min, include_min) = if min_a.is_some() {
+                (min_a, inc_min_a)
+            } else {
+                (min_b, inc_min_b)
+            };
+            let (max, include_max) = if max_a.is_some() {
+                (max_a, inc_max_a)
+            } else {
+                (max_b, inc_max_b)
+            };
+            IndexQuery::Range {
+                key,
+                min,
+                max,
+                include_min,
+                include_max,
+            }
+        }
         (a, b) => IndexQuery::And(vec![a, b]),
     }
 }

@@ -22,15 +22,16 @@ use redisearch::{
     RSFLDTYPE_VECTOR, RSGeoDistance_RS_GEO_DISTANCE_M, RSIndex, RSRANGE_INF, RSRANGE_NEG_INF,
     RSResultsIterator, RediSearch_CreateDocument2, RediSearch_CreateField,
     RediSearch_CreateGeoNode, RediSearch_CreateIndex, RediSearch_CreateIndexOptions,
-    RediSearch_CreateNumericNode, RediSearch_CreateTagNode, RediSearch_CreateTagTokenNode,
-    RediSearch_DeleteDocument, RediSearch_DocumentAddFieldGeo, RediSearch_DocumentAddFieldNumber,
-    RediSearch_DocumentAddFieldString, RediSearch_DocumentAddFieldVector, RediSearch_DropIndex,
-    RediSearch_FreeIndexOptions, RediSearch_GetResultsIterator, RediSearch_IndexAddDocument,
-    RediSearch_IndexOptionsSetGCPolicy, RediSearch_IndexOptionsSetLanguage,
-    RediSearch_IndexOptionsSetStopwords, RediSearch_IterateQuery, RediSearch_QueryNodeAddChild,
-    RediSearch_ResultsIteratorFree, RediSearch_ResultsIteratorGetScore,
-    RediSearch_ResultsIteratorNext, RediSearch_TagFieldSetCaseSensitive,
-    RediSearch_TagFieldSetSeparator, RediSearch_TextFieldSetWeight,
+    RediSearch_CreateIntersectNode, RediSearch_CreateNumericNode, RediSearch_CreateTagNode,
+    RediSearch_CreateTagTokenNode, RediSearch_DeleteDocument, RediSearch_DocumentAddFieldGeo,
+    RediSearch_DocumentAddFieldNumber, RediSearch_DocumentAddFieldString,
+    RediSearch_DocumentAddFieldVector, RediSearch_DropIndex, RediSearch_FreeIndexOptions,
+    RediSearch_GetResultsIterator, RediSearch_IndexAddDocument, RediSearch_IndexOptionsSetGCPolicy,
+    RediSearch_IndexOptionsSetLanguage, RediSearch_IndexOptionsSetStopwords,
+    RediSearch_IterateQuery, RediSearch_QueryNodeAddChild, RediSearch_ResultsIteratorFree,
+    RediSearch_ResultsIteratorGetScore, RediSearch_ResultsIteratorNext,
+    RediSearch_TagFieldSetCaseSensitive, RediSearch_TagFieldSetSeparator,
+    RediSearch_TextFieldSetWeight,
 };
 
 /// Type of index for a property.
@@ -439,33 +440,36 @@ impl Index {
         }
     }
 
-    /// Execute an index query and return matching entity IDs.
-    pub fn query(
+    /// Build a RediSearch query node from an `IndexQuery`.
+    fn build_query_node(
         &self,
         query: IndexQuery<Value>,
-    ) -> IdIter {
-        let query = match query {
-            IndexQuery::Equal(key, Value::Int(value)) => unsafe {
+    ) -> *mut redisearch::RSQNode {
+        match query {
+            IndexQuery::Equal(key, Value::Int(value)) => {
                 let field = &self.fields.get(&key).unwrap()[0];
-                RediSearch_CreateNumericNode(
-                    self.rs_idx,
-                    field.name.as_ptr(),
-                    value as f64,
-                    value as f64,
-                    1,
-                    1,
-                )
-            },
-            IndexQuery::Equal(key, Value::String(value)) => unsafe {
+                unsafe {
+                    RediSearch_CreateNumericNode(
+                        self.rs_idx,
+                        field.name.as_ptr(),
+                        value as f64,
+                        value as f64,
+                        1,
+                        1,
+                    )
+                }
+            }
+            IndexQuery::Equal(key, Value::String(value)) => {
                 let field = &self.fields.get(&key).unwrap()[0];
-                let query = RediSearch_CreateTagNode(self.rs_idx, field.name.as_ptr());
+                let query = unsafe { RediSearch_CreateTagNode(self.rs_idx, field.name.as_ptr()) };
                 let msg = CString::new(value.as_str()).unwrap();
-                let child =
-                    RediSearch_CreateTagTokenNode(self.rs_idx, msg.as_ptr().cast::<c_char>());
-                RediSearch_QueryNodeAddChild(query, child);
+                let child = unsafe {
+                    RediSearch_CreateTagTokenNode(self.rs_idx, msg.as_ptr().cast::<c_char>())
+                };
+                unsafe { RediSearch_QueryNodeAddChild(query, child) };
 
                 query
-            },
+            }
             IndexQuery::Range {
                 key,
                 min,
@@ -482,8 +486,8 @@ impl Index {
                     (Some(Value::Int(min)), Some(Value::Int(max))) => (min as f64, max as f64),
                     _ => todo!(),
                 };
+                let field = &self.fields.get(&key).unwrap()[0];
                 unsafe {
-                    let field = &self.fields.get(&key).unwrap()[0];
                     RediSearch_CreateNumericNode(
                         self.rs_idx,
                         field.name.as_ptr(),
@@ -498,38 +502,56 @@ impl Index {
                 key,
                 point: Value::Point(point),
                 radius: Value::Float(radius),
-            } => unsafe {
+            } => {
                 let field = &self.fields.get(&key).unwrap()[0];
-                RediSearch_CreateGeoNode(
-                    self.rs_idx,
-                    field.name.as_ptr(),
-                    point.latitude as f64,
-                    point.longitude as f64,
-                    radius,
-                    RSGeoDistance_RS_GEO_DISTANCE_M,
-                )
-            },
+                unsafe {
+                    RediSearch_CreateGeoNode(
+                        self.rs_idx,
+                        field.name.as_ptr(),
+                        point.latitude as f64,
+                        point.longitude as f64,
+                        radius,
+                        RSGeoDistance_RS_GEO_DISTANCE_M,
+                    )
+                }
+            }
             IndexQuery::Point {
                 key,
                 point: Value::Point(point),
                 radius: Value::Int(radius),
-            } => unsafe {
+            } => {
                 let field = &self.fields.get(&key).unwrap()[0];
-                RediSearch_CreateGeoNode(
-                    self.rs_idx,
-                    field.name.as_ptr(),
-                    point.latitude as f64,
-                    point.longitude as f64,
-                    radius as f64,
-                    RSGeoDistance_RS_GEO_DISTANCE_M,
-                )
-            },
-
+                unsafe {
+                    RediSearch_CreateGeoNode(
+                        self.rs_idx,
+                        field.name.as_ptr(),
+                        point.latitude as f64,
+                        point.longitude as f64,
+                        radius as f64,
+                        RSGeoDistance_RS_GEO_DISTANCE_M,
+                    )
+                }
+            }
+            IndexQuery::And(children) => {
+                let intersect = unsafe { RediSearch_CreateIntersectNode(self.rs_idx, 0) };
+                for child in children {
+                    let child_node = self.build_query_node(child);
+                    unsafe { RediSearch_QueryNodeAddChild(intersect, child_node) };
+                }
+                intersect
+            }
             _ => todo!(),
-        };
+        }
+    }
 
+    /// Execute an index query and return matching entity IDs.
+    pub fn query(
+        &self,
+        query: IndexQuery<Value>,
+    ) -> IdIter {
         unsafe {
-            let iter = RediSearch_GetResultsIterator(query, self.rs_idx);
+            let query_node = self.build_query_node(query);
+            let iter = RediSearch_GetResultsIterator(query_node, self.rs_idx);
             IndexResultsIter::new(iter, self.rs_idx, |_, id| id)
         }
     }

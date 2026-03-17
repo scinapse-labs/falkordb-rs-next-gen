@@ -9,7 +9,6 @@ tests/flow/test_null_handling
 tests/flow/test_opening_node
 tests/flow/test_optimizations_plan
 tests/flow/test_order_by
-tests/flow/test_path_filter
 tests/flow/test_profile
 tests/flow/test_query_mem_limit
 tests/flow/test_reduce
