@@ -58,7 +58,13 @@ impl<'a> NodeByIndexScanOp<'a> {
                 let value = runtime.run_expr(value, value.root().idx(), vars, None)?;
                 Ok(IndexQuery::Equal(key.clone(), value))
             }
-            IndexQuery::Range(key, min, max) => {
+            IndexQuery::Range {
+                key,
+                min,
+                max,
+                include_min,
+                include_max,
+            } => {
                 let (min, max) = match (min, max) {
                     (Some(min), Some(max)) => {
                         let min = runtime.run_expr(min, min.root().idx(), vars, None)?;
@@ -75,7 +81,13 @@ impl<'a> NodeByIndexScanOp<'a> {
                     }
                     (None, None) => (None, None),
                 };
-                Ok(IndexQuery::Range(key.clone(), min, max))
+                Ok(IndexQuery::Range {
+                    key: key.clone(),
+                    min,
+                    max,
+                    include_min: *include_min,
+                    include_max: *include_max,
+                })
             }
             IndexQuery::Point { key, point, radius } => {
                 let point = runtime.run_expr(point, point.root().idx(), vars, None)?;
@@ -85,6 +97,13 @@ impl<'a> NodeByIndexScanOp<'a> {
                     point,
                     radius,
                 })
+            }
+            IndexQuery::And(queries) => {
+                let mut evaluated = Vec::with_capacity(queries.len());
+                for q in queries {
+                    evaluated.push(Self::evaluate_index_query(runtime, q, vars)?);
+                }
+                Ok(IndexQuery::And(evaluated))
             }
             _ => todo!(),
         }

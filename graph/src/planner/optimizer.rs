@@ -107,20 +107,46 @@ fn try_property_index_scan(
         ExprIR::Gt => Some((
             node.clone(),
             node.labels[0].clone(),
-            Arc::new(IndexQuery::Range(
-                attr.clone(),
-                Some(Arc::new(constant_node)),
-                None,
-            )),
+            Arc::new(IndexQuery::Range {
+                key: attr.clone(),
+                min: Some(Arc::new(constant_node)),
+                max: None,
+                include_min: false,
+                include_max: false,
+            }),
+        )),
+        ExprIR::Ge => Some((
+            node.clone(),
+            node.labels[0].clone(),
+            Arc::new(IndexQuery::Range {
+                key: attr.clone(),
+                min: Some(Arc::new(constant_node)),
+                max: None,
+                include_min: true,
+                include_max: false,
+            }),
         )),
         ExprIR::Lt => Some((
             node.clone(),
             node.labels[0].clone(),
-            Arc::new(IndexQuery::Range(
-                attr.clone(),
-                None,
-                Some(Arc::new(constant_node)),
-            )),
+            Arc::new(IndexQuery::Range {
+                key: attr.clone(),
+                min: None,
+                max: Some(Arc::new(constant_node)),
+                include_min: false,
+                include_max: false,
+            }),
+        )),
+        ExprIR::Le => Some((
+            node.clone(),
+            node.labels[0].clone(),
+            Arc::new(IndexQuery::Range {
+                key: attr.clone(),
+                min: None,
+                max: Some(Arc::new(constant_node)),
+                include_min: false,
+                include_max: true,
+            }),
         )),
         _ => None,
     }
@@ -179,12 +205,137 @@ fn try_distance_index_scan(
     }
 }
 
+/// Merges two index queries on the same attribute into a single Range query.
+///
+/// For example, `year >= 1980` and `year < 1990` become `Range { min: 1980, max: 1990, include_min: true, include_max: false }`.
+///
+/// When both queries specify the same bound (both min or both max), we cannot
+/// determine at plan time which is stricter (the values are expression trees),
+/// so we fall back to `And` and let the index engine intersect them.
+fn merge_range_queries(
+    a: IndexQuery<QueryExpr<Variable>>,
+    b: IndexQuery<QueryExpr<Variable>>,
+) -> IndexQuery<QueryExpr<Variable>> {
+    match (a, b) {
+        (
+            IndexQuery::Range {
+                key,
+                min: min_a,
+                max: max_a,
+                include_min: inc_min_a,
+                include_max: inc_max_a,
+            },
+            IndexQuery::Range {
+                min: min_b,
+                max: max_b,
+                include_min: inc_min_b,
+                include_max: inc_max_b,
+                ..
+            },
+        ) => {
+            // If both specify the same bound, we can't compare expression
+            // values at plan time to pick the stricter one — fall back to And.
+            if min_a.is_some() && min_b.is_some() || max_a.is_some() && max_b.is_some() {
+                return IndexQuery::And(vec![
+                    IndexQuery::Range {
+                        key: key.clone(),
+                        min: min_a,
+                        max: max_a,
+                        include_min: inc_min_a,
+                        include_max: inc_max_a,
+                    },
+                    IndexQuery::Range {
+                        key,
+                        min: min_b,
+                        max: max_b,
+                        include_min: inc_min_b,
+                        include_max: inc_max_b,
+                    },
+                ]);
+            }
+            // Complementary bounds: one provides min, the other max.
+            // The unused include flag is always false, so or/select works.
+            let (min, include_min) = if min_a.is_some() {
+                (min_a, inc_min_a)
+            } else {
+                (min_b, inc_min_b)
+            };
+            let (max, include_max) = if max_a.is_some() {
+                (max_a, inc_max_a)
+            } else {
+                (max_b, inc_max_b)
+            };
+            IndexQuery::Range {
+                key,
+                min,
+                max,
+                include_min,
+                include_max,
+            }
+        }
+        (a, b) => IndexQuery::And(vec![a, b]),
+    }
+}
+
+/// Tries to convert a single comparison filter into an index scan for the given node.
+fn try_single_filter_index_scan(
+    node: &Arc<QueryNode<Arc<String>, Variable>>,
+    filter: &DynTree<ExprIR<Variable>>,
+    graph: &Graph,
+) -> IndexScanResult {
+    if !matches!(
+        filter.root().data(),
+        ExprIR::Eq | ExprIR::Gt | ExprIR::Ge | ExprIR::Lt | ExprIR::Le
+    ) {
+        return None;
+    }
+    let Some((attr, attr_side, constant_side)) =
+        extract_attribute_and_expression_from_filter(filter)
+    else {
+        return None;
+    };
+    if !graph.is_indexed(&node.labels[0], &attr, &IndexType::Range) {
+        return None;
+    }
+    match filter.node(attr_side).data() {
+        ExprIR::FuncInvocation(func) => {
+            let constant_node = filter.node(constant_side).clone_as_tree();
+            match func.name.as_str() {
+                "distance" => {
+                    try_distance_index_scan(node, &attr, filter, attr_side, constant_node)
+                }
+                _ => None,
+            }
+        }
+        ExprIR::Property(attr) => {
+            let constant_node = filter.node(constant_side).clone_as_tree();
+            // If the property is on the right side (e.g., `1980 <= m.year`),
+            // flip the operator so the index scan uses the correct direction.
+            let op = if attr_side == filter.root().child(0).idx() {
+                filter.root().data().clone()
+            } else {
+                match filter.root().data() {
+                    ExprIR::Eq => ExprIR::Eq,
+                    ExprIR::Gt => ExprIR::Lt,
+                    ExprIR::Ge => ExprIR::Le,
+                    ExprIR::Lt => ExprIR::Gt,
+                    ExprIR::Le => ExprIR::Ge,
+                    _ => unreachable!(),
+                }
+            };
+            try_property_index_scan(node, attr, &op, constant_node)
+        }
+        _ => None,
+    }
+}
+
 /// Attempts to replace label scans with index scans where applicable.
 ///
 /// Scans the plan for patterns like:
 /// `NodeByLabelScan` → `Filter(property = value)`
 ///
 /// If an index exists on the filtered property, replaces with `NodeByIndexScan`.
+/// Also handles AND filters where multiple conjuncts can each be converted to index queries.
 fn utilize_index(
     optimized_plan: &mut DynTree<IR>,
     graph: &Graph,
@@ -192,43 +343,60 @@ fn utilize_index(
     let indices = optimized_plan.root().indices::<Bfs>().collect::<Vec<_>>();
 
     for idx in indices {
-        // Try to replace label scans with index scans where applicable.
         let node = if let IR::NodeByLabelScan(node) = optimized_plan.node(idx).data()
             && !node.labels.is_empty()
             && let IR::Filter(filter) = optimized_plan.node(idx).parent().unwrap().data()
-            // If the filter is an equality, greater than, or less than expression
-            && matches!(filter.root().data(), ExprIR::Eq | ExprIR::Gt | ExprIR::Lt)
-            // If we managed to extract the attribute and expression from the filter
-            && let Some((attr, attr_side, constant_side)) = extract_attribute_and_expression_from_filter(filter)
-            // If the attribute is indexed
-            && graph.is_indexed(&node.labels[0], &attr, &IndexType::Range)
         {
-            // Check if the attribute side is a propetry function or more complexed function
-            // If it is a property function, we can handle it right away since we know everything: Attribute, expression and operation
-            // If it is a more complexed function, we need to understand which function it is and if we can apply an index scan on.
-            match filter.node(attr_side).data() {
-                ExprIR::FuncInvocation(func) => {
-                    let constant_node = filter.node(constant_side).clone_as_tree();
-                    match func.name.as_str() {
-                        "distance" => {
-                            try_distance_index_scan(node, &attr, filter, attr_side, constant_node)
-                        }
-                        _ => None,
+            if matches!(filter.root().data(), ExprIR::And) {
+                // AND filter: try to merge conjuncts into a single range index query
+                let mut merged: Option<IndexQuery<QueryExpr<Variable>>> = None;
+                let mut remaining_conjuncts = Vec::new();
+                for child in filter.root().children() {
+                    let conjunct = child.clone_as_tree();
+                    if let Some((_, _, query)) =
+                        try_single_filter_index_scan(node, &conjunct, graph)
+                    {
+                        let query = Arc::try_unwrap(query).unwrap();
+                        merged = Some(match merged {
+                            None => query,
+                            Some(prev) => merge_range_queries(prev, query),
+                        });
+                    } else {
+                        remaining_conjuncts.push(conjunct);
                     }
                 }
-                ExprIR::Property(attr) => {
-                    let constant_node = filter.node(constant_side).clone_as_tree();
-                    try_property_index_scan(node, attr, filter.root().data(), constant_node)
+                if let Some(combined_query) = merged {
+                    Some((
+                        node.clone(),
+                        node.labels[0].clone(),
+                        Arc::new(combined_query),
+                        remaining_conjuncts,
+                    ))
+                } else {
+                    None
                 }
-                _ => None,
+            } else {
+                // Single comparison filter
+                try_single_filter_index_scan(node, filter, graph)
+                    .map(|(n, l, q)| (n, l, q, Vec::new()))
             }
         } else {
             None
         };
-        if let Some((node, index, query)) = node {
+        if let Some((node, index, query, remaining)) = node {
             let mut op = optimized_plan.node_mut(idx);
             *op.data_mut() = IR::NodeByIndexScan { node, index, query };
-            op.parent_mut().unwrap().take_out();
+            if remaining.is_empty() {
+                op.parent_mut().unwrap().take_out();
+            } else {
+                // Replace the AND filter with only the remaining conjuncts
+                let remaining_filter = if remaining.len() == 1 {
+                    Arc::new(remaining.into_iter().next().unwrap())
+                } else {
+                    Arc::new(tree!(ExprIR::And; remaining))
+                };
+                *op.parent_mut().unwrap().data_mut() = IR::Filter(remaining_filter);
+            }
             break;
         }
 
