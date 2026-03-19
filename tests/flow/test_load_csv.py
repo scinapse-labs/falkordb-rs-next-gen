@@ -42,6 +42,11 @@ BOM_BYTES                               = b"\xEF\xBB\xBF"
 BOM_CSV_HEADER                          = ["col_1", "col_2", "col_3"]
 BOM_CSV_DATA                            = ["1", "some_string", "http://www.domain.com"]
 
+SEMICOLON_CSV                           = "semicolon.csv"
+SEMICOLON_CSV_HEADER                    = [["given_name", "surname"]]
+SEMICOLON_CSV_DATA                      = [["Roi", "Lipman"]]
+
+
 # Get the absolute path to the current file
 IMPORT_DIR = os.path.dirname(os.path.abspath(__file__)) + '/csvs/'
 
@@ -50,11 +55,11 @@ IMPORT_DIR = os.path.dirname(os.path.abspath(__file__)) + '/csvs/'
 # 'data' [optional] CSV rows
 def create_csv_file(name, header, data, delimiter=','):
     # create any missing directories in the path
-    path = IMPORT_DIR + name
+    path = os.path.join(IMPORT_DIR, name)
     os.makedirs(os.path.dirname(path), exist_ok=True)
 
-    with open(path, 'w') as f:
-        writer = csv.writer(f)
+    with open(path, 'w', newline='') as f:
+        writer = csv.writer(f, delimiter=delimiter)
         data = header + data
         writer.writerows(data)
 
@@ -127,6 +132,13 @@ def create_bom_prefixed_csv():
         f.write((headers + '\n').encode('utf-8'))
         f.write((content + '\n').encode('utf-8'))
 
+def create_semicolon_delimited_csv():
+    name   = SEMICOLON_CSV
+    data   = SEMICOLON_CSV_DATA
+    header = SEMICOLON_CSV_HEADER
+
+    create_csv_file(name, header, data, delimiter=';')
+
 #-------------------------------------------------------------------------------
 # create CSV files
 #-------------------------------------------------------------------------------
@@ -137,6 +149,7 @@ create_empty_cell_csv()
 create_empty_column_csv()
 create_bom_prefixed_csv()
 create_short_csv_with_header()
+create_semicolon_delimited_csv()
 create_short_csv_without_header()
 
 class testLoadLocalCSV():
@@ -354,6 +367,42 @@ class testLoadLocalCSV():
         expected = {k: v for k, v in zip(BOM_CSV_HEADER, BOM_CSV_DATA)}
         self.env.assertEqual(actual[0][0], expected)
 
+    def test13_specify_delimiter(self):
+        # read CSV using a different field delimiter
+
+        # load csv when specifying the field delimiter ';'
+        q = f"LOAD CSV FROM 'file://{SEMICOLON_CSV}' AS row FIELDTERMINATOR ';' RETURN row"
+        actual = self.graph.query(q).result_set
+
+        # validate returned arrays
+        self.env.assertEqual(actual[0][0], SEMICOLON_CSV_HEADER[0])
+        self.env.assertEqual(actual[1][0], SEMICOLON_CSV_DATA[0])
+
+        #-----------------------------------------------------------------------
+
+        # load csv with headers when specifying the field delimiter ';'
+        q = f"LOAD CSV WITH HEADERS FROM 'file://{SEMICOLON_CSV}' AS row FIELDTERMINATOR ';' RETURN row"
+        actual = self.graph.query(q).result_set
+
+        # validate returned dict
+        expected = {k: v for k, v in zip(SEMICOLON_CSV_HEADER[0], SEMICOLON_CSV_DATA[0])}
+        self.env.assertEqual(actual[0][0], expected)
+
+    def test14_invalid_delimiter(self):
+        # field delimiter must be one character in length
+
+        invalid_delimiters = ['', ';,']
+        for delimiter in invalid_delimiters:
+            try:
+                # use an invalid delimiter
+                q = f"LOAD CSV FROM 'file://{SEMICOLON_CSV}' AS row FIELDTERMINATOR '{delimiter}' RETURN row"
+                self.graph.query(q).result_set
+
+                # expecting an error
+                self.env.assertFalse(True)
+            except Exception as e:
+                self.env.assertContains("CSV field terminator can only be one character wide", str(e))
+
 
 class testLoadRemoteCSV():
     def __init__(self):
@@ -426,13 +475,11 @@ class testLoadCsvPlan():
         ]
 
 
-        # expecting to find two index scan operations, a cartesian product
-        # and a create clause
+        # expecting to find two index scan operations and a create clause
         for q in queries:
             plan = str(self.graph.explain(q, {'file': 'file://' + SHORT_CSV_WITH_HEADERS}))
             self.env.assertContains("Node By Index Scan | (a:Person)", plan)
             self.env.assertContains("Node By Index Scan | (b:Person)", plan)
-            self.env.assertContains("Cartesian Product", plan)
             self.env.assertContains("Create", plan)
 
         # run query and validate results

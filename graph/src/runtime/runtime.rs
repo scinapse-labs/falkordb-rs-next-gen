@@ -553,9 +553,17 @@ impl<'a> Runtime<'a> {
             }
             IR::CartesianProduct => {
                 let child = self.child_batch_op(idx)?;
+                let right_children: Vec<BatchOp<'_>> = self
+                    .plan
+                    .node(idx)
+                    .children()
+                    .skip(1)
+                    .map(|c| self.run_batch(c.idx()))
+                    .collect::<Result<Vec<_>, String>>()?;
                 Ok(BatchOp::CartesianProduct(CartesianProductOp::new(
                     self,
                     Box::new(child),
+                    right_children,
                     idx,
                 )))
             }

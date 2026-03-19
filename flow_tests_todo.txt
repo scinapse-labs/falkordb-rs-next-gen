@@ -2,7 +2,6 @@ tests/flow/test_index_delete
 tests/flow/test_index_scans
 tests/flow/test_index_updates
 tests/flow/test_intern_string
-tests/flow/test_load_csv
 tests/flow/test_maintain_record_order
 tests/flow/test_multi_label
 tests/flow/test_null_handling

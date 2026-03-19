@@ -11,11 +11,10 @@
 use std::collections::{HashSet, VecDeque};
 
 use crate::parser::ast::Variable;
-use crate::planner::IR;
+use crate::planner::{IR, subtree_contains};
 use crate::runtime::{
     batch::{BATCH_SIZE, Batch, BatchOp},
     env::Env,
-    ops::apply::has_aggregate,
     runtime::Runtime,
     value::Value,
 };
@@ -69,7 +68,9 @@ impl<'a> OptionalOp<'a> {
             runtime.plan.node(idx).child(1).idx()
         };
 
-        let can_batch = !has_aggregate(&runtime.plan, optional_child_idx);
+        let can_batch = !subtree_contains(&runtime.plan, optional_child_idx, |ir| {
+            matches!(ir, IR::Aggregate(..) | IR::CartesianProduct)
+        });
 
         Self {
             runtime,

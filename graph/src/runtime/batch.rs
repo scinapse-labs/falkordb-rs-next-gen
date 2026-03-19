@@ -699,7 +699,16 @@ impl<'a> BatchOp<'a> {
             Self::ExpandInto(op) => op.child.set_argument_batch(batch),
             Self::NodeByIdSeek(op) => op.child.set_argument_batch(batch),
             Self::NodeByIndexScan(op) => op.child.set_argument_batch(batch),
-            Self::CartesianProduct(op) => op.child.set_argument_batch(batch),
+            Self::CartesianProduct(op) => {
+                for right_child in &mut op.right_children {
+                    let cloned: Vec<Env<'a>> = batch
+                        .active_env_iter()
+                        .map(|e| e.clone_pooled(op.runtime.env_pool))
+                        .collect();
+                    right_child.set_argument_batch(Batch::from_envs(cloned));
+                }
+                op.child.set_argument_batch(batch);
+            }
             Self::Apply(op) => op.child.set_argument_batch(batch),
             Self::SemiApply(op) => op.child.set_argument_batch(batch),
             Self::Optional(op) => op.child.set_argument_batch(batch),

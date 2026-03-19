@@ -527,15 +527,16 @@ impl<'a> Parser<'a> {
                 match_token!(self.lexer => Csv);
                 let headers = optional_match_token!(self.lexer => With)
                     && optional_match_token!(self.lexer => Headers);
-                let delimiter = if optional_match_token!(self.lexer => Delimiter) {
-                    Arc::new(self.parse_expr(false)?)
-                } else {
-                    Arc::new(tree!(ExprIR::String(Arc::new(String::from(',')))))
-                };
                 match_token!(self.lexer => From);
                 let file_path = Arc::new(self.parse_expr(false)?);
                 match_token!(self.lexer => As);
                 let ident = self.parse_ident()?;
+                // Support standard Cypher FIELDTERMINATOR after AS
+                let delimiter = if optional_match_token!(self.lexer => Fieldterminator) {
+                    Arc::new(self.parse_expr(false)?)
+                } else {
+                    Arc::new(tree!(ExprIR::String(Arc::new(String::from(',')))))
+                };
                 Ok(QueryIR::LoadCsv {
                     file_path,
                     headers,

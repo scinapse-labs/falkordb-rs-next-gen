@@ -42,7 +42,7 @@ use crate::{
     tree,
 };
 
-use super::IR;
+use super::{IR, subtree_contains};
 
 type IndexScanResult = Option<(
     Arc<QueryNode<Arc<String>, Variable>>,
@@ -340,83 +340,91 @@ fn utilize_index(
     optimized_plan: &mut DynTree<IR>,
     graph: &Graph,
 ) {
-    let indices = optimized_plan.root().indices::<Bfs>().collect::<Vec<_>>();
+    loop {
+        let mut changed = false;
+        let indices = optimized_plan.root().indices::<Bfs>().collect::<Vec<_>>();
 
-    for idx in indices {
-        let node = if let IR::NodeByLabelScan(node) = optimized_plan.node(idx).data()
-            && !node.labels.is_empty()
-            && let IR::Filter(filter) = optimized_plan.node(idx).parent().unwrap().data()
-        {
-            if matches!(filter.root().data(), ExprIR::And) {
-                // AND filter: try to merge conjuncts into a single range index query
-                let mut merged: Option<IndexQuery<QueryExpr<Variable>>> = None;
-                let mut remaining_conjuncts = Vec::new();
-                for child in filter.root().children() {
-                    let conjunct = child.clone_as_tree();
-                    if let Some((_, _, query)) =
-                        try_single_filter_index_scan(node, &conjunct, graph)
-                    {
-                        let query = Arc::try_unwrap(query).unwrap();
-                        merged = Some(match merged {
-                            None => query,
-                            Some(prev) => merge_range_queries(prev, query),
-                        });
-                    } else {
-                        remaining_conjuncts.push(conjunct);
+        for idx in indices {
+            let node = if let IR::NodeByLabelScan(node) = optimized_plan.node(idx).data()
+                && !node.labels.is_empty()
+                && let IR::Filter(filter) = optimized_plan.node(idx).parent().unwrap().data()
+            {
+                if matches!(filter.root().data(), ExprIR::And) {
+                    // AND filter: try to merge conjuncts into a single range index query
+                    let mut merged: Option<IndexQuery<QueryExpr<Variable>>> = None;
+                    let mut remaining_conjuncts = Vec::new();
+                    for child in filter.root().children() {
+                        let conjunct = child.clone_as_tree();
+                        if let Some((_, _, query)) =
+                            try_single_filter_index_scan(node, &conjunct, graph)
+                        {
+                            let query = Arc::try_unwrap(query).unwrap();
+                            merged = Some(match merged {
+                                None => query,
+                                Some(prev) => merge_range_queries(prev, query),
+                            });
+                        } else {
+                            remaining_conjuncts.push(conjunct);
+                        }
                     }
-                }
-                if let Some(combined_query) = merged {
-                    Some((
-                        node.clone(),
-                        node.labels[0].clone(),
-                        Arc::new(combined_query),
-                        remaining_conjuncts,
-                    ))
+                    if let Some(combined_query) = merged {
+                        Some((
+                            node.clone(),
+                            node.labels[0].clone(),
+                            Arc::new(combined_query),
+                            remaining_conjuncts,
+                        ))
+                    } else {
+                        None
+                    }
                 } else {
-                    None
+                    // Single comparison filter
+                    try_single_filter_index_scan(node, filter, graph)
+                        .map(|(n, l, q)| (n, l, q, Vec::new()))
                 }
             } else {
-                // Single comparison filter
-                try_single_filter_index_scan(node, filter, graph)
-                    .map(|(n, l, q)| (n, l, q, Vec::new()))
+                None
+            };
+            if let Some((node, index, query, remaining)) = node {
+                let mut op = optimized_plan.node_mut(idx);
+                *op.data_mut() = IR::NodeByIndexScan { node, index, query };
+                if remaining.is_empty() {
+                    op.parent_mut().unwrap().take_out();
+                } else {
+                    // Replace the AND filter with only the remaining conjuncts
+                    let remaining_filter = if remaining.len() == 1 {
+                        Arc::new(remaining.into_iter().next().unwrap())
+                    } else {
+                        Arc::new(tree!(ExprIR::And; remaining))
+                    };
+                    *op.parent_mut().unwrap().data_mut() = IR::Filter(remaining_filter);
+                }
+                changed = true;
+                break; // Restart traversal after structural modification
             }
-        } else {
-            None
-        };
-        if let Some((node, index, query, remaining)) = node {
-            let mut op = optimized_plan.node_mut(idx);
-            *op.data_mut() = IR::NodeByIndexScan { node, index, query };
-            if remaining.is_empty() {
-                op.parent_mut().unwrap().take_out();
+
+            let node = if let IR::NodeByLabelScan(node) = optimized_plan.node(idx).data() {
+                get_index(graph, node)
             } else {
-                // Replace the AND filter with only the remaining conjuncts
-                let remaining_filter = if remaining.len() == 1 {
-                    Arc::new(remaining.into_iter().next().unwrap())
-                } else {
-                    Arc::new(tree!(ExprIR::And; remaining))
+                None
+            };
+            if let Some((node, attr, filter)) = node
+                && !node.labels.is_empty()
+            {
+                let mut op = optimized_plan.node_mut(idx);
+                *op.data_mut() = IR::NodeByIndexScan {
+                    node: node.clone(),
+                    index: node.labels[0].clone(),
+                    query: Arc::new(IndexQuery::Equal(
+                        attr.clone(),
+                        Arc::new(filter.root().child(1).clone_as_tree()),
+                    )),
                 };
-                *op.parent_mut().unwrap().data_mut() = IR::Filter(remaining_filter);
             }
-            break;
         }
 
-        let node = if let IR::NodeByLabelScan(node) = optimized_plan.node(idx).data() {
-            get_index(graph, node)
-        } else {
-            None
-        };
-        if let Some((node, attr, filter)) = node
-            && !node.labels.is_empty()
-        {
-            let mut op = optimized_plan.node_mut(idx);
-            *op.data_mut() = IR::NodeByIndexScan {
-                node: node.clone(),
-                index: node.labels[0].clone(),
-                query: Arc::new(IndexQuery::Equal(
-                    attr.clone(),
-                    Arc::new(filter.root().child(1).clone_as_tree()),
-                )),
-            };
+        if !changed {
+            break;
         }
     }
 }
@@ -562,7 +570,7 @@ fn push_filters_down(optimized_plan: &mut DynTree<IR>) {
                 };
 
             // Collect children and the variables they provide
-            let children: Vec<_> = optimized_plan
+            let mut children: Vec<_> = optimized_plan
                 .node(idx)
                 .children()
                 .filter(|c| {
@@ -580,6 +588,52 @@ fn push_filters_down(optimized_plan: &mut DynTree<IR>) {
                 .flat_map(|c| c.children().collect::<Vec<_>>())
                 .map(|c| (c.idx(), collect_subtree_variables(&c)))
                 .collect();
+
+            // Compute inherited variables from Apply context.
+            // When Apply propagates bound variables via Argument leaves,
+            // the right branch effectively has access to the left branch's
+            // variables. We augment variable sets accordingly so filters
+            // referencing bound variables can be pushed down.
+            let mut inherited = HashSet::new();
+
+            // Case 1: Filter's child is Apply — left branch vars are
+            // available in the right branch via Argument.
+            if let Some(child) = optimized_plan.node(idx).get_child(0)
+                && matches!(child.data(), IR::Apply)
+            {
+                if let Some((_, left_vars)) = children.first() {
+                    inherited.extend(left_vars.iter());
+                }
+            }
+
+            // Case 2: Filter is inside an Apply's right branch.
+            // Stop the ancestor walk at Merge nodes — Merge's internal
+            // match sub-plan has its own Argument leaves that receive
+            // variables from Merge's input, not from an enclosing Apply.
+            {
+                let mut ancestor = idx;
+                while let Some(parent) = optimized_plan.node(ancestor).parent() {
+                    if matches!(parent.data(), IR::Apply) {
+                        let left_vars = collect_subtree_variables(&parent.child(0));
+                        inherited.extend(left_vars);
+                        break;
+                    }
+                    if matches!(parent.data(), IR::Merge(..)) {
+                        break;
+                    }
+                    ancestor = parent.idx();
+                }
+            }
+
+            // Augment variable sets for subtrees containing Argument leaves.
+            if !inherited.is_empty() {
+                for (child_idx, vars) in children.iter_mut() {
+                    if subtree_contains(optimized_plan, *child_idx, |ir| matches!(ir, IR::Argument))
+                    {
+                        vars.extend(&inherited);
+                    }
+                }
+            }
 
             // Route each conjunct to the child that provides all its variables
             let mut child_conjuncts: Vec<Vec<DynTree<ExprIR<Variable>>>> =
@@ -650,42 +704,51 @@ fn push_filters_down(optimized_plan: &mut DynTree<IR>) {
 
 /// Replaces label scan + ID filter with direct node ID lookup.
 fn utilize_node_by_id(optimized_plan: &mut DynTree<IR>) {
-    let indices = optimized_plan.root().indices::<Bfs>().collect::<Vec<_>>();
+    loop {
+        let mut changed = false;
+        let indices = optimized_plan.root().indices::<Bfs>().collect::<Vec<_>>();
 
-    for idx in indices {
-        let mut filters = vec![];
-        let node = match optimized_plan.node(idx).data() {
-            IR::NodeByLabelScan(node) | IR::AllNodeScan(node) => node.clone(),
-            _ => continue,
-        };
-        if let IR::Filter(filter) = optimized_plan.node(idx).parent().unwrap().data() {
-            if let Some((id, op)) = get_id_filter(&filter.root(), &node.alias) {
-                filters.push((id, op));
-            } else if matches!(filter.root().data(), ExprIR::And) {
-                for child in filter.root().children() {
-                    if let Some((id, op)) = get_id_filter(&child, &node.alias) {
-                        filters.push((id, op));
-                    } else {
-                        filters.clear();
-                        break;
+        for idx in indices {
+            let mut filters = vec![];
+            let node = match optimized_plan.node(idx).data() {
+                IR::NodeByLabelScan(node) | IR::AllNodeScan(node) => node.clone(),
+                _ => continue,
+            };
+            if let IR::Filter(filter) = optimized_plan.node(idx).parent().unwrap().data() {
+                if let Some((id, op)) = get_id_filter(&filter.root(), &node.alias) {
+                    filters.push((id, op));
+                } else if matches!(filter.root().data(), ExprIR::And) {
+                    for child in filter.root().children() {
+                        if let Some((id, op)) = get_id_filter(&child, &node.alias) {
+                            filters.push((id, op));
+                        } else {
+                            filters.clear();
+                            break;
+                        }
                     }
                 }
             }
-        }
-        if !filters.is_empty() {
-            let mut new_op = optimized_plan.node_mut(idx);
-            if node.labels.is_empty() {
-                *new_op.data_mut() = IR::NodeByIdSeek {
-                    node: node.clone(),
-                    filter: filters,
-                };
-            } else {
-                *new_op.data_mut() = IR::NodeByLabelAndIdScan {
-                    node: node.clone(),
-                    filter: filters,
-                };
+            if !filters.is_empty() {
+                let mut new_op = optimized_plan.node_mut(idx);
+                if node.labels.is_empty() {
+                    *new_op.data_mut() = IR::NodeByIdSeek {
+                        node: node.clone(),
+                        filter: filters,
+                    };
+                } else {
+                    *new_op.data_mut() = IR::NodeByLabelAndIdScan {
+                        node: node.clone(),
+                        filter: filters,
+                    };
+                }
+                new_op.parent_mut().unwrap().take_out();
+                changed = true;
+                break; // Restart traversal after structural modification
             }
-            new_op.parent_mut().unwrap().take_out();
+        }
+
+        if !changed {
+            break;
         }
     }
 }
