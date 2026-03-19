@@ -11,7 +11,7 @@
 use std::collections::{HashSet, VecDeque};
 
 use crate::parser::ast::Variable;
-use crate::planner::IR;
+use crate::planner::{IR, subtree_contains};
 use crate::runtime::{
     batch::{BATCH_SIZE, Batch, BatchOp},
     env::Env,
@@ -56,23 +56,6 @@ pub struct ApplyOp<'a> {
     pub(crate) idx: NodeIdx<Dyn<IR>>,
 }
 
-/// Returns true if the IR sub-plan rooted at `idx` contains any Aggregate node.
-pub(crate) fn has_aggregate(
-    plan: &orx_tree::DynTree<IR>,
-    idx: NodeIdx<Dyn<IR>>,
-) -> bool {
-    let node = plan.node(idx);
-    if matches!(node.data(), IR::Aggregate(..)) {
-        return true;
-    }
-    for i in 0..node.num_children() {
-        if has_aggregate(plan, node.child(i).idx()) {
-            return true;
-        }
-    }
-    false
-}
-
 impl<'a> ApplyOp<'a> {
     pub fn new(
         runtime: &'a Runtime<'a>,
@@ -90,7 +73,11 @@ impl<'a> ApplyOp<'a> {
             _ => (None, right_child_idx),
         };
 
-        let can_batch = !has_aggregate(&runtime.plan, child_idx);
+        let can_batch = !subtree_contains(&runtime.plan, child_idx, |ir| {
+            matches!(ir, IR::Aggregate(..))
+        }) && !subtree_contains(&runtime.plan, child_idx, |ir| {
+            matches!(ir, IR::CartesianProduct)
+        });
 
         Self {
             runtime,

@@ -9,13 +9,13 @@ use crate::runtime::{
     env::Env,
     runtime::Runtime,
 };
-use orx_tree::{Dyn, NodeIdx, NodeRef};
+use orx_tree::{Dyn, NodeIdx};
 
 pub struct CartesianProductOp<'a> {
     pub(crate) runtime: &'a Runtime<'a>,
     pub(crate) child: Box<BatchOp<'a>>,
-    /// Indices of all right children (may be >1 for multi-branch products).
-    right_child_indices: Vec<NodeIdx<Dyn<IR>>>,
+    /// Pre-built right branch operators, seeded via set_argument_batch.
+    pub(crate) right_children: Vec<BatchOp<'a>>,
     pub(crate) idx: NodeIdx<Dyn<IR>>,
     /// Lazily materialized right-side rows. `None` means not yet computed.
     materialized_right: Option<Vec<Env<'a>>>,
@@ -31,20 +31,13 @@ impl<'a> CartesianProductOp<'a> {
     pub fn new(
         runtime: &'a Runtime<'a>,
         child: Box<BatchOp<'a>>,
+        right_children: Vec<BatchOp<'a>>,
         idx: NodeIdx<Dyn<IR>>,
     ) -> Self {
-        let right_child_indices: Vec<_> = runtime
-            .plan
-            .node(idx)
-            .children()
-            .skip(1)
-            .map(|c| c.idx())
-            .collect();
-
         Self {
             runtime,
             child,
-            right_child_indices,
+            right_children,
             idx,
             materialized_right: None,
             left_envs: Vec::new(),
@@ -58,18 +51,14 @@ impl<'a> CartesianProductOp<'a> {
     /// For a single right child, runs the sub-plan once and collects all rows.
     /// For multiple right children, materializes each independently and computes
     /// their cross-product into a single flat vector.
-    fn materialize_right(&self) -> Result<Vec<Env<'a>>, String> {
+    fn materialize_right(&mut self) -> Result<Vec<Env<'a>>, String> {
         let pool = self.runtime.env_pool;
 
-        let mut branch_results: Vec<Vec<Env<'a>>> =
-            Vec::with_capacity(self.right_child_indices.len());
+        let mut branch_results: Vec<Vec<Env<'a>>> = Vec::with_capacity(self.right_children.len());
 
-        for &child_idx in &self.right_child_indices {
-            let mut subtree = self.runtime.run_batch(child_idx)?;
-            subtree.set_argument_batch(Batch::from_envs(vec![Env::new(pool)]));
-
+        for child in &mut self.right_children {
             let mut branch_envs = Vec::new();
-            for result in &mut subtree {
+            for result in child.by_ref() {
                 let batch = result?;
                 for env in batch.active_env_iter() {
                     branch_envs.push(env.clone_pooled(pool));

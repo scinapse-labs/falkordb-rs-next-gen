@@ -202,7 +202,9 @@ impl<'a> Iterator for LoadCsvOp<'a> {
                     Err(e) => return Some(Err(e)),
                 };
                 if delimiter.len() != 1 {
-                    return Some(Err(String::from("Delimiter must be a single character")));
+                    return Some(Err(String::from(
+                        "CSV field terminator can only be one character wide",
+                    )));
                 }
                 let Value::String(path) = path else {
                     return Some(Err(String::from("File path must be a string")));

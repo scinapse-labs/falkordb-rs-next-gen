@@ -195,6 +195,17 @@ pub enum IR {
     },
 }
 
+/// Returns true if the subtree rooted at `idx` contains any node matching `predicate`.
+pub fn subtree_contains(
+    plan: &DynTree<IR>,
+    idx: orx_tree::NodeIdx<orx_tree::Dyn<IR>>,
+    predicate: fn(&IR) -> bool,
+) -> bool {
+    plan.node(idx)
+        .walk_with(&mut Traversal.bfs().over_nodes())
+        .any(|n| predicate(n.data()))
+}
+
 #[cfg_attr(tarpaulin, skip)]
 impl Display for IR {
     fn fmt(
@@ -1383,7 +1394,27 @@ impl Planner {
         // current insertion point, then walk down again to find the next
         // insertion point for the clause before it.
         for n in iter {
-            if res.node(idx).num_children() > 0 {
+            if matches!(res.node(idx).data(), IR::CartesianProduct)
+                && Self::needs_apply_wrapping(&n)
+            {
+                // When stitching a data-producing clause (LOAD CSV, UNWIND,
+                // WITH, etc.) into a CartesianProduct, wrap the CartesianProduct
+                // in Apply so that bound variables from the preceding clause
+                // propagate via Argument leaves.
+                // This matches the FalkorDB C project's approach.
+                let cp_children: Vec<_> = res.node(idx).children().map(|c| c.idx()).collect();
+                for child_idx in cp_children {
+                    let mut leaf = child_idx;
+                    while res.node(leaf).num_children() > 0 {
+                        leaf = res.node(leaf).child(0).idx();
+                    }
+                    if !matches!(res.node(leaf).data(), IR::Argument) {
+                        res.node_mut(leaf).push_child(IR::Argument);
+                    }
+                }
+                res.node_mut(idx).push_parent(IR::Apply);
+                idx = res.node_mut(idx).push_sibling_tree(Side::Left, n);
+            } else if res.node(idx).num_children() > 0 {
                 idx = res
                     .node_mut(idx)
                     .child_mut(0)
@@ -1436,6 +1467,44 @@ impl Planner {
         Self::ensure_apply_has_input(&mut res);
 
         res
+    }
+
+    /// Returns true if a plan `n` being stitched into a CartesianProduct
+    /// requires Apply wrapping. Plans from data-producing clauses (LOAD CSV,
+    /// UNWIND, WITH/RETURN projections) produce variables that may be referenced
+    /// inside the CartesianProduct — these need Apply + Argument propagation.
+    /// Plans from MATCH components (scans, traversals) are just additional
+    /// cross-product branches and should be inserted as CartesianProduct children.
+    fn needs_apply_wrapping(n: &DynTree<IR>) -> bool {
+        // Walk to the root of n and check its type.
+        // Match-produced plans have scan/traversal/filter/argument at root.
+        let mut idx = n.root().idx();
+        loop {
+            match n.node(idx).data() {
+                // Scan/traversal nodes come from MATCH — add as CP child
+                IR::NodeByLabelScan(_)
+                | IR::AllNodeScan(_)
+                | IR::NodeByIndexScan { .. }
+                | IR::NodeByIdSeek { .. }
+                | IR::NodeByLabelAndIdScan { .. }
+                | IR::CondTraverse(_, _)
+                | IR::CondVarLenTraverse(_)
+                | IR::ExpandInto(_, _)
+                | IR::CartesianProduct
+                | IR::Argument
+                | IR::PathBuilder(_) => return false,
+                // Filter, SemiApply, etc. wrap scans — walk through
+                IR::Filter(_) | IR::SemiApply | IR::AntiSemiApply | IR::OrApplyMultiplexer(_) => {
+                    if n.node(idx).num_children() > 0 {
+                        idx = n.node(idx).child(0).idx();
+                    } else {
+                        return false;
+                    }
+                }
+                // Data-producing clauses need Apply wrapping
+                _ => return true,
+            }
+        }
     }
 
     /// Walk the plan tree and insert an `Argument` node as child(0) of any
