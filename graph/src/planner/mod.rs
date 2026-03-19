@@ -1403,14 +1403,26 @@ impl Planner {
                 // propagate via Argument leaves.
                 // This matches the FalkorDB C project's approach.
                 let cp_children: Vec<_> = res.node(idx).children().map(|c| c.idx()).collect();
-                for child_idx in cp_children {
-                    let mut leaf = child_idx;
-                    while res.node(leaf).num_children() > 0 {
-                        leaf = res.node(leaf).child(0).idx();
+                let mut leaves = Vec::new();
+                let mut stack: Vec<_> = cp_children;
+                while let Some(n) = stack.pop() {
+                    let node = res.node(n);
+                    if matches!(node.data(), IR::Merge(..)) {
+                        if node.num_children() > 1 {
+                            stack.push(node.child(0).idx());
+                        }
+                        continue;
                     }
-                    if !matches!(res.node(leaf).data(), IR::Argument) {
-                        res.node_mut(leaf).push_child(IR::Argument);
+                    if node.is_leaf() && !matches!(node.data(), IR::Argument) {
+                        leaves.push(n);
+                    } else {
+                        for i in 0..node.num_children() {
+                            stack.push(node.child(i).idx());
+                        }
                     }
+                }
+                for leaf in leaves {
+                    res.node_mut(leaf).push_child(IR::Argument);
                 }
                 res.node_mut(idx).push_parent(IR::Apply);
                 idx = res.node_mut(idx).push_sibling_tree(Side::Left, n);

@@ -74,9 +74,7 @@ impl<'a> ApplyOp<'a> {
         };
 
         let can_batch = !subtree_contains(&runtime.plan, child_idx, |ir| {
-            matches!(ir, IR::Aggregate(..))
-        }) && !subtree_contains(&runtime.plan, child_idx, |ir| {
-            matches!(ir, IR::CartesianProduct)
+            matches!(ir, IR::Aggregate(..) | IR::CartesianProduct)
         });
 
         Self {
