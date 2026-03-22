@@ -237,6 +237,9 @@ impl<'a> ExprEval<'a> {
                                 res.push(Value::Null);
                             }
                         }
+                        (Value::List(_), Value::Null) => {
+                            res.push(Value::Null);
+                        }
                         (Value::List(_), v) => {
                             return Err(format!(
                                 "Type mismatch: expected Integer but was {}",
@@ -924,7 +927,7 @@ pub(crate) fn get_elements(
                     .collect::<ThinVec<_>>(),
             )))
         }
-        (_, Value::Null, _) | (_, _, Value::Null) => Ok(Value::Null),
+        (Value::Null, _, _) | (_, Value::Null, _) | (_, _, Value::Null) => Ok(Value::Null),
         _ => Err(String::from("Invalid array range parameters.")),
     }
 }

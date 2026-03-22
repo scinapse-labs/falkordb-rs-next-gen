@@ -197,4 +197,107 @@ pub fn register(funcs: &mut Functions) {
         FnType::Function,
         Type::Union(vec![Type::Bool, Type::Null]),
     );
+
+    cypher_fn!(funcs, "toBooleanList",
+        args: [Type::Union(vec![Type::List(Box::new(Type::Any)), Type::Null])],
+        ret: Type::Union(vec![Type::List(Box::new(Type::Any)), Type::Null]),
+        fn to_boolean_list(_, args) {
+            match args.into_iter().next() {
+                Some(Value::List(vs)) => {
+                    let result: ThinVec<Value> = vs.iter().map(|v| match v {
+                        Value::Bool(b) => Value::Bool(*b),
+                        Value::String(s) => {
+                            if s.eq_ignore_ascii_case("true") {
+                                Value::Bool(true)
+                            } else if s.eq_ignore_ascii_case("false") {
+                                Value::Bool(false)
+                            } else {
+                                Value::Null
+                            }
+                        }
+                        Value::Int(n) => Value::Bool(*n != 0),
+                        _ => Value::Null,
+                    }).collect();
+                    Ok(Value::List(Arc::new(result)))
+                }
+                _ => Ok(Value::Null),
+            }
+        }
+    );
+
+    cypher_fn!(funcs, "toFloatList",
+        args: [Type::Union(vec![Type::List(Box::new(Type::Any)), Type::Null])],
+        ret: Type::Union(vec![Type::List(Box::new(Type::Any)), Type::Null]),
+        fn to_float_list(_, args) {
+            match args.into_iter().next() {
+                Some(Value::List(vs)) => {
+                    let result: ThinVec<Value> = vs.iter().map(|v| match v {
+                        Value::Float(f) => Value::Float(*f),
+                        Value::Int(i) => Value::Float(*i as f64),
+                        Value::String(s) => s.parse::<f64>().map_or(Value::Null, Value::Float),
+                        _ => Value::Null,
+                    }).collect();
+                    Ok(Value::List(Arc::new(result)))
+                }
+                _ => Ok(Value::Null),
+            }
+        }
+    );
+
+    cypher_fn!(funcs, "toIntegerList",
+        args: [Type::Union(vec![Type::List(Box::new(Type::Any)), Type::Null])],
+        ret: Type::Union(vec![Type::List(Box::new(Type::Any)), Type::Null]),
+        fn to_integer_list(_, args) {
+            match args.into_iter().next() {
+                Some(Value::List(vs)) => {
+                    let result: ThinVec<Value> = vs.iter().map(|v| match v {
+                        Value::Int(i) => Value::Int(*i),
+                        Value::Float(f) => {
+                            if f.is_finite() {
+                                Value::Int(f.floor() as i64)
+                            } else {
+                                Value::Null
+                            }
+                        }
+                        Value::Bool(b) => Value::Int(i64::from(*b)),
+                        Value::String(s) => {
+                            if s.is_empty() {
+                                return Value::Null;
+                            }
+                            if let Ok(i) = s.parse::<i64>() {
+                                return Value::Int(i);
+                            }
+                            match s.parse::<f64>() {
+                                Ok(f) if f.is_finite() => Value::Int(f.floor() as i64),
+                                _ => Value::Null,
+                            }
+                        }
+                        _ => Value::Null,
+                    }).collect();
+                    Ok(Value::List(Arc::new(result)))
+                }
+                _ => Ok(Value::Null),
+            }
+        }
+    );
+
+    cypher_fn!(funcs, "toStringList",
+        args: [Type::Union(vec![Type::List(Box::new(Type::Any)), Type::Null])],
+        ret: Type::Union(vec![Type::List(Box::new(Type::Any)), Type::Null]),
+        fn to_string_list(_, args) {
+            match args.into_iter().next() {
+                Some(Value::List(vs)) => {
+                    let result: ThinVec<Value> = vs.iter().map(|v| match v {
+                        Value::String(s) => Value::String(s.clone()),
+                        Value::Int(i) => Value::String(Arc::new(i.to_string())),
+                        Value::Float(f) => Value::String(Arc::new(format!("{f:.6}"))),
+                        Value::Bool(b) => Value::String(Arc::new(b.to_string())),
+                        _ => Value::Null,
+                    }).collect();
+                    Ok(Value::List(Arc::new(result)))
+                }
+                _ => Ok(Value::Null),
+            }
+        }
+    );
 }
