@@ -8,7 +8,6 @@ tests/flow/test_reduce.py
 tests/flow/test_relation_patterns.py
 tests/flow/test_star_projections.py
 tests/flow/test_results.py
-tests/flow/test_temporal.py
 tests/flow/test_parser.py
 
 ## Graph Traversal & Algorithms
