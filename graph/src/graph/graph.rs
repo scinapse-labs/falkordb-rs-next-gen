@@ -634,6 +634,22 @@ impl Graph {
         self.relationship_attrs.get_attr_id(attr)
     }
 
+    pub fn return_node_id(
+        &mut self,
+        id: NodeId,
+    ) {
+        self.reserved_node_count -= 1;
+        self.deleted_nodes.insert(id.into());
+    }
+
+    pub fn return_relationship_id(
+        &mut self,
+        id: RelationshipId,
+    ) {
+        self.reserved_relationship_count -= 1;
+        self.deleted_relationships.insert(id.into());
+    }
+
     pub fn reserve_node(&mut self) -> NodeId {
         if self.reserved_node_count < self.deleted_nodes.len() {
             let id = self.deleted_nodes.select(self.reserved_node_count).unwrap();
