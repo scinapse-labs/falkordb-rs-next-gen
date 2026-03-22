@@ -6,11 +6,7 @@ use graph::{
         graphblas::{GrB_Mode, GrB_init},
         mvcc_graph::MvccGraph,
     },
-    runtime::{
-        functions::init_functions,
-        pool::Pool,
-        runtime::{Runtime, evaluate_param},
-    },
+    runtime::{eval::evaluate_param, functions::init_functions, pool::Pool, runtime::Runtime},
 };
 
 #[macro_use]

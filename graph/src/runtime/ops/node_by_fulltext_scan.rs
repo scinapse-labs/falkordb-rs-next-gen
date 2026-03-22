@@ -10,6 +10,7 @@ use std::collections::VecDeque;
 use crate::graph::graph::NodeId;
 use crate::parser::ast::{QueryExpr, Variable};
 use crate::planner::IR;
+use crate::runtime::eval::ExprEval;
 use crate::runtime::{
     batch::{BATCH_SIZE, Batch, BatchOp},
     env::Env,
@@ -92,28 +93,30 @@ impl<'a> Iterator for NodeByFulltextScanOp<'a> {
             };
 
             for vars in batch.active_env_iter() {
-                let label_str =
-                    match self
-                        .runtime
-                        .run_expr(self.label, self.label.root().idx(), vars, None)
-                    {
-                        Ok(Value::String(s)) => s,
-                        Ok(_) => {
-                            return Some(Err("fulltext query expects a string label".into()));
-                        }
-                        Err(e) => return Some(Err(e)),
-                    };
-                let query_str =
-                    match self
-                        .runtime
-                        .run_expr(self.query, self.query.root().idx(), vars, None)
-                    {
-                        Ok(Value::String(s)) => s,
-                        Ok(_) => {
-                            return Some(Err("fulltext query expects a string query".into()));
-                        }
-                        Err(e) => return Some(Err(e)),
-                    };
+                let label_str = match ExprEval::from_runtime(self.runtime).eval(
+                    self.label,
+                    self.label.root().idx(),
+                    Some(vars),
+                    None,
+                ) {
+                    Ok(Value::String(s)) => s,
+                    Ok(_) => {
+                        return Some(Err("fulltext query expects a string label".into()));
+                    }
+                    Err(e) => return Some(Err(e)),
+                };
+                let query_str = match ExprEval::from_runtime(self.runtime).eval(
+                    self.query,
+                    self.query.root().idx(),
+                    Some(vars),
+                    None,
+                ) {
+                    Ok(Value::String(s)) => s,
+                    Ok(_) => {
+                        return Some(Err("fulltext query expects a string query".into()));
+                    }
+                    Err(e) => return Some(Err(e)),
+                };
                 let iter = match self
                     .runtime
                     .g

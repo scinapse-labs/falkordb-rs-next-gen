@@ -24,6 +24,7 @@
 pub mod batch;
 pub mod bitset;
 pub mod env;
+pub mod eval;
 pub mod functions;
 pub mod ops;
 pub mod ordermap;

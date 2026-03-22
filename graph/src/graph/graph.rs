@@ -1006,30 +1006,22 @@ impl Graph {
 
     pub fn delete_relationships(
         &mut self,
-        rels: OrderSet<(RelationshipId, NodeId, NodeId)>,
+        rels: HashMap<RelationshipId, (NodeId, NodeId)>,
     ) -> Result<(), String> {
         self.deleted_relationships
-            .extend(rels.iter().map(|(id, _, _)| id.0));
+            .extend(rels.keys().map(|id| id.0));
         self.relationship_count -= rels.len() as u64;
-        let mut r = vec![];
         for (type_id, rels) in &rels
             .into_iter()
-            .chunk_by(|(id, _, _)| self.get_relationship_type_id(*id))
+            .map(|(id, (src, dst))| (id.0, src.0, dst.0))
+            .into_group_map_by(|(id, _, _)| self.get_relationship_type_id(RelationshipId(*id)))
         {
-            r.push((
-                type_id,
-                rels.map(|(id, src, dest)| (id.0, src.0, dest.0))
-                    .collect::<Vec<_>>(),
-            ));
-        }
-
-        for (type_id, rels) in r {
-            for (id, _, _) in &rels {
+            for (id, _, _) in rels {
                 self.relationship_type_matrix.remove(*id, type_id.0 as u64);
                 self.relationship_attrs.remove(*id)?;
             }
-            let label = self.relationship_types[type_id.0].clone();
-            self.get_relationship_matrix_mut(&label).remove_all(rels);
+            let typ = self.relationship_types[type_id.0].clone();
+            self.get_relationship_matrix_mut(&typ).remove_all(rels);
         }
         Ok(())
     }

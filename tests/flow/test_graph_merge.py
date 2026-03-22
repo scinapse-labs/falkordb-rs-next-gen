@@ -701,3 +701,13 @@ class testGraphMergeFlow():
         res = self.graph.query(q).result_set[0][0]
         self.env.assertEqual(res, 2)
 
+    def test36_reset_index(self):
+        self.graph.delete()
+
+        self.graph.query("CREATE INDEX FOR (n:N) ON(n.v)")
+
+        res = self.graph.query("""UNWIND range(1, 10) AS x
+                            MERGE (cv:N {v: toString(x % 2)})
+                            ON CREATE SET
+                              cv.x = x""")
+        self.env.assertEqual(res.nodes_created, 2)

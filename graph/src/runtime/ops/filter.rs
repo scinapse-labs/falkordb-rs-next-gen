@@ -21,6 +21,7 @@
 
 use crate::parser::ast::{QueryExpr, Variable};
 use crate::planner::IR;
+use crate::runtime::eval::ExprEval;
 use crate::runtime::{
     batch::{Batch, BatchOp, Column},
     runtime::Runtime,
@@ -169,10 +170,12 @@ impl<'a> FilterOp<'a> {
         let mut passing = Vec::new();
         for row in batch.active_indices() {
             let env = batch.env_ref(row);
-            match self
-                .runtime
-                .run_expr(self.tree, self.tree.root().idx(), env, None)
-            {
+            match ExprEval::from_runtime(self.runtime).eval(
+                self.tree,
+                self.tree.root().idx(),
+                Some(env),
+                None,
+            ) {
                 Ok(Value::Bool(true)) => passing.push(row as u16),
                 Ok(Value::Bool(false) | Value::Null) => {}
                 Err(e) => return Err(e),

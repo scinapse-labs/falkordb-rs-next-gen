@@ -229,6 +229,10 @@ class testWithClause(FlowTestsBase):
         actual_result = self.graph.query(query)
         expected = [] # No results should be returned
         self.env.assertEqual(actual_result.result_set, expected)
+        # TODO - See what if we can do it
+        # # Verify that the Filter op appears directly above the Apply operation in the ExecutionPlan.
+        # plan = str(self.graph.explain(query))
+        # self.env.assertTrue(re.search('Filter\s+Apply', plan))
 
         # Verify that filters on projected aliases do not get placed before the projection op.
         query = """UNWIND [1] AS a WITH a AS b, 'projected' AS a WHERE a = 1 RETURN a"""

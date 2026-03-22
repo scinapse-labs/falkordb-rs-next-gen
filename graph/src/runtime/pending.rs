@@ -77,7 +77,7 @@ pub struct Pending {
     /// Nodes to be deleted
     deleted_nodes: RoaringTreemap,
     /// Relationships to be deleted (edge_id, src, dst)
-    deleted_relationships: OrderSet<(RelationshipId, NodeId, NodeId)>,
+    deleted_relationships: HashMap<RelationshipId, (NodeId, NodeId)>,
     /// Property updates for nodes
     set_nodes_attrs: HashMap<u64, OrderMap<Arc<String>, Value>>,
     /// Property updates for relationships
@@ -105,7 +105,7 @@ impl Pending {
             created_nodes: RoaringTreemap::new(),
             created_relationships: HashMap::new(),
             deleted_nodes: RoaringTreemap::new(),
-            deleted_relationships: OrderSet::default(),
+            deleted_relationships: HashMap::new(),
             set_nodes_attrs: HashMap::new(),
             set_relationships_attrs: HashMap::new(),
             set_node_labels: Matrix::new(0, 0),
@@ -314,6 +314,44 @@ impl Pending {
         self.deleted_nodes.insert(id.into());
     }
 
+    /// Delete a pending-created node: mark it deleted, collect its labels and attrs,
+    /// and also mark any pending-created relationships connected to it for deletion.
+    /// Returns (label_ids, attrs, connected_pending_rels).
+    pub fn delete_pending_node(
+        &mut self,
+        id: NodeId,
+    ) -> (
+        OrderSet<LabelId>,
+        OrderMap<Arc<String>, Value>,
+        Vec<(RelationshipId, NodeId, NodeId)>,
+    ) {
+        self.created_nodes.remove(id.into());
+        // Collect pending labels
+        let mut label_ids = OrderSet::default();
+        self.update_node_labels(id, &mut label_ids);
+        for label in label_ids.iter() {
+            self.set_node_labels
+                .remove(id.into(), usize::from(*label) as u64);
+        }
+
+        // Collect pending attrs
+        let attrs = self.set_nodes_attrs.remove(&id.into()).unwrap_or_default();
+
+        // Find pending-created relationships connected to this node
+        let rels: Vec<_> = self
+            .created_relationships
+            .iter()
+            .filter(|(_, r)| r.from == id || r.to == id)
+            .map(|(rid, r)| (*rid, r.from, r.to))
+            .collect();
+
+        for (rel_id, _, _) in &rels {
+            self.created_relationships.remove(rel_id);
+        }
+
+        (label_ids, attrs, rels)
+    }
+
     pub fn created_relationships(
         &mut self,
         rels: Vec<(RelationshipId, NodeId, NodeId, Arc<String>)>,
@@ -336,8 +374,9 @@ impl Pending {
                     Type::Int,
                     Type::Float,
                     Type::String,
-                    Type::Null,
                     Type::Point,
+                    Type::VecF32,
+                    Type::Null,
                     Type::List(Box::new(Type::Union(vec![
                         Type::Bool,
                         Type::Int,
@@ -368,6 +407,8 @@ impl Pending {
                 Type::Int,
                 Type::Float,
                 Type::String,
+                Type::Point,
+                Type::VecF32,
                 Type::Null,
                 Type::List(Box::new(Type::Union(vec![
                     Type::Bool,
@@ -422,7 +463,7 @@ impl Pending {
         from: NodeId,
         to: NodeId,
     ) {
-        self.deleted_relationships.insert((id, from, to));
+        self.deleted_relationships.insert(id, (from, to));
     }
 
     #[must_use]
@@ -444,6 +485,14 @@ impl Pending {
     }
 
     #[must_use]
+    pub fn is_relationship_created(
+        &self,
+        id: RelationshipId,
+    ) -> bool {
+        self.created_relationships.contains_key(&id)
+    }
+
+    #[must_use]
     pub fn is_node_deleted(
         &self,
         id: NodeId,
@@ -458,7 +507,9 @@ impl Pending {
         from: NodeId,
         to: NodeId,
     ) -> bool {
-        self.deleted_relationships.contains(&(id, from, to))
+        self.deleted_relationships
+            .get(&id)
+            .is_some_and(|(from_id, to_id)| *from_id == from && *to_id == to)
     }
 
     pub fn commit(

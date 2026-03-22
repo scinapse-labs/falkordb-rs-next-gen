@@ -42,10 +42,7 @@ use graph::{
         mvcc_graph::MvccGraph,
     },
     planner::IR,
-    runtime::{
-        pool::Pool,
-        runtime::{Runtime, evaluate_param},
-    },
+    runtime::{eval::evaluate_param, pool::Pool, runtime::Runtime},
     threadpool::spawn,
 };
 use orx_tree::Collection;

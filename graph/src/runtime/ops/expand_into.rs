@@ -20,6 +20,7 @@ use std::sync::Arc;
 
 use crate::parser::ast::{QueryRelationship, Variable};
 use crate::planner::IR;
+use crate::runtime::eval::ExprEval;
 use crate::runtime::{
     batch::{BATCH_SIZE, Batch, BatchOp},
     env::Env,
@@ -88,7 +89,12 @@ impl<'a> ExpandIntoOp<'a> {
             }
         };
 
-        let filter_attrs = runtime.run_expr(&rp.attrs, rp.attrs.root().idx(), env, None)?;
+        let filter_attrs = ExprEval::from_runtime(runtime).eval(
+            &rp.attrs,
+            rp.attrs.root().idx(),
+            Some(env),
+            None,
+        )?;
 
         // Synthetic multi-label check: the planner splits MATCH (a:A:B:C) into
         // LabelScan(:A) + ExpandInto(self-loop) to verify remaining labels.

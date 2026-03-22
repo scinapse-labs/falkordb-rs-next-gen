@@ -11,6 +11,7 @@ use std::sync::Arc;
 
 use crate::parser::ast::{QueryExpr, Variable};
 use crate::planner::IR;
+use crate::runtime::eval::ExprEval;
 use crate::runtime::{
     batch::{BATCH_SIZE, Batch, BatchOp},
     env::Env,
@@ -182,19 +183,19 @@ impl<'a> Iterator for LoadCsvOp<'a> {
             };
 
             for vars in batch.active_env_iter() {
-                let path = match self.runtime.run_expr(
+                let path = match ExprEval::from_runtime(self.runtime).eval(
                     self.file_path,
                     self.file_path.root().idx(),
-                    vars,
+                    Some(vars),
                     None,
                 ) {
                     Ok(v) => v,
                     Err(e) => return Some(Err(e)),
                 };
-                let delimiter = match self.runtime.run_expr(
+                let delimiter = match ExprEval::from_runtime(self.runtime).eval(
                     self.delimiter,
                     self.delimiter.root().idx(),
-                    vars,
+                    Some(vars),
                     None,
                 ) {
                     Ok(Value::String(s)) => s,

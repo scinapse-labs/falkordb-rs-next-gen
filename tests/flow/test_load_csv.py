@@ -475,11 +475,13 @@ class testLoadCsvPlan():
         ]
 
 
-        # expecting to find two index scan operations and a create clause
+        # expecting to find two index scan operations, a cartesian product
+        # and a create clause
         for q in queries:
             plan = str(self.graph.explain(q, {'file': 'file://' + SHORT_CSV_WITH_HEADERS}))
             self.env.assertContains("Node By Index Scan | (a:Person)", plan)
             self.env.assertContains("Node By Index Scan | (b:Person)", plan)
+            self.env.assertContains("Cartesian Product", plan)
             self.env.assertContains("Create", plan)
 
         # run query and validate results

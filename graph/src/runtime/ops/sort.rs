@@ -7,6 +7,7 @@
 
 use crate::parser::ast::{QueryExpr, Variable};
 use crate::planner::IR;
+use crate::runtime::eval::ExprEval;
 use crate::runtime::{
     batch::{BATCH_SIZE, Batch, BatchOp},
     env::Env,
@@ -62,7 +63,12 @@ impl<'a> Iterator for SortOp<'a> {
                         .iter()
                         .map(|(tree, desc)| {
                             Ok((
-                                self.runtime.run_expr(tree, tree.root().idx(), env, None)?,
+                                ExprEval::from_runtime(self.runtime).eval(
+                                    tree,
+                                    tree.root().idx(),
+                                    Some(env),
+                                    None,
+                                )?,
                                 *desc,
                             ))
                         })

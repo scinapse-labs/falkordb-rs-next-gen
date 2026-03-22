@@ -12,6 +12,7 @@ use std::sync::Arc;
 
 use crate::parser::ast::{QueryExpr, Variable};
 use crate::planner::IR;
+use crate::runtime::eval::ExprEval;
 use crate::runtime::{
     batch::{BATCH_SIZE, Batch, BatchOp},
     env::Env,
@@ -57,9 +58,12 @@ impl<'a> UnwindOp<'a> {
         out: &mut Vec<Env<'a>>,
     ) -> Result<(), String> {
         let pool = self.runtime.env_pool;
-        let value = self
-            .runtime
-            .run_expr(self.list, self.list.root().idx(), env, None)?;
+        let value = ExprEval::from_runtime(self.runtime).eval(
+            self.list,
+            self.list.root().idx(),
+            Some(env),
+            None,
+        )?;
 
         match value {
             Value::Null => {

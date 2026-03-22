@@ -5,6 +5,7 @@
 
 use crate::parser::ast::{ExprIR, QueryExpr, Variable};
 use crate::planner::IR;
+use crate::runtime::eval::ExprEval;
 use crate::runtime::{
     batch::{Batch, BatchOp},
     env::Env,
@@ -78,7 +79,12 @@ impl Runtime<'_> {
         for item in items {
             let (entity, property, labels) = match item.root().data() {
                 ExprIR::Property(property) => (
-                    self.run_expr(item, item.root().child(0).idx(), vars, None)?,
+                    ExprEval::from_runtime(self).eval(
+                        item,
+                        item.root().child(0).idx(),
+                        Some(vars),
+                        None,
+                    )?,
                     Some(property),
                     None,
                 ),
@@ -94,7 +100,12 @@ impl Runtime<'_> {
                         .collect::<OrderSet<_>>();
 
                     (
-                        self.run_expr(item, item.root().child(0).idx(), vars, None)?,
+                        ExprEval::from_runtime(self).eval(
+                            item,
+                            item.root().child(0).idx(),
+                            Some(vars),
+                            None,
+                        )?,
                         None,
                         Some(labels),
                     )

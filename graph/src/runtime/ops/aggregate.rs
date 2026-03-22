@@ -13,6 +13,7 @@
 
 use crate::parser::ast::{ExprIR, QueryExpr, Variable};
 use crate::planner::IR;
+use crate::runtime::eval::ExprEval;
 use crate::runtime::{
     batch::{BATCH_SIZE, Batch, BatchOp, Column, NullBitmap},
     env::Env,
@@ -517,7 +518,12 @@ impl<'a> AggregateOp<'a> {
                 let mut key_values = Vec::with_capacity(keys.len());
                 let mut key_env = Env::new(runtime.env_pool);
                 for (name, tree) in keys {
-                    let value = runtime.run_expr(tree, tree.root().idx(), vars, None)?;
+                    let value = ExprEval::from_runtime(runtime).eval(
+                        tree,
+                        tree.root().idx(),
+                        Some(vars),
+                        None,
+                    )?;
                     key_env.insert(name, value.clone());
                     key_values.push(value);
                 }
@@ -594,7 +600,13 @@ impl<'a> AggregateOp<'a> {
                 let arg_results: Result<ThinVec<Value>, String> = (0..num_children - 1)
                     .map(|i| {
                         let child = ir.node(idx).child(i);
-                        runtime.run_expr(ir, child.idx(), curr, Some(agg_group_key))
+
+                        ExprEval::from_runtime(runtime).eval(
+                            ir,
+                            child.idx(),
+                            Some(curr),
+                            Some(agg_group_key),
+                        )
                     })
                     .collect();
 
@@ -725,9 +737,17 @@ impl<'a> Iterator for AggregateOp<'a> {
                 }
                 combined.merge(&acc);
                 for (name, tree) in self.agg {
-                    let val = self
-                        .runtime
-                        .run_expr(tree, tree.root().idx(), &combined, None)?;
+                    let val = {
+                        let this = &self.runtime;
+                        let idx = tree.root().idx();
+                        let env: &Env<'_> = &combined;
+                        crate::runtime::eval::ExprEval::from_runtime(this).eval(
+                            tree,
+                            idx,
+                            Some(env),
+                            None,
+                        )
+                    }?;
                     acc.insert(name, val.clone());
                     combined.insert(name, val);
                 }

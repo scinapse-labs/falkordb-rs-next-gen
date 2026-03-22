@@ -22,11 +22,7 @@ use graph::{
     //         RedisModuleString,
     //     },
     // },
-    runtime::{
-        functions::init_functions,
-        pool::Pool,
-        runtime::{Runtime, evaluate_param},
-    },
+    runtime::{eval::evaluate_param, functions::init_functions, pool::Pool, runtime::Runtime},
 };
 use libfuzzer_sys::{Corpus, fuzz_target};
 

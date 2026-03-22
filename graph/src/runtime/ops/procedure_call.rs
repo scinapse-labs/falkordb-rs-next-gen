@@ -13,6 +13,7 @@ use std::sync::Arc;
 
 use crate::parser::ast::{QueryExpr, Variable};
 use crate::planner::IR;
+use crate::runtime::eval::ExprEval;
 use crate::runtime::{
     batch::{BATCH_SIZE, Batch},
     env::Env,
@@ -60,8 +61,12 @@ impl<'a> ProcedureCallOp<'a> {
             .trees
             .iter()
             .map(|ir| {
-                self.runtime
-                    .run_expr(ir, ir.root().idx(), &Env::new(self.runtime.env_pool), None)
+                ExprEval::from_runtime(self.runtime).eval(
+                    ir,
+                    ir.root().idx(),
+                    Some(&Env::new(self.runtime.env_pool)),
+                    None,
+                )
             })
             .collect::<Result<ThinVec<_>, _>>()?;
         self.func.validate_args_type(&args)?;

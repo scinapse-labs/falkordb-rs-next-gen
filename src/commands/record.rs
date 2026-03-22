@@ -24,8 +24,9 @@ use crate::{
 use graph::{
     graph::graph::Plan,
     runtime::{
+        eval::evaluate_param,
         pool::Pool,
-        runtime::{GetVariables, Runtime, evaluate_param},
+        runtime::{GetVariables, Runtime},
     },
 };
 use orx_tree::{Bfs, Collection, NodeRef};
