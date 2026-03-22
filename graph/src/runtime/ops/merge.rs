@@ -14,6 +14,7 @@ use std::sync::Arc;
 use crate::graph::graph::LabelId;
 use crate::parser::ast::{QueryGraph, SetItem, Variable};
 use crate::planner::IR;
+use crate::runtime::eval::ExprEval;
 use crate::runtime::{
     batch::{BATCH_SIZE, Batch, BatchOp},
     env::Env,
@@ -183,9 +184,12 @@ impl<'a> MergeOp<'a> {
                 for label in node.labels.iter() {
                     label.hash(&mut hasher);
                 }
-                let attrs =
-                    self.runtime
-                        .run_expr(&node.attrs, node.attrs.root().idx(), vars, None)?;
+                let attrs = ExprEval::from_runtime(self.runtime).eval(
+                    &node.attrs,
+                    node.attrs.root().idx(),
+                    Some(vars),
+                    None,
+                )?;
 
                 if let Value::Map(ref map) = attrs {
                     for (key, value) in map.iter() {
@@ -212,9 +216,12 @@ impl<'a> MergeOp<'a> {
                 value.hash(&mut hasher);
             }
 
-            let attrs = self
-                .runtime
-                .run_expr(&rel.attrs, rel.attrs.root().idx(), vars, None)?;
+            let attrs = ExprEval::from_runtime(self.runtime).eval(
+                &rel.attrs,
+                rel.attrs.root().idx(),
+                Some(vars),
+                None,
+            )?;
 
             if let Value::Map(ref map) = attrs {
                 for (key, value) in map.iter() {

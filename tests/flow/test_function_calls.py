@@ -644,12 +644,11 @@ class testFunctionCallsFlow(FlowTestsBase):
         expected_result = [[['name', 'val']]]
         self.env.assertEqual(actual_result.result_set, expected_result)
 
-        # @todo barak fix
         # Test retrieving keys of an (empty) edge
-        #query = """MATCH (:person {name: 'Roi'})-[e:works_with]->(:person {name: 'Alon'}) RETURN keys(e)"""
-        #actual_result = self.graph.query(query)
-        #expected_result = [[[]]]
-        #self.env.assertEqual(actual_result.result_set, expected_result)
+        query = """MATCH (:person {name: 'Roi'})-[e:works_with]->(:person {name: 'Alon'}) RETURN keys(e)"""
+        actual_result = self.graph.query(query)
+        expected_result = [[[]]]
+        self.env.assertEqual(actual_result.result_set, expected_result)
 
         # Test a null input
         query = """WITH NULL AS map RETURN keys(map)"""
@@ -661,13 +660,12 @@ class testFunctionCallsFlow(FlowTestsBase):
         query = """WITH 10 AS map RETURN keys(map)"""
         self.expect_type_error(query)
 
-    # @todo barak fixme
-    #def test21_distinct_memory_management(self):
-    #    # validate behavior of the DISTINCT function with allocated values
-    #    query = """MATCH (a {val: 0}) RETURN collect(DISTINCT a { .name })"""
-    #    actual_result = self.graph.query(query)
-    #    expected_result = [[[{'name': 'Roi'}]]]
-    #    self.env.assertEqual(actual_result.result_set, expected_result)
+    def test21_distinct_memory_management(self):
+        # validate behavior of the DISTINCT function with allocated values
+        query = """MATCH (a {val: 0}) RETURN collect(DISTINCT a { .name })"""
+        actual_result = self.graph.query(query)
+        expected_result = [[[{'name': 'Roi'}]]]
+        self.env.assertEqual(actual_result.result_set, expected_result)
 
     def test22_large_list_argument(self):
         # validate that large lists arguments are not allocated on stack
@@ -1254,18 +1252,16 @@ class testFunctionCallsFlow(FlowTestsBase):
         expected_result = [[{'name': 'R1', 'len': 5}]]
         self.env.assertEqual(query_result.result_set, expected_result)
 
-        # @todo Barak fixme
         # properies of entity properties subset
-        #query = """MATCH (p:Person {name: 'Alexa'}) RETURN properties(p{.name, .age})"""
-        #query_result = self.graph.query(query)
-        #expected_result = [[{'name': 'Alexa', 'age': 44}]]
-        #self.env.assertEqual(query_result.result_set, expected_result)
-        
-        # @todo Barak fixme 
-        #query = """MATCH ()-[r:R {name:'R1', len:5}]->() RETURN properties(r{.name})"""
-        #query_result = self.graph.query(query)
-        #expected_result = [[{'name': 'R1'}]]
-        #self.env.assertEqual(query_result.result_set, expected_result)
+        query = """MATCH (p:Person {name: 'Alexa'}) RETURN properties(p{.name, .age})"""
+        query_result = self.graph.query(query)
+        expected_result = [[{'name': 'Alexa', 'age': 44}]]
+        self.env.assertEqual(query_result.result_set, expected_result)
+
+        query = """MATCH ()-[r:R {name:'R1', len:5}]->() RETURN properties(r{.name})"""
+        query_result = self.graph.query(query)
+        expected_result = [[{'name': 'R1'}]]
+        self.env.assertEqual(query_result.result_set, expected_result)
 
         # string input
         query = """RETURN properties('a')"""
@@ -2252,8 +2248,7 @@ class testFunctionCallsFlow(FlowTestsBase):
             "RETURN typeOf({a: 1})" : [['Map']],
             "RETURN typeOf(point({latitude:1,longitude:2}))" : [['Point']],
             "RETURN typeOf(1), typeOf('1'), typeOf(true)" : [['Integer', 'String', 'Boolean']],
-            # @todo Barak: Enable after adding support for multiple paths
-            # "MATCH path=({val: 0})-[e:works_with]->({val: 1}) RETURN typeOf(path)" : [['Path']],
+            "MATCH path=({val: 0})-[e:works_with]->({val: 1}) RETURN typeOf(path)" : [['Path']],
             "CREATE (a)-[b:B]->(c) RETURN typeOf(a), typeOf(b), typeOf(c)" : [['Node', 'Edge', 'Node']],
             "CREATE (a:A {x:1, y:'1', z:true}) RETURN typeOf(a.x), typeOf(a.y), typeOf(a.z)" : [['Integer', 'String', 'Boolean']],
         }

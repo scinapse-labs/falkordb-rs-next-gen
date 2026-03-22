@@ -6,6 +6,7 @@
 
 use crate::parser::ast::{ExprIR, QueryExpr, Variable};
 use crate::planner::IR;
+use crate::runtime::eval::ExprEval;
 use crate::runtime::{
     batch::{Batch, BatchOp},
     runtime::Runtime,
@@ -85,7 +86,12 @@ impl Runtime<'_> {
             for row in batch.active_indices() {
                 let env = batch.env_ref(row);
                 for tree in &expr_trees {
-                    let value = self.run_expr(tree, tree.root().idx(), env, None)?;
+                    let value = ExprEval::from_runtime(self).eval(
+                        tree,
+                        tree.root().idx(),
+                        Some(env),
+                        None,
+                    )?;
                     self.delete_entity(&value)?;
                 }
             }
@@ -101,7 +107,25 @@ impl Runtime<'_> {
         match value {
             Value::Node(id) => {
                 let id = *id;
-                if !self.g.borrow().is_node_deleted(id) {
+                if self.pending.borrow().is_node_deleted(id) {
+                    // Already pending deletion, nothing to do
+                } else if self.pending.borrow().is_node_created(id) {
+                    // Node was created in this transaction but not yet committed.
+                    let (label_ids, attrs, pending_rels) =
+                        self.pending.borrow_mut().delete_pending_node(id);
+                    // Return the node ID and relationship IDs to the graph for reuse.
+                    self.g.borrow_mut().return_node_id(id);
+                    for (rel_id, _, _) in &pending_rels {
+                        self.g.borrow_mut().return_relationship_id(*rel_id);
+                    }
+                    self.deleted_nodes.borrow_mut().insert(
+                        id,
+                        DeletedNode::new(
+                            label_ids.into_iter().collect(),
+                            attrs.into_iter().collect(),
+                        ),
+                    );
+                } else if !self.g.borrow().is_node_deleted(id) {
                     for (src, dest, id) in self.g.borrow().get_node_relationships(id) {
                         self.pending
                             .borrow_mut()
@@ -117,15 +141,26 @@ impl Runtime<'_> {
             }
             Value::Relationship(rel) => {
                 let (rel_id, src, dest) = **rel;
-                if !self.g.borrow().is_relationship_deleted(rel_id) {
+                if self
+                    .pending
+                    .borrow()
+                    .is_relationship_deleted(rel_id, src, dest)
+                {
+                    // Already pending deletion, nothing to do
+                } else if !self.g.borrow().is_relationship_deleted(rel_id) {
                     self.pending
                         .borrow_mut()
                         .deleted_relationship(rel_id, src, dest);
-                    let type_id = self.g.borrow().get_relationship_type_id(rel_id);
-                    let attrs = self.get_relationship_attrs(rel_id).collect();
-                    self.deleted_relationships
-                        .borrow_mut()
-                        .insert(rel_id, DeletedRelationship::new(type_id, attrs));
+                    if !self.pending.borrow().is_relationship_created(rel_id) {
+                        // Only snapshot committed relationships for RETURN access.
+                        // Pending-created relationships still have their data available
+                        // in pending.created_relationships.
+                        let type_id = self.g.borrow().get_relationship_type_id(rel_id);
+                        let attrs = self.get_relationship_attrs(rel_id).collect();
+                        self.deleted_relationships
+                            .borrow_mut()
+                            .insert(rel_id, DeletedRelationship::new(type_id, attrs));
+                    }
                 }
             }
             Value::Path(values) => {

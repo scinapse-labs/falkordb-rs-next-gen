@@ -14,6 +14,7 @@ use std::sync::Arc;
 
 use crate::parser::ast::{ExprIR, QueryExpr, Variable};
 use crate::planner::IR;
+use crate::runtime::eval::ExprEval;
 use crate::runtime::{
     batch::{Batch, BatchOp, Column},
     env::Env,
@@ -182,7 +183,13 @@ impl<'a> ProjectOp<'a> {
         for env in batch.active_env_iter() {
             let mut return_vars = Env::with_capacity(cap, self.runtime.env_pool);
             for (name, tree) in self.trees {
-                match self.runtime.run_expr(tree, tree.root().idx(), env, None) {
+                let res = ExprEval::from_runtime(self.runtime).eval(
+                    tree,
+                    tree.root().idx(),
+                    Some(env),
+                    None,
+                );
+                match res {
                     Ok(value) => return_vars.insert(name, value),
                     Err(e) => return Err(e),
                 }

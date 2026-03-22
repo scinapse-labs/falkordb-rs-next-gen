@@ -10,6 +10,7 @@ use crate::graph::graph::NodeId;
 use crate::index::indexer::IndexQuery;
 use crate::parser::ast::{QueryExpr, QueryNode, Variable};
 use crate::planner::IR;
+use crate::runtime::eval::ExprEval;
 use crate::runtime::{
     batch::{BATCH_SIZE, Batch, BatchOp},
     env::Env,
@@ -55,7 +56,14 @@ impl<'a> NodeByIndexScanOp<'a> {
     ) -> Result<IndexQuery<Value>, String> {
         match query {
             IndexQuery::Equal(key, value) => {
-                let value = runtime.run_expr(value, value.root().idx(), vars, None)?;
+                let value = {
+                    ExprEval::from_runtime(runtime).eval(
+                        value,
+                        value.root().idx(),
+                        Some(vars),
+                        None,
+                    )
+                }?;
                 Ok(IndexQuery::Equal(key.clone(), value))
             }
             IndexQuery::Range {
@@ -67,16 +75,36 @@ impl<'a> NodeByIndexScanOp<'a> {
             } => {
                 let (min, max) = match (min, max) {
                     (Some(min), Some(max)) => {
-                        let min = runtime.run_expr(min, min.root().idx(), vars, None)?;
-                        let max = runtime.run_expr(max, max.root().idx(), vars, None)?;
+                        let min = ExprEval::from_runtime(runtime).eval(
+                            min,
+                            min.root().idx(),
+                            Some(vars),
+                            None,
+                        )?;
+                        let max = ExprEval::from_runtime(runtime).eval(
+                            max,
+                            max.root().idx(),
+                            Some(vars),
+                            None,
+                        )?;
                         (Some(min), Some(max))
                     }
                     (Some(min), None) => {
-                        let min = runtime.run_expr(min, min.root().idx(), vars, None)?;
+                        let min = ExprEval::from_runtime(runtime).eval(
+                            min,
+                            min.root().idx(),
+                            Some(vars),
+                            None,
+                        )?;
                         (Some(min), None)
                     }
                     (None, Some(max)) => {
-                        let max = runtime.run_expr(max, max.root().idx(), vars, None)?;
+                        let max = ExprEval::from_runtime(runtime).eval(
+                            max,
+                            max.root().idx(),
+                            Some(vars),
+                            None,
+                        )?;
                         (None, Some(max))
                     }
                     (None, None) => (None, None),
@@ -90,8 +118,18 @@ impl<'a> NodeByIndexScanOp<'a> {
                 })
             }
             IndexQuery::Point { key, point, radius } => {
-                let point = runtime.run_expr(point, point.root().idx(), vars, None)?;
-                let radius = runtime.run_expr(radius, radius.root().idx(), vars, None)?;
+                let point = ExprEval::from_runtime(runtime).eval(
+                    point,
+                    point.root().idx(),
+                    Some(vars),
+                    None,
+                )?;
+                let radius = ExprEval::from_runtime(runtime).eval(
+                    radius,
+                    radius.root().idx(),
+                    Some(vars),
+                    None,
+                )?;
                 Ok(IndexQuery::Point {
                     key: key.clone(),
                     point,

@@ -82,9 +82,9 @@ impl Tensor {
 
     pub fn remove_all(
         &mut self,
-        rels: Vec<(u64, u64, u64)>,
+        rels: &Vec<(u64, u64, u64)>,
     ) {
-        for (id, src, dest) in &rels {
+        for (id, src, dest) in rels {
             self.me.remove(src << 32 | dest, *id);
         }
         for (_, src, dest) in rels {
@@ -94,8 +94,8 @@ impl Tensor {
                 .next()
                 .is_none()
             {
-                self.m.remove(src, dest);
-                self.mt.remove(dest, src);
+                self.m.remove(*src, *dest);
+                self.mt.remove(*dest, *src);
             }
         }
     }

@@ -917,11 +917,12 @@ impl ValueTypeOf for Value {
             | (Self::Int(_), Type::Int)
             | (Self::Float(_), Type::Float)
             | (Self::String(_), Type::String)
+            | (Self::Point(_), Type::Point)
+            | (Self::VecF32(_), Type::VecF32)
             | (Self::Map(_), Type::Map)
             | (Self::Node(_), Type::Node)
             | (Self::Relationship(_), Type::Relationship)
             | (Self::Path(_), Type::Path)
-            | (Self::Point(_), Type::Point)
             | (Self::Datetime(_), Type::Datetime)
             | (Self::Date(_), Type::Date)
             | (Self::Time(_), Type::Time)
@@ -978,7 +979,7 @@ impl Value {
             Self::List(_) => "List",
             Self::Map(_) => "Map",
             Self::Node(_) => "Node",
-            Self::Relationship(..) => "Edge",
+            Self::Relationship(..) => "Relationship",
             Self::Path(_) => "Path",
             Self::VecF32(_) => "VecF32",
             Self::Point(_) => "Point",

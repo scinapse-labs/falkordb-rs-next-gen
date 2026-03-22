@@ -29,6 +29,7 @@ use std::sync::Arc;
 
 use crate::parser::ast::{QueryRelationship, Variable};
 use crate::planner::IR;
+use crate::runtime::eval::ExprEval;
 use crate::runtime::{
     batch::{BATCH_SIZE, Batch, BatchOp},
     env::Env,
@@ -82,10 +83,24 @@ impl<'a> CondTraverseOp<'a> {
         let runtime = self.runtime;
         let rp = self.relationship_pattern;
 
-        let filter_attrs = runtime.run_expr(&rp.attrs, rp.attrs.root().idx(), env, None)?;
-        let from_node_attrs =
-            runtime.run_expr(&rp.from.attrs, rp.from.attrs.root().idx(), env, None)?;
-        let to_node_attrs = runtime.run_expr(&rp.to.attrs, rp.to.attrs.root().idx(), env, None)?;
+        let filter_attrs = ExprEval::from_runtime(runtime).eval(
+            &rp.attrs,
+            rp.attrs.root().idx(),
+            Some(env),
+            None,
+        )?;
+        let from_node_attrs = ExprEval::from_runtime(runtime).eval(
+            &rp.from.attrs,
+            rp.from.attrs.root().idx(),
+            Some(env),
+            None,
+        )?;
+        let to_node_attrs = ExprEval::from_runtime(runtime).eval(
+            &rp.to.attrs,
+            rp.to.attrs.root().idx(),
+            Some(env),
+            None,
+        )?;
 
         let from_id = env.get(&rp.from.alias).and_then(|v| match v {
             Value::Node(id) => Some(*id),

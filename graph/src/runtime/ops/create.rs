@@ -12,6 +12,7 @@ use std::sync::Arc;
 use crate::graph::graph::LabelId;
 use crate::parser::ast::{QueryGraph, QueryNode, QueryRelationship, Variable};
 use crate::planner::IR;
+use crate::runtime::eval::ExprEval;
 use crate::runtime::{
     batch::{Batch, BatchOp},
     runtime::Runtime,
@@ -108,7 +109,12 @@ impl Runtime<'_> {
             // Evaluate attributes per row (run_expr only reads from env)
             for (i, row) in batch.active_indices().enumerate() {
                 let env = batch.env_ref(row);
-                let attrs = self.run_expr(&node.attrs, node.attrs.root().idx(), env, None)?;
+                let attrs = ExprEval::from_runtime(self).eval(
+                    &node.attrs,
+                    node.attrs.root().idx(),
+                    Some(env),
+                    None,
+                )?;
                 match attrs {
                     Value::Map(attrs) => {
                         self.pending
@@ -175,7 +181,12 @@ impl Runtime<'_> {
             // Evaluate relationship attributes per row
             for (i, row) in batch.active_indices().enumerate() {
                 let env = batch.env_ref(row);
-                let attrs = self.run_expr(&rel.attrs, rel.attrs.root().idx(), env, None)?;
+                let attrs = ExprEval::from_runtime(self).eval(
+                    &rel.attrs,
+                    rel.attrs.root().idx(),
+                    Some(env),
+                    None,
+                )?;
                 match attrs {
                     Value::Map(attrs) => {
                         self.pending.borrow_mut().set_relationship_attributes(

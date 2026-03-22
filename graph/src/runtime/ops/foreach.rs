@@ -13,6 +13,7 @@ use std::sync::Arc;
 
 use crate::parser::ast::{QueryExpr, Variable};
 use crate::planner::IR;
+use crate::runtime::eval::ExprEval;
 use crate::runtime::{
     batch::{BATCH_SIZE, Batch, BatchOp},
     env::Env,
@@ -145,14 +146,15 @@ impl<'a> Iterator for ForEachOp<'a> {
                     let env = batch.env_ref(row_idx);
 
                     // Evaluate the list expression for this row.
-                    let list_value =
-                        match self
-                            .runtime
-                            .run_expr(self.list, self.list.root().idx(), env, None)
-                        {
-                            Ok(v) => v,
-                            Err(e) => return Some(Err(e)),
-                        };
+                    let list_value = match ExprEval::from_runtime(self.runtime).eval(
+                        self.list,
+                        self.list.root().idx(),
+                        Some(env),
+                        None,
+                    ) {
+                        Ok(v) => v,
+                        Err(e) => return Some(Err(e)),
+                    };
 
                     match list_value {
                         Value::List(list) => {

@@ -202,38 +202,40 @@ class testQueryValidationFlow(FlowTestsBase):
             assert("not defined" in str(e))
             pass
 
-    ## Comments should not affect query functionality.
-    #def test21_ignore_query_comments(self):
-    #    query = """MATCH (n)  // This is a comment
-    #               /* This is a block comment */
-    #               WHERE EXISTS(n.age)
-    #               RETURN n.age /* Also a block comment*/"""
-    #    actual_result = self.graph.query(query)
-    #    expected_result = [[34]]
-    #    self.env.assertEqual(actual_result.result_set, expected_result)
+        try:
+            query = """MATCH (a {val: undeclared}) RETURN a"""
+            self.graph.query(query)
+            assert(False)
+        except redis.exceptions.ResponseError as e:
+            # Expecting an error.
+            assert("not defined" in str(e))
+            pass
 
-    #    query = """/* A block comment*/ MATCH (n)  // This is a comment
-    #            /* This is a block comment */
-    #            WHERE EXISTS(n.age)
-    #            RETURN n.age /* Also a block comment*/"""
-    #    actual_result = self.graph.query(query)
-    #    expected_result = [[34]]
-    #    self.env.assertEqual(actual_result.result_set, expected_result)
+        try:
+            query = """UNWIND [fake] AS ref RETURN ref"""
+            self.graph.query(query)
+            assert(False)
+        except redis.exceptions.ResponseError as e:
+            # Expecting an error.
+            assert("not defined" in str(e))
+            pass
 
-    #    query = """// This is a comment
-    #            MATCH (n)  // This is a comment
-    #            /* This is a block comment */
-    #            WHERE EXISTS(n.age)
-    #            RETURN n.age /* Also a block comment*/"""
-    #    actual_result = self.graph.query(query)
-    #    expected_result = [[34]]
-    #    self.env.assertEqual(actual_result.result_set, expected_result)
+    def test19_invalid_cypher_options(self):
+        query = "EXPLAIN MATCH (p:president)-[:born]->(:state {name:'Hawaii'}) RETURN p"
+        try:
+            self.graph.query(query)
+            assert(False)
+        except:
+            # Expecting an error.
+            pass
 
-    #    query = """MATCH (n)  /* This is a block comment */ WHERE EXISTS(n.age)
-    #            RETURN n.age /* Also a block comment*/"""
-    #    actual_result = self.graph.query(query)
-    #    expected_result = [[34]]
-    #    self.env.assertEqual(actual_result.result_set, expected_result)
+        query = "PROFILE MATCH (p:president)-[:born]->(:state {name:'Hawaii'}) RETURN p"
+        try:
+            self.graph.query(query)
+            assert(False)
+        except:
+            # Expecting an error.
+            pass
 
         query = "CYPHER val=1 EXPLAIN MATCH (p:president)-[:born]->(:state {name:'Hawaii'}) RETURN p"
         try:
@@ -357,7 +359,8 @@ class testQueryValidationFlow(FlowTestsBase):
             assert(False)
         except redis.exceptions.ResponseError as e:
             # Expecting an error.
-           assert("Type mismatch: expected Map, Node, Edge, Datetime, Date, Time, Duration, Null, or Point but was Path" in str(e))
+            assert("Type mismatch: expected Map, Node, Edge, Datetime, Date, Time, Duration, Null, or Point but was Path" in str(e))
+            pass
 
     # invalid predicates should raise errors.
     def test26_invalid_filter_predicate(self):

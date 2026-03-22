@@ -11,6 +11,7 @@ use once_cell::unsync::OnceCell;
 use crate::graph::graph::LabelId;
 use crate::parser::ast::{ExprIR, SetItem, Variable};
 use crate::planner::IR;
+use crate::runtime::eval::ExprEval;
 use crate::runtime::{
     batch::{Batch, BatchOp},
     env::Env,
@@ -111,7 +112,12 @@ impl Runtime<'_> {
         for item in items {
             match item {
                 SetItem::Attribute(entity, value, replace) => {
-                    let run_expr = self.run_expr(value, value.root().idx(), vars, None)?;
+                    let run_expr = ExprEval::from_runtime(self).eval(
+                        value,
+                        value.root().idx(),
+                        Some(vars),
+                        None,
+                    )?;
                     let (entity, attr) = match entity.root().data() {
                         ExprIR::Variable(name) => {
                             let entity = vars
@@ -121,7 +127,16 @@ impl Runtime<'_> {
                             (entity, None)
                         }
                         ExprIR::Property(property) => (
-                            self.run_expr(entity, entity.root().child(0).idx(), vars, None)?,
+                            {
+                                let this = &self;
+                                let idx = entity.root().child(0).idx();
+                                crate::runtime::eval::ExprEval::from_runtime(this).eval(
+                                    entity,
+                                    idx,
+                                    Some(vars),
+                                    None,
+                                )
+                            }?,
                             Some(property),
                         ),
                         _ => {
@@ -162,6 +177,11 @@ impl Runtime<'_> {
                                             }
                                         }
                                         for (key, value) in map.iter() {
+                                            if let Some(v) = self.get_node_attribute(id, key)
+                                                && v == *value
+                                            {
+                                                continue;
+                                            }
                                             self.pending.borrow_mut().set_node_attribute(
                                                 id,
                                                 key.clone(),
@@ -170,8 +190,11 @@ impl Runtime<'_> {
                                         }
                                     }
                                     Value::Node(tid) => {
+                                        if tid == id {
+                                            continue;
+                                        }
                                         let g = self.g.borrow();
-                                        let attrs = self.get_node_attrs(tid);
+                                        let attrs: Vec<_> = self.get_node_attrs(tid).collect();
                                         if *replace {
                                             for key in g.get_node_attrs(id) {
                                                 self.pending.borrow_mut().set_node_attribute(
@@ -182,6 +205,11 @@ impl Runtime<'_> {
                                             }
                                         }
                                         for (key, value) in attrs {
+                                            if let Some(v) = self.get_node_attribute(id, &key)
+                                                && v == value
+                                            {
+                                                continue;
+                                            }
                                             self.pending
                                                 .borrow_mut()
                                                 .set_node_attribute(id, key, value)?;
@@ -189,7 +217,8 @@ impl Runtime<'_> {
                                     }
                                     Value::Relationship(rel) => {
                                         let g = self.g.borrow();
-                                        let attrs = self.get_relationship_attrs(rel.0);
+                                        let attrs: Vec<_> =
+                                            self.get_relationship_attrs(rel.0).collect();
                                         if *replace {
                                             for key in g.get_node_attrs(id) {
                                                 self.pending.borrow_mut().set_node_attribute(
@@ -200,6 +229,11 @@ impl Runtime<'_> {
                                             }
                                         }
                                         for (key, value) in attrs {
+                                            if let Some(v) = self.get_node_attribute(id, &key)
+                                                && v == value
+                                            {
+                                                continue;
+                                            }
                                             self.pending
                                                 .borrow_mut()
                                                 .set_node_attribute(id, key, value)?;
@@ -249,6 +283,12 @@ impl Runtime<'_> {
                                             }
                                         }
                                         for (key, value) in map.iter() {
+                                            if let Some(v) =
+                                                self.get_relationship_attribute(target_rel.0, key)
+                                                && v == *value
+                                            {
+                                                continue;
+                                            }
                                             self.pending.borrow_mut().set_relationship_attribute(
                                                 target_rel.0,
                                                 key.clone(),
@@ -258,7 +298,7 @@ impl Runtime<'_> {
                                     }
                                     Value::Node(sid) => {
                                         let g = self.g.borrow();
-                                        let attrs = self.get_node_attrs(sid);
+                                        let attrs: Vec<_> = self.get_node_attrs(sid).collect();
                                         if *replace {
                                             for key in g.get_relationship_attrs(target_rel.0) {
                                                 self.pending
@@ -271,6 +311,12 @@ impl Runtime<'_> {
                                             }
                                         }
                                         for (key, value) in attrs {
+                                            if let Some(v) =
+                                                self.get_relationship_attribute(target_rel.0, &key)
+                                                && v == value
+                                            {
+                                                continue;
+                                            }
                                             self.pending.borrow_mut().set_relationship_attribute(
                                                 target_rel.0,
                                                 key,
@@ -279,8 +325,12 @@ impl Runtime<'_> {
                                         }
                                     }
                                     Value::Relationship(source_rel) => {
+                                        if source_rel.0 == target_rel.0 {
+                                            continue;
+                                        }
                                         let g = self.g.borrow();
-                                        let attrs = self.get_relationship_attrs(source_rel.0);
+                                        let attrs: Vec<_> =
+                                            self.get_relationship_attrs(source_rel.0).collect();
                                         if *replace {
                                             for key in g.get_relationship_attrs(target_rel.0) {
                                                 self.pending
@@ -293,6 +343,12 @@ impl Runtime<'_> {
                                             }
                                         }
                                         for (key, value) in attrs {
+                                            if let Some(v) =
+                                                self.get_relationship_attribute(target_rel.0, &key)
+                                                && v == value
+                                            {
+                                                continue;
+                                            }
                                             self.pending.borrow_mut().set_relationship_attribute(
                                                 target_rel.0,
                                                 key,
