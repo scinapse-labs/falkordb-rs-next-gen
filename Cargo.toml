@@ -34,6 +34,9 @@ orx-tree = "2.2.0"
 [build-dependencies]
 redis-module-macros = { git = "https://github.com/AviAvni/redismodule-rs", branch = "master" }
 
+[profile.dev]
+opt-level = 2
+
 [profile.release]
 codegen-units = 1
 lto = true

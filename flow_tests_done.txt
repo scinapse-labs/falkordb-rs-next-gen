@@ -1,9 +1,9 @@
 tests/flow/test_access_del_entity
 tests/flow/test_aggregation
 tests/flow/test_bound_variables
-tests/flow/test_create_clause
 tests/flow/test_cache
 tests/flow/test_comprehension_functions
+tests/flow/test_create_clause
 tests/flow/test_distinct
 tests/flow/test_empty_query
 tests/flow/test_entity_update
@@ -16,6 +16,7 @@ tests/flow/test_graph_deletion
 tests/flow/test_graph_merge
 tests/flow/test_imdb
 tests/flow/test_index_create
+tests/flow/test_list
 tests/flow/test_load_csv
 tests/flow/test_map
 tests/flow/test_mix_labels

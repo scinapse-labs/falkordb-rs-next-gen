@@ -32,10 +32,14 @@ enum ProjectionKind {
 }
 
 /// Cached analysis of whether all projections are batchable.
-/// `None` means not yet analyzed.
-/// `Some(None)` means not all batchable (use per-row).
-/// `Some(Some(..))` means all batchable.
-type CachedProjections = Option<Option<Vec<ProjectionKind>>>;
+enum ProjectionCache {
+    /// Not yet analyzed (lazy initialization pending).
+    NotAnalyzed,
+    /// Analyzed: not all projections are batchable — use per-row evaluation.
+    NotBatchable,
+    /// Analyzed: all projections are batchable — use vectorized path.
+    Batchable(Vec<ProjectionKind>),
+}
 
 pub struct ProjectOp<'a> {
     pub(crate) runtime: &'a Runtime<'a>,
@@ -44,7 +48,7 @@ pub struct ProjectOp<'a> {
     copy_from_parent: &'a [(Variable, Variable)],
     pub(crate) idx: NodeIdx<Dyn<IR>>,
     /// Lazily-initialized projection analysis cache.
-    vectorized: CachedProjections,
+    vectorized: ProjectionCache,
 }
 
 impl<'a> ProjectOp<'a> {
@@ -61,7 +65,7 @@ impl<'a> ProjectOp<'a> {
             trees,
             copy_from_parent,
             idx,
-            vectorized: None,
+            vectorized: ProjectionCache::NotAnalyzed,
         }
     }
 
@@ -216,8 +220,11 @@ impl<'a> Iterator for ProjectOp<'a> {
 
     fn next(&mut self) -> Option<Self::Item> {
         // Lazily analyze projections on the first call.
-        if self.vectorized.is_none() {
-            self.vectorized = Some(self.analyze_projections());
+        if matches!(self.vectorized, ProjectionCache::NotAnalyzed) {
+            self.vectorized = match self.analyze_projections() {
+                Some(kinds) => ProjectionCache::Batchable(kinds),
+                None => ProjectionCache::NotBatchable,
+            };
         }
 
         let batch = match self.child.next()? {
@@ -226,14 +233,14 @@ impl<'a> Iterator for ProjectOp<'a> {
         };
 
         // Try vectorized path if all projections are simple property accesses.
-        if let Some(Some(kinds)) = &self.vectorized {
+        if let ProjectionCache::Batchable(kinds) = &self.vectorized {
             match self.eval_vectorized(batch, kinds) {
                 Ok(result) => return Some(Ok(result)),
                 Err(batch) => {
                     // Vectorized path failed (e.g. variable not a node).
                     // Disable for future batches and fall through to per-row
                     // on the same batch.
-                    self.vectorized = Some(None);
+                    self.vectorized = ProjectionCache::NotBatchable;
                     return Some(self.eval_per_row(batch));
                 }
             }
