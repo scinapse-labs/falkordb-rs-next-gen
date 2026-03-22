@@ -155,7 +155,7 @@ class testTemporalDate(FlowTestsBase):
         self.env.assertEqual(week, 42)
         self.env.assertEqual(day, 21)
         self.env.assertEqual(dayOfWeek, 0)
-        self.env.assertEqual(dayOfQuarter, 23)
+        self.env.assertEqual(dayOfQuarter, 21)
         self.env.assertEqual(ordinalDay, 295)
 
     def test_date_to_from_string(self):

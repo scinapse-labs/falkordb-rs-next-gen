@@ -257,6 +257,7 @@ mod path;
 mod procedures;
 mod spatial;
 mod string;
+pub mod temporal;
 mod trig;
 
 pub use math::apply_pow;
@@ -651,6 +652,7 @@ pub fn init_functions() -> Result<(), Functions> {
     list::register(&mut funcs);
     aggregation::register(&mut funcs);
     spatial::register(&mut funcs);
+    temporal::register(&mut funcs);
     path::register(&mut funcs);
     internal::register(&mut funcs);
     procedures::register(&mut funcs);
