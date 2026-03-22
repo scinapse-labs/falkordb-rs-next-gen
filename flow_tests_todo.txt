@@ -1,4 +1,4 @@
-## Query Language & Cypher Features (11)
+## Query Language & Cypher Features
 tests/flow/test_call_subquery.py
 tests/flow/test_null_handling.py
 tests/flow/test_order_by.py
@@ -11,7 +11,7 @@ tests/flow/test_results.py
 tests/flow/test_temporal.py
 tests/flow/test_parser.py
 
-## Graph Traversal & Algorithms (13)
+## Graph Traversal & Algorithms
 tests/flow/test_all_shortest_paths.py
 tests/flow/test_bfs.py
 tests/flow/test_bidirectional_traversals.py
@@ -27,7 +27,7 @@ tests/flow/test_cdlp.py
 tests/flow/test_msf.py
 tests/flow/test_wcc.py
 
-## Indexing (7)
+## Indexing
 tests/flow/test_index_scans.py
 tests/flow/test_index_updates.py
 tests/flow/test_index_delete.py
@@ -37,21 +37,21 @@ tests/flow/test_fulltext_query.py
 tests/flow/test_vecsim.py
 tests/flow/test_constraint.py
 
-## Query Execution & Optimization (5)
+## Query Execution & Optimization
 tests/flow/test_optimizations_plan.py
 tests/flow/test_execution_plan_print.py
 tests/flow/test_profile.py
 tests/flow/test_maintain_record_order.py
 tests/flow/test_social.py
 
-## Concurrency & Multi-writer (5)
+## Concurrency & Multi-writer
 tests/flow/test_concurrent_query.py
 tests/flow/test_multi_writer.py
 tests/flow/test_multi_exec.py
 tests/flow/test_stress.py
 tests/flow/test_pending_queries_limit.py
 
-## Persistence & Replication (7)
+## Persistence & Replication
 tests/flow/test_persistency.py
 tests/flow/test_encode_decode.py
 tests/flow/test_rdb_load.py
@@ -60,7 +60,7 @@ tests/flow/test_replication.py
 tests/flow/test_replication_states.py
 tests/flow/test_graph_versioning.py
 
-## Redis Integration & Server Features (12)
+## Redis Integration & Server Features
 tests/flow/test_acl.py
 tests/flow/test_bolt.py
 tests/flow/test_bulk_insertion.py
@@ -74,7 +74,7 @@ tests/flow/test_slowlog.py
 tests/flow/test_procedures.py
 tests/flow/test_udf.py
 
-## Memory & Resource Management (6)
+## Memory & Resource Management
 tests/flow/test_memory_usage.py
 tests/flow/test_query_mem_limit.py
 tests/flow/test_timeout.py
@@ -82,7 +82,7 @@ tests/flow/test_expiry.py
 tests/flow/test_defrag.py
 tests/flow/test_undo_log.py
 
-## Metadata & Internals (5)
+## Metadata & Internals
 tests/flow/test_meta_stats.py
 tests/flow/test_multi_label.py
 tests/flow/test_effects.py

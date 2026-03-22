@@ -301,7 +301,15 @@ pub fn register(funcs: &mut Functions) {
                     let to_insert: ThinVec<Value> = if allow_dup {
                         vals.iter().cloned().collect()
                     } else {
-                        vals.iter().filter(|v| !vs.contains(v)).cloned().collect()
+                        let mut seen: ThinVec<Value> = vs.iter().cloned().collect();
+                        let mut filtered = ThinVec::new();
+                        for v in vals.iter() {
+                            if !seen.contains(v) {
+                                seen.push(v.clone());
+                                filtered.push(v.clone());
+                            }
+                        }
+                        filtered
                     };
                     let mut result = ThinVec::with_capacity(vs.len() + to_insert.len());
                     result.extend_from_slice(&vs[..pos]);
