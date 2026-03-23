@@ -915,6 +915,36 @@ impl Binder {
                 }
                 Ok(new_tree)
             }
+            ExprIR::Reduce(acc_name, iter_name) => {
+                let bound_acc: Variable = self.fresh_var(Some(acc_name.clone()), Type::Any, 0);
+                let bound_iter: Variable = self.fresh_var(Some(iter_name.clone()), Type::Any, 0);
+
+                let mut children_iter = node_ref.children();
+
+                // child[0] = init expression — bind in outer scope
+                let init_child = children_iter.next().unwrap();
+                let bound_init = self.bind_expr_node(expr, &init_child, locals)?;
+
+                // child[1] = list expression — bind in outer scope
+                let list_child = children_iter.next().unwrap();
+                let bound_list = self.bind_expr_node(expr, &list_child, locals)?;
+
+                // child[2] = body expression — bind with acc + iter in scope
+                let body_child = children_iter.next().unwrap();
+                let mut local = HashMap::new();
+                local.insert(acc_name.clone(), bound_acc.clone());
+                local.insert(iter_name.clone(), bound_iter.clone());
+                locals.push(local);
+                let bound_body = self.bind_expr_node(expr, &body_child, locals)?;
+                locals.pop();
+
+                let mut new_tree = DynTree::new(ExprIR::Reduce(bound_acc, bound_iter));
+                let mut root = new_tree.root_mut();
+                root.push_child_tree(bound_init);
+                root.push_child_tree(bound_list);
+                root.push_child_tree(bound_body);
+                Ok(new_tree)
+            }
             ExprIR::PatternComprehension(graph) => {
                 // Snapshot outer scope so pattern-local aliases can be
                 // cleaned up after binding (they must not leak outward).
@@ -1019,6 +1049,7 @@ impl Binder {
                     ExprIR::Variable(_)
                     | ExprIR::Quantifier(_, _)
                     | ExprIR::ListComprehension(_)
+                    | ExprIR::Reduce(_, _)
                     | ExprIR::PatternComprehension(_) => unreachable!("handled above"),
                     ExprIR::Pattern(pattern) => {
                         // Snapshot outer scope so pattern-local aliases can be
@@ -1245,6 +1276,7 @@ impl Binder {
             | ExprIR::GetElement
             | ExprIR::GetElements
             | ExprIR::ListComprehension(_)
+            | ExprIR::Reduce(_, _)
             | ExprIR::PatternComprehension(_) => false,
 
             // Boolean literals, comparisons, predicates, and runtime-typed nodes
@@ -1302,6 +1334,7 @@ impl Binder {
             | ExprIR::Length
             | ExprIR::GetElements
             | ExprIR::ListComprehension(_)
+            | ExprIR::Reduce(_, _)
             | ExprIR::PatternComprehension(_)
             | ExprIR::Or
             | ExprIR::And

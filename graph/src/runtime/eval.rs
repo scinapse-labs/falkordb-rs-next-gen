@@ -625,6 +625,36 @@ impl<'a> ExprEval<'a> {
 
                     res.push(Value::List(Arc::new(acc)));
                 }
+                ExprIR::Reduce(acc_var, iter_var) => {
+                    // child[0] = init, child[1] = list, child[2] = body
+                    let init = self.eval(ir, node.child(0).idx(), env, agg_group_key)?;
+                    let list = self.eval(ir, node.child(1).idx(), env, agg_group_key)?;
+                    match list {
+                        Value::List(values) => {
+                            let e = env.ok_or_else(|| String::from("Variable not found"))?;
+                            let mut env = self.clone_env(e)?;
+                            let mut accumulator = init;
+                            for value in values.iter().cloned() {
+                                env.insert(acc_var, accumulator);
+                                env.insert(iter_var, value);
+                                accumulator = self.eval(
+                                    ir,
+                                    node.child(2).idx(),
+                                    Some(&env),
+                                    agg_group_key,
+                                )?;
+                            }
+                            res.push(accumulator);
+                        }
+                        Value::Null => res.push(Value::Null),
+                        value => {
+                            return Err(format!(
+                                "Type mismatch: expected List but was {}",
+                                value.name()
+                            ));
+                        }
+                    }
+                }
                 ExprIR::PatternComprehension(_) => {
                     unreachable!("PatternComprehension should be handled by the planner")
                 }
