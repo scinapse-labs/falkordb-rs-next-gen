@@ -26,6 +26,7 @@ tests/flow/test_node_by_id
 tests/flow/test_optional_match
 tests/flow/test_order_by.py
 tests/flow/test_params
+tests/flow/test_path.py
 tests/flow/test_path_filter
 tests/flow/test_point
 tests/flow/test_query_validation
