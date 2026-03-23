@@ -150,8 +150,7 @@ impl<'a> CondVarLenTraverseOp<'a> {
                             && !visited.contains(&dest)
                         {
                             let mut new_path = path.clone();
-                            new_path
-                                .push(Value::Relationship(Box::new((edge_id, edge_src, edge_dst))));
+                            new_path.push(Value::Relationship(Box::new((edge_id, *current, dest))));
 
                             if hop >= min_hops
                                 && (dest_id.is_none() || dest_id == Some(dest))

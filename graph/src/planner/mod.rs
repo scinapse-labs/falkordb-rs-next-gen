@@ -442,6 +442,7 @@ impl Planner {
             QueryGraph<Arc<String>, Arc<String>, Variable>,
             Option<Arc<DynTree<ExprIR<Variable>>>>,
             Arc<DynTree<ExprIR<Variable>>>,
+            Vec<Arc<QueryPath<Variable>>>,
         )>,
     ) -> DynTree<ExprIR<Variable>> {
         match node.data() {
@@ -462,17 +463,34 @@ impl Planner {
                     extracted,
                 ));
 
-                extracted.push((var.clone(), graph.clone(), where_tree, result_tree));
+                extracted.push((var.clone(), graph.clone(), where_tree, result_tree, vec![]));
                 DynTree::new(ExprIR::Variable(var))
             }
             ExprIR::Pattern(graph) => {
                 let var = self.fresh_var(scope_id, Type::List(Box::new(Type::Any)));
 
+                // Build a path variable and path component variables from the
+                // graph's nodes and relationships in pattern order so the
+                // sub-plan collects actual Path values instead of a placeholder
+                // integer.
+                let path_var = self.fresh_var(scope_id, Type::Path);
+                let mut path_component_vars = Vec::new();
+                let nodes = graph.nodes();
+                let rels = graph.relationships();
+                for i in 0..nodes.len() {
+                    path_component_vars.push(nodes[i].alias.clone());
+                    if i < rels.len() {
+                        path_component_vars.push(rels[i].alias.clone());
+                    }
+                }
+                let query_path = Arc::new(QueryPath::new(path_var.clone(), path_component_vars));
+
                 extracted.push((
                     var.clone(),
                     graph.clone(),
                     None,
-                    Arc::new(DynTree::new(ExprIR::Integer(1))),
+                    Arc::new(DynTree::new(ExprIR::Variable(path_var))),
+                    vec![query_path],
                 ));
                 DynTree::new(ExprIR::Variable(var))
             }
@@ -497,10 +515,16 @@ impl Planner {
         graph: &QueryGraph<Arc<String>, Arc<String>, Variable>,
         where_filter: Option<&Arc<DynTree<ExprIR<Variable>>>>,
         result_expr: &Arc<DynTree<ExprIR<Variable>>>,
+        paths: &[Arc<QueryPath<Variable>>],
     ) -> DynTree<IR> {
         let saved = self.visited.clone();
         let mut sub_plan = self.plan_match(graph, None);
         self.visited = saved;
+
+        // Add PathBuilder to construct Path values from matched variables.
+        if !paths.is_empty() {
+            sub_plan = tree!(IR::PathBuilder(paths.to_vec()), sub_plan);
+        }
 
         // Add WHERE filter if present
         if let Some(filter) = where_filter {
@@ -1205,12 +1229,13 @@ impl Planner {
         // This uses the CURRENT (pre-clear) visited set so plan_match knows which
         // variables are already bound by the outer stream.
         let mut apply_plans = Vec::new();
-        for (var, graph, where_filter, result_expr) in &all_extracted {
+        for (var, graph, where_filter, result_expr, paths) in &all_extracted {
             let sub_plan = self.build_pattern_comprehension_plan(
                 var,
                 graph,
                 where_filter.as_ref(),
                 result_expr,
+                paths,
             );
             apply_plans.push((var.clone(), sub_plan));
         }
