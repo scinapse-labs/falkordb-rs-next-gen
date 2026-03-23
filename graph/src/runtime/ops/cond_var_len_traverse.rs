@@ -56,7 +56,7 @@ impl<'a> CondVarLenTraverseOp<'a> {
         let from_id = vars
             .get(&relationship_pattern.from.alias)
             .and_then(|v| match v {
-                Value::Node(id) => Some(id),
+                Value::Node(id) => Some(*id),
                 _ => None,
             });
         if from_id.is_none() && vars.is_bound(&relationship_pattern.from.alias) {
@@ -76,23 +76,40 @@ impl<'a> CondVarLenTraverseOp<'a> {
         let max_hops = relationship_pattern.max_hops.unwrap_or(u32::MAX);
         let bidirectional = relationship_pattern.bidirectional;
 
+        // When `to` is bound but `from` is unbound (e.g. `(:L1)<-[:R1*]-()`)
+        // we reverse the BFS: start from the bound `to` node and follow
+        // edges in the opposite direction, emitting the BFS destinations as
+        // the `from` binding.
+        let reversed = from_id.is_none() && to_id.is_some() && !bidirectional;
+
         // Get starting nodes
-        let start_nodes: Vec<NodeId> = from_id.map_or_else(
-            || {
-                self.runtime
-                    .g
-                    .borrow()
-                    .get_nodes(&relationship_pattern.from.labels, 0)
-                    .collect()
-            },
-            |id| vec![*id],
-        );
+        let start_nodes: Vec<NodeId> = if reversed {
+            vec![to_id.unwrap()]
+        } else {
+            from_id.map_or_else(
+                || {
+                    self.runtime
+                        .g
+                        .borrow()
+                        .get_nodes(&relationship_pattern.from.labels, 0)
+                        .collect()
+                },
+                |id| vec![id],
+            )
+        };
+
+        let dest_labels = if reversed {
+            &relationship_pattern.from.labels
+        } else {
+            &relationship_pattern.to.labels
+        };
+        let dest_id = if reversed { from_id } else { to_id };
 
         // Each frontier entry tracks: (current_node, path_of_edges)
         // where path_of_edges is a list of Value::Relationship for path building.
         for start_node in start_nodes {
             // Handle 0-hop case: start node itself is a valid result.
-            if min_hops == 0 && (to_id.is_none() || to_id == Some(start_node)) {
+            if min_hops == 0 && (dest_id.is_none() || dest_id == Some(start_node)) {
                 let mut env = vars.clone_pooled(self.runtime.env_pool);
                 env.insert(&relationship_pattern.from.alias, Value::Node(start_node));
                 env.insert(&relationship_pattern.to.alias, Value::Node(start_node));
@@ -108,14 +125,21 @@ impl<'a> CondVarLenTraverseOp<'a> {
             visited.insert(start_node);
 
             let g = self.runtime.g.borrow();
-            let to_labels = &relationship_pattern.to.labels;
 
             for hop in 1..=max_hops {
                 let mut next_frontier_set: HashSet<NodeId> = HashSet::new();
                 let mut next_frontier: Vec<(NodeId, ThinVec<Value>)> = Vec::new();
                 for (current, path) in &frontier {
                     for (edge_src, edge_dst, edge_id) in g.get_node_relationships(*current) {
-                        let neighbor = if edge_src == *current {
+                        let neighbor = if reversed {
+                            // Reversed BFS: follow incoming edges
+                            // (edges where current is the dst, neighbor is the src)
+                            if edge_dst == *current {
+                                Some(edge_src)
+                            } else {
+                                None
+                            }
+                        } else if edge_src == *current {
                             Some(edge_dst)
                         } else if bidirectional && edge_dst == *current {
                             Some(edge_src)
@@ -126,22 +150,29 @@ impl<'a> CondVarLenTraverseOp<'a> {
                             && !visited.contains(&dest)
                         {
                             let mut new_path = path.clone();
-                            new_path
-                                .push(Value::Relationship(Box::new((edge_id, edge_src, edge_dst))));
+                            new_path.push(Value::Relationship(Box::new((edge_id, *current, dest))));
 
                             if hop >= min_hops
-                                && (to_id.is_none() || to_id == Some(dest))
-                                && (to_labels.is_empty()
-                                    || to_labels
+                                && (dest_id.is_none() || dest_id == Some(dest))
+                                && (dest_labels.is_empty()
+                                    || dest_labels
                                         .iter()
                                         .all(|l| g.get_node_labels(dest).any(|nl| nl == *l)))
                             {
                                 let mut env = vars.clone_pooled(self.runtime.env_pool);
-                                env.insert(
-                                    &relationship_pattern.from.alias,
-                                    Value::Node(start_node),
-                                );
-                                env.insert(&relationship_pattern.to.alias, Value::Node(dest));
+                                if reversed {
+                                    env.insert(&relationship_pattern.from.alias, Value::Node(dest));
+                                    env.insert(
+                                        &relationship_pattern.to.alias,
+                                        Value::Node(start_node),
+                                    );
+                                } else {
+                                    env.insert(
+                                        &relationship_pattern.from.alias,
+                                        Value::Node(start_node),
+                                    );
+                                    env.insert(&relationship_pattern.to.alias, Value::Node(dest));
+                                }
                                 env.insert(
                                     &relationship_pattern.alias,
                                     Value::List(Arc::new(new_path.clone())),
