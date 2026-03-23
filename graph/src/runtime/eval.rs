@@ -637,12 +637,8 @@ impl<'a> ExprEval<'a> {
                             for value in values.iter().cloned() {
                                 env.insert(acc_var, accumulator);
                                 env.insert(iter_var, value);
-                                accumulator = self.eval(
-                                    ir,
-                                    node.child(2).idx(),
-                                    Some(&env),
-                                    agg_group_key,
-                                )?;
+                                accumulator =
+                                    self.eval(ir, node.child(2).idx(), Some(&env), agg_group_key)?;
                             }
                             res.push(accumulator);
                         }
