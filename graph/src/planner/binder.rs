@@ -27,7 +27,7 @@
 
 use crate::parser::ast::{
     BoundQueryIR, ExprIR, QueryExpr, QueryGraph, QueryIR, QueryNode, QueryPath, QueryRelationship,
-    RawQueryIR, SetItem, Variable,
+    RawQueryIR, SetItem, SupportAggregation, Variable,
 };
 use crate::runtime::functions::Type;
 use crate::tree;
@@ -406,10 +406,57 @@ impl Binder {
             }
         }
 
+        // Collect variable names used in non-aggregation (group-by) projected
+        // expressions.  These variables are allowed in ORDER BY even in an
+        // aggregation scope because they form the grouping keys.
+        let groupby_var_names: HashSet<Arc<String>> = projected
+            .iter()
+            .filter(|(_, e)| !e.is_aggregation())
+            .flat_map(|(_, e)| {
+                e.root()
+                    .indices::<Dfs>()
+                    .filter_map(|idx| {
+                        if let ExprIR::Variable(v) = e.node(idx).data() {
+                            v.name.clone()
+                        } else {
+                            None
+                        }
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .collect();
+
         let orderby = orderby
             .iter()
             .map(|(expr, desc)| Ok((self.bind_expr(expr)?, *desc)))
             .collect::<Result<Vec<_>, String>>()?;
+
+        // Reject aggregation functions inside ORDER BY expressions
+        // e.g. RETURN x ORDER BY MAX(x)
+        for (expr, _) in &orderby {
+            if expr.is_aggregation() {
+                return Err(String::from("failed to map aggregation expression"));
+            }
+        }
+
+        // When the projection contains aggregation(s), ORDER BY must not
+        // reference variables that were not explicitly projected.
+        // e.g. WITH count(X) AS cnt ORDER BY X  — X is not projected
+        // But ORDER BY t.v is fine when RETURN t.v, count(t.v) — t is
+        // used in the group-by key expression t.v.
+        let has_aggregation = projected.iter().any(|(_, e)| e.is_aggregation());
+        if has_aggregation {
+            let has_disallowed = self
+                .copy_from_parent
+                .keys()
+                .any(|k| !groupby_var_names.contains(k));
+            if has_disallowed {
+                return Err(String::from(
+                    "ORDER BY cannot reference variables not projected",
+                ));
+            }
+        }
+
         let skip = skip.map(|expr| self.bind_expr(&expr)).transpose()?;
         let limit = limit.map(|expr| self.bind_expr(&expr)).transpose()?;
         let filter = filter.map(|expr| self.bind_expr(&expr)).transpose()?;

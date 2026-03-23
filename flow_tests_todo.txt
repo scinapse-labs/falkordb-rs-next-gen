@@ -1,7 +1,6 @@
 ## Query Language & Cypher Features
 tests/flow/test_call_subquery.py
 tests/flow/test_null_handling.py
-tests/flow/test_order_by.py
 tests/flow/test_path.py
 tests/flow/test_path_projections.py
 tests/flow/test_reduce.py
