@@ -92,7 +92,7 @@ class testReduce():
         try:
             self.graph.query(q).result_set
         except ResponseError as e:
-            self.env.assertContains("Invalid input '|'", str(e))
+            self.env.assertContains("Unknown function 'reduce'", str(e))
         #-----------------------------------------------------------------------
 
         # missing accumulator init
@@ -100,7 +100,7 @@ class testReduce():
         try:
             self.graph.query(q).result_set
         except ResponseError as e:
-            self.env.assertContains("Invalid input '|'", str(e))
+            self.env.assertContains("Unknown function 'reduce'", str(e))
 
     def test_missing_variables_reduction(self):
         # `x` isn't defined
@@ -193,7 +193,7 @@ class testReduce():
                 self.env.assertTrue(False)
             except redis.exceptions.ResponseError as e:
                 # Expecting an error.
-                self.env.assertContains(str(e), "Unknown function 'reduce'")
+                self.env.assertContains("Unknown function 'reduce'", str(e))
                 pass
     
     def test_aggregate_in_reduce(self):
@@ -211,5 +211,5 @@ class testReduce():
                 self.env.assertTrue(False)
             except redis.exceptions.ResponseError as e:
                 # Expecting an error.
-                self.env.assertContains(str(e), "Invalid use of aggregating function 'min'")
+                self.env.assertContains("Invalid use of aggregating function 'min'", str(e))
                 pass

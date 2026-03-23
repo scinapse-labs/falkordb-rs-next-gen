@@ -186,6 +186,10 @@ pub enum ExprIR<TVar> {
     Quantifier(QuantifierType, TVar),
     /// List comprehension [x IN list | expr]
     ListComprehension(TVar),
+    /// Reduce expression: reduce(acc = init, var IN list | expr)
+    /// Children: [init_expr, list_expr, body_expr]
+    /// TVar fields: (accumulator_var, iteration_var)
+    Reduce(TVar, TVar),
     /// Pattern comprehension [(pattern) WHERE cond | expr]
     /// Stores the graph pattern for runtime traversal.
     /// Children: [where_condition, result_expression]
@@ -246,6 +250,9 @@ impl<TVar: Display + std::fmt::Debug> Display for ExprIR<TVar> {
             }
             Self::ListComprehension(var) => {
                 write!(f, "list comp({var})")
+            }
+            Self::Reduce(acc, var) => {
+                write!(f, "reduce({acc}, {var})")
             }
             Self::PatternComprehension(_) => {
                 write!(f, "pattern comp")

@@ -986,6 +986,80 @@ impl<'a> Parser<'a> {
         ))
     }
 
+    /// Parses `reduce(acc = init, var IN list | expr)` after the opening `(`.
+    fn parse_reduce_expr(
+        &mut self,
+        allow_pattern_predicate: bool,
+    ) -> Result<DynTree<ExprIR<Arc<String>>>, String> {
+        // accumulator name
+        let Ok(acc_var) = self.parse_ident() else {
+            return Err(self.lexer.format_error("Unknown function 'reduce'"));
+        };
+
+        // '=' for accumulator init
+        if !optional_match_token!(self.lexer, Equal) {
+            return Err(self.lexer.format_error("Unknown function 'reduce'"));
+        }
+
+        // init expression
+        let init_expr = self.parse_expr(allow_pattern_predicate)?;
+
+        // Check for aggregate functions in the init expression
+        if let Some(func) = Self::find_aggregate_name(&init_expr) {
+            return Err(self
+                .lexer
+                .format_error(&format!("Invalid use of aggregating function '{func}'")));
+        }
+
+        // ','
+        if !optional_match_token!(self.lexer, Comma) {
+            return Err(self.lexer.format_error("Unknown function 'reduce'"));
+        }
+
+        // iteration variable
+        let iter_var = self.parse_ident()?;
+
+        // IN
+        if !optional_match_token!(self.lexer => In) {
+            return Err(self.lexer.format_error("Unknown function 'reduce'"));
+        }
+
+        // list expression
+        let list_expr = self.parse_expr(allow_pattern_predicate)?;
+
+        // Check for aggregate functions in the list expression
+        if let Some(func) = Self::find_aggregate_name(&list_expr) {
+            return Err(self
+                .lexer
+                .format_error(&format!("Invalid use of aggregating function '{func}'")));
+        }
+
+        // '|'
+        if !optional_match_token!(self.lexer, Pipe) {
+            return Err(self.lexer.format_error("Unknown function 'reduce'"));
+        }
+
+        // body expression
+        let body_expr = self.parse_expr(allow_pattern_predicate)?;
+
+        // Check for aggregate functions in the body expression
+        if let Some(func) = Self::find_aggregate_name(&body_expr) {
+            return Err(self
+                .lexer
+                .format_error(&format!("Invalid use of aggregating function '{func}'")));
+        }
+
+        // ')'
+        match_token!(self.lexer, RParen);
+
+        Ok(tree!(
+            ExprIR::Reduce(acc_var, iter_var),
+            init_expr,
+            list_expr,
+            body_expr
+        ))
+    }
+
     #[allow(clippy::too_many_lines)]
     fn parse_primary_expr(
         &mut self,
@@ -996,6 +1070,11 @@ impl<'a> Parser<'a> {
                 let state = self.save_state();
                 let ident = self.parse_dotted_ident()?;
                 if optional_match_token!(self.lexer, LParen) {
+                    // reduce(acc = init, var IN list | expr)
+                    if ident.eq_ignore_ascii_case("reduce") {
+                        return Ok((self.parse_reduce_expr(allow_pattern_predicate)?, false));
+                    }
+
                     let func = get_functions()
                         .get(&ident, &FnType::Function)
                         .or_else(|_| {
