@@ -28,6 +28,7 @@ tests/flow/test_order_by.py
 tests/flow/test_params
 tests/flow/test_path.py
 tests/flow/test_path_filter
+tests/flow/test_path_projections.py
 tests/flow/test_point
 tests/flow/test_query_validation
 tests/flow/test_reversed_patterns
