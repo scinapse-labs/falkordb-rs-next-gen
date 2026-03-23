@@ -162,10 +162,7 @@ impl<'a> CondVarLenTraverseOp<'a> {
                             {
                                 let mut env = vars.clone_pooled(self.runtime.env_pool);
                                 if reversed {
-                                    env.insert(
-                                        &relationship_pattern.from.alias,
-                                        Value::Node(dest),
-                                    );
+                                    env.insert(&relationship_pattern.from.alias, Value::Node(dest));
                                     env.insert(
                                         &relationship_pattern.to.alias,
                                         Value::Node(start_node),
@@ -175,10 +172,7 @@ impl<'a> CondVarLenTraverseOp<'a> {
                                         &relationship_pattern.from.alias,
                                         Value::Node(start_node),
                                     );
-                                    env.insert(
-                                        &relationship_pattern.to.alias,
-                                        Value::Node(dest),
-                                    );
+                                    env.insert(&relationship_pattern.to.alias, Value::Node(dest));
                                 }
                                 env.insert(
                                     &relationship_pattern.alias,
