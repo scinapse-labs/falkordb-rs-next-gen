@@ -27,7 +27,7 @@
 
 use crate::parser::ast::{
     BoundQueryIR, ExprIR, QueryExpr, QueryGraph, QueryIR, QueryNode, QueryPath, QueryRelationship,
-    RawQueryIR, SetItem, Variable,
+    RawQueryIR, SetItem, SupportAggregation, Variable,
 };
 use crate::runtime::functions::Type;
 use crate::tree;
@@ -410,6 +410,25 @@ impl Binder {
             .iter()
             .map(|(expr, desc)| Ok((self.bind_expr(expr)?, *desc)))
             .collect::<Result<Vec<_>, String>>()?;
+
+        // Reject aggregation functions inside ORDER BY expressions
+        // e.g. RETURN x ORDER BY MAX(x)
+        for (expr, _) in &orderby {
+            if expr.is_aggregation() {
+                return Err(String::from("failed to map aggregation expression"));
+            }
+        }
+
+        // When the projection contains aggregation(s), ORDER BY must not
+        // reference variables that were not explicitly projected.
+        // e.g. WITH count(X) AS cnt ORDER BY X  — X is not projected
+        let has_aggregation = projected.iter().any(|(_, e)| e.is_aggregation());
+        if has_aggregation && !self.copy_from_parent.is_empty() {
+            return Err(String::from(
+                "ORDER BY cannot reference variables not projected",
+            ));
+        }
+
         let skip = skip.map(|expr| self.bind_expr(&expr)).transpose()?;
         let limit = limit.map(|expr| self.bind_expr(&expr)).transpose()?;
         let filter = filter.map(|expr| self.bind_expr(&expr)).transpose()?;
