@@ -916,6 +916,9 @@ impl Binder {
                 Ok(new_tree)
             }
             ExprIR::Reduce(acc_name, iter_name) => {
+                if acc_name == iter_name {
+                    return Err(format!("Variable `{acc_name}` already declared"));
+                }
                 let bound_acc: Variable = self.fresh_var(Some(acc_name.clone()), Type::Any, 0);
                 let bound_iter: Variable = self.fresh_var(Some(iter_name.clone()), Type::Any, 0);
 
@@ -1276,7 +1279,6 @@ impl Binder {
             | ExprIR::GetElement
             | ExprIR::GetElements
             | ExprIR::ListComprehension(_)
-            | ExprIR::Reduce(_, _)
             | ExprIR::PatternComprehension(_) => false,
 
             // Boolean literals, comparisons, predicates, and runtime-typed nodes
@@ -1298,6 +1300,7 @@ impl Binder {
             | ExprIR::IsNode
             | ExprIR::IsRelationship
             | ExprIR::Quantifier(_, _)
+            | ExprIR::Reduce(_, _)
             | ExprIR::Variable(_)
             | ExprIR::Parameter(_)
             | ExprIR::Property(_)
@@ -1320,7 +1323,11 @@ impl Binder {
             }
 
             // Subscript and property access could produce entities at runtime
-            ExprIR::GetElement | ExprIR::Property(_) | ExprIR::Parameter(_) | ExprIR::Null => true,
+            ExprIR::GetElement
+            | ExprIR::Property(_)
+            | ExprIR::Parameter(_)
+            | ExprIR::Null
+            | ExprIR::Reduce(_, _) => true,
 
             // Everything else cannot produce a graph entity
             ExprIR::Integer(_)
@@ -1334,7 +1341,6 @@ impl Binder {
             | ExprIR::Length
             | ExprIR::GetElements
             | ExprIR::ListComprehension(_)
-            | ExprIR::Reduce(_, _)
             | ExprIR::PatternComprehension(_)
             | ExprIR::Or
             | ExprIR::And
