@@ -471,8 +471,8 @@ impl Planner {
 
                 // Build a path variable and path component variables from the
                 // graph's nodes and relationships in pattern order so the
-                // sub-plan collects actual Path values instead of a placeholder
-                // integer.
+                // sub-plan collects actual Path values instead of a
+                // placeholder integer.
                 let path_var = self.fresh_var(scope_id, Type::Path);
                 let mut path_component_vars = Vec::new();
                 let nodes = graph.nodes();
