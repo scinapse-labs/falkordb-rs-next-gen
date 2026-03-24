@@ -1572,7 +1572,7 @@ impl Planner {
         match ir {
             // CALL procedure: special-case fulltext index procedures into
             // native CreateIndex/DropIndex IR nodes.
-            QueryIR::Call(proc, exprs, named_outputs, filter) => {
+            QueryIR::Call(proc, exprs, named_outputs, filter, _yielded) => {
                 if proc.name == "db.idx.fulltext.drop" {
                     let ExprIR::String(label) = exprs[0].root().data() else {
                         unreachable!()

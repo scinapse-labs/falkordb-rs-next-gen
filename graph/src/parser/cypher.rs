@@ -615,24 +615,30 @@ impl<'a> Parser<'a> {
             .map(Arc::new)
             .collect();
         let mut named_outputs = vec![];
-        let filter = if optional_match_token!(self.lexer => Yield) {
+        let (filter, yielded) = if optional_match_token!(self.lexer => Yield) {
             let ident = self.parse_ident()?;
             named_outputs.push(ident);
             while optional_match_token!(self.lexer, Comma) {
                 let ident = self.parse_ident()?;
                 named_outputs.push(ident);
             }
-            self.parse_where()?
+            (self.parse_where()?, true)
         } else if let FnType::Procedure(defult_outputs) = &func.fn_type {
             for output in defult_outputs {
                 named_outputs.push(Arc::new(output.clone()));
             }
-            None
+            (None, false)
         } else {
-            None
+            (None, false)
         };
 
-        Ok(vec![QueryIR::Call(func, args, named_outputs, filter)])
+        Ok(vec![QueryIR::Call(
+            func,
+            args,
+            named_outputs,
+            filter,
+            yielded,
+        )])
     }
 
     /// Check if a parsed query body ends with a RETURN clause.
@@ -746,7 +752,11 @@ impl<'a> Parser<'a> {
         let distinct = optional_match_token!(self.lexer => Distinct);
         let (all, exprs) = if optional_match_token!(self.lexer, Star) {
             // WITH * carries forward the current named_in_scope unchanged
-            (true, vec![])
+            if optional_match_token!(self.lexer, Comma) {
+                (true, self.parse_named_exprs(true)?)
+            } else {
+                (true, vec![])
+            }
         } else {
             (false, self.parse_named_exprs(true)?)
         };
@@ -817,7 +827,11 @@ impl<'a> Parser<'a> {
     ) -> Result<RawQueryIR, String> {
         let distinct = optional_match_token!(self.lexer => Distinct);
         let (all, exprs) = if optional_match_token!(self.lexer, Star) {
-            (true, vec![])
+            if optional_match_token!(self.lexer, Comma) {
+                (true, self.parse_named_exprs(false)?)
+            } else {
+                (true, vec![])
+            }
         } else {
             (false, self.parse_named_exprs(false)?)
         };
@@ -1028,7 +1042,8 @@ impl<'a> Parser<'a> {
         let expr = self.parse_expr(allow_pattern_predicate)?;
         if !optional_match_token!(self.lexer => Where) {
             return Err(self.lexer.format_error(&format!(
-                "'{quantifier_type:?}' function requires a WHERE predicate"
+                "'{}' function requires a WHERE predicate",
+                quantifier_type.to_string().to_uppercase()
             )));
         }
         let condition = self.parse_expr(allow_pattern_predicate)?;
