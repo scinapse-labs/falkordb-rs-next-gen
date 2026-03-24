@@ -834,6 +834,16 @@ impl Binder {
                 if let ExprIR::Variable(var_name) = expr.root().data() {
                     self.parent_to_child_scope
                         .insert(var_name.name.as_ref().unwrap().clone(), bound_var.clone());
+                    // Carry forward node_labels for projected node variables.
+                    if var_name.ty == Type::Node
+                        && let Some(labels) = self
+                            .node_labels
+                            .get(&(var_name.scope_id, var_name.id))
+                            .cloned()
+                    {
+                        self.node_labels
+                            .insert((bound_var.scope_id, bound_var.id), labels);
+                    }
                 }
                 projected.push((bound_var, expr));
             }
