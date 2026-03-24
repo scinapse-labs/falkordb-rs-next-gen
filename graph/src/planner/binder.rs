@@ -430,7 +430,7 @@ impl Binder {
                             Type::Any,
                             self.env_stack.len() as u32 - 1,
                         );
-                        let hidden_name = Arc::new(format!("_{name}"));
+                        let hidden_name = Arc::new(format!("_hidden_{}_{name}", var.id));
                         self.current_env_mut().insert(hidden_name, var.clone());
                         bound_vars.push(var);
                     }
@@ -820,7 +820,16 @@ impl Binder {
             projected.sort_by(|(name_a, _), (name_b, _)| name_a.name.cmp(&name_b.name));
 
             // Now add the explicit projections after the star-expanded ones
+            let mut seen_aliases: HashSet<Arc<String>> = projected
+                .iter()
+                .filter_map(|(v, _)| v.name.clone())
+                .collect();
             for (name, expr) in bound_exprs {
+                if !seen_aliases.insert(name.clone()) {
+                    return Err(String::from(
+                        "Error: Multiple result columns with the same name are not supported.",
+                    ));
+                }
                 let bound_var = self.project_name(&name, Type::Any);
                 if let ExprIR::Variable(var_name) = expr.root().data() {
                     self.parent_to_child_scope
