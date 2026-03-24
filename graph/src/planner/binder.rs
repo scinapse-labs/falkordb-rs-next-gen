@@ -30,6 +30,7 @@ use crate::parser::ast::{
     RawQueryIR, SetItem, SupportAggregation, Variable,
 };
 use crate::runtime::functions::Type;
+use crate::runtime::orderset::OrderSet;
 use crate::tree;
 use orx_tree::{Dfs, DynNode, DynTree, NodeRef};
 use std::collections::{HashMap, HashSet};
@@ -40,8 +41,6 @@ use std::sync::Arc;
 /// It resolves variable references, manages scope, and converts the raw AST
 /// (with string names) into a bound AST (with numeric variable IDs and types).
 pub struct Binder {
-    /// Counter for generating unique variable IDs
-    next_var_id: u32,
     /// Stack of variable environments (name → Variable mapping)
     env_stack: Vec<HashMap<Arc<String>, Variable>>,
     /// Whether to look up variables in parent scope
@@ -50,16 +49,21 @@ pub struct Binder {
     parent_to_child_scope: HashMap<Arc<String>, Variable>,
     /// Track which variables need to be copied from parent
     copy_from_parent: HashMap<Arc<String>, (Variable, Variable)>,
+    /// Accumulated labels for each node variable across all MATCH clauses.
+    /// When `MATCH (n:N) ... MATCH (n:O)` is encountered, this maps
+    /// n's (scope_id, variable ID) → {N, O} so the planner can create a single
+    /// NodeByLabelScan with the full label set.
+    node_labels: HashMap<(u32, u32), OrderSet<Arc<String>>>,
 }
 
 impl Default for Binder {
     fn default() -> Self {
         Self {
-            next_var_id: 0,
             env_stack: vec![HashMap::new()],
             use_parent_scope: false,
             parent_to_child_scope: HashMap::new(),
             copy_from_parent: HashMap::new(),
+            node_labels: HashMap::new(),
         }
     }
 }
@@ -75,12 +79,13 @@ impl Binder {
     /// Binds a raw query IR, resolving all variable references.
     ///
     /// This is the main entry point for semantic analysis.
-    /// Returns the bound IR along with a map from scope ID to its variables.
+    /// Returns the bound IR, scope variables, and accumulated node labels.
     pub fn bind(
         mut self,
         ir: RawQueryIR,
     ) -> Result<(BoundQueryIR, Vec<Vec<Variable>>), String> {
-        let bound = self.bind_ir(ir)?;
+        let mut bound = self.bind_ir(ir)?;
+        self.update_all_node_labels(&mut bound);
         let scope_vars = self
             .env_stack
             .iter()
@@ -91,6 +96,103 @@ impl Binder {
             })
             .collect();
         Ok((bound, scope_vars))
+    }
+
+    /// Post-process the bound IR: update every QueryNode's labels to the
+    /// full accumulated set from `self.node_labels`.  This ensures that
+    /// the first MATCH occurrence of a node has labels from all later
+    /// MATCH clauses, so the planner can create efficient scans directly.
+    fn update_all_node_labels(
+        &self,
+        ir: &mut BoundQueryIR,
+    ) {
+        match ir {
+            QueryIR::Match { pattern, .. } => {
+                Self::update_graph_labels(pattern, &self.node_labels);
+            }
+            QueryIR::Create(graph) | QueryIR::Merge(graph, _, _) => {
+                Self::update_graph_labels(graph, &self.node_labels);
+            }
+            QueryIR::Query(clauses, _) => {
+                for clause in clauses {
+                    self.update_all_node_labels(clause);
+                }
+            }
+            QueryIR::Union(branches, _) => {
+                for branch in branches {
+                    self.update_all_node_labels(branch);
+                }
+            }
+            QueryIR::ForEach(_, _, body) => {
+                for clause in body {
+                    self.update_all_node_labels(clause);
+                }
+            }
+            QueryIR::CallSubquery(_, _, _) => {
+                // Labels already applied in bind_call_subquery — skip to
+                // avoid overwriting inner labels with colliding outer scope IDs.
+            }
+            _ => {}
+        }
+    }
+
+    /// Replace QueryNode labels in the graph with the full accumulated set.
+    fn update_graph_labels(
+        graph: &mut QueryGraph<Arc<String>, Arc<String>, Variable>,
+        node_labels: &HashMap<(u32, u32), OrderSet<Arc<String>>>,
+    ) {
+        for node in graph.nodes_mut() {
+            let key = (node.alias.scope_id, node.alias.id);
+            if let Some(labels) = node_labels.get(&key)
+                && node.labels != *labels
+            {
+                *node = Arc::new(QueryNode::new(
+                    node.alias.clone(),
+                    labels.clone(),
+                    node.attrs.clone(),
+                ));
+            }
+        }
+        for rel in graph.relationships_mut() {
+            let from_key = (rel.from.alias.scope_id, rel.from.alias.id);
+            let to_key = (rel.to.alias.scope_id, rel.to.alias.id);
+            let from_changed = node_labels
+                .get(&from_key)
+                .is_some_and(|l| rel.from.labels != *l);
+            let to_changed = node_labels
+                .get(&to_key)
+                .is_some_and(|l| rel.to.labels != *l);
+            if from_changed || to_changed {
+                let from = if let Some(labels) = node_labels.get(&from_key) {
+                    Arc::new(QueryNode::new(
+                        rel.from.alias.clone(),
+                        labels.clone(),
+                        rel.from.attrs.clone(),
+                    ))
+                } else {
+                    rel.from.clone()
+                };
+                let to = if let Some(labels) = node_labels.get(&to_key) {
+                    Arc::new(QueryNode::new(
+                        rel.to.alias.clone(),
+                        labels.clone(),
+                        rel.to.attrs.clone(),
+                    ))
+                } else {
+                    rel.to.clone()
+                };
+                *rel = Arc::new(QueryRelationship::new(
+                    rel.alias.clone(),
+                    rel.types.clone(),
+                    rel.attrs.clone(),
+                    from,
+                    to,
+                    rel.bidirectional,
+                    rel.min_hops,
+                    rel.max_hops,
+                ));
+            }
+        }
     }
 
     fn current_env(&self) -> &HashMap<Arc<String>, Variable> {
@@ -108,7 +210,6 @@ impl Binder {
     fn push_scope(&mut self) {
         self.env_stack.push(HashMap::new());
         self.use_parent_scope = true;
-        self.next_var_id = 0;
     }
 
     fn commit_scope(&mut self) {
@@ -340,11 +441,309 @@ impl Binder {
                 for clause in body {
                     bound_body.push(self.bind_ir(clause)?);
                 }
-                // Restore the outer scope — keep next_var_id advanced to
-                // avoid ID collisions with variables allocated inside the body.
+                // Restore the outer scope.
                 *self.current_env_mut() = saved_env;
                 Ok(QueryIR::ForEach(bound_list, var, bound_body))
             }
+            QueryIR::CallSubquery(body, is_returning, _) => {
+                self.bind_call_subquery(*body, is_returning)
+            }
+        }
+    }
+
+    fn bind_call_subquery(
+        &mut self,
+        body: RawQueryIR,
+        is_returning: bool,
+    ) -> Result<BoundQueryIR, String> {
+        // 1. Save outer scope
+        let saved_env = self.current_env().clone();
+        let saved_env_stack_len = self.env_stack.len();
+
+        // 2. Bind the inner body with scope isolation (also validates import WITH)
+        let mut bound_body = self.bind_call_body(body, &saved_env)?;
+
+        // 2b. Apply node labels to the inner body NOW, before the inner
+        // scopes are popped.  This prevents scope_id reuse in the outer
+        // query from overwriting the inner body's label entries.
+        self.update_all_node_labels(&mut bound_body);
+
+        // 2c. Remove inner-scope entries from node_labels so that a
+        // subsequent CALL body (which reuses the same scope_id range)
+        // doesn't inherit stale labels from this body.
+        let inner_scope_ids: Vec<u32> =
+            (saved_env_stack_len as u32..self.env_stack.len() as u32).collect();
+        self.node_labels
+            .retain(|&(scope_id, _), _| !inner_scope_ids.contains(&scope_id));
+
+        // 3. Capture subquery output, restore outer scope
+        let subquery_env = self.current_env().clone();
+        while self.env_stack.len() > saved_env_stack_len {
+            self.env_stack.pop();
+        }
+        *self.current_env_mut() = saved_env;
+
+        // 4. If returning, check for variable shadowing, allocate outer IDs,
+        //    and build inner→outer remapping for the Planner.
+        let mut remap = Vec::new();
+        if is_returning {
+            for name in subquery_env.keys() {
+                // Filter out internal slot reservations
+                if name.starts_with("_slot_")
+                    || name.starts_with("__agg_placeholder_")
+                    || name.starts_with("_quant_")
+                    || name.starts_with("_lc_")
+                    || name.starts_with("_reduce_")
+                {
+                    continue;
+                }
+                if self.current_env().contains_key(name) {
+                    return Err(format!("Variable `{name}` already declared in outer scope"));
+                }
+            }
+            for (name, inner_var) in &subquery_env {
+                // Skip internal slot reservations
+                if name.starts_with("_slot_")
+                    || name.starts_with("__agg_placeholder_")
+                    || name.starts_with("_quant_")
+                    || name.starts_with("_lc_")
+                    || name.starts_with("_reduce_")
+                {
+                    continue;
+                }
+                // Allocate a fresh outer-scope ID for this returned variable
+                let outer_var = self.project_name(name, inner_var.ty.clone());
+                remap.push((inner_var.clone(), outer_var));
+            }
+        }
+
+        Ok(QueryIR::CallSubquery(
+            Box::new(bound_body),
+            is_returning,
+            remap,
+        ))
+    }
+
+    /// Bind the inner body of a CALL subquery with scope isolation.
+    /// For Query bodies: set env to imported vars, bind normally.
+    /// For Union bodies: create binders initialized with imported vars for each branch.
+    fn bind_call_body(
+        &mut self,
+        body: RawQueryIR,
+        outer_env: &HashMap<Arc<String>, Variable>,
+    ) -> Result<BoundQueryIR, String> {
+        match body {
+            QueryIR::Query(clauses, write) => {
+                let has_import = matches!(clauses.first(), Some(QueryIR::With { .. }));
+
+                // Validate and extract imports
+                let imported = if has_import {
+                    self.validate_import_with(clauses.first().unwrap(), outer_env)?
+                } else {
+                    HashMap::new()
+                };
+
+                let skip_count = if has_import { 1 } else { 0 };
+                let mut bound = Vec::with_capacity(clauses.len());
+
+                // Create a new scope for the CALL body (NOT via push_scope —
+                // the CALL body is isolated, not a child scope)
+                self.env_stack.push(HashMap::new());
+
+                if !imported.is_empty() {
+                    // Allocate fresh inner IDs for imported variables and build
+                    // projection pairs that map outer → inner.
+                    let projections = self.build_import_projections(&imported);
+
+                    // Emit a bound import WITH as the first clause
+                    bound.push(QueryIR::With {
+                        distinct: false,
+                        all: false,
+                        exprs: projections,
+                        copy_from_parent: vec![],
+                        orderby: vec![],
+                        skip: None,
+                        limit: None,
+                        filter: None,
+                        write: false,
+                    });
+                }
+
+                // Bind remaining clauses (skip raw import WITH)
+                for clause in clauses.into_iter().skip(skip_count) {
+                    bound.push(self.bind_ir(clause)?);
+                }
+                Ok(QueryIR::Query(bound, write))
+            }
+            QueryIR::Union(branches, all) => {
+                // For UNION in CALL subquery, each branch is an independent query
+                // that may have its own import WITH. Create binders with imported env.
+                let mut bound_branches = Vec::with_capacity(branches.len());
+                let mut first_columns: Option<Vec<String>> = None;
+                let mut last_binder_env: Option<HashMap<Arc<String>, Variable>> = None;
+                for branch in branches {
+                    let (has_import, imported) = match &branch {
+                        QueryIR::Query(clauses, _) => {
+                            if let Some(first) = clauses.first() {
+                                if matches!(first, QueryIR::With { .. }) {
+                                    (true, self.validate_import_with(first, outer_env)?)
+                                } else {
+                                    (false, HashMap::new())
+                                }
+                            } else {
+                                (false, HashMap::new())
+                            }
+                        }
+                        _ => (false, HashMap::new()),
+                    };
+                    let mut binder = Self {
+                        env_stack: vec![HashMap::new()],
+                        use_parent_scope: false,
+                        parent_to_child_scope: HashMap::new(),
+                        copy_from_parent: HashMap::new(),
+                        node_labels: HashMap::new(),
+                    };
+
+                    // Build bound clauses: explicit import WITH + remaining
+                    let mut bound = if let QueryIR::Query(clauses, write) = branch {
+                        let skip_count = if has_import { 1 } else { 0 };
+                        let mut bound_clauses = Vec::with_capacity(clauses.len());
+
+                        if !imported.is_empty() {
+                            let projections = binder.build_import_projections(&imported);
+                            bound_clauses.push(QueryIR::With {
+                                distinct: false,
+                                all: false,
+                                exprs: projections,
+                                copy_from_parent: vec![],
+                                orderby: vec![],
+                                skip: None,
+                                limit: None,
+                                filter: None,
+                                write: false,
+                            });
+                        }
+
+                        for clause in clauses.into_iter().skip(skip_count) {
+                            bound_clauses.push(binder.bind_ir(clause)?);
+                        }
+                        QueryIR::Query(bound_clauses, write)
+                    } else {
+                        binder.bind_ir(branch)?
+                    };
+
+                    // Post-process this branch's IR with its own accumulated labels
+                    binder.update_all_node_labels(&mut bound);
+                    let columns = bound.return_column_names();
+                    if let Some(ref expected) = first_columns {
+                        if columns != *expected {
+                            return Err(String::from(
+                                "All sub queries in a UNION must have the same column names.",
+                            ));
+                        }
+                    } else {
+                        first_columns = Some(columns);
+                    }
+                    // Capture the binder's final env (RETURN-projected vars)
+                    last_binder_env = Some(binder.current_env().clone());
+                    bound_branches.push(bound);
+                }
+                // Set current env to the returned columns from the last branch
+                if let Some(env) = last_binder_env {
+                    *self.current_env_mut() = env;
+                } else {
+                    *self.current_env_mut() = HashMap::new();
+                }
+                Ok(QueryIR::Union(bound_branches, all))
+            }
+            other => {
+                *self.current_env_mut() = HashMap::new();
+                self.bind_ir(other)
+            }
+        }
+    }
+
+    /// Build projection pairs that map outer variables to fresh inner variables.
+    /// For each imported variable, allocates a fresh inner ID via `project_name`
+    /// and creates `(inner_var, ExprIR::Variable(outer_var))` pairs.
+    /// Also carries forward `node_labels` for Node-typed imports.
+    fn build_import_projections(
+        &mut self,
+        imported: &HashMap<Arc<String>, Variable>,
+    ) -> Vec<(Variable, QueryExpr<Variable>)> {
+        let mut projections = Vec::with_capacity(imported.len());
+        for (name, outer_var) in imported {
+            let inner_var = self.project_name(name, outer_var.ty.clone());
+            // Carry forward node_labels for Node-typed imports
+            if outer_var.ty == Type::Node {
+                if let Some(labels) = self
+                    .node_labels
+                    .get(&(outer_var.scope_id, outer_var.id))
+                    .cloned()
+                {
+                    self.node_labels
+                        .insert((inner_var.scope_id, inner_var.id), labels);
+                }
+            }
+            let outer_expr = Arc::new(DynTree::new(ExprIR::Variable(outer_var.clone())));
+            projections.push((inner_var, outer_expr));
+        }
+        projections.sort_by(|(a, _), (b, _)| a.name.cmp(&b.name));
+        projections
+    }
+
+    fn validate_import_with(
+        &self,
+        with: &RawQueryIR,
+        outer_env: &HashMap<Arc<String>, Variable>,
+    ) -> Result<HashMap<Arc<String>, Variable>, String> {
+        let import_error =
+            "WITH imports in CALL {} must consist of only simple references to outside variables";
+        if let QueryIR::With {
+            distinct,
+            all,
+            exprs,
+            orderby,
+            skip,
+            limit,
+            filter,
+            ..
+        } = with
+        {
+            // No ORDER BY, SKIP, LIMIT, WHERE, DISTINCT allowed on import WITH
+            if *distinct
+                || !orderby.is_empty()
+                || skip.is_some()
+                || limit.is_some()
+                || filter.is_some()
+            {
+                return Err(import_error.to_string());
+            }
+            if *all {
+                // WITH * — import all outer variables
+                return Ok(outer_env.clone());
+            }
+            let mut imported = HashMap::new();
+            for (alias, expr) in exprs {
+                // Must be a simple variable reference where alias == variable name
+                let root = expr.root();
+                if let ExprIR::Variable(var_name) = root.data() {
+                    if root.num_children() == 0 && var_name == alias {
+                        if let Some(var) = outer_env.get(var_name) {
+                            imported.insert(alias.clone(), var.clone());
+                        } else {
+                            return Err(format!("'{var_name}' not defined"));
+                        }
+                    } else {
+                        return Err(import_error.to_string());
+                    }
+                } else {
+                    return Err(import_error.to_string());
+                }
+            }
+            Ok(imported)
+        } else {
+            Ok(HashMap::new())
         }
     }
 
@@ -382,7 +781,13 @@ impl Binder {
             self.push_scope();
             for (name, var) in env_copy {
                 let bound_var = self.project_name(&name, var.ty.clone());
-                // Create an expression that refers to the variable
+                // Carry forward labels for projected node variables.
+                if var.ty == Type::Node
+                    && let Some(labels) = self.node_labels.get(&(var.scope_id, var.id)).cloned()
+                {
+                    self.node_labels
+                        .insert((bound_var.scope_id, bound_var.id), labels);
+                }
                 let expr = Arc::new(DynTree::new(ExprIR::Variable(var.clone())));
                 projected.push((bound_var, expr));
             }
@@ -401,6 +806,16 @@ impl Binder {
                 if let ExprIR::Variable(var_name) = expr.root().data() {
                     self.parent_to_child_scope
                         .insert(var_name.name.as_ref().unwrap().clone(), bound_var.clone());
+                    // Carry forward node_labels for projected node variables.
+                    if var_name.ty == Type::Node
+                        && let Some(labels) = self
+                            .node_labels
+                            .get(&(var_name.scope_id, var_name.id))
+                            .cloned()
+                    {
+                        self.node_labels
+                            .insert((bound_var.scope_id, bound_var.id), labels);
+                    }
                 }
                 projected.push((bound_var, expr));
             }
@@ -548,7 +963,15 @@ impl Binder {
             let alias = self.define_name_in_scope(node.alias.clone(), Type::Node, !is_create)?;
             let attrs = self.bind_expr(&node.attrs)?;
 
-            let bound_node = Arc::new(QueryNode::new(alias.clone(), node.labels.clone(), attrs));
+            // Accumulate labels across MATCH clauses for this node variable.
+            let labels = self
+                .node_labels
+                .entry((alias.scope_id, alias.id))
+                .or_default();
+            labels.extend(node.labels.iter().cloned());
+            let all_labels = labels.clone();
+
+            let bound_node = Arc::new(QueryNode::new(alias.clone(), all_labels, attrs));
             bound.add_node(bound_node);
         }
 
@@ -575,11 +998,14 @@ impl Binder {
                     !is_create,
                 )?;
                 let from_attrs = self.bind_expr(&relationship.from.attrs)?;
-                let bound_node = Arc::new(QueryNode::new(
-                    from_alias.clone(),
-                    relationship.from.labels.clone(),
-                    from_attrs,
-                ));
+                let labels = self
+                    .node_labels
+                    .entry((from_alias.scope_id, from_alias.id))
+                    .or_default();
+                labels.extend(relationship.from.labels.iter().cloned());
+                let all_labels = labels.clone();
+                let bound_node =
+                    Arc::new(QueryNode::new(from_alias.clone(), all_labels, from_attrs));
                 bound.add_node(bound_node.clone());
                 bound_node
             };
@@ -598,11 +1024,13 @@ impl Binder {
                     !is_create,
                 )?;
                 let to_attrs = self.bind_expr(&relationship.to.attrs)?;
-                let bound_node = Arc::new(QueryNode::new(
-                    to_alias.clone(),
-                    relationship.to.labels.clone(),
-                    to_attrs,
-                ));
+                let labels = self
+                    .node_labels
+                    .entry((to_alias.scope_id, to_alias.id))
+                    .or_default();
+                labels.extend(relationship.to.labels.iter().cloned());
+                let all_labels = labels.clone();
+                let bound_node = Arc::new(QueryNode::new(to_alias.clone(), all_labels, to_attrs));
                 bound.add_node(bound_node.clone());
                 bound_node
             };
@@ -855,7 +1283,11 @@ impl Binder {
                 Ok(tree!(ExprIR::Variable(var)))
             }
             ExprIR::Quantifier(qt, name) => {
-                let bound_var: Variable = self.fresh_var(Some(name.clone()), Type::Any, 0);
+                let scope_id = self.env_stack.len() as u32 - 1;
+                let bound_var: Variable = self.fresh_var(Some(name.clone()), Type::Any, scope_id);
+                // Reserve the ID slot in env_stack with a unique key.
+                let key = Arc::new(format!("_quant_{}_{}", scope_id, bound_var.id));
+                self.env_stack[scope_id as usize].insert(key, bound_var.clone());
 
                 // Bind child[0] (the iterable) BEFORE introducing the
                 // quantifier variable so it resolves in the outer scope.
@@ -882,7 +1314,11 @@ impl Binder {
                 Ok(new_tree)
             }
             ExprIR::ListComprehension(name) => {
-                let bound_var: Variable = self.fresh_var(Some(name.clone()), Type::Any, 0);
+                let scope_id = self.env_stack.len() as u32 - 1;
+                let bound_var: Variable = self.fresh_var(Some(name.clone()), Type::Any, scope_id);
+                // Reserve the ID slot in env_stack with a unique key.
+                let key = Arc::new(format!("_lc_{}_{}", scope_id, bound_var.id));
+                self.env_stack[scope_id as usize].insert(key, bound_var.clone());
 
                 // Bind child[0] (the iterable) BEFORE introducing the
                 // comprehension variable so that e.g. `[x IN nodes(x) | ...]`
@@ -919,8 +1355,15 @@ impl Binder {
                 if acc_name == iter_name {
                     return Err(format!("Variable `{acc_name}` already declared"));
                 }
-                let bound_acc: Variable = self.fresh_var(Some(acc_name.clone()), Type::Any, 0);
-                let bound_iter: Variable = self.fresh_var(Some(iter_name.clone()), Type::Any, 0);
+                let scope_id = self.env_stack.len() as u32 - 1;
+                let bound_acc: Variable =
+                    self.fresh_var(Some(acc_name.clone()), Type::Any, scope_id);
+                let key = Arc::new(format!("_reduce_acc_{}_{}", scope_id, bound_acc.id));
+                self.env_stack[scope_id as usize].insert(key, bound_acc.clone());
+                let bound_iter: Variable =
+                    self.fresh_var(Some(iter_name.clone()), Type::Any, scope_id);
+                let key = Arc::new(format!("_reduce_iter_{}_{}", scope_id, bound_iter.id));
+                self.env_stack[scope_id as usize].insert(key, bound_iter.clone());
 
                 let mut children_iter = node_ref.children();
 
@@ -1128,20 +1571,23 @@ impl Binder {
     ) -> Result<Variable, String> {
         // Special placeholder for aggregate function ordering - always create a fresh variable
         if name.as_str() == "__agg_order_by_placeholder__" {
-            return Ok(self.fresh_var(
-                Some(name.clone()),
-                Type::Any,
-                self.env_stack.len() as u32 - 1,
-            ));
+            let scope_id = self.env_stack.len() as u32 - 1;
+            let var = self.fresh_var(Some(name.clone()), Type::Any, scope_id);
+            // Insert with a unique key so each placeholder occupies its own
+            // slot in the env (keeping env.len() == next available ID).
+            let key = Arc::new(format!("__agg_placeholder_{}", var.id));
+            self.env_stack[scope_id as usize].insert(key, var.clone());
+            return Ok(var);
         }
 
         // Anonymous variables should also create fresh variables
         if name.starts_with("_anon") {
-            return Ok(self.fresh_var(
-                Some(name.clone()),
-                Type::Any,
-                self.env_stack.len() as u32 - 1,
-            ));
+            let scope_id = self.env_stack.len() as u32 - 1;
+            let var = self.fresh_var(Some(name.clone()), Type::Any, scope_id);
+            // Insert with the anon name (unique by construction) to reserve
+            // the ID slot.
+            self.current_env_mut().insert(name.clone(), var.clone());
+            return Ok(var);
         }
 
         for scope in locals.iter().rev() {
@@ -1167,8 +1613,7 @@ impl Binder {
             {
                 // Copy variable from parent scope into current scope
                 let current_scope_id = self.env_stack.len() as u32 - 1;
-                let var_id = self.next_var_id;
-                self.next_var_id += 1;
+                let var_id = self.env_stack[current_scope_id as usize].len() as u32;
 
                 let copied_var = Variable {
                     name: var.name.clone(),
@@ -1187,14 +1632,13 @@ impl Binder {
         Err(format!("'{}' not defined", name.as_str()))
     }
 
-    const fn fresh_var(
-        &mut self,
+    fn fresh_var(
+        &self,
         name: Option<Arc<String>>,
         ty: Type,
         scope_id: u32,
     ) -> Variable {
-        let var_id = self.next_var_id;
-        self.next_var_id += 1;
+        let var_id = self.env_stack[scope_id as usize].len() as u32;
 
         Variable {
             name,

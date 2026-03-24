@@ -100,7 +100,8 @@ class testExpandInto():
         query = "CREATE (:A), (:A:B), (:A:B:C)"
         self.graph.query(query)
 
-        # make sure expand into is utilize
+        # make sure multi-label scan is utilized (get_nodes intersects
+        # all label matrices, so ExpandInto is no longer needed)
         queries = ["MATCH (a:A:B:C) RETURN count(a)",
                    "MATCH (a:A:C:B) RETURN count(a)",
                    "MATCH (a:B:A:C) RETURN count(a)",
@@ -112,7 +113,6 @@ class testExpandInto():
             plan = str(self.graph.explain(q))
             result = self.graph.query(q)
             self.env.assertContains("Label Scan", plan)
-            self.env.assertContains("Expand Into", plan)
             self.env.assertEqual(1, result.result_set[0][0])
 
     def test06_expand_into_reset_crash(self):

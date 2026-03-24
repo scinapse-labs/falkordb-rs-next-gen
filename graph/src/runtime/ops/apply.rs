@@ -74,7 +74,19 @@ impl<'a> ApplyOp<'a> {
         };
 
         let can_batch = !subtree_contains(&runtime.plan, child_idx, |ir| {
-            matches!(ir, IR::Aggregate(..) | IR::CartesianProduct)
+            matches!(
+                ir,
+                IR::Aggregate(..)
+                    | IR::CartesianProduct
+                    | IR::Optional(_)
+                    | IR::Apply
+                    | IR::Merge(..)
+                    | IR::Union
+                    | IR::Sort(_)
+                    | IR::Limit(_)
+                    | IR::Skip(_)
+                    | IR::Distinct
+            )
         });
 
         Self {
@@ -271,6 +283,10 @@ impl<'a> ApplyOp<'a> {
                         envs.push(fallback);
                     }
                     self.pending.pop_front();
+                    // Clear DISTINCT deduplication state between per-row
+                    // subquery invocations so that each CALL {} execution
+                    // starts with a fresh deduper.
+                    self.runtime.value_dedupers.borrow_mut().clear();
                 }
             }
         }

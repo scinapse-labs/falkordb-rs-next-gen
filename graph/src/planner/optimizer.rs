@@ -607,6 +607,9 @@ fn push_filters_down(optimized_plan: &mut DynTree<IR>) {
             }
 
             // Case 2: Filter is inside an Apply's right branch.
+            // The left branch's variables are available in the right branch
+            // via Argument propagation. Only applies when the filter is
+            // actually in the right subtree (not the left subtree itself).
             // Stop the ancestor walk at Merge nodes — Merge's internal
             // match sub-plan has its own Argument leaves that receive
             // variables from Merge's input, not from an enclosing Apply.
@@ -614,8 +617,29 @@ fn push_filters_down(optimized_plan: &mut DynTree<IR>) {
                 let mut ancestor = idx;
                 while let Some(parent) = optimized_plan.node(ancestor).parent() {
                     if matches!(parent.data(), IR::Apply) {
-                        let left_vars = collect_subtree_variables(&parent.child(0));
-                        inherited.extend(left_vars);
+                        // Only inherit left-branch variables if the filter
+                        // is NOT inside the left branch (child 0) itself.
+                        let left_child_idx = parent.child(0).idx();
+                        let filter_in_left = {
+                            let mut cur = idx;
+                            loop {
+                                if cur == left_child_idx {
+                                    break true;
+                                }
+                                if let Some(p) = optimized_plan.node(cur).parent() {
+                                    if p.idx() == parent.idx() {
+                                        break false;
+                                    }
+                                    cur = p.idx();
+                                } else {
+                                    break false;
+                                }
+                            }
+                        };
+                        if !filter_in_left {
+                            let left_vars = collect_subtree_variables(&parent.child(0));
+                            inherited.extend(left_vars);
+                        }
                         break;
                     }
                     if matches!(parent.data(), IR::Merge(..)) {

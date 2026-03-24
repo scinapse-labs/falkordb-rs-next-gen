@@ -108,13 +108,15 @@ impl<'a> ProjectOp<'a> {
         let active_count = batch.active_len();
         let mut result_envs = Vec::with_capacity(active_count);
 
-        // Pre-initialize result envs.
-        for _ in 0..active_count {
-            result_envs.push(Env::with_capacity(cap, self.runtime.env_pool));
-        }
-
         // Process each projection.
         let active: Vec<usize> = batch.active_indices().collect();
+
+        // Pre-initialize result envs.
+        for &row_idx in &active {
+            let mut env = Env::with_capacity(cap, self.runtime.env_pool);
+            env.origin_row = batch.env_ref(row_idx).origin_row;
+            result_envs.push(env);
+        }
 
         for (proj_idx, kind) in kinds.iter().enumerate() {
             let target = &self.trees[proj_idx].0;
@@ -186,6 +188,7 @@ impl<'a> ProjectOp<'a> {
 
         for env in batch.active_env_iter() {
             let mut return_vars = Env::with_capacity(cap, self.runtime.env_pool);
+            return_vars.origin_row = env.origin_row;
             for (name, tree) in self.trees {
                 let res = ExprEval::from_runtime(self.runtime).eval(
                     tree,

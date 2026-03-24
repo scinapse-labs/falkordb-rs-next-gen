@@ -538,9 +538,17 @@ impl<T, L, TVar: Clone + Hash + Eq> QueryGraph<T, L, TVar> {
         &self.nodes
     }
 
+    pub const fn nodes_mut(&mut self) -> &mut Vec<Arc<QueryNode<L, TVar>>> {
+        &mut self.nodes
+    }
+
     #[must_use]
     pub fn relationships(&self) -> &[Arc<QueryRelationship<T, L, TVar>>] {
         &self.relationships
+    }
+
+    pub const fn relationships_mut(&mut self) -> &mut Vec<Arc<QueryRelationship<T, L, TVar>>> {
+        &mut self.relationships
     }
 
     #[must_use]
@@ -553,7 +561,7 @@ impl<T, L> QueryGraph<T, L, Variable> {
     #[must_use]
     pub fn filter_visited(
         &self,
-        visited: &HashSet<u32>,
+        visited: &HashSet<(u32, u32)>,
     ) -> Self
     where
         T: Default,
@@ -561,17 +569,17 @@ impl<T, L> QueryGraph<T, L, Variable> {
     {
         let mut res = Self::default();
         for node in &self.nodes {
-            if !visited.contains(&node.alias.id) {
+            if !visited.contains(&(node.alias.id, node.alias.scope_id)) {
                 res.add_node(node.clone());
             }
         }
         for relationship in &self.relationships {
-            if !visited.contains(&relationship.alias.id) {
+            if !visited.contains(&(relationship.alias.id, relationship.alias.scope_id)) {
                 res.add_relationship(relationship.clone());
             }
         }
         for path in &self.paths {
-            if !visited.contains(&path.var.id) {
+            if !visited.contains(&(path.var.id, path.var.scope_id)) {
                 res.add_path(path.clone());
             }
         }
@@ -757,6 +765,10 @@ pub enum QueryIR<TVar> {
     Query(Vec<Self>, bool),
     /// FOREACH(var IN list_expr | body_clauses)
     ForEach(QueryExpr<TVar>, TVar, Vec<Self>),
+    /// CALL { subquery_body }
+    /// bool = is_returning (body ends with RETURN)
+    /// Vec<(TVar, TVar)> = return remapping: (inner_var, outer_var) pairs
+    CallSubquery(Box<Self>, bool, Vec<(TVar, TVar)>),
 }
 
 #[cfg_attr(tarpaulin, skip)]
@@ -864,6 +876,7 @@ impl<TVar: Display + std::fmt::Debug + Eq + Hash> Display for QueryIR<TVar> {
                 }
                 write!(f, ")")
             }
+            Self::CallSubquery(body, _, _) => write!(f, "CALL {{ {body} }}"),
         }
     }
 }
@@ -1009,6 +1022,18 @@ impl<TVar: Eq + Hash + Display> QueryIR<TVar> {
                 iter.next()
                     .map_or(Ok(()), |first| first.inner_validate(iter))
             }
+            Self::CallSubquery(body, is_returning, _) => {
+                body.validate()?;
+                if *is_returning {
+                    iter.next().map_or_else(
+                        || Err("Query cannot conclude with a returning subquery (must be a RETURN clause, an update clause, a procedure call or a non-returning subquery)".into()),
+                        |first| first.inner_validate(iter),
+                    )
+                } else {
+                    iter.next()
+                        .map_or(Ok(()), |first| first.inner_validate(iter))
+                }
+            }
         }
     }
 
@@ -1062,6 +1087,9 @@ impl<TVar: Eq + Hash + Display> QueryIR<TVar> {
                     }
                     Self::Call(_, _, vars, _) => {
                         return vars.iter().map(ToString::to_string).collect();
+                    }
+                    Self::CallSubquery(body, true, _) => {
+                        return body.return_column_names();
                     }
                     _ => {}
                 }

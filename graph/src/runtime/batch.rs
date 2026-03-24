@@ -723,8 +723,15 @@ impl<'a> BatchOp<'a> {
                 }
             }
             Self::Union(op) => {
-                if let Some(ref mut c) = op.current {
-                    c.set_argument_batch(batch);
+                op.store_argument_batch(batch);
+                if let Some(ref mut c) = op.current
+                    && let Some(ref envs) = op.argument_batch
+                {
+                    let cloned: Vec<crate::runtime::env::Env<'a>> = envs
+                        .iter()
+                        .map(|e| e.clone_pooled(op.runtime.env_pool))
+                        .collect();
+                    c.set_argument_batch(Batch::from_envs(cloned));
                 }
             }
             Self::PathBuilder(op) => op.child.set_argument_batch(batch),
