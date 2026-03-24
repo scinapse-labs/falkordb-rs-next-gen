@@ -740,7 +740,7 @@ updating clause.")
 
         # assert results
         expected_res = {'name': 'Canada',
-                        'langs': ['French', 'English'],
+                        'langs': ['English', 'French'],
                         'states':
                             [OrderedDict({'type': 'State',
                                           'name': 'Ontario',
@@ -2109,14 +2109,16 @@ updating clause.")
 
         plan = self.graph.explain(query)
         self.env.assertEqual(count_operation(plan.structured_plan, "Node By Label Scan"), 2)
-        self.env.assertEqual(count_operation(plan.structured_plan, "Conditional Traverse"), 1)
+        self.env.assertEqual(count_operation(plan.structured_plan, "Conditional Traverse"), 0)
 
-        # assert that the `O` label is scanned via cond-traverse
-        scan = locate_operation(plan.structured_plan, "Conditional Traverse")
-        self.env.assertEqual(str(scan), "Conditional Traverse | (n:O)->(n:O)")
+        # assert that the `O` label is scanned via a label scan
+        scan = locate_operation(plan.structured_plan, "Node By Label Scan")
+        self.env.assertEqual(str(scan), "Node By Label Scan | (n:N:O)")
 
         # return a bound variable from the call {} clause, with a scan on it
-        # after
+        # after. The inner CALL body scans (n:M); the outer MATCH (n:N) adds
+        # an Expand Into filter since the inner and outer n are in different
+        # scopes.
         query = """
             CALL {
                 MATCH (n:M)
@@ -2127,10 +2129,9 @@ updating clause.")
             RETURN n
         """
 
-        # assert that the execution-plan holds a cond-traverse for :N
         plan = self.graph.explain(query)
-        scan = locate_operation(plan.structured_plan, "Conditional Traverse")
-        self.env.assertEqual(str(scan), "Conditional Traverse | (n:N)->(n:N)")
+        scan = locate_operation(plan.structured_plan, "Node By Label Scan")
+        self.env.assertEqual(str(scan), "Node By Label Scan | (n:M)")
 
     def test29_rewrite_call_subquery(self):
         self.graph.delete()

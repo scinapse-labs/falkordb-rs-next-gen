@@ -8,10 +8,10 @@
 use crate::planner::IR;
 use crate::runtime::{
     batch::{Batch, BatchOp},
-    runtime::Runtime,
+    runtime::{ReturnNames, Runtime},
     value::ValuesDeduper,
 };
-use orx_tree::{Dyn, NodeIdx};
+use orx_tree::{Dyn, NodeIdx, NodeRef};
 use std::hash::{DefaultHasher, Hash, Hasher};
 
 pub struct DistinctOp<'a> {
@@ -46,11 +46,18 @@ impl<'a> Iterator for DistinctOp<'a> {
                 Err(e) => return Some(Err(e)),
             };
 
+            let child_names = self.runtime.plan.node(self.idx).child(0).get_return_names();
+            let names = if child_names.is_empty() {
+                &self.runtime.return_names
+            } else {
+                &child_names
+            };
+
             let mut passing = Vec::new();
 
             for row in batch.active_indices() {
                 let mut hasher = DefaultHasher::new();
-                for name in &self.runtime.return_names {
+                for name in names {
                     batch.get(row, name.id).hash(&mut hasher);
                 }
                 if self.deduper.has_hash(hasher.finish()) {

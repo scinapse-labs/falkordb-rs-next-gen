@@ -7,6 +7,7 @@
 use crate::planner::IR;
 use crate::runtime::{
     batch::{Batch, BatchOp},
+    env::Env,
     runtime::Runtime,
 };
 use orx_tree::{Dyn, NodeIdx, NodeRef};
@@ -16,6 +17,8 @@ pub struct UnionOp<'a> {
     pub(crate) current: Option<Box<BatchOp<'a>>>,
     current_child: usize,
     pub(crate) idx: NodeIdx<Dyn<IR>>,
+    /// Stored argument batch to propagate to each branch when created.
+    pub(crate) argument_batch: Option<Vec<Env<'a>>>,
 }
 
 impl<'a> UnionOp<'a> {
@@ -28,7 +31,21 @@ impl<'a> UnionOp<'a> {
             current: None,
             current_child: 0,
             idx,
+            argument_batch: None,
         }
+    }
+
+    /// Store an argument batch to be passed to each Union branch.
+    pub fn store_argument_batch(
+        &mut self,
+        batch: Batch<'a>,
+    ) {
+        self.argument_batch = Some(
+            batch
+                .active_env_iter()
+                .map(|e| e.clone_pooled(self.runtime.env_pool))
+                .collect(),
+        );
     }
 }
 
@@ -50,7 +67,15 @@ impl<'a> Iterator for UnionOp<'a> {
             }
             let child_idx = current_node.child(self.current_child).idx();
             match self.runtime.run_batch(child_idx) {
-                Ok(child_op) => {
+                Ok(mut child_op) => {
+                    // Propagate stored argument batch to each new branch
+                    if let Some(ref envs) = self.argument_batch {
+                        let cloned: Vec<Env<'a>> = envs
+                            .iter()
+                            .map(|e| e.clone_pooled(self.runtime.env_pool))
+                            .collect();
+                        child_op.set_argument_batch(Batch::from_envs(cloned));
+                    }
                     self.current = Some(Box::new(child_op));
                 }
                 Err(e) => {

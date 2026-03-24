@@ -430,8 +430,13 @@ impl<'a> Parser<'a> {
                 _,
             ) = self.lexer.current()?
             {
-                let clause = self.parse_reading_clasue()?;
-                clauses.push(clause);
+                if matches!(self.lexer.current()?, Token::Keyword(Keyword::Call, _)) {
+                    self.lexer.next();
+                    clauses.extend(self.parse_call_clause()?);
+                } else {
+                    let clause = self.parse_reading_clasue()?;
+                    clauses.push(clause);
+                }
             }
             while let Token::Keyword(
                 Keyword::Create
@@ -465,9 +470,17 @@ impl<'a> Parser<'a> {
                             ));
                         }
                         Token::Keyword(Keyword::Call, _) => {
-                            return Err(self.lexer.format_error(
-                                "A WITH clause is required to introduce CALL after an updating clause.",
-                            ));
+                            // Peek ahead to distinguish CALL { subquery } from CALL procedure()
+                            let state = self.save_state();
+                            self.lexer.next(); // consume CALL
+                            let is_subquery = matches!(self.lexer.current(), Ok(Token::LBracket));
+                            self.restore_state(state);
+                            let msg = if is_subquery {
+                                "A WITH clause is required to introduce CALL SUBQUERY after an updating clause."
+                            } else {
+                                "A WITH clause is required to introduce CALL after an updating clause."
+                            };
+                            return Err(self.lexer.format_error(msg));
                         }
                         Token::Keyword(Keyword::Load, _) => {
                             return Err(self.lexer.format_error(
@@ -484,9 +497,12 @@ impl<'a> Parser<'a> {
         if optional_match_token!(self.lexer => Return) {
             clauses.push(self.parse_return_clause(write)?);
             write = false;
-            // After RETURN, only UNION, semicolons, or end-of-file may follow.
+            // After RETURN, only UNION, semicolons, end-of-file, or closing brace may follow.
             match self.lexer.current()? {
-                Token::EndOfFile | Token::Keyword(Keyword::Union, _) | Token::Semicolon => {}
+                Token::EndOfFile
+                | Token::Keyword(Keyword::Union, _)
+                | Token::Semicolon
+                | Token::RBracket => {}
                 _ => {
                     return Err(self
                         .lexer
@@ -496,7 +512,7 @@ impl<'a> Parser<'a> {
         }
         if !matches!(
             self.lexer.current()?,
-            Token::Keyword(Keyword::Union, _) | Token::Semicolon
+            Token::Keyword(Keyword::Union, _) | Token::Semicolon | Token::RBracket
         ) {
             match_token!(self.lexer, EndOfFile);
         }
@@ -517,10 +533,6 @@ impl<'a> Parser<'a> {
             Token::Keyword(Keyword::Unwind, _) => {
                 self.lexer.next();
                 self.parse_unwind_clause()
-            }
-            Token::Keyword(Keyword::Call, _) => {
-                self.lexer.next();
-                self.parse_call_clause()
             }
             Token::Keyword(Keyword::Load, _) => {
                 self.lexer.next();
@@ -579,7 +591,21 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_call_clause(&mut self) -> Result<RawQueryIR, String> {
+    fn parse_call_clause(&mut self) -> Result<Vec<RawQueryIR>, String> {
+        // CALL { subquery } — parse body as a self-contained query
+        if self.lexer.current()? == Token::LBracket {
+            self.lexer.next();
+            let body = self.parse_query()?;
+            match_token!(self.lexer, RBracket);
+            let is_returning = Self::body_has_return(&body);
+            return Ok(vec![QueryIR::CallSubquery(
+                Box::new(body),
+                is_returning,
+                vec![],
+            )]);
+        }
+
+        // CALL procedure() — existing procedure call parsing
         let function_name = self.parse_dotted_ident()?;
         let func = get_functions().get(function_name.as_str(), &FnType::Procedure(vec![]))?;
         match_token!(self.lexer, LParen);
@@ -606,7 +632,18 @@ impl<'a> Parser<'a> {
             None
         };
 
-        Ok(QueryIR::Call(func, args, named_outputs, filter))
+        Ok(vec![QueryIR::Call(func, args, named_outputs, filter)])
+    }
+
+    /// Check if a parsed query body ends with a RETURN clause.
+    fn body_has_return(ir: &RawQueryIR) -> bool {
+        match ir {
+            QueryIR::Query(clauses, _) => clauses
+                .last()
+                .is_some_and(|c| matches!(c, QueryIR::Return { .. })),
+            QueryIR::Union(branches, _) => branches.iter().all(|b| Self::body_has_return(b)),
+            _ => false,
+        }
     }
 
     fn parse_dotted_ident(&mut self) -> Result<Arc<String>, String> {
@@ -668,13 +705,30 @@ impl<'a> Parser<'a> {
         &mut self,
         is_detach: bool,
     ) -> Result<RawQueryIR, String> {
-        Ok(QueryIR::Delete(
-            self.parse_expression_list(ExpressionListType::OneOrMore, false)?
+        let mut exprs = self
+            .parse_expression_list(ExpressionListType::OneOrMore, false)?
+            .into_iter()
+            .map(Arc::new)
+            .collect::<Vec<_>>();
+        let mut any_detach = is_detach;
+
+        // Combine consecutive DELETE clauses into one
+        while matches!(
+            self.lexer.current()?,
+            Token::Keyword(Keyword::Delete | Keyword::Detach, _)
+        ) {
+            let next_is_detach = optional_match_token!(self.lexer => Detach);
+            match_token!(self.lexer => Delete);
+            let more_exprs = self
+                .parse_expression_list(ExpressionListType::OneOrMore, false)?
                 .into_iter()
                 .map(Arc::new)
-                .collect(),
-            is_detach,
-        ))
+                .collect::<Vec<_>>();
+            exprs.extend(more_exprs);
+            any_detach = any_detach || next_is_detach;
+        }
+
+        Ok(QueryIR::Delete(exprs, any_detach))
     }
 
     fn parse_where(&mut self) -> Result<Option<QueryExpr<Arc<String>>>, String> {
@@ -1170,6 +1224,15 @@ impl<'a> Parser<'a> {
             Token::Keyword(Keyword::False, _) => {
                 self.lexer.next();
                 Ok((tree!(ExprIR::Bool(false)), false))
+            }
+            // Keywords such as `limit`, `skip`, etc. can be used as
+            // variable names in expressions.  Treat them like identifiers.
+            Token::Keyword(
+                Keyword::Limit | Keyword::Skip | Keyword::Order | Keyword::Asc | Keyword::Desc,
+                _,
+            ) => {
+                let ident = self.parse_ident()?;
+                Ok((tree!(ExprIR::Variable(ident)), false))
             }
             Token::Integer(i) => {
                 self.lexer.next();
@@ -2066,6 +2129,12 @@ impl<'a> Parser<'a> {
     fn parse_set_clause(&mut self) -> Result<QueryIR<Arc<String>>, String> {
         let mut set_items = vec![];
         self.parse_set_items(&mut set_items)?;
+
+        // Combine consecutive SET clauses into one
+        while optional_match_token!(self.lexer => Set) {
+            self.parse_set_items(&mut set_items)?;
+        }
+
         Ok(QueryIR::Set(set_items))
     }
 
@@ -2114,6 +2183,20 @@ impl<'a> Parser<'a> {
 
     fn parse_remove_clause(&mut self) -> Result<QueryIR<Arc<String>>, String> {
         let mut remove_items = vec![];
+        self.parse_remove_items(&mut remove_items)?;
+
+        // Combine consecutive REMOVE clauses into one
+        while optional_match_token!(self.lexer => Remove) {
+            self.parse_remove_items(&mut remove_items)?;
+        }
+
+        Ok(QueryIR::Remove(remove_items))
+    }
+
+    fn parse_remove_items(
+        &mut self,
+        remove_items: &mut Vec<QueryExpr<Arc<String>>>,
+    ) -> Result<(), String> {
         loop {
             let (mut expr, recurse) = self.parse_primary_expr(false)?;
             if recurse {
@@ -2140,10 +2223,9 @@ impl<'a> Parser<'a> {
             }
 
             if !optional_match_token!(self.lexer, Comma) {
-                break;
+                return Ok(());
             }
         }
-        Ok(QueryIR::Remove(remove_items))
     }
 
     fn parse_foreach_clause(&mut self) -> Result<RawQueryIR, String> {

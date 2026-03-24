@@ -228,7 +228,7 @@ impl<T: MemoryPolicy> GetVariables for DynNode<'_, IR, T> {
     }
 }
 
-trait ReturnNames {
+pub(crate) trait ReturnNames {
     fn get_return_names(&self) -> Vec<Variable>;
 }
 
