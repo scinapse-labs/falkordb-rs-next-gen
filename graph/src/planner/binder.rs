@@ -395,7 +395,7 @@ impl Binder {
                     && !self
                         .current_env()
                         .iter()
-                        .any(|v| v.1.name.is_some() && !v.1.name.as_ref().unwrap().starts_with('_'))
+                        .any(|(key, _)| !key.starts_with('_'))
                 {
                     return Err(String::from(
                         "RETURN * is not allowed when there are no variables in scope",
@@ -413,14 +413,27 @@ impl Binder {
                     write,
                 )
             }
-            QueryIR::Call(func, args, vars, filter) => {
+            QueryIR::Call(func, args, vars, filter, yielded) => {
                 let args = args
                     .iter()
                     .map(|expr| self.bind_expr(expr))
                     .collect::<Result<Vec<_>, _>>()?;
                 let mut bound_vars = Vec::with_capacity(vars.len());
                 for name in vars {
-                    bound_vars.push(self.define_name_in_scope(name, Type::Any, true)?);
+                    if yielded {
+                        bound_vars.push(self.define_name_in_scope(name, Type::Any, true)?);
+                    } else {
+                        // Create a variable with the original name (for procedure map lookup)
+                        // but store it in scope under a `_`-prefixed key so RETURN * doesn't see it.
+                        let var = self.fresh_var(
+                            Some(name.clone()),
+                            Type::Any,
+                            self.env_stack.len() as u32 - 1,
+                        );
+                        let hidden_name = Arc::new(format!("_{name}"));
+                        self.current_env_mut().insert(hidden_name, var.clone());
+                        bound_vars.push(var);
+                    }
                 }
                 let filter = filter.map(|expr| self.bind_expr(&expr)).transpose()?;
                 if let Some(ref f) = filter
@@ -428,7 +441,7 @@ impl Binder {
                 {
                     return Err(String::from("Expected boolean predicate"));
                 }
-                Ok(QueryIR::Call(func, args, bound_vars, filter))
+                Ok(QueryIR::Call(func, args, bound_vars, filter, yielded))
             }
             QueryIR::ForEach(list_expr, var_name, body) => {
                 let bound_list = self.bind_expr(&list_expr)?;
@@ -771,8 +784,13 @@ impl Binder {
 
         let mut projected = Vec::with_capacity(bound_exprs.len());
 
-        // If `all` is true, project all variables from the current env
+        // If `all` is true, project all named (non-anonymous) variables from the current env
         if all {
+            // Collect the names of explicitly provided projections so we can
+            // skip duplicates when expanding *.
+            let explicit_names: HashSet<Arc<String>> =
+                bound_exprs.iter().map(|(name, _)| name.clone()).collect();
+
             let env_copy = self
                 .current_env()
                 .iter()
@@ -780,6 +798,14 @@ impl Binder {
                 .collect::<Vec<_>>(); // Clone to avoid borrowing issues
             self.push_scope();
             for (name, var) in env_copy {
+                // Skip anonymous variables (names starting with '_')
+                if name.starts_with('_') {
+                    continue;
+                }
+                // Skip variables that are explicitly listed after *
+                if explicit_names.contains(&name) {
+                    continue;
+                }
                 let bound_var = self.project_name(&name, var.ty.clone());
                 // Carry forward labels for projected node variables.
                 if var.ty == Type::Node
@@ -792,6 +818,16 @@ impl Binder {
                 projected.push((bound_var, expr));
             }
             projected.sort_by(|(name_a, _), (name_b, _)| name_a.name.cmp(&name_b.name));
+
+            // Now add the explicit projections after the star-expanded ones
+            for (name, expr) in bound_exprs {
+                let bound_var = self.project_name(&name, Type::Any);
+                if let ExprIR::Variable(var_name) = expr.root().data() {
+                    self.parent_to_child_scope
+                        .insert(var_name.name.as_ref().unwrap().clone(), bound_var.clone());
+                }
+                projected.push((bound_var, expr));
+            }
         } else {
             // Project explicitly listed expressions
             self.push_scope();

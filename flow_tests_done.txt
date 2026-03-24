@@ -36,6 +36,7 @@ tests/flow/test_query_validation
 tests/flow/test_reversed_patterns
 tests/flow/test_reduce.py
 tests/flow/test_self_pointing_node
+tests/flow/test_star_projections.py
 tests/flow/test_temporal
 tests/flow/test_union
 tests/flow/test_unwind_clause

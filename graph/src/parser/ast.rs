@@ -689,11 +689,13 @@ impl<L: Display + PartialEq, TVar: Display + std::fmt::Debug> Display for SetIte
 #[derive(Debug)]
 pub enum QueryIR<TVar> {
     /// CALL procedure(args) YIELD outputs WHERE filter
+    /// The bool indicates whether YIELD was explicitly written (true) or default outputs are used (false).
     Call(
         Arc<GraphFn>,
         Vec<QueryExpr<TVar>>,
         Vec<TVar>,
         Option<QueryExpr<TVar>>,
+        bool,
     ),
     /// MATCH pattern WHERE filter (optional flag for OPTIONAL MATCH)
     Match {
@@ -778,7 +780,7 @@ impl<TVar: Display + std::fmt::Debug + Eq + Hash> Display for QueryIR<TVar> {
         f: &mut std::fmt::Formatter<'_>,
     ) -> std::fmt::Result {
         match self {
-            Self::Call(func, args, _, _) => {
+            Self::Call(func, args, _, _, _) => {
                 writeln!(f, "{}():", func.name)?;
                 for arg in args {
                     write!(f, "{arg}")?;
@@ -897,7 +899,7 @@ impl<TVar: Eq + Hash + Display> QueryIR<TVar> {
         TVar: 'a,
     {
         match self {
-            Self::Call(proc, args, _, _) => {
+            Self::Call(proc, args, _, _, _) => {
                 if proc.name == "db.idx.fulltext.createNodeIndex" {
                     match args[0].root().data() {
                         ExprIR::String(_) => {}
@@ -1085,7 +1087,7 @@ impl<TVar: Eq + Hash + Display> QueryIR<TVar> {
                     Self::Return { exprs, .. } => {
                         return exprs.iter().map(|(var, _)| var.to_string()).collect();
                     }
-                    Self::Call(_, _, vars, _) => {
+                    Self::Call(_, _, vars, _, _) => {
                         return vars.iter().map(ToString::to_string).collect();
                     }
                     Self::CallSubquery(body, true, _) => {
