@@ -233,15 +233,16 @@ impl AttributeStore {
         &self,
         key: u64,
     ) -> bool {
+        // Entity pending full deletion has no attributes.
+        if self.pending_deletes.contains(key) {
+            return false;
+        }
         if let Some(has) = self.cache.has_entity(key, self.version) {
             return has;
         }
-        // Fallback to fjall.
-        let prefix = key.to_be_bytes();
-        self.snapshot
-            .prefix(self.keyspace(), prefix)
-            .next()
-            .is_some()
+        // Fallback to fjall, populating cache to avoid repeated scans.
+        let attrs = self.populate_cache_from_fjall(key);
+        !attrs.is_empty()
     }
 
     pub fn get_attrs(
@@ -465,6 +466,15 @@ impl AttributeStore {
 
         let mut batch = self.database.batch();
         for (entity_id, attrs) in &dirty_entries {
+            // Delete all existing fjall keys for this entity first, so that
+            // removed attributes don't reappear after cache eviction.
+            let prefix = entity_id.to_be_bytes();
+            for entry in self.keyspace().prefix(prefix) {
+                if let Ok(k) = entry.key() {
+                    batch.remove(self.keyspace(), k);
+                }
+            }
+            // Then insert the current attribute set.
             for &(attr_idx, ref value) in attrs {
                 let composite_key = make_key(*entity_id, attr_idx);
                 batch.insert(self.keyspace(), composite_key, value.to_bytes());
@@ -484,10 +494,13 @@ impl AttributeStore {
         &self,
         entity_id: u64,
     ) -> Result<(), String> {
-        if let Some(cached) = self.cache.get_entity(entity_id, self.version)
+        if let Some((cached, dirty)) = self.cache.get_entity_with_dirty(entity_id, self.version)
+            && dirty
             && !cached.is_empty()
         {
-            // Write cached attributes to fjall before losing the cache entry.
+            // Write dirty cached attributes to fjall before losing the cache entry.
+            // This preserves data for rollback: if the transaction aborts, the
+            // cache entry is gone but fjall still has the flushed data.
             let mut batch = self.database.batch();
             for &(attr_idx, ref value) in &cached {
                 let composite_key = make_key(entity_id, attr_idx);
@@ -506,5 +519,10 @@ impl AttributeStore {
     }
 }
 
+// SAFETY: AttributeStore is Send+Sync because:
+// - `Database`, `Snapshot`, `Keyspace` are thread-safe (fjall guarantees)
+// - `AttributeCache` is wrapped in `Arc` and uses sharded locks internally
+// - `OnceCell<Keyspace>` is `Sync` (interior init is thread-safe)
+// - All other fields (`RoaringTreemap`, `OrderSet`, etc.) are owned and not shared
 unsafe impl Send for AttributeStore {}
 unsafe impl Sync for AttributeStore {}

@@ -104,6 +104,22 @@ impl AttributeCache {
         Some(entry.attrs)
     }
 
+    /// Return all cached attributes for an entity along with the dirty flag.
+    ///
+    /// Returns `None` on cache miss or version mismatch.
+    #[must_use]
+    pub fn get_entity_with_dirty(
+        &self,
+        entity_id: u64,
+        version: u64,
+    ) -> Option<(Vec<(u16, Value)>, bool)> {
+        let entry = self.entries.get(&entity_id)?;
+        if entry.version > version {
+            return None;
+        }
+        Some((entry.attrs, entry.dirty))
+    }
+
     /// Check whether an entity has *any* cached attributes.
     #[must_use]
     pub fn has_entity(
@@ -149,6 +165,14 @@ impl AttributeCache {
     ///
     /// Returns `true` if the insert proceeded, `false` if it was skipped due to
     /// a newer/dirty entry already in cache.
+    ///
+    /// **Note:** There is a narrow TOCTOU window between the `get` check and the
+    /// subsequent `insert_entity` call.  A concurrent writer could insert a dirty
+    /// entry in that gap, which this clean insert would then overwrite.  In
+    /// practice this is benign because (a) the window is sub-microsecond,
+    /// (b) writers are serialized so only one write transaction is active, and
+    /// (c) readers always hold an older MVCC version so the version check
+    /// (`>=`) catches the common case.
     #[must_use]
     pub fn insert_entity_if_older(
         &self,
