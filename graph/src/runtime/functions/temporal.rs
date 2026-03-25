@@ -26,7 +26,11 @@ fn date_from_map(map: &OrderMap<Arc<String>, Value>) -> Result<NaiveDate, String
     let year = get_int_field(map, "year").unwrap_or(1970) as i32;
 
     if let Some(week) = get_int_field(map, "week") {
-        let dow = get_int_field(map, "dayOfWeek").unwrap_or(1) as u32;
+        let dow_raw = get_int_field(map, "dayOfWeek").unwrap_or(1);
+        if !(0..=6).contains(&dow_raw) {
+            return Err(format!("Invalid dayOfWeek: {dow_raw}, expected 0..6"));
+        }
+        let dow = dow_raw as u32;
         // Find Monday of ISO week 1 for the given year
         let jan4 =
             NaiveDate::from_ymd_opt(year, 1, 4).ok_or_else(|| format!("Invalid year: {year}"))?;
@@ -34,7 +38,7 @@ fn date_from_map(map: &OrderMap<Arc<String>, Value>) -> Result<NaiveDate, String
         let iso_week1_monday = jan4 - chrono::Duration::days(i64::from(weekday_of_jan4));
         // Add (week-1)*7 days to get to target week Monday
         let target_monday = iso_week1_monday + chrono::Duration::days((week - 1) * 7);
-        // Add dayOfWeek offset: our dow 0=Sun,1=Mon,...,6=Sat
+        // Add dayOfWeek offset: dow 0=Sun,1=Mon,...,6=Sat
         // Monday is already our base, so offset from Monday
         let day_offset = if dow == 0 { 6 } else { i64::from(dow) - 1 };
         let result = target_monday + chrono::Duration::days(day_offset);
