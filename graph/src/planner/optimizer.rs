@@ -576,6 +576,7 @@ fn push_filters_down(optimized_plan: &mut DynTree<IR>) {
                             c.data(),
                             IR::Project { .. }
                                 | IR::Aggregate { .. }
+                                | IR::Merge { .. }
                                 | IR::Argument
                                 | IR::SemiApply
                                 | IR::AntiSemiApply

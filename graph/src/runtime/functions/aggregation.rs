@@ -12,7 +12,7 @@
 //! ```
 //!
 //! Each aggregation is registered with an initial accumulator value
-//! (`FnType::Aggregation(init, finalizer)`).  The runtime calls the
+//! (`FnType::Aggregation { initial, finalizer }`).  The runtime calls the
 //! function once per row with `(current_value, accumulator)` and
 //! replaces the accumulator with the return value.  After all rows,
 //! the optional finalizer transforms the accumulator into the result.
