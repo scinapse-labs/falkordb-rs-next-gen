@@ -585,7 +585,7 @@ impl Pending {
         }
         {
             let mut g = g.borrow_mut();
-            g.commit_attrs();
+            g.commit_attrs()?;
             g.commit_index(&mut self.index_add_docs, &mut self.index_remove_docs);
         }
         Ok(())

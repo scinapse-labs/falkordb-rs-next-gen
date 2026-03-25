@@ -1277,9 +1277,10 @@ impl Graph {
         populate_index(label.clone(), self.node_indexer.clone());
     }
 
-    pub fn commit_attrs(&mut self) {
-        self.node_attrs.commit();
-        self.relationship_attrs.commit();
+    pub fn commit_attrs(&mut self) -> Result<(), String> {
+        self.node_attrs.commit()?;
+        self.relationship_attrs.commit()?;
+        Ok(())
     }
 
     /// Invalidate dirty cache entries written during a failed write transaction.

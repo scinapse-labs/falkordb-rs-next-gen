@@ -69,6 +69,8 @@ pub struct AttributeStore {
     version: u64,
     /// Entity IDs dirtied during the current write tx (for rollback).
     dirty_entities: RoaringTreemap,
+    /// Entity IDs pending full deletion (all attributes) — applied on commit, cleared on rollback.
+    pending_deletes: RoaringTreemap,
 }
 
 impl Clone for AttributeStore {
@@ -82,6 +84,7 @@ impl Clone for AttributeStore {
             cache: self.cache.clone(),
             version: self.version,
             dirty_entities: self.dirty_entities.clone(),
+            pending_deletes: self.pending_deletes.clone(),
         }
     }
 }
@@ -105,6 +108,7 @@ impl AttributeStore {
             cache: Arc::new(AttributeCache::new(DEFAULT_ATTR_CACHE_BYTES)),
             version,
             dirty_entities: RoaringTreemap::new(),
+            pending_deletes: RoaringTreemap::new(),
         }
     }
 
@@ -142,6 +146,7 @@ impl AttributeStore {
             cache: self.cache.clone(),
             version,
             dirty_entities: RoaringTreemap::new(),
+            pending_deletes: RoaringTreemap::new(),
         }
     }
 
@@ -153,11 +158,15 @@ impl AttributeStore {
     /// Uses a version-aware insert to avoid overwriting in-flight dirty writes:
     /// the cache entry is only updated if no newer/dirty entry already exists.
     /// Empty entries are cached to prevent repeated fjall scans for non-existent
-    /// entities.
+    /// entities. Returns empty if the entity is pending full deletion.
     fn populate_cache_from_fjall(
         &self,
         entity_id: u64,
     ) -> Vec<(u16, Value)> {
+        // If this entity is pending full deletion, return empty regardless of fjall state.
+        if self.pending_deletes.contains(entity_id) {
+            return Vec::new();
+        }
         let prefix = entity_id.to_be_bytes();
         let attrs: Vec<(u16, Value)> = self
             .snapshot
@@ -185,15 +194,8 @@ impl AttributeStore {
         // Flush any pending dirty attributes to fjall before invalidating the cache.
         self.flush_and_invalidate(key)?;
         self.dirty_entities.insert(key);
-
-        let prefix = key.to_be_bytes();
-        let mut batch = self.database.batch();
-        for entry in self.keyspace().prefix(prefix) {
-            if let Ok(k) = entry.key() {
-                batch.remove(self.keyspace(), k);
-            }
-        }
-        batch.durability(None).commit().map_err(|e| e.to_string())?;
+        // Stage the deletion to be applied on commit (not immediately to fjall).
+        self.pending_deletes.insert(key);
         Ok(())
     }
 
@@ -328,18 +330,9 @@ impl AttributeStore {
         for key in keys {
             self.flush_and_invalidate(key)?;
             self.dirty_entities.insert(key);
+            // Stage the deletion to be applied on commit (not immediately to fjall).
+            self.pending_deletes.insert(key);
         }
-        // Also remove from fjall for durability.
-        let mut batch = self.database.batch();
-        for key in keys {
-            let prefix = key.to_be_bytes();
-            for entry in self.keyspace().prefix(prefix) {
-                if let Ok(k) = entry.key() {
-                    batch.remove(self.keyspace(), k);
-                }
-            }
-        }
-        batch.durability(None).commit().map_err(|e| e.to_string())?;
         Ok(())
     }
 
@@ -425,9 +418,24 @@ impl AttributeStore {
         disk + self.cache.memory_usage()
     }
 
-    pub fn commit(&mut self) {
+    pub fn commit(&mut self) -> Result<(), String> {
+        // Apply pending full entity deletions to fjall.
+        if !self.pending_deletes.is_empty() {
+            let mut batch = self.database.batch();
+            for key in &self.pending_deletes {
+                let prefix = key.to_be_bytes();
+                for entry in self.keyspace().prefix(prefix) {
+                    if let Ok(k) = entry.key() {
+                        batch.remove(self.keyspace(), k);
+                    }
+                }
+            }
+            batch.durability(None).commit().map_err(|e| e.to_string())?;
+        }
         self.snapshot = self.database.snapshot();
         self.dirty_entities.clear();
+        self.pending_deletes.clear();
+        Ok(())
     }
 
     // ---- flush / rollback -----------------------------------------------
@@ -437,6 +445,7 @@ impl AttributeStore {
     pub fn rollback_cache(&mut self) {
         self.cache.invalidate_batch(&self.dirty_entities);
         self.dirty_entities.clear();
+        self.pending_deletes.clear();
     }
 
     /// Flush dirty cache entries to fjall.
