@@ -580,13 +580,14 @@ impl Pending {
         }
         if !self.deleted_relationships.is_empty() {
             stats.borrow_mut().relationships_deleted += self.deleted_relationships.len();
-            g.borrow_mut()
-                .delete_relationships(self.deleted_relationships.clone())?;
-            self.deleted_relationships.clear();
+            let rels = std::mem::take(&mut self.deleted_relationships);
+            g.borrow_mut().delete_relationships(rels)?;
         }
-        g.borrow_mut().commit_attrs();
-        g.borrow_mut()
-            .commit_index(&mut self.index_add_docs, &mut self.index_remove_docs);
+        {
+            let mut g = g.borrow_mut();
+            g.commit_attrs();
+            g.commit_index(&mut self.index_add_docs, &mut self.index_remove_docs);
+        }
         Ok(())
     }
 }

@@ -358,6 +358,7 @@ impl Graph {
             Database::builder(format!("./attrs/{}", std::process::id()))
                 .temporary(true)
                 .manual_journal_persist(true)
+                .cache_size(128 * 1_024 * 1_024)
                 .open()
                 .unwrap()
         });
@@ -377,8 +378,12 @@ impl Graph {
             all_nodes_matrix: VersionedMatrix::new(n, n),
             labels_matices: Vec::new(),
             relationship_matrices: Vec::new(),
-            node_attrs: AttributeStore::new(db.clone(), &format!("{name}/nodes")),
-            relationship_attrs: AttributeStore::new(db.clone(), &format!("{name}/relationships")),
+            node_attrs: AttributeStore::new(db.clone(), &format!("{name}/nodes"), version),
+            relationship_attrs: AttributeStore::new(
+                db.clone(),
+                &format!("{name}/relationships"),
+                version,
+            ),
             node_indexer: Indexer::default(),
             node_labels: Vec::new(),
             relationship_types: Vec::new(),
@@ -393,6 +398,8 @@ impl Graph {
     pub fn new_version(&self) -> Self {
         debug_assert_eq!(self.reserved_node_count, 0);
         debug_assert_eq!(self.reserved_relationship_count, 0);
+        let node_attrs = self.node_attrs.new_version(self.version + 1);
+        let relationship_attrs = self.relationship_attrs.new_version(self.version + 1);
         Self {
             node_cap: self.node_cap,
             relationship_cap: self.relationship_cap,
@@ -413,8 +420,8 @@ impl Graph {
                 .map(VersionedMatrix::dup)
                 .collect(),
             relationship_matrices: self.relationship_matrices.iter().map(Tensor::dup).collect(),
-            node_attrs: self.node_attrs.new_version(),
-            relationship_attrs: self.relationship_attrs.new_version(),
+            node_attrs,
+            relationship_attrs,
             node_indexer: self.node_indexer.clone(),
             node_labels: self.node_labels.clone(),
             relationship_types: self.relationship_types.clone(),
@@ -1273,6 +1280,24 @@ impl Graph {
     pub fn commit_attrs(&mut self) {
         self.node_attrs.commit();
         self.relationship_attrs.commit();
+    }
+
+    /// Invalidate dirty cache entries written during a failed write transaction.
+    pub fn rollback_cache(&mut self) {
+        self.node_attrs.rollback_cache();
+        self.relationship_attrs.rollback_cache();
+    }
+
+    /// Flush dirty cache entries to fjall and evict clean entries if over budget.
+    pub fn maybe_flush_caches(&self) -> Result<(), String> {
+        const FLUSH_BATCH: usize = 1024;
+        if self.node_attrs.cache().over_budget() {
+            self.node_attrs.flush_dirty_to_fjall(FLUSH_BATCH)?;
+        }
+        if self.relationship_attrs.cache().over_budget() {
+            self.relationship_attrs.flush_dirty_to_fjall(FLUSH_BATCH)?;
+        }
+        Ok(())
     }
 
     pub fn commit_index(

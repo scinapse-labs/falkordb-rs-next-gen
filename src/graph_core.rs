@@ -174,7 +174,14 @@ impl ThreadedGraph {
             &env_pool,
             RESULTSET_SIZE.load(Ordering::Relaxed),
         );
-        let mut result = runtime.query()?;
+        let mut result = match runtime.query() {
+            Ok(r) => r,
+            Err(err) => {
+                // Clean up dirty cache entries before the graph is dropped.
+                g.borrow_mut().rollback_cache();
+                return Err(err);
+            }
+        };
         result.stats.cached = cached;
         if compact {
             reply_compact(ctx, &runtime, &result);
@@ -308,6 +315,8 @@ fn query_sync(
                 match res {
                     Ok(new_graph) => {
                         g.graph.commit(new_graph);
+                        // Flush dirty cache entries to fjall if over budget.
+                        let _ = g.graph.read().borrow().maybe_flush_caches();
                     }
                     Err(err) => {
                         g.graph.rollback();
@@ -353,6 +362,8 @@ pub fn process_write_queued_query(graph: &Arc<RwLock<ThreadedGraph>>) {
                     };
                     drop(bc);
                     graph.graph.commit(g);
+                    // Flush dirty cache entries to fjall if over budget.
+                    let _ = graph.graph.read().borrow().maybe_flush_caches();
                 }
                 Err(err) => {
                     let cerr = CString::new(err).unwrap();

@@ -248,6 +248,43 @@ impl Value {
         format!("PT{duration_secs}S")
     }
 
+    /// Estimate the heap-allocated bytes owned by this value.
+    ///
+    /// Used by the in-memory attribute cache to track memory consumption.
+    /// Returns only the *extra* heap allocation beyond the `Value` enum itself.
+    #[must_use]
+    pub fn heap_size(&self) -> usize {
+        match self {
+            Self::Null
+            | Self::Bool(_)
+            | Self::Int(_)
+            | Self::Float(_)
+            | Self::Point(_)
+            | Self::Datetime(_)
+            | Self::Date(_)
+            | Self::Time(_)
+            | Self::Duration(_)
+            | Self::Node(_) => 0,
+            Self::String(s) => std::mem::size_of::<String>() + s.len(),
+            Self::List(l) | Self::Path(l) => {
+                let header = l.len() * std::mem::size_of::<Self>();
+                header + l.iter().map(Self::heap_size).sum::<usize>()
+            }
+            Self::Map(m) => m
+                .iter()
+                .map(|(k, v)| {
+                    std::mem::size_of::<Arc<String>>()
+                        + std::mem::size_of::<String>()
+                        + k.len()
+                        + std::mem::size_of::<Self>()
+                        + v.heap_size()
+                })
+                .sum(),
+            Self::Relationship(_) => std::mem::size_of::<(RelationshipId, NodeId, NodeId)>(),
+            Self::VecF32(v) => v.len() * std::mem::size_of::<f32>(),
+        }
+    }
+
     /// Get a named attribute/component from this value.
     ///
     /// Handles Map key lookup, Point fields, and temporal component extraction.
@@ -1535,7 +1572,20 @@ impl Value {
     /// Serializes this value to a byte vector.
     #[must_use]
     pub fn to_bytes(&self) -> Vec<u8> {
-        let mut buf = Vec::new();
+        let cap = match self {
+            Self::Null => 1,
+            Self::Bool(_) => 2,
+            Self::Int(_)
+            | Self::Float(_)
+            | Self::Datetime(_)
+            | Self::Date(_)
+            | Self::Time(_)
+            | Self::Duration(_) => 9,
+            Self::Point(_) => 17,
+            Self::String(s) => 5 + s.len(),
+            _ => 32,
+        };
+        let mut buf = Vec::with_capacity(cap);
         self.write_bytes(&mut buf);
         buf
     }
