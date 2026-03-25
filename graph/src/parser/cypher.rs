@@ -147,7 +147,11 @@ impl<'a> Parser<'a> {
         &mut self
     ) -> Result<(HashMap<String, DynTree<ExprIR<Arc<String>>>>, &'a str), String> {
         let mut params = HashMap::new();
-        while let Ok(Token::Ident(id)) = self.lexer.current() {
+        while let Ok(Token::IdentifierOrKeyword {
+            ident: id,
+            keyword: None,
+        }) = self.lexer.current()
+        {
             if id.as_str() == "CYPHER" {
                 self.lexer.next();
                 let mut state = self.save_state();
@@ -407,7 +411,7 @@ impl<'a> Parser<'a> {
                 }
                 branches.push(self.parse_single_query()?);
             }
-            return Ok(QueryIR::Union(branches, all));
+            return Ok(QueryIR::Union { branches, all });
         }
         Ok(first)
     }
@@ -421,16 +425,25 @@ impl<'a> Parser<'a> {
         let mut clauses = Vec::new();
         let mut write = false;
         loop {
-            while let Token::Keyword(
-                Keyword::Optional
-                | Keyword::Match
-                | Keyword::Unwind
-                | Keyword::Call
-                | Keyword::Load,
-                _,
-            ) = self.lexer.current()?
+            while let Token::IdentifierOrKeyword {
+                keyword:
+                    Some(
+                        Keyword::Optional
+                        | Keyword::Match
+                        | Keyword::Unwind
+                        | Keyword::Call
+                        | Keyword::Load,
+                    ),
+                ..
+            } = self.lexer.current()?
             {
-                if matches!(self.lexer.current()?, Token::Keyword(Keyword::Call, _)) {
+                if matches!(
+                    self.lexer.current()?,
+                    Token::IdentifierOrKeyword {
+                        keyword: Some(Keyword::Call),
+                        ..
+                    }
+                ) {
                     self.lexer.next();
                     clauses.extend(self.parse_call_clause()?);
                 } else {
@@ -438,16 +451,19 @@ impl<'a> Parser<'a> {
                     clauses.push(clause);
                 }
             }
-            while let Token::Keyword(
-                Keyword::Create
-                | Keyword::Merge
-                | Keyword::Delete
-                | Keyword::Detach
-                | Keyword::Set
-                | Keyword::Remove
-                | Keyword::Foreach,
-                _,
-            ) = self.lexer.current()?
+            while let Token::IdentifierOrKeyword {
+                keyword:
+                    Some(
+                        Keyword::Create
+                        | Keyword::Merge
+                        | Keyword::Delete
+                        | Keyword::Detach
+                        | Keyword::Set
+                        | Keyword::Remove
+                        | Keyword::Foreach,
+                    ),
+                ..
+            } = self.lexer.current()?
             {
                 write = true;
                 let clause = self.parse_writing_clause()?;
@@ -459,17 +475,26 @@ impl<'a> Parser<'a> {
                 // After updating clauses, a reading clause requires WITH.
                 if write {
                     match self.lexer.current()? {
-                        Token::Keyword(Keyword::Match | Keyword::Optional, _) => {
+                        Token::IdentifierOrKeyword {
+                            keyword: Some(Keyword::Match | Keyword::Optional),
+                            ..
+                        } => {
                             return Err(self.lexer.format_error(
                                 "A WITH clause is required to introduce MATCH after an updating clause.",
                             ));
                         }
-                        Token::Keyword(Keyword::Unwind, _) => {
+                        Token::IdentifierOrKeyword {
+                            keyword: Some(Keyword::Unwind),
+                            ..
+                        } => {
                             return Err(self.lexer.format_error(
                                 "A WITH clause is required to introduce UNWIND after an updating clause.",
                             ));
                         }
-                        Token::Keyword(Keyword::Call, _) => {
+                        Token::IdentifierOrKeyword {
+                            keyword: Some(Keyword::Call),
+                            ..
+                        } => {
                             // Peek ahead to distinguish CALL { subquery } from CALL procedure()
                             let state = self.save_state();
                             self.lexer.next(); // consume CALL
@@ -482,7 +507,10 @@ impl<'a> Parser<'a> {
                             };
                             return Err(self.lexer.format_error(msg));
                         }
-                        Token::Keyword(Keyword::Load, _) => {
+                        Token::IdentifierOrKeyword {
+                            keyword: Some(Keyword::Load),
+                            ..
+                        } => {
                             return Err(self.lexer.format_error(
                                 "A WITH clause is required to introduce LOAD CSV after an updating clause.",
                             ));
@@ -500,7 +528,10 @@ impl<'a> Parser<'a> {
             // After RETURN, only UNION, semicolons, end-of-file, or closing brace may follow.
             match self.lexer.current()? {
                 Token::EndOfFile
-                | Token::Keyword(Keyword::Union, _)
+                | Token::IdentifierOrKeyword {
+                    keyword: Some(Keyword::Union),
+                    ..
+                }
                 | Token::Semicolon
                 | Token::RBracket => {}
                 _ => {
@@ -512,11 +543,15 @@ impl<'a> Parser<'a> {
         }
         if !matches!(
             self.lexer.current()?,
-            Token::Keyword(Keyword::Union, _) | Token::Semicolon | Token::RBracket
+            Token::IdentifierOrKeyword {
+                keyword: Some(Keyword::Union),
+                ..
+            } | Token::Semicolon
+                | Token::RBracket
         ) {
             match_token!(self.lexer, EndOfFile);
         }
-        Ok(QueryIR::Query(clauses, write))
+        Ok(QueryIR::Query { clauses, write })
     }
 
     fn parse_reading_clasue(&mut self) -> Result<RawQueryIR, String> {
@@ -525,16 +560,25 @@ impl<'a> Parser<'a> {
             return self.parse_match_clause(true);
         }
         match self.lexer.current()? {
-            Token::Keyword(Keyword::Match, _) => {
+            Token::IdentifierOrKeyword {
+                keyword: Some(Keyword::Match),
+                ..
+            } => {
                 self.lexer.next();
                 optional_match_token!(self.lexer => Match);
                 self.parse_match_clause(false)
             }
-            Token::Keyword(Keyword::Unwind, _) => {
+            Token::IdentifierOrKeyword {
+                keyword: Some(Keyword::Unwind),
+                ..
+            } => {
                 self.lexer.next();
                 self.parse_unwind_clause()
             }
-            Token::Keyword(Keyword::Load, _) => {
+            Token::IdentifierOrKeyword {
+                keyword: Some(Keyword::Load),
+                ..
+            } => {
                 self.lexer.next();
                 match_token!(self.lexer => Csv);
                 let headers = optional_match_token!(self.lexer => With)
@@ -562,28 +606,46 @@ impl<'a> Parser<'a> {
 
     fn parse_writing_clause(&mut self) -> Result<RawQueryIR, String> {
         match self.lexer.current()? {
-            Token::Keyword(Keyword::Create, _) => {
+            Token::IdentifierOrKeyword {
+                keyword: Some(Keyword::Create),
+                ..
+            } => {
                 self.lexer.next();
                 self.parse_create_clause()
             }
-            Token::Keyword(Keyword::Merge, _) => {
+            Token::IdentifierOrKeyword {
+                keyword: Some(Keyword::Merge),
+                ..
+            } => {
                 self.lexer.next();
                 self.parse_merge_clause()
             }
-            Token::Keyword(Keyword::Detach | Keyword::Delete, _) => {
+            Token::IdentifierOrKeyword {
+                keyword: Some(Keyword::Detach | Keyword::Delete),
+                ..
+            } => {
                 let is_detach = optional_match_token!(self.lexer => Detach);
                 match_token!(self.lexer => Delete);
                 self.parse_delete_clause(is_detach)
             }
-            Token::Keyword(Keyword::Set, _) => {
+            Token::IdentifierOrKeyword {
+                keyword: Some(Keyword::Set),
+                ..
+            } => {
                 self.lexer.next();
                 self.parse_set_clause()
             }
-            Token::Keyword(Keyword::Remove, _) => {
+            Token::IdentifierOrKeyword {
+                keyword: Some(Keyword::Remove),
+                ..
+            } => {
                 self.lexer.next();
                 self.parse_remove_clause()
             }
-            Token::Keyword(Keyword::Foreach, _) => {
+            Token::IdentifierOrKeyword {
+                keyword: Some(Keyword::Foreach),
+                ..
+            } => {
                 self.lexer.next();
                 self.parse_foreach_clause()
             }
@@ -598,11 +660,11 @@ impl<'a> Parser<'a> {
             let body = self.parse_query()?;
             match_token!(self.lexer, RBracket);
             let is_returning = Self::body_has_return(&body);
-            return Ok(vec![QueryIR::CallSubquery(
-                Box::new(body),
+            return Ok(vec![QueryIR::CallSubquery {
+                body: Box::new(body),
                 is_returning,
-                vec![],
-            )]);
+                remap: vec![],
+            }]);
         }
 
         // CALL procedure() — existing procedure call parsing
@@ -632,22 +694,22 @@ impl<'a> Parser<'a> {
             (None, false)
         };
 
-        Ok(vec![QueryIR::Call(
+        Ok(vec![QueryIR::Call {
             func,
             args,
-            named_outputs,
+            yields: named_outputs,
             filter,
-            yielded,
-        )])
+            explicit_yield: yielded,
+        }])
     }
 
     /// Check if a parsed query body ends with a RETURN clause.
     fn body_has_return(ir: &RawQueryIR) -> bool {
         match ir {
-            QueryIR::Query(clauses, _) => clauses
+            QueryIR::Query { clauses, .. } => clauses
                 .last()
                 .is_some_and(|c| matches!(c, QueryIR::Return { .. })),
-            QueryIR::Union(branches, _) => branches.iter().all(Self::body_has_return),
+            QueryIR::Union { branches, .. } => branches.iter().all(Self::body_has_return),
             _ => false,
         }
     }
@@ -678,7 +740,10 @@ impl<'a> Parser<'a> {
         let list = Arc::new(self.parse_expr(false)?);
         match_token!(self.lexer => As);
         let ident = self.parse_ident()?;
-        Ok(QueryIR::Unwind(list, ident))
+        Ok(QueryIR::Unwind {
+            expr: list,
+            var: ident,
+        })
     }
 
     fn parse_create_clause(&mut self) -> Result<RawQueryIR, String> {
@@ -700,11 +765,11 @@ impl<'a> Parser<'a> {
                 return Err(self.lexer.format_error("Expected MATCH or CREATE after ON"));
             }
         }
-        Ok(QueryIR::Merge(
+        Ok(QueryIR::Merge {
             pattern,
-            on_create_set_items,
-            on_match_set_items,
-        ))
+            on_create: on_create_set_items,
+            on_match: on_match_set_items,
+        })
     }
 
     fn parse_delete_clause(
@@ -721,7 +786,10 @@ impl<'a> Parser<'a> {
         // Combine consecutive DELETE clauses into one
         while matches!(
             self.lexer.current()?,
-            Token::Keyword(Keyword::Delete | Keyword::Detach, _)
+            Token::IdentifierOrKeyword {
+                keyword: Some(Keyword::Delete | Keyword::Detach),
+                ..
+            }
         ) {
             let next_is_detach = optional_match_token!(self.lexer => Detach);
             match_token!(self.lexer => Delete);
@@ -734,11 +802,18 @@ impl<'a> Parser<'a> {
             any_detach = any_detach || next_is_detach;
         }
 
-        Ok(QueryIR::Delete(exprs, any_detach))
+        Ok(QueryIR::Delete {
+            exprs,
+            detach: any_detach,
+        })
     }
 
     fn parse_where(&mut self) -> Result<Option<QueryExpr<Arc<String>>>, String> {
-        if let Token::Keyword(Keyword::Where, _) = self.lexer.current()? {
+        if let Token::IdentifierOrKeyword {
+            keyword: Some(Keyword::Where),
+            ..
+        } = self.lexer.current()?
+        {
             self.lexer.next();
             return Ok(Some(Arc::new(self.parse_expr(true)?)));
         }
@@ -970,7 +1045,10 @@ impl<'a> Parser<'a> {
                 Token::Comma => {
                     self.lexer.next();
                 }
-                Token::Keyword(token, _) => {
+                Token::IdentifierOrKeyword {
+                    keyword: Some(token),
+                    ..
+                } => {
                     if token == *clause {
                         self.lexer.next();
                         continue;
@@ -987,7 +1065,11 @@ impl<'a> Parser<'a> {
     fn parse_case_expression(&mut self) -> Result<DynTree<ExprIR<Arc<String>>>, String> {
         self.lexer.next();
         let mut children = vec![];
-        if let Token::Keyword(Keyword::When, _) = self.lexer.current()? {
+        if let Token::IdentifierOrKeyword {
+            keyword: Some(Keyword::When),
+            ..
+        } = self.lexer.current()?
+        {
         } else {
             children.push(self.parse_expr(false)?);
         }
@@ -1017,19 +1099,31 @@ impl<'a> Parser<'a> {
         allow_pattern_predicate: bool,
     ) -> Result<DynTree<ExprIR<Arc<String>>>, String> {
         let quantifier_type = match self.lexer.current()? {
-            Token::Keyword(Keyword::All, _) => {
+            Token::IdentifierOrKeyword {
+                keyword: Some(Keyword::All),
+                ..
+            } => {
                 self.lexer.next();
                 QuantifierType::All
             }
-            Token::Keyword(Keyword::Any, _) => {
+            Token::IdentifierOrKeyword {
+                keyword: Some(Keyword::Any),
+                ..
+            } => {
                 self.lexer.next();
                 QuantifierType::Any
             }
-            Token::Keyword(Keyword::None, _) => {
+            Token::IdentifierOrKeyword {
+                keyword: Some(Keyword::None),
+                ..
+            } => {
                 self.lexer.next();
                 QuantifierType::None
             }
-            Token::Keyword(Keyword::Single, _) => {
+            Token::IdentifierOrKeyword {
+                keyword: Some(Keyword::Single),
+                ..
+            } => {
                 self.lexer.next();
                 QuantifierType::Single
             }
@@ -1049,7 +1143,10 @@ impl<'a> Parser<'a> {
         let condition = self.parse_expr(allow_pattern_predicate)?;
         match_token!(self.lexer, RParen);
         Ok(tree!(
-            ExprIR::Quantifier(quantifier_type, var),
+            ExprIR::Quantifier {
+                quantifier_type,
+                var
+            },
             expr,
             condition
         ))
@@ -1122,7 +1219,10 @@ impl<'a> Parser<'a> {
         match_token!(self.lexer, RParen);
 
         Ok(tree!(
-            ExprIR::Reduce(acc_var, iter_var),
+            ExprIR::Reduce {
+                accumulator: acc_var,
+                iterator: iter_var
+            },
             init_expr,
             list_expr,
             body_expr
@@ -1135,7 +1235,36 @@ impl<'a> Parser<'a> {
         allow_pattern_predicate: bool,
     ) -> Result<(DynTree<ExprIR<Arc<String>>>, bool), String> {
         match self.lexer.current()? {
-            Token::Ident(_) => {
+            Token::IdentifierOrKeyword {
+                keyword: Some(Keyword::Case),
+                ..
+            } => Ok((self.parse_case_expression()?, false)),
+            Token::IdentifierOrKeyword {
+                keyword: Some(Keyword::All | Keyword::Any | Keyword::None | Keyword::Single),
+                ..
+            } => Ok((self.parse_quantifier_expr(allow_pattern_predicate)?, false)),
+            Token::IdentifierOrKeyword {
+                keyword: Some(Keyword::Null),
+                ..
+            } => {
+                self.lexer.next();
+                Ok((tree!(ExprIR::Null), false))
+            }
+            Token::IdentifierOrKeyword {
+                keyword: Some(Keyword::True),
+                ..
+            } => {
+                self.lexer.next();
+                Ok((tree!(ExprIR::Bool(true)), false))
+            }
+            Token::IdentifierOrKeyword {
+                keyword: Some(Keyword::False),
+                ..
+            } => {
+                self.lexer.next();
+                Ok((tree!(ExprIR::Bool(false)), false))
+            }
+            Token::IdentifierOrKeyword { .. } => {
                 let state = self.save_state();
                 let ident = self.parse_dotted_ident()?;
                 if optional_match_token!(self.lexer, LParen) {
@@ -1147,7 +1276,13 @@ impl<'a> Parser<'a> {
                     let func = get_functions()
                         .get(&ident, &FnType::Function)
                         .or_else(|_| {
-                            get_functions().get(&ident, &FnType::Aggregation(Value::Null, None))
+                            get_functions().get(
+                                &ident,
+                                &FnType::Aggregation {
+                                    initial: Value::Null,
+                                    finalizer: None,
+                                },
+                            )
                         })?;
 
                     let distinct = optional_match_token!(self.lexer => Distinct);
@@ -1222,32 +1357,6 @@ impl<'a> Parser<'a> {
             Token::Parameter(param) => {
                 self.lexer.next();
                 Ok((tree!(ExprIR::Parameter(param)), false))
-            }
-            Token::Keyword(Keyword::Case, _) => Ok((self.parse_case_expression()?, false)),
-            Token::Keyword(Keyword::All | Keyword::Any | Keyword::None | Keyword::Single, _) => {
-                Ok((self.parse_quantifier_expr(allow_pattern_predicate)?, false))
-            }
-
-            Token::Keyword(Keyword::Null, _) => {
-                self.lexer.next();
-                Ok((tree!(ExprIR::Null), false))
-            }
-            Token::Keyword(Keyword::True, _) => {
-                self.lexer.next();
-                Ok((tree!(ExprIR::Bool(true)), false))
-            }
-            Token::Keyword(Keyword::False, _) => {
-                self.lexer.next();
-                Ok((tree!(ExprIR::Bool(false)), false))
-            }
-            // Keywords such as `limit`, `skip`, etc. can be used as
-            // variable names in expressions.  Treat them like identifiers.
-            Token::Keyword(
-                Keyword::Limit | Keyword::Skip | Keyword::Order | Keyword::Asc | Keyword::Desc,
-                _,
-            ) => {
-                let ident = self.parse_ident()?;
-                Ok((tree!(ExprIR::Variable(ident)), false))
             }
             Token::Integer(i) => {
                 self.lexer.next();
@@ -1332,7 +1441,11 @@ impl<'a> Parser<'a> {
                 } else if current == 3 {
                     // Not
                     let mut not_count = 0;
-                    while let Token::Keyword(Keyword::Not, _) = self.lexer.current()? {
+                    while let Token::IdentifierOrKeyword {
+                        keyword: Some(Keyword::Not),
+                        ..
+                    } = self.lexer.current()?
+                    {
                         self.lexer.next();
                         not_count += 1;
                     }
@@ -1375,15 +1488,15 @@ impl<'a> Parser<'a> {
             match current {
                 0 => {
                     // Or
-                    parse_operators!(self, stack, res, current, Token::Keyword(Keyword::Or, _) => Or);
+                    parse_operators!(self, stack, res, current, Token::IdentifierOrKeyword { keyword: Some(Keyword::Or), .. } => Or);
                 }
                 1 => {
                     // Xor
-                    parse_operators!(self, stack, res, current, Token::Keyword(Keyword::Xor, _) => Xor);
+                    parse_operators!(self, stack, res, current, Token::IdentifierOrKeyword { keyword: Some(Keyword::Xor), .. } => Xor);
                 }
                 2 => {
                     // And
-                    parse_operators!(self, stack, res, current, Token::Keyword(Keyword::And, _) => And);
+                    parse_operators!(self, stack, res, current, Token::IdentifierOrKeyword { keyword: Some(Keyword::And), .. } => And);
                 }
                 3 => {
                     // Not
@@ -1397,11 +1510,17 @@ impl<'a> Parser<'a> {
                     // String, List, Null predicates
                     let mut res = res;
                     match self.lexer.current()? {
-                        Token::Keyword(Keyword::In, _) => {
+                        Token::IdentifierOrKeyword {
+                            keyword: Some(Keyword::In),
+                            ..
+                        } => {
                             self.lexer.next();
                             res = tree!(ExprIR::In, res);
                         }
-                        Token::Keyword(Keyword::Starts, _) => {
+                        Token::IdentifierOrKeyword {
+                            keyword: Some(Keyword::Starts),
+                            ..
+                        } => {
                             self.lexer.next();
                             match_token!(self.lexer => With);
                             res = tree!(
@@ -1411,7 +1530,10 @@ impl<'a> Parser<'a> {
                                 res
                             );
                         }
-                        Token::Keyword(Keyword::Ends, _) => {
+                        Token::IdentifierOrKeyword {
+                            keyword: Some(Keyword::Ends),
+                            ..
+                        } => {
                             self.lexer.next();
                             match_token!(self.lexer => With);
                             res = tree!(
@@ -1421,7 +1543,10 @@ impl<'a> Parser<'a> {
                                 res
                             );
                         }
-                        Token::Keyword(Keyword::Contains, _) => {
+                        Token::IdentifierOrKeyword {
+                            keyword: Some(Keyword::Contains),
+                            ..
+                        } => {
                             self.lexer.next();
                             res = tree!(
                                 ExprIR::FuncInvocation(
@@ -1439,7 +1564,10 @@ impl<'a> Parser<'a> {
                                 res
                             );
                         }
-                        Token::Keyword(Keyword::Is, _) => {
+                        Token::IdentifierOrKeyword {
+                            keyword: Some(Keyword::Is),
+                            ..
+                        } => {
                             while optional_match_token!(self.lexer => Is) {
                                 let is_not =
                                     tree!(ExprIR::Bool(optional_match_token!(self.lexer => Not)));
@@ -1469,17 +1597,26 @@ impl<'a> Parser<'a> {
                         //
                         // Bare NOT (e.g. `u.v NOT NULL`) produces a binary
                         // Not(lhs, rhs) which the binder rejects.
-                        Token::Keyword(Keyword::Not, _) => {
+                        Token::IdentifierOrKeyword {
+                            keyword: Some(Keyword::Not),
+                            ..
+                        } => {
                             self.lexer.next();
                             match self.lexer.current()? {
                                 // x NOT IN [1, 2, 3]
-                                Token::Keyword(Keyword::In, _) => {
+                                Token::IdentifierOrKeyword {
+                                    keyword: Some(Keyword::In),
+                                    ..
+                                } => {
                                     self.lexer.next();
                                     stack.push((current, Some(tree!(ExprIR::Not))));
                                     res = tree!(ExprIR::In, res);
                                 }
                                 // name NOT STARTS WITH 'A'
-                                Token::Keyword(Keyword::Starts, _) => {
+                                Token::IdentifierOrKeyword {
+                                    keyword: Some(Keyword::Starts),
+                                    ..
+                                } => {
                                     self.lexer.next();
                                     match_token!(self.lexer => With);
                                     stack.push((current, Some(tree!(ExprIR::Not))));
@@ -1492,7 +1629,10 @@ impl<'a> Parser<'a> {
                                     );
                                 }
                                 // name NOT ENDS WITH 'z'
-                                Token::Keyword(Keyword::Ends, _) => {
+                                Token::IdentifierOrKeyword {
+                                    keyword: Some(Keyword::Ends),
+                                    ..
+                                } => {
                                     self.lexer.next();
                                     match_token!(self.lexer => With);
                                     stack.push((current, Some(tree!(ExprIR::Not))));
@@ -1504,7 +1644,10 @@ impl<'a> Parser<'a> {
                                     );
                                 }
                                 // name NOT CONTAINS 'foo'
-                                Token::Keyword(Keyword::Contains, _) => {
+                                Token::IdentifierOrKeyword {
+                                    keyword: Some(Keyword::Contains),
+                                    ..
+                                } => {
                                     self.lexer.next();
                                     stack.push((current, Some(tree!(ExprIR::Not))));
                                     res = tree!(
@@ -1641,7 +1784,7 @@ impl<'a> Parser<'a> {
 
     fn parse_ident(&mut self) -> Result<Arc<String>, String> {
         match self.lexer.current() {
-            Ok(Token::Ident(id) | Token::Keyword(_, id)) => {
+            Ok(Token::IdentifierOrKeyword { ident: id, .. }) => {
                 self.lexer.next();
                 Ok(id)
             }
@@ -1654,7 +1797,7 @@ impl<'a> Parser<'a> {
 
     fn parse_property_name(&mut self) -> Result<Arc<String>, String> {
         match self.lexer.current() {
-            Ok(Token::Ident(id) | Token::Keyword(_, id)) => {
+            Ok(Token::IdentifierOrKeyword { ident: id, .. }) => {
                 self.lexer.next();
                 Ok(id)
             }
@@ -1673,7 +1816,11 @@ impl<'a> Parser<'a> {
         loop {
             let pos = self.lexer.pos(false);
             let expr = Arc::new(self.parse_expr(true)?);
-            if let Token::Keyword(Keyword::As, _) = self.lexer.current()? {
+            if let Token::IdentifierOrKeyword {
+                keyword: Some(Keyword::As),
+                ..
+            } = self.lexer.current()?
+            {
                 self.lexer.next();
                 let ident = self.parse_ident()?;
                 named_exprs.push((ident, expr));
@@ -2170,14 +2317,21 @@ impl<'a> Parser<'a> {
                 }
                 match_token!(self.lexer, Equal);
                 let value = Arc::new(self.parse_expr(false)?);
-                set_items.push(SetItem::Attribute(Arc::new(expr), value, false));
+                set_items.push(SetItem::Attribute {
+                    target: Arc::new(expr),
+                    value,
+                    replace: false,
+                });
             } else if self.lexer.current()? == Token::Colon {
                 let ExprIR::Variable(id) = expr.root().data() else {
                     return Err(self
                         .lexer
                         .format_error("Cannot set labels on non-node expressions"));
                 };
-                set_items.push(SetItem::Label(id.clone(), self.parse_labels()?));
+                set_items.push(SetItem::Label {
+                    var: id.clone(),
+                    labels: self.parse_labels()?,
+                });
             } else {
                 let equals = optional_match_token!(self.lexer, Equal);
                 let plus_equals = if equals {
@@ -2187,7 +2341,11 @@ impl<'a> Parser<'a> {
                     true
                 };
                 let value = Arc::new(self.parse_expr(false)?);
-                set_items.push(SetItem::Attribute(Arc::new(expr), value, !plus_equals));
+                set_items.push(SetItem::Attribute {
+                    target: Arc::new(expr),
+                    value,
+                    replace: !plus_equals,
+                });
             }
 
             if !optional_match_token!(self.lexer, Comma) {
@@ -2260,28 +2418,46 @@ impl<'a> Parser<'a> {
         let mut body = Vec::new();
         loop {
             match self.lexer.current()? {
-                Token::Keyword(Keyword::Create, _) => {
+                Token::IdentifierOrKeyword {
+                    keyword: Some(Keyword::Create),
+                    ..
+                } => {
                     self.lexer.next();
                     body.push(self.parse_create_clause()?);
                 }
-                Token::Keyword(Keyword::Merge, _) => {
+                Token::IdentifierOrKeyword {
+                    keyword: Some(Keyword::Merge),
+                    ..
+                } => {
                     self.lexer.next();
                     body.push(self.parse_merge_clause()?);
                 }
-                Token::Keyword(Keyword::Detach | Keyword::Delete, _) => {
+                Token::IdentifierOrKeyword {
+                    keyword: Some(Keyword::Detach | Keyword::Delete),
+                    ..
+                } => {
                     let is_detach = optional_match_token!(self.lexer => Detach);
                     match_token!(self.lexer => Delete);
                     body.push(self.parse_delete_clause(is_detach)?);
                 }
-                Token::Keyword(Keyword::Set, _) => {
+                Token::IdentifierOrKeyword {
+                    keyword: Some(Keyword::Set),
+                    ..
+                } => {
                     self.lexer.next();
                     body.push(self.parse_set_clause()?);
                 }
-                Token::Keyword(Keyword::Remove, _) => {
+                Token::IdentifierOrKeyword {
+                    keyword: Some(Keyword::Remove),
+                    ..
+                } => {
                     self.lexer.next();
                     body.push(self.parse_remove_clause()?);
                 }
-                Token::Keyword(Keyword::Foreach, _) => {
+                Token::IdentifierOrKeyword {
+                    keyword: Some(Keyword::Foreach),
+                    ..
+                } => {
                     self.lexer.next();
                     body.push(self.parse_foreach_clause()?);
                 }
@@ -2294,7 +2470,11 @@ impl<'a> Parser<'a> {
                 .lexer
                 .format_error("FOREACH body must contain at least one clause"));
         }
-        Ok(QueryIR::ForEach(Arc::new(list_expr), var, body))
+        Ok(QueryIR::ForEach {
+            list: Arc::new(list_expr),
+            var,
+            body,
+        })
     }
 
     fn find_aggregate_name(tree: &DynTree<ExprIR<Arc<String>>>) -> Option<&str> {

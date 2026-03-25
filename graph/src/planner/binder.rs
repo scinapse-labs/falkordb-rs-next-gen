@@ -110,20 +110,20 @@ impl Binder {
             QueryIR::Match { pattern, .. } => {
                 Self::update_graph_labels(pattern, &self.node_labels);
             }
-            QueryIR::Create(graph) | QueryIR::Merge(graph, _, _) => {
+            QueryIR::Create(graph) | QueryIR::Merge { pattern: graph, .. } => {
                 Self::update_graph_labels(graph, &self.node_labels);
             }
-            QueryIR::Query(clauses, _) => {
+            QueryIR::Query { clauses, .. } => {
                 for clause in clauses {
                     self.update_all_node_labels(clause);
                 }
             }
-            QueryIR::Union(branches, _) => {
+            QueryIR::Union { branches, .. } => {
                 for branch in branches {
                     self.update_all_node_labels(branch);
                 }
             }
-            QueryIR::ForEach(_, _, body) => {
+            QueryIR::ForEach { body, .. } => {
                 for clause in body {
                     self.update_all_node_labels(clause);
                 }
@@ -221,7 +221,7 @@ impl Binder {
         ir: RawQueryIR,
     ) -> Result<BoundQueryIR, String> {
         match ir {
-            QueryIR::Union(branches, all) => {
+            QueryIR::Union { branches, all } => {
                 // Each UNION branch is an independent sub-query with its own
                 // variable scope, so each branch is bound with a fresh Binder.
                 let mut bound_branches = Vec::with_capacity(branches.len());
@@ -241,14 +241,20 @@ impl Binder {
                     }
                     bound_branches.push(bound);
                 }
-                Ok(QueryIR::Union(bound_branches, all))
+                Ok(QueryIR::Union {
+                    branches: bound_branches,
+                    all,
+                })
             }
-            QueryIR::Query(clauses, write) => {
+            QueryIR::Query { clauses, write } => {
                 let mut bound = Vec::with_capacity(clauses.len());
                 for clause in clauses {
                     bound.push(self.bind_ir(clause)?);
                 }
-                Ok(QueryIR::Query(bound, write))
+                Ok(QueryIR::Query {
+                    clauses: bound,
+                    write,
+                })
             }
             QueryIR::Match {
                 pattern,
@@ -268,12 +274,19 @@ impl Binder {
                     optional,
                 })
             }
-            QueryIR::Unwind(expr, var_name) => {
+            QueryIR::Unwind {
+                expr,
+                var: var_name,
+            } => {
                 let expr = self.bind_expr(&expr)?;
                 let var = self.define_name_in_scope(var_name, Type::Any, false)?;
-                Ok(QueryIR::Unwind(expr, var))
+                Ok(QueryIR::Unwind { expr, var })
             }
-            QueryIR::Merge(pattern, on_create, on_match) => {
+            QueryIR::Merge {
+                pattern,
+                on_create,
+                on_match,
+            } => {
                 // MERGE may create new entities, so validate that inline attrs
                 // don't reference entities being merged.  Entity aliases are
                 // not yet in scope, so any such reference is caught here, e.g.:
@@ -287,7 +300,11 @@ impl Binder {
                 let pattern = self.bind_graph(&pattern, false)?;
                 let on_create = self.bind_set_items(on_create)?;
                 let on_match = self.bind_set_items(on_match)?;
-                Ok(QueryIR::Merge(pattern, on_create, on_match))
+                Ok(QueryIR::Merge {
+                    pattern,
+                    on_create,
+                    on_match,
+                })
             }
             QueryIR::Create(pattern) => {
                 let bound = self.bind_graph_create(&pattern)?;
@@ -320,7 +337,7 @@ impl Binder {
                 index_type,
                 entity_type,
             }),
-            QueryIR::Delete(exprs, detach) => {
+            QueryIR::Delete { exprs, detach } => {
                 let exprs = exprs
                     .iter()
                     .map(|expr| self.bind_expr(expr))
@@ -332,7 +349,7 @@ impl Binder {
                         ));
                     }
                 }
-                Ok(QueryIR::Delete(exprs, detach))
+                Ok(QueryIR::Delete { exprs, detach })
             }
             QueryIR::Set(items) => Ok(QueryIR::Set(self.bind_set_items(items)?)),
             QueryIR::Remove(items) => {
@@ -411,7 +428,13 @@ impl Binder {
                     write,
                 )
             }
-            QueryIR::Call(func, args, vars, filter, yielded) => {
+            QueryIR::Call {
+                func,
+                args,
+                yields: vars,
+                filter,
+                explicit_yield: yielded,
+            } => {
                 let args = args
                     .iter()
                     .map(|expr| self.bind_expr(expr))
@@ -439,9 +462,19 @@ impl Binder {
                 {
                     return Err(String::from("Expected boolean predicate"));
                 }
-                Ok(QueryIR::Call(func, args, bound_vars, filter, yielded))
+                Ok(QueryIR::Call {
+                    func,
+                    args,
+                    yields: bound_vars,
+                    filter,
+                    explicit_yield: yielded,
+                })
             }
-            QueryIR::ForEach(list_expr, var_name, body) => {
+            QueryIR::ForEach {
+                list: list_expr,
+                var: var_name,
+                body,
+            } => {
                 let bound_list = self.bind_expr(&list_expr)?;
                 // Save the current env so that names defined inside the
                 // FOREACH body (loop variable, CREATE'd nodes, etc.) don't
@@ -454,11 +487,15 @@ impl Binder {
                 }
                 // Restore the outer scope.
                 *self.current_env_mut() = saved_env;
-                Ok(QueryIR::ForEach(bound_list, var, bound_body))
+                Ok(QueryIR::ForEach {
+                    list: bound_list,
+                    var,
+                    body: bound_body,
+                })
             }
-            QueryIR::CallSubquery(body, is_returning, _) => {
-                self.bind_call_subquery(*body, is_returning)
-            }
+            QueryIR::CallSubquery {
+                body, is_returning, ..
+            } => self.bind_call_subquery(*body, is_returning),
         }
     }
 
@@ -528,11 +565,11 @@ impl Binder {
             }
         }
 
-        Ok(QueryIR::CallSubquery(
-            Box::new(bound_body),
+        Ok(QueryIR::CallSubquery {
+            body: Box::new(bound_body),
             is_returning,
             remap,
-        ))
+        })
     }
 
     /// Bind the inner body of a CALL subquery with scope isolation.
@@ -544,7 +581,7 @@ impl Binder {
         outer_env: &HashMap<Arc<String>, Variable>,
     ) -> Result<BoundQueryIR, String> {
         match body {
-            QueryIR::Query(clauses, write) => {
+            QueryIR::Query { clauses, write } => {
                 let has_import = matches!(clauses.first(), Some(QueryIR::With { .. }));
 
                 // Validate and extract imports
@@ -584,9 +621,12 @@ impl Binder {
                 for clause in clauses.into_iter().skip(skip_count) {
                     bound.push(self.bind_ir(clause)?);
                 }
-                Ok(QueryIR::Query(bound, write))
+                Ok(QueryIR::Query {
+                    clauses: bound,
+                    write,
+                })
             }
-            QueryIR::Union(branches, all) => {
+            QueryIR::Union { branches, all } => {
                 // For UNION in CALL subquery, each branch is an independent query
                 // that may have its own import WITH. Create binders with imported env.
                 let mut bound_branches = Vec::with_capacity(branches.len());
@@ -594,7 +634,7 @@ impl Binder {
                 let mut last_binder_env: Option<HashMap<Arc<String>, Variable>> = None;
                 for branch in branches {
                     let (has_import, imported) = match &branch {
-                        QueryIR::Query(clauses, _) => {
+                        QueryIR::Query { clauses, .. } => {
                             if let Some(first) = clauses.first() {
                                 if matches!(first, QueryIR::With { .. }) {
                                     (true, self.validate_import_with(first, outer_env)?)
@@ -616,7 +656,7 @@ impl Binder {
                     };
 
                     // Build bound clauses: explicit import WITH + remaining
-                    let mut bound = if let QueryIR::Query(clauses, write) = branch {
+                    let mut bound = if let QueryIR::Query { clauses, write } = branch {
                         let skip_count = usize::from(has_import);
                         let mut bound_clauses = Vec::with_capacity(clauses.len());
 
@@ -638,7 +678,10 @@ impl Binder {
                         for clause in clauses.into_iter().skip(skip_count) {
                             bound_clauses.push(binder.bind_ir(clause)?);
                         }
-                        QueryIR::Query(bound_clauses, write)
+                        QueryIR::Query {
+                            clauses: bound_clauses,
+                            write,
+                        }
                     } else {
                         binder.bind_ir(branch)?
                     };
@@ -665,7 +708,10 @@ impl Binder {
                 } else {
                     *self.current_env_mut() = HashMap::new();
                 }
-                Ok(QueryIR::Union(bound_branches, all))
+                Ok(QueryIR::Union {
+                    branches: bound_branches,
+                    all,
+                })
             }
             other => {
                 *self.current_env_mut() = HashMap::new();
@@ -1288,14 +1334,18 @@ impl Binder {
         let mut res = Vec::with_capacity(items.len());
         for item in items {
             match item {
-                SetItem::Attribute(target, value, strict) => res.push(SetItem::Attribute(
-                    self.bind_expr(&target)?,
-                    self.bind_expr(&value)?,
-                    strict,
-                )),
-                SetItem::Label(name, labels) => {
+                SetItem::Attribute {
+                    target,
+                    value,
+                    replace: strict,
+                } => res.push(SetItem::Attribute {
+                    target: self.bind_expr(&target)?,
+                    value: self.bind_expr(&value)?,
+                    replace: strict,
+                }),
+                SetItem::Label { var: name, labels } => {
                     let var = self.resolve_name(&name, &[])?;
-                    res.push(SetItem::Label(var, labels));
+                    res.push(SetItem::Label { var, labels });
                 }
             }
         }
@@ -1334,7 +1384,10 @@ impl Binder {
                 let var = self.resolve_name(name, locals)?;
                 Ok(tree!(ExprIR::Variable(var)))
             }
-            ExprIR::Quantifier(qt, name) => {
+            ExprIR::Quantifier {
+                quantifier_type: qt,
+                var: name,
+            } => {
                 let scope_id = self.env_stack.len() as u32 - 1;
                 let bound_var: Variable = self.fresh_var(Some(name.clone()), Type::Any, scope_id);
                 // Reserve the ID slot in env_stack with a unique key.
@@ -1358,7 +1411,10 @@ impl Binder {
                 let mut children = vec![bound_iterable];
                 children.extend(rest_children);
 
-                let mut new_tree = DynTree::new(ExprIR::Quantifier(qt.clone(), bound_var));
+                let mut new_tree = DynTree::new(ExprIR::Quantifier {
+                    quantifier_type: qt.clone(),
+                    var: bound_var,
+                });
                 let mut root = new_tree.root_mut();
                 for child in children {
                     root.push_child_tree(child);
@@ -1403,7 +1459,10 @@ impl Binder {
                 }
                 Ok(new_tree)
             }
-            ExprIR::Reduce(acc_name, iter_name) => {
+            ExprIR::Reduce {
+                accumulator: acc_name,
+                iterator: iter_name,
+            } => {
                 if acc_name == iter_name {
                     return Err(format!("Variable `{acc_name}` already declared"));
                 }
@@ -1436,7 +1495,10 @@ impl Binder {
                 let bound_body = self.bind_expr_node(expr, &body_child, locals)?;
                 locals.pop();
 
-                let mut new_tree = DynTree::new(ExprIR::Reduce(bound_acc, bound_iter));
+                let mut new_tree = DynTree::new(ExprIR::Reduce {
+                    accumulator: bound_acc,
+                    iterator: bound_iter,
+                });
                 let mut root = new_tree.root_mut();
                 root.push_child_tree(bound_init);
                 root.push_child_tree(bound_list);
@@ -1545,9 +1607,9 @@ impl Binder {
                     ExprIR::FuncInvocation(func) => ExprIR::FuncInvocation(func),
                     ExprIR::Paren => ExprIR::Paren,
                     ExprIR::Variable(_)
-                    | ExprIR::Quantifier(_, _)
+                    | ExprIR::Quantifier { .. }
                     | ExprIR::ListComprehension(_)
-                    | ExprIR::Reduce(_, _)
+                    | ExprIR::Reduce { .. }
                     | ExprIR::PatternComprehension(_) => unreachable!("handled above"),
                     ExprIR::Pattern(pattern) => {
                         // Snapshot outer scope so pattern-local aliases can be
@@ -1795,8 +1857,8 @@ impl Binder {
             | ExprIR::Modulo
             | ExprIR::IsNode
             | ExprIR::IsRelationship
-            | ExprIR::Quantifier(_, _)
-            | ExprIR::Reduce(_, _)
+            | ExprIR::Quantifier { .. }
+            | ExprIR::Reduce { .. }
             | ExprIR::Variable(_)
             | ExprIR::Parameter(_)
             | ExprIR::Property(_)
@@ -1823,7 +1885,7 @@ impl Binder {
             | ExprIR::Property(_)
             | ExprIR::Parameter(_)
             | ExprIR::Null
-            | ExprIR::Reduce(_, _) => true,
+            | ExprIR::Reduce { .. } => true,
 
             // Everything else cannot produce a graph entity
             ExprIR::Integer(_)
@@ -1857,7 +1919,7 @@ impl Binder {
             | ExprIR::Modulo
             | ExprIR::IsNode
             | ExprIR::IsRelationship
-            | ExprIR::Quantifier(_, _)
+            | ExprIR::Quantifier { .. }
             | ExprIR::Pattern(_) => false,
         }
     }

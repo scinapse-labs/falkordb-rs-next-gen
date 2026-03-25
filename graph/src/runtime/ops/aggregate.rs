@@ -667,7 +667,7 @@ impl<'a> AggregateOp<'a> {
     ) {
         match ir.data() {
             ExprIR::FuncInvocation(func) if func.is_aggregate() => {
-                if let FnType::Aggregation(zero, _) = &func.fn_type {
+                if let FnType::Aggregation { initial: zero, .. } = &func.fn_type {
                     let ExprIR::Variable(key) = ir.child(ir.num_children() - 1).data() else {
                         unreachable!();
                     };

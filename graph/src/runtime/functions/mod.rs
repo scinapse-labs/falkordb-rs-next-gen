@@ -140,7 +140,7 @@ macro_rules! cypher_fn {
             $fn_name,
             false,
             vec![$($arg),*],
-            FnType::Aggregation($init, None),
+            FnType::Aggregation { initial: $init, finalizer: None },
             $ret,
         );
     };
@@ -166,7 +166,7 @@ macro_rules! cypher_fn {
             $fn_name,
             false,
             vec![$($arg),*],
-            FnType::Aggregation($init, Some(Box::new($finalizer))),
+            FnType::Aggregation { initial: $init, finalizer: Some(Box::new($finalizer)) },
             $ret,
         );
     };
@@ -286,7 +286,10 @@ pub enum FnType {
     /// Procedure that returns a result set (e.g., `db.labels()`)
     Procedure(Vec<String>),
     /// Aggregation function with initial value and optional finalizer
-    Aggregation(Value, Option<Box<dyn Fn(Value) -> Value>>),
+    Aggregation {
+        initial: Value,
+        finalizer: Option<Box<dyn Fn(Value) -> Value>>,
+    },
 }
 
 #[cfg_attr(tarpaulin, skip)]
@@ -299,7 +302,7 @@ impl Debug for FnType {
             Self::Function => write!(f, "Function"),
             Self::Internal => write!(f, "Internal"),
             Self::Procedure(_) => write!(f, "Procedure"),
-            Self::Aggregation(_, _) => write!(f, "Aggregation"),
+            Self::Aggregation { .. } => write!(f, "Aggregation"),
         }
     }
 }
@@ -314,7 +317,7 @@ impl PartialEq for FnType {
             (Self::Function, Self::Function)
                 | (Self::Internal, Self::Internal)
                 | (Self::Procedure(_), Self::Procedure(_))
-                | (Self::Aggregation(_, _), Self::Aggregation(_, _))
+                | (Self::Aggregation { .. }, Self::Aggregation { .. })
         )
     }
 }
@@ -453,7 +456,7 @@ impl GraphFn {
 
     #[must_use]
     pub const fn is_aggregate(&self) -> bool {
-        matches!(self.fn_type, FnType::Aggregation(_, _))
+        matches!(self.fn_type, FnType::Aggregation { .. })
     }
 
     pub fn validate(
@@ -635,7 +638,7 @@ impl Functions {
     ) -> bool {
         self.functions
             .get(name)
-            .is_some_and(|graph_fn| matches!(graph_fn.fn_type, FnType::Aggregation(_, _)))
+            .is_some_and(|graph_fn| matches!(graph_fn.fn_type, FnType::Aggregation { .. }))
     }
 }
 

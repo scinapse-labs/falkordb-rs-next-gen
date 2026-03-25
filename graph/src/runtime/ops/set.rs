@@ -89,16 +89,22 @@ impl Runtime<'_> {
         items
             .iter()
             .map(|item| match item {
-                SetItem::Label(var, labels) => SetItem::Label(
-                    var.clone(),
-                    labels
+                SetItem::Label { var, labels } => SetItem::Label {
+                    var: var.clone(),
+                    labels: labels
                         .iter()
                         .map(|l| self.g.borrow_mut().get_label_id_mut(l.as_str()))
                         .collect(),
-                ),
-                SetItem::Attribute(entity, value, replace) => {
-                    SetItem::Attribute(entity.clone(), value.clone(), *replace)
-                }
+                },
+                SetItem::Attribute {
+                    target: entity,
+                    value,
+                    replace,
+                } => SetItem::Attribute {
+                    target: entity.clone(),
+                    value: value.clone(),
+                    replace: *replace,
+                },
             })
             .collect()
     }
@@ -111,7 +117,11 @@ impl Runtime<'_> {
     ) -> Result<(), String> {
         for item in items {
             match item {
-                SetItem::Attribute(entity, value, replace) => {
+                SetItem::Attribute {
+                    target: entity,
+                    value,
+                    replace,
+                } => {
                     let run_expr = ExprEval::from_runtime(self).eval(
                         value,
                         value.root().idx(),
@@ -367,7 +377,10 @@ impl Runtime<'_> {
                         _ => {}
                     }
                 }
-                SetItem::Label(entity, labels) => {
+                SetItem::Label {
+                    var: entity,
+                    labels,
+                } => {
                     let run_expr = vars.get(entity);
                     match run_expr {
                         Some(Value::Node(id)) => {

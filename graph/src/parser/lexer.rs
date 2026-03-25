@@ -80,8 +80,10 @@ pub enum Keyword {
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum Token {
-    Ident(Arc<String>),
-    Keyword(Keyword, Arc<String>),
+    IdentifierOrKeyword {
+        ident: Arc<String>,
+        keyword: Option<Keyword>,
+    },
     Parameter(String),
     Integer(i64),
     Float(f64),
@@ -121,7 +123,7 @@ impl std::fmt::Display for Token {
         f: &mut std::fmt::Formatter,
     ) -> std::fmt::Result {
         match self {
-            Self::Ident(s) | Self::Keyword(_, s) => write!(f, "'{s}'"),
+            Self::IdentifierOrKeyword { ident: s, .. } => write!(f, "'{s}'"),
             Self::Parameter(s) => write!(f, "${s}"),
             Self::Integer(i) => write!(f, "{i}"),
             Self::Float(fl) => write!(f, "{fl}"),
@@ -492,12 +494,13 @@ impl<'a> Lexer<'a> {
                         .iter()
                         .find(|&other| str[pos..pos + len].eq_ignore_ascii_case(other.0))
                         .map_or_else(
-                            || Token::Ident(Arc::new(String::from(&str[pos..pos + len]))),
-                            |o| {
-                                Token::Keyword(
-                                    o.1.clone(),
-                                    Arc::new(String::from(&str[pos..pos + len])),
-                                )
+                            || Token::IdentifierOrKeyword {
+                                ident: Arc::new(String::from(&str[pos..pos + len])),
+                                keyword: None,
+                            },
+                            |o| Token::IdentifierOrKeyword {
+                                ident: Arc::new(String::from(&str[pos..pos + len])),
+                                keyword: Some(o.1.clone()),
                             },
                         );
                     Ok((token, len))
@@ -516,7 +519,13 @@ impl<'a> Lexer<'a> {
                         return Err((String::from(&str[pos..pos + len]), len));
                     }
                     let id = &str[pos + 1..pos + len];
-                    Ok((Token::Ident(Arc::new(String::from(id))), len + 1))
+                    Ok((
+                        Token::IdentifierOrKeyword {
+                            ident: Arc::new(String::from(id)),
+                            keyword: None,
+                        },
+                        len + 1,
+                    ))
                 }
                 ';' => Ok((Token::Semicolon, 1)),
                 _ => Err((format!("Invalid input at pos: {pos} at char {char}"), 0)),

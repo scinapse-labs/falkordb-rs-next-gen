@@ -261,13 +261,13 @@ pub fn register(funcs: &mut Functions) {
             Type::Union(vec![Type::Int, Type::Float, Type::Null]),
             Type::Union(vec![Type::Int, Type::Float]),
         ],
-        FnType::Aggregation(
-            Value::List(Arc::new(thin_vec![
+        FnType::Aggregation {
+            initial: Value::List(Arc::new(thin_vec![
                 Value::Float(0.0),
                 Value::List(Arc::new(thin_vec![]))
             ])),
-            Some(Box::new(finalize_percentile_cont)),
-        ),
+            finalizer: Some(Box::new(finalize_percentile_cont)),
+        },
         Type::Union(vec![Type::Float, Type::Null]),
     );
 
@@ -308,13 +308,13 @@ pub fn register(funcs: &mut Functions) {
         stdev,
         false,
         vec![Type::Union(vec![Type::Int, Type::Float, Type::Null])],
-        FnType::Aggregation(
-            Value::List(Arc::new(thin_vec![
+        FnType::Aggregation {
+            initial: Value::List(Arc::new(thin_vec![
                 Value::Float(0.0),
                 Value::List(Arc::new(thin_vec![]))
             ])),
-            Some(Box::new(finalize_stdevp)),
-        ),
+            finalizer: Some(Box::new(finalize_stdevp)),
+        },
         Type::Union(vec![Type::Float, Type::Null]),
     );
 }
