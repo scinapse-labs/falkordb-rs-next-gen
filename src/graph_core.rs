@@ -273,7 +273,7 @@ pub fn query_mut(
                     if is_write {
                         graph
                             .sender
-                            .send((bc, query, compact, cached, key_name.clone()))
+                            .send((bc, query, compact, cached, key_name))
                             .unwrap();
                         drop(graph);
                         process_write_queued_query(&g);
@@ -319,7 +319,8 @@ fn query_sync(
                     Ok(new_graph) => {
                         g.graph.commit(new_graph);
                         // Flush dirty cache entries to fjall if over budget.
-                        if let Err(e) = g.graph.read().borrow().maybe_flush_caches() {
+                        let value = g.graph.read().borrow().maybe_flush_caches();
+                        if let Err(e) = value {
                             eprintln!("FalkorDB: cache flush failed: {e}");
                         }
                     }
@@ -368,7 +369,8 @@ pub fn process_write_queued_query(graph: &Arc<RwLock<ThreadedGraph>>) {
                     drop(bc);
                     graph.graph.commit(g);
                     // Flush dirty cache entries to fjall if over budget.
-                    if let Err(e) = graph.graph.read().borrow().maybe_flush_caches() {
+                    let value = graph.graph.read().borrow().maybe_flush_caches();
+                    if let Err(e) = value {
                         eprintln!("FalkorDB: cache flush failed: {e}");
                     }
                 }

@@ -1346,7 +1346,9 @@ impl Graph {
     ) -> Result<usize, String> {
         match entity_type {
             EntityType::Node => {
-                let total = self.get_label_matrix(label).map_or(0, |m| m.nvals());
+                let total = self
+                    .get_label_matrix(label)
+                    .map_or(0, super::graphblas::matrix::Size::nvals);
                 let reindex = self
                     .node_indexer
                     .drop_index(label, attrs, index_type, total);
