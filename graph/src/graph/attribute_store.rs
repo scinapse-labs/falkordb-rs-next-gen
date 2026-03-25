@@ -180,7 +180,8 @@ impl AttributeStore {
             .collect();
         // Always cache the result (even empty entries) using safe insert that
         // respects in-flight writes: only insert if no newer/dirty entry exists.
-        self.cache
+        let _ = self
+            .cache
             .insert_entity_if_older(entity_id, attrs.clone(), self.version);
         attrs
     }
@@ -311,7 +312,7 @@ impl AttributeStore {
                     // Attr is in fjall but not in cache. Populate cache from fjall,
                     // then remove the attr from the cached entry.
                     let _ = self.populate_cache_from_fjall(key);
-                    self.cache.remove_attr_from_entity(key, attr_idx);
+                    let _ = self.cache.remove_attr_from_entity(key, attr_idx);
                 }
                 self.dirty_entities.insert(key);
                 // Don't immediately delete from fjall; let the flush logic persist the removal
@@ -483,16 +484,16 @@ impl AttributeStore {
         &self,
         entity_id: u64,
     ) -> Result<(), String> {
-        if let Some(cached) = self.cache.get_entity(entity_id, self.version) {
-            if !cached.is_empty() {
-                // Write cached attributes to fjall before losing the cache entry.
-                let mut batch = self.database.batch();
-                for &(attr_idx, ref value) in &cached {
-                    let composite_key = make_key(entity_id, attr_idx);
-                    batch.insert(self.keyspace(), composite_key, value.to_bytes());
-                }
-                batch.durability(None).commit().map_err(|e| e.to_string())?;
+        if let Some(cached) = self.cache.get_entity(entity_id, self.version)
+            && !cached.is_empty()
+        {
+            // Write cached attributes to fjall before losing the cache entry.
+            let mut batch = self.database.batch();
+            for &(attr_idx, ref value) in &cached {
+                let composite_key = make_key(entity_id, attr_idx);
+                batch.insert(self.keyspace(), composite_key, value.to_bytes());
             }
+            batch.durability(None).commit().map_err(|e| e.to_string())?;
         }
         self.cache.invalidate(entity_id);
         Ok(())

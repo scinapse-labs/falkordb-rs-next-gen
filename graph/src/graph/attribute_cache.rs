@@ -149,6 +149,7 @@ impl AttributeCache {
     ///
     /// Returns `true` if the insert proceeded, `false` if it was skipped due to
     /// a newer/dirty entry already in cache.
+    #[must_use]
     pub fn insert_entity_if_older(
         &self,
         entity_id: u64,
@@ -215,19 +216,20 @@ impl AttributeCache {
     ///
     /// Returns `true` if the attribute was found and removed, `false` if the
     /// entity was not in cache or the attribute didn't exist.
+    #[must_use]
     pub fn remove_attr_from_entity(
         &self,
         entity_id: u64,
         attr_idx: u16,
     ) -> bool {
-        if let Some(mut entry) = self.entries.get(&entity_id) {
-            if let Ok(pos) = entry.attrs.binary_search_by_key(&attr_idx, |(idx, _)| *idx) {
-                entry.attrs.remove(pos);
-                entry.dirty = true;
-                // Update the cache with the modified entry
-                self.entries.insert(entity_id, entry);
-                return true;
-            }
+        if let Some(mut entry) = self.entries.get(&entity_id)
+            && let Ok(pos) = entry.attrs.binary_search_by_key(&attr_idx, |(idx, _)| *idx)
+        {
+            entry.attrs.remove(pos);
+            entry.dirty = true;
+            // Update the cache with the modified entry
+            self.entries.insert(entity_id, entry);
+            return true;
         }
         false
     }
