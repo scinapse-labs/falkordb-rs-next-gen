@@ -140,6 +140,33 @@ impl AttributeCache {
         self.entries.insert(entity_id, entry);
     }
 
+    /// Insert or update a cache entry only if not overwriting a newer or dirty entry.
+    ///
+    /// This is used by `populate_cache_from_fjall` to safely cache fjall reads without
+    /// overwriting in-flight dirty writes. The insert only proceeds if:
+    /// - No cache entry exists for this entity, OR
+    /// - The existing entry is from an older version AND not dirty
+    ///
+    /// Returns `true` if the insert proceeded, `false` if it was skipped due to
+    /// a newer/dirty entry already in cache.
+    pub fn insert_entity_if_older(
+        &self,
+        entity_id: u64,
+        attrs: Vec<(u16, Value)>,
+        version: u64,
+    ) -> bool {
+        // Check if a newer or dirty entry already exists
+        if let Some(existing) = self.entries.get(&entity_id) {
+            // Skip if existing entry is newer or dirty (in-flight write)
+            if existing.version >= version || existing.dirty {
+                return false;
+            }
+        }
+        // Safe to insert or update with this fjall read
+        self.insert_entity(entity_id, attrs, version, false);
+        true
+    }
+
     /// Remove a single entity from the cache.
     pub fn invalidate(
         &self,

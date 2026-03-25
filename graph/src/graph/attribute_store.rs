@@ -149,6 +149,11 @@ impl AttributeStore {
 
     /// Fetch ALL attributes for `entity_id` from the fjall snapshot and
     /// populate the cache as a clean entry.
+    ///
+    /// Uses a version-aware insert to avoid overwriting in-flight dirty writes:
+    /// the cache entry is only updated if no newer/dirty entry already exists.
+    /// Empty entries are cached to prevent repeated fjall scans for non-existent
+    /// entities.
     fn populate_cache_from_fjall(
         &self,
         entity_id: u64,
@@ -164,10 +169,10 @@ impl AttributeStore {
                 Some((idx, value))
             })
             .collect();
-        if !attrs.is_empty() {
-            self.cache
-                .insert_entity(entity_id, attrs.clone(), self.version, false);
-        }
+        // Always cache the result (even empty entries) using safe insert that
+        // respects in-flight writes: only insert if no newer/dirty entry exists.
+        self.cache
+            .insert_entity_if_older(entity_id, attrs.clone(), self.version);
         attrs
     }
 
