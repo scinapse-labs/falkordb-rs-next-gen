@@ -1788,6 +1788,7 @@ def test_index():
     #     assert abs(memory_usage_after - memory_usage_before) < 1024 * 1024 / 2
 
 
+@pytest.mark.extra
 def test_load_csv():
     common.client.config_set("IMPORT_FOLDER", "data/")
 
