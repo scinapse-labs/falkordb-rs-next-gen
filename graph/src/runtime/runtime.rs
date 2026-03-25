@@ -74,8 +74,8 @@ pub use super::eval::ValueIter;
 pub struct ResultSummary<'a> {
     /// Mutation statistics (nodes created, etc.)
     pub stats: QueryStatistics,
-    /// Result tuples, each Env contains variable bindings
-    pub result: Vec<Env<'a>>,
+    /// Result batches from the execution pipeline
+    pub result: Vec<Batch<'a>>,
 }
 
 /// Statistics about query execution and mutations performed.
@@ -142,6 +142,8 @@ pub struct Runtime<'a> {
     /// Per-query object pool for Env backing Vec<Value> buffers.
     /// Owned externally and borrowed here to avoid self-referential lifetimes.
     pub env_pool: &'a Pool<Value>,
+    /// Maximum number of result rows to return. Negative means unlimited.
+    pub result_set_size: i64,
 }
 
 pub trait GetVariables {
@@ -297,6 +299,7 @@ impl<'a> Runtime<'a> {
         inspect: bool,
         import_folder: String,
         env_pool: &'a Pool<Value>,
+        result_set_size: i64,
     ) -> Self {
         let return_names = plan.root().get_return_names();
         Self {
@@ -315,19 +318,39 @@ impl<'a> Runtime<'a> {
             deleted_relationships: RefCell::new(HashMap::new()),
             merge_pattern_cache: RefCell::new(HashMap::new()),
             env_pool,
+            result_set_size,
         }
     }
 
-    pub fn query(&self) -> Result<ResultSummary<'a>, String> {
+    pub fn query(&'a self) -> Result<ResultSummary<'a>, String> {
         let start = Instant::now();
         let idx = self.plan.root().idx();
         let labels_count = self.g.borrow().labels_count();
         let mut result = vec![];
         let mut batch_op = self.run_batch(idx)?;
-        for batch_result in &mut batch_op {
-            let batch = batch_result?;
-            for env in batch.active_env_iter() {
-                result.push(env.clone_pooled(self.env_pool));
+        if self.result_set_size >= 0 {
+            let limit = self.result_set_size as usize;
+            let mut total: usize = 0;
+            for batch_result in &mut batch_op {
+                let mut batch = batch_result?;
+                total += batch.active_len();
+                if total >= limit {
+                    let keep = batch.active_len() - (total - limit);
+                    let sel: Vec<u16> = batch
+                        .active_indices()
+                        .take(keep)
+                        .map(|i| i as u16)
+                        .collect();
+                    batch.set_selection(sel);
+                    result.push(batch);
+                    break;
+                }
+                result.push(batch);
+            }
+        } else {
+            for batch_result in &mut batch_op {
+                let batch = batch_result?;
+                result.push(batch);
             }
         }
         let run_duration = start.elapsed();
@@ -349,9 +372,9 @@ impl<'a> Runtime<'a> {
     /// Resolves the first child of `idx` into a `BatchOp`, falling back to a
     /// single-row default batch when no child exists.
     fn child_batch_op(
-        &self,
+        &'a self,
         idx: NodeIdx<Dyn<IR>>,
-    ) -> Result<BatchOp<'_>, String> {
+    ) -> Result<BatchOp<'a>, String> {
         self.plan.node(idx).get_child(0).map_or_else(
             || Ok(BatchOp::Once(Some(self.default_batch()))),
             |child| self.run_batch(child.idx()),
@@ -360,9 +383,9 @@ impl<'a> Runtime<'a> {
 
     /// Builds a batch-mode operator tree for the given IR node.
     pub fn run_batch(
-        &self,
+        &'a self,
         idx: NodeIdx<Dyn<IR>>,
-    ) -> Result<BatchOp<'_>, String> {
+    ) -> Result<BatchOp<'a>, String> {
         match self.plan.node(idx).data() {
             IR::NodeByLabelScan(_) | IR::AllNodeScan(_) => {
                 let child = self.child_batch_op(idx)?;

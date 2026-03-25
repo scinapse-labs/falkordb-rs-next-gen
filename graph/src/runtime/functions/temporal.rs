@@ -377,6 +377,17 @@ pub fn decompose_duration(dur_secs: i64) -> Result<(i32, i32, i64), String> {
 }
 
 pub fn register(funcs: &mut Functions) {
+    // ── timestamp() ──
+    cypher_fn!(funcs, "timestamp",
+        args: [],
+        ret: Type::Int,
+        fn timestamp_fn(_, args) {
+            debug_assert!(args.is_empty());
+            let now = Utc::now();
+            Ok(Value::Int(now.timestamp_millis()))
+        }
+    );
+
     // ── date() ──
     cypher_fn!(funcs, "date",
         args: [Type::Union(vec![Type::Map, Type::String, Type::Null])],

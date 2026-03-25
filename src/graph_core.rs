@@ -28,7 +28,7 @@
 //! queue guarded by `write_loop`.
 
 use crate::{
-    config::CONFIGURATION_IMPORT_FOLDER,
+    config::{CONFIGURATION_IMPORT_FOLDER, MAX_QUEUED_QUERIES, RESULTSET_SIZE},
     reply::{reply_compact, reply_verbose},
 };
 use atomic_refcell::AtomicRefCell;
@@ -43,11 +43,11 @@ use graph::{
     },
     planner::IR,
     runtime::{eval::evaluate_param, pool::Pool, runtime::Runtime},
-    threadpool::spawn,
+    threadpool::{pending_count, spawn},
 };
 use orx_tree::Collection;
 use parking_lot::RwLock;
-use redis_module::{Context, raw};
+use redis_module::{Context, ContextFlags, RedisResult, RedisValue, raw};
 use std::{
     collections::HashMap,
     ffi::CString,
@@ -63,8 +63,8 @@ use crate::allocator::{current_thread_usage, disable_tracking, enable_tracking, 
 
 pub struct ThreadedGraph {
     pub graph: MvccGraph,
-    pub sender: Tx<Array<(BlockedClient, Arc<String>, bool, bool)>>,
-    pub receiver: Rx<Array<(BlockedClient, Arc<String>, bool, bool)>>,
+    pub sender: Tx<Array<(BlockedClient, Arc<String>, bool, bool, Arc<String>)>>,
+    pub receiver: Rx<Array<(BlockedClient, Arc<String>, bool, bool, Arc<String>)>>,
     pub write_loop: AtomicBool,
 }
 
@@ -127,6 +127,7 @@ impl ThreadedGraph {
             false,
             (*CONFIGURATION_IMPORT_FOLDER.lock(ctx)).clone(),
             &env_pool,
+            RESULTSET_SIZE.load(Ordering::Relaxed),
         );
         let mut result = runtime.query()?;
         result.stats.cached = cached;
@@ -167,6 +168,7 @@ impl ThreadedGraph {
             false,
             (*CONFIGURATION_IMPORT_FOLDER.lock(ctx)).clone(),
             &env_pool,
+            RESULTSET_SIZE.load(Ordering::Relaxed),
         );
         let mut result = runtime.query()?;
         result.stats.cached = cached;
@@ -200,7 +202,28 @@ pub fn query_mut(
     compact: bool,
     write: bool,
     track_mem: bool,
-) {
+    key_name: Arc<String>,
+) -> RedisResult {
+    // Inside MULTI/EXEC: execute synchronously (blocking commands not allowed).
+    if ctx.get_flags().contains(ContextFlags::MULTI) {
+        return query_sync(ctx, graph, query, compact, write);
+    }
+
+    // Check pending queries limit before dispatching.
+    let max = MAX_QUEUED_QUERIES.load(Ordering::Relaxed) as usize;
+    if pending_count() >= max {
+        let bc = BlockedClient {
+            inner: unsafe { raw::RedisModule_BlockClient.unwrap()(ctx.ctx, None, None, None, 0) },
+        };
+        let err_ctx = unsafe { raw::RedisModule_GetThreadSafeContext.unwrap()(bc.inner) };
+        let err_ctx = Context::new(err_ctx);
+        let cerr = CString::new("Max pending queries exceeded").unwrap();
+        raw::reply_with_error(err_ctx.ctx, cerr.as_ptr());
+        drop(bc);
+        unsafe { raw::RedisModule_FreeThreadSafeContext.unwrap()(err_ctx.ctx) };
+        return Ok(RedisValue::NoReply);
+    }
+
     let bc = BlockedClient {
         inner: unsafe { raw::RedisModule_BlockClient.unwrap()(ctx.ctx, None, None, None, 0) },
     };
@@ -223,7 +246,10 @@ pub fn query_mut(
             match res {
                 Ok((is_write, cached)) => {
                     if is_write {
-                        graph.sender.send((bc, query, compact, cached)).unwrap();
+                        graph
+                            .sender
+                            .send((bc, query, compact, cached, key_name.clone()))
+                            .unwrap();
                         drop(graph);
                         process_write_queued_query(&g);
                     } else {
@@ -252,6 +278,45 @@ pub fn query_mut(
         },
         None,
     );
+    Ok(RedisValue::NoReply)
+}
+
+/// Execute a query synchronously on the calling thread.
+/// Used when inside MULTI/EXEC where blocking is not allowed.
+fn query_sync(
+    ctx: &Context,
+    graph: &Arc<RwLock<ThreadedGraph>>,
+    query: &str,
+    compact: bool,
+    write: bool,
+) -> RedisResult {
+    // First pass: parse + detect if write, execute reads inline.
+    let res = {
+        let g = graph.read();
+        g.execute_query(ctx, query, compact, write)
+    };
+    match res {
+        Ok((is_write, cached)) => {
+            if is_write {
+                // Write path: acquire exclusive lock and execute.
+                let mut g = graph.write();
+                let res = g.execute_query_write(ctx, query, compact, cached);
+                match res {
+                    Ok(new_graph) => {
+                        g.graph.commit(new_graph);
+                    }
+                    Err(err) => {
+                        g.graph.rollback();
+                        return Err(redis_module::RedisError::String(err));
+                    }
+                }
+            }
+        }
+        Err(err) => {
+            return Err(redis_module::RedisError::String(err));
+        }
+    }
+    Ok(RedisValue::NoReply)
 }
 
 pub fn process_write_queued_query(graph: &Arc<RwLock<ThreadedGraph>>) {
@@ -262,13 +327,25 @@ pub fn process_write_queued_query(graph: &Arc<RwLock<ThreadedGraph>>) {
     {
         drop(g);
         let mut graph = graph.write();
-        while let Ok((bc, query, compact, cached)) = { graph.receiver.try_recv() } {
+        while let Ok((bc, query, compact, cached, key_name)) = { graph.receiver.try_recv() } {
             let ctx = unsafe { raw::RedisModule_GetThreadSafeContext.unwrap()(bc.inner) };
             let ctx = Context::new(ctx);
             let res = graph.execute_query_write(&ctx, &query, compact, cached);
             match res {
                 Ok(g) => {
                     drop(bc);
+                    // Signal the key as modified so WATCH gets triggered.
+                    unsafe {
+                        raw::RedisModule_ThreadSafeContextLock.unwrap()(ctx.ctx);
+                        let rstr = raw::RedisModule_CreateString.unwrap()(
+                            ctx.ctx,
+                            key_name.as_ptr().cast(),
+                            key_name.len(),
+                        );
+                        raw::RedisModule_SignalModifiedKey.unwrap()(ctx.ctx, rstr);
+                        raw::RedisModule_FreeString.unwrap()(ctx.ctx, rstr);
+                        raw::RedisModule_ThreadSafeContextUnlock.unwrap()(ctx.ctx);
+                    }
                     unsafe { raw::RedisModule_FreeThreadSafeContext.unwrap()(ctx.ctx) };
                     graph.graph.commit(g);
                 }

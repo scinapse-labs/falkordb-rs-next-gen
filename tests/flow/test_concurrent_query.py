@@ -303,7 +303,8 @@ class testConcurrentQueryFlow(FlowTestsBase):
             result = results[0]
             if type(result) is ResponseError:
                 possible_exceptions = ["Encountered a non-graph value type when opened key " + GRAPH_ID,
-                                       "WRONGTYPE Operation against a key holding the wrong kind of value"]
+                                       "WRONGTYPE Operation against a key holding the wrong kind of value",
+                                       "Existing key has wrong Redis type"]
                 self.env.assertContains(str(result), possible_exceptions)
             else:
                 self.env.assertEqual(1000000, result.result_set[0][0])

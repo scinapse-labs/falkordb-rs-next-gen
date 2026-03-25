@@ -37,11 +37,7 @@ tests/flow/test_maintain_record_order.py
 tests/flow/test_social.py
 
 ## Concurrency & Multi-writer
-tests/flow/test_concurrent_query.py
-tests/flow/test_multi_writer.py
-tests/flow/test_multi_exec.py
 tests/flow/test_stress.py
-tests/flow/test_pending_queries_limit.py
 
 ## Persistence & Replication
 tests/flow/test_persistency.py
@@ -56,11 +52,8 @@ tests/flow/test_graph_versioning.py
 tests/flow/test_acl.py
 tests/flow/test_bolt.py
 tests/flow/test_bulk_insertion.py
-tests/flow/test_commands_registration.py
-tests/flow/test_config.py
 tests/flow/test_graph_copy.py
 tests/flow/test_graph_info.py
-tests/flow/test_keyspace_accesses.py
 tests/flow/test_ro_query.py
 tests/flow/test_slowlog.py
 tests/flow/test_procedures.py

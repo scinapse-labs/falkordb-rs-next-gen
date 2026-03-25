@@ -1,17 +1,90 @@
-//! Global Redis module configuration values.
+//! Global FalkorDB configuration values.
 //!
-//! Stores runtime-configurable values exposed through Redis configuration,
-//! such as query plan cache size and CSV import folder.
-//!
-//! These values are wrapped in `RedisGILGuard` to match Redis module threading
-//! constraints: reads/writes to config occur while respecting Redis global
-//! synchronization semantics.
+//! Integer configs use atomics for thread-safe access.
+//! String configs use `RedisGILGuard` for Redis module compatibility.
+//! Load-time configs (CACHE_SIZE, THREAD_COUNT, NODE_CREATION_BUFFER, etc.)
+//! are set via Redis module args and exposed read-only at runtime.
 
 use lazy_static::lazy_static;
 use redis_module::RedisGILGuard;
+use std::sync::atomic::{AtomicI64, AtomicU64};
+
+// ── Redis module-level configurations (set via moduleArgs) ──
 
 lazy_static! {
     pub static ref CONFIGURATION_IMPORT_FOLDER: RedisGILGuard<String> =
         RedisGILGuard::new("/var/lib/FalkorDB/import/".into());
     pub static ref CONFIGURATION_CACHE_SIZE: RedisGILGuard<i64> = RedisGILGuard::new(25.into());
+    pub static ref CONFIGURATION_THREAD_COUNT: RedisGILGuard<i64> = RedisGILGuard::new(0.into());
+    pub static ref CONFIGURATION_NODE_CREATION_BUFFER: RedisGILGuard<i64> =
+        RedisGILGuard::new(16384.into());
+    pub static ref CONFIGURATION_VKEY_MAX_ENTITY_COUNT: RedisGILGuard<i64> =
+        RedisGILGuard::new(100000.into());
+    pub static ref CONFIGURATION_CMD_INFO: RedisGILGuard<bool> = RedisGILGuard::new(true);
+    pub static ref CONFIGURATION_DELAY_INDEXING: RedisGILGuard<bool> = RedisGILGuard::new(false);
+    pub static ref CONFIGURATION_TEMP_FOLDER: RedisGILGuard<String> =
+        RedisGILGuard::new("/tmp".into());
+    pub static ref CONFIGURATION_JS_HEAP_SIZE: RedisGILGuard<i64> =
+        RedisGILGuard::new((256 * 1024 * 1024_i64).into());
+    pub static ref CONFIGURATION_JS_STACK_SIZE: RedisGILGuard<i64> =
+        RedisGILGuard::new((1024 * 1024_i64).into());
 }
+
+// ── Runtime-configurable atomics ──
+
+pub static MAX_QUEUED_QUERIES: AtomicU64 = AtomicU64::new(u32::MAX as u64);
+pub static TIMEOUT: AtomicI64 = AtomicI64::new(0);
+pub static TIMEOUT_DEFAULT: AtomicI64 = AtomicI64::new(0);
+pub static TIMEOUT_MAX: AtomicI64 = AtomicI64::new(0);
+pub static RESULTSET_SIZE: AtomicI64 = AtomicI64::new(-1);
+pub static QUERY_MEM_CAPACITY: AtomicI64 = AtomicI64::new(0);
+pub static DELTA_MAX_PENDING_CHANGES: AtomicI64 = AtomicI64::new(10000);
+
+// ── Read-only runtime configs ──
+
+pub static OMP_THREAD_COUNT: AtomicI64 = AtomicI64::new(0);
+pub static ASYNC_DELETE: AtomicI64 = AtomicI64::new(0);
+pub static MAX_INFO_QUERIES: AtomicI64 = AtomicI64::new(1000);
+pub static EFFECTS_THRESHOLD: AtomicI64 = AtomicI64::new(300);
+pub static BOLT_PORT: AtomicI64 = AtomicI64::new(65535);
+
+pub fn get_thread_count(ctx: &redis_module::Context) -> i64 {
+    let val = *CONFIGURATION_THREAD_COUNT.lock(ctx);
+    if val > 0 {
+        val
+    } else {
+        std::thread::available_parallelism().map_or(4, |n| n.get() as i64)
+    }
+}
+
+/// Round up to the next power of 2, with a minimum of 128.
+pub fn normalize_node_creation_buffer(val: i64) -> i64 {
+    let val = val.max(128) as u64;
+    val.next_power_of_two() as i64
+}
+
+/// Ordered list of all configuration names for `GET *`.
+pub const CONFIG_NAMES: &[&str] = &[
+    "TIMEOUT",
+    "TIMEOUT_DEFAULT",
+    "TIMEOUT_MAX",
+    "CACHE_SIZE",
+    "ASYNC_DELETE",
+    "OMP_THREAD_COUNT",
+    "THREAD_COUNT",
+    "RESULTSET_SIZE",
+    "VKEY_MAX_ENTITY_COUNT",
+    "MAX_QUEUED_QUERIES",
+    "QUERY_MEM_CAPACITY",
+    "DELTA_MAX_PENDING_CHANGES",
+    "NODE_CREATION_BUFFER",
+    "CMD_INFO",
+    "MAX_INFO_QUERIES",
+    "EFFECTS_THRESHOLD",
+    "BOLT_PORT",
+    "DELAY_INDEXING",
+    "IMPORT_FOLDER",
+    "TEMP_FOLDER",
+    "JS_HEAP_SIZE",
+    "JS_STACK_SIZE",
+];

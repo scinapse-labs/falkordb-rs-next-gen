@@ -41,13 +41,18 @@ use commands::{
     graph_config, graph_delete, graph_explain, graph_list, graph_memory, graph_query, graph_record,
     graph_ro_query,
 };
-use config::{CONFIGURATION_CACHE_SIZE, CONFIGURATION_IMPORT_FOLDER};
+use config::{
+    CONFIGURATION_CACHE_SIZE, CONFIGURATION_CMD_INFO, CONFIGURATION_DELAY_INDEXING,
+    CONFIGURATION_IMPORT_FOLDER, CONFIGURATION_JS_HEAP_SIZE, CONFIGURATION_JS_STACK_SIZE,
+    CONFIGURATION_NODE_CREATION_BUFFER, CONFIGURATION_TEMP_FOLDER, CONFIGURATION_THREAD_COUNT,
+    CONFIGURATION_VKEY_MAX_ENTITY_COUNT,
+};
 use module_init::graph_init;
 use redis_module::{configuration::ConfigurationFlags, redis_module};
 use redis_type::GRAPH_TYPE;
 
 redis_module! {
-    name: "falkordb",
+    name: "graph",
     version: 1,
     allocator: (ThreadCountingAllocator, ThreadCountingAllocator),
     data_types: [GRAPH_TYPE],
@@ -65,11 +70,20 @@ redis_module! {
     configurations: [
         i64: [
             ["CACHE_SIZE", &*CONFIGURATION_CACHE_SIZE, 25, 0, 1000, ConfigurationFlags::DEFAULT, None],
+            ["THREAD_COUNT", &*CONFIGURATION_THREAD_COUNT, 0, 0, 1024, ConfigurationFlags::IMMUTABLE, None],
+            ["NODE_CREATION_BUFFER", &*CONFIGURATION_NODE_CREATION_BUFFER, 16384, 0, 1073741824, ConfigurationFlags::IMMUTABLE, None],
+            ["VKEY_MAX_ENTITY_COUNT", &*CONFIGURATION_VKEY_MAX_ENTITY_COUNT, 100000, 1, 1073741824, ConfigurationFlags::DEFAULT, None],
+            ["JS_HEAP_SIZE", &*CONFIGURATION_JS_HEAP_SIZE, 268435456, 0, 1073741824, ConfigurationFlags::DEFAULT, None],
+            ["JS_STACK_SIZE", &*CONFIGURATION_JS_STACK_SIZE, 1048576, 0, 1073741824, ConfigurationFlags::DEFAULT, None],
         ],
         string: [
             ["IMPORT_FOLDER", &*CONFIGURATION_IMPORT_FOLDER, "/var/lib/FalkorDB/import/", ConfigurationFlags::DEFAULT, None],
+            ["TEMP_FOLDER", &*CONFIGURATION_TEMP_FOLDER, "/tmp", ConfigurationFlags::DEFAULT, None],
         ],
-        bool: [],
+        bool: [
+            ["CMD_INFO", &*CONFIGURATION_CMD_INFO, true, ConfigurationFlags::DEFAULT, None],
+            ["DELAY_INDEXING", &*CONFIGURATION_DELAY_INDEXING, false, ConfigurationFlags::DEFAULT, None],
+        ],
         enum: [],
         module_args_as_configuration: true,
     ]

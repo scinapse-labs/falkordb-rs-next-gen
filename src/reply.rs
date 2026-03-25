@@ -560,11 +560,14 @@ pub fn reply_verbose(
             name.as_str().len(),
         );
     }
-    raw::reply_with_array(ctx.ctx, result.result.len() as _);
-    for row in result.result {
-        raw::reply_with_array(ctx.ctx, runtime.return_names.len() as _);
-        for name in &runtime.return_names {
-            reply_verbose_value(ctx, runtime, row.get(name).unwrap());
+    let total: usize = result.result.iter().map(|b| b.active_len()).sum();
+    raw::reply_with_array(ctx.ctx, total as _);
+    for batch in &result.result {
+        for row in batch.active_env_iter() {
+            raw::reply_with_array(ctx.ctx, runtime.return_names.len() as _);
+            for name in &runtime.return_names {
+                reply_verbose_value(ctx, runtime, row.get(name).unwrap());
+            }
         }
     }
     reply_stats(ctx, &result.stats, runtime.g.borrow().version);
@@ -586,12 +589,15 @@ pub fn reply_compact(
             name.as_str().len(),
         );
     }
-    raw::reply_with_array(ctx.ctx, result.result.len() as _);
-    for row in result.result {
-        raw::reply_with_array(ctx.ctx, runtime.return_names.len() as _);
-        for name in &runtime.return_names {
-            raw::reply_with_array(ctx.ctx, 2);
-            reply_compact_value(ctx, runtime, row.get(name).unwrap());
+    let total: usize = result.result.iter().map(|b| b.active_len()).sum();
+    raw::reply_with_array(ctx.ctx, total as _);
+    for batch in &result.result {
+        for row in batch.active_env_iter() {
+            raw::reply_with_array(ctx.ctx, runtime.return_names.len() as _);
+            for name in &runtime.return_names {
+                raw::reply_with_array(ctx.ctx, 2);
+                reply_compact_value(ctx, runtime, row.get(name).unwrap());
+            }
         }
     }
     reply_stats(ctx, &result.stats, runtime.g.borrow().version);
