@@ -338,7 +338,6 @@ pub fn process_write_queued_query(graph: &Arc<RwLock<ThreadedGraph>>) {
             let res = graph.execute_query_write(&ctx, &query, compact, cached);
             match res {
                 Ok(g) => {
-                    drop(bc);
                     // Signal the key as modified so WATCH gets triggered.
                     unsafe {
                         raw::RedisModule_ThreadSafeContextLock.unwrap()(ctx.ctx);
@@ -350,8 +349,9 @@ pub fn process_write_queued_query(graph: &Arc<RwLock<ThreadedGraph>>) {
                         raw::RedisModule_SignalModifiedKey.unwrap()(ctx.ctx, rstr);
                         raw::RedisModule_FreeString.unwrap()(ctx.ctx, rstr);
                         raw::RedisModule_ThreadSafeContextUnlock.unwrap()(ctx.ctx);
-                    }
-                    unsafe { raw::RedisModule_FreeThreadSafeContext.unwrap()(ctx.ctx) };
+                        raw::RedisModule_FreeThreadSafeContext.unwrap()(ctx.ctx);
+                    };
+                    drop(bc);
                     graph.graph.commit(g);
                 }
                 Err(err) => {
