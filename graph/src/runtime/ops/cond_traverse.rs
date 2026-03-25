@@ -266,21 +266,6 @@ impl<'a> CondTraverseOp<'a> {
             }
         }
     }
-
-    /// Drains rows from `self.pending` into `envs` until `BATCH_SIZE` is reached
-    /// or all pending rows are exhausted.
-    fn drain_pending(
-        &mut self,
-        envs: &mut Vec<Env<'a>>,
-    ) {
-        while envs.len() < BATCH_SIZE {
-            if let Some(row) = self.pending.pop_front() {
-                envs.push(row);
-            } else {
-                break;
-            }
-        }
-    }
 }
 
 impl<'a> Iterator for CondTraverseOp<'a> {
@@ -290,7 +275,7 @@ impl<'a> Iterator for CondTraverseOp<'a> {
         let mut envs = Vec::with_capacity(BATCH_SIZE);
 
         // Drain leftover rows from previous call.
-        self.drain_pending(&mut envs);
+        super::drain_pending(&mut self.pending, &mut envs);
 
         loop {
             if envs.len() >= BATCH_SIZE {
@@ -329,7 +314,7 @@ impl<'a> Iterator for CondTraverseOp<'a> {
                 }
             }
 
-            self.drain_pending(&mut envs);
+            super::drain_pending(&mut self.pending, &mut envs);
 
             // Check if batch is exhausted.
             if let Some(ref batch) = self.current_batch

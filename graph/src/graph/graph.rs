@@ -360,7 +360,7 @@ impl Graph {
                 .manual_journal_persist(true)
                 .cache_size(128 * 1_024 * 1_024)
                 .open()
-                .unwrap()
+                .expect("failed to open fjall database")
         });
         Self {
             node_cap: n,
@@ -388,7 +388,7 @@ impl Graph {
             node_labels: Vec::new(),
             relationship_types: Vec::new(),
             cache: Arc::new(Mutex::new(LruCache::new(
-                NonZeroUsize::new(cache_size).unwrap(),
+                NonZeroUsize::new(cache_size.max(1)).expect("cache_size.max(1) is always >= 1"),
             ))),
             version,
         }
@@ -588,7 +588,7 @@ impl Graph {
             .iter()
             .position(|l| l.as_str() == label.as_str())
             .map(|i| &mut self.labels_matices[i])
-            .unwrap()
+            .expect("label was just inserted")
     }
 
     fn get_relationship_matrix_mut(
@@ -608,7 +608,7 @@ impl Graph {
             .iter()
             .position(|l| l.as_str() == relationship_type.as_str())
             .map(|i| &mut self.relationship_matrices[i])
-            .unwrap()
+            .expect("relationship type was just inserted")
     }
 
     fn get_relationship_matrix(
@@ -1158,7 +1158,7 @@ impl Graph {
             .iter(id.0, id.0)
             .map(|(_, l)| TypeId(l as usize))
             .next()
-            .unwrap()
+            .expect("relationship must have a type in type_matrix")
     }
 
     #[must_use]
@@ -1346,7 +1346,7 @@ impl Graph {
     ) -> Result<usize, String> {
         match entity_type {
             EntityType::Node => {
-                let total = self.get_label_matrix(label).unwrap().nvals();
+                let total = self.get_label_matrix(label).map_or(0, |m| m.nvals());
                 let reindex = self
                     .node_indexer
                     .drop_index(label, attrs, index_type, total);

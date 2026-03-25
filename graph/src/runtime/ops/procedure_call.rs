@@ -97,7 +97,7 @@ impl<'a> ProcedureCallOp<'a> {
                 self.batches = Some(batches.into_iter());
                 Ok(())
             }
-            _ => unreachable!(),
+            _ => Err("Procedure must return a list".into()),
         }
     }
 }

@@ -163,7 +163,7 @@ impl<'a> ExprEval<'a> {
                                 if let ExprIR::String(key) = child.data() {
                                     key.clone()
                                 } else {
-                                    todo!();
+                                    return Err("Map key must be a string".into());
                                 },
                                 self.eval(ir, child.child(0).idx(), env, agg_group_key)?,
                             ))
@@ -558,7 +558,7 @@ impl<'a> ExprEval<'a> {
                                 if let ExprIR::String(key) = child.data() {
                                     key.clone()
                                 } else {
-                                    todo!();
+                                    return Err("Map key must be a string".into());
                                 },
                                 self.eval(ir, child.child(0).idx(), env, agg_group_key)?,
                             ))
@@ -990,7 +990,7 @@ pub fn evaluate_param(expr: &DynNode<ExprIR<Arc<String>>>) -> Result<Value, Stri
                     ExprIR::String(key) => {
                         Ok::<_, String>((key.clone(), evaluate_param(&ir.child(0))?))
                     }
-                    _ => todo!(),
+                    _ => Err("Map parameter key must be a string".into()),
                 })
                 .collect::<Result<OrderMap<_, _>, _>>()?,
         ))),

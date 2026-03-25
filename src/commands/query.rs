@@ -27,12 +27,14 @@ use parking_lot::RwLock;
 use redis_module::{Context, NextArg, RedisResult, RedisString};
 use std::sync::Arc;
 #[cfg(feature = "fuzz")]
+use std::sync::atomic::{AtomicI32, Ordering};
+#[cfg(feature = "fuzz")]
 use std::{fs::File, io::Write};
 
 #[cfg(feature = "fuzz")]
-static mut file_id: i32 = 0;
+static FILE_ID: AtomicI32 = AtomicI32::new(0);
 
-#[allow(static_mut_refs)]
+#[allow(unused_imports)]
 pub fn graph_query(
     ctx: &Context,
     args: Vec<RedisString>,
@@ -42,13 +44,10 @@ pub fn graph_query(
     let query = args.next_str()?;
 
     #[cfg(feature = "fuzz")]
-    unsafe {
-        let mut file = File::create(format!(
-            "fuzz/corpus/fuzz_target_runtime/output{file_id}.txt"
-        ))?;
+    {
+        let id = FILE_ID.fetch_add(1, Ordering::Relaxed);
+        let mut file = File::create(format!("fuzz/corpus/fuzz_target_runtime/output{id}.txt"))?;
         file.write_all(query.as_bytes())?;
-        drop(file);
-        file_id += 1;
     }
 
     let mut compact = false;

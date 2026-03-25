@@ -146,7 +146,7 @@ impl<'a> NodeByIndexScanOp<'a> {
                 }
                 Ok(IndexQuery::And(evaluated))
             }
-            IndexQuery::Or(_) => todo!(),
+            IndexQuery::Or(_) => Err("OR index queries are not yet supported".into()),
         }
     }
 

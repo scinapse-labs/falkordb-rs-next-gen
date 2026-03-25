@@ -36,14 +36,10 @@ impl<'a> CreateOp<'a> {
         pattern: &QueryGraph<Arc<String>, Arc<String>, Variable>,
         idx: NodeIdx<Dyn<IR>>,
     ) -> Self {
-        let parent_commit = if let Some(parent) = runtime.plan.node(idx).parent()
-            && matches!(parent.data(), IR::Commit)
-            && parent.parent().is_none()
-        {
-            true
-        } else {
-            false
-        };
+        let parent_commit =
+            runtime.plan.node(idx).parent().is_some_and(|parent| {
+                matches!(parent.data(), IR::Commit) && parent.parent().is_none()
+            });
 
         Self {
             runtime,
@@ -121,7 +117,12 @@ impl Runtime<'_> {
                             .borrow_mut()
                             .set_node_attributes(node_ids[i], Arc::unwrap_or_clone(attrs))?;
                     }
-                    _ => unreachable!(),
+                    other => {
+                        return Err(format!(
+                            "Expected map for node attributes, got {}",
+                            other.name()
+                        ));
+                    }
                 }
             }
 

@@ -65,6 +65,61 @@ impl PendingRelationship {
     }
 }
 
+const INVALID_PROPERTY_MSG: &str =
+    "Property values can only be of primitive types or arrays of primitive types";
+
+/// Validate that a value is a valid node property type.
+fn validate_node_property(value: &Value) -> Result<(), String> {
+    if value
+        .value_of_type(&Type::Union(vec![
+            Type::Bool,
+            Type::Int,
+            Type::Float,
+            Type::String,
+            Type::Point,
+            Type::VecF32,
+            Type::Null,
+            Type::List(Box::new(Type::Union(vec![
+                Type::Bool,
+                Type::Int,
+                Type::Float,
+                Type::String,
+                Type::Point,
+                Type::VecF32,
+            ]))),
+        ]))
+        .is_some()
+    {
+        return Err(INVALID_PROPERTY_MSG.into());
+    }
+    Ok(())
+}
+
+/// Validate that a value is a valid relationship property type.
+fn validate_relationship_property(value: &Value) -> Result<(), String> {
+    if value
+        .value_of_type(&Type::Union(vec![
+            Type::Bool,
+            Type::Int,
+            Type::Float,
+            Type::String,
+            Type::Point,
+            Type::VecF32,
+            Type::Null,
+            Type::List(Box::new(Type::Union(vec![
+                Type::Bool,
+                Type::Int,
+                Type::Float,
+                Type::String,
+            ]))),
+        ]))
+        .is_some()
+    {
+        return Err(INVALID_PROPERTY_MSG.into());
+    }
+    Ok(())
+}
+
 /// Accumulated write operations for deferred application.
 ///
 /// All mutations during query execution are collected here and applied
@@ -154,30 +209,7 @@ impl Pending {
         attrs: OrderMap<Arc<String>, Value>,
     ) -> Result<(), String> {
         for (_, value) in attrs.iter() {
-            if value
-                .value_of_type(&Type::Union(vec![
-                    Type::Bool,
-                    Type::Int,
-                    Type::Float,
-                    Type::String,
-                    Type::Point,
-                    Type::VecF32,
-                    Type::Null,
-                    Type::List(Box::new(Type::Union(vec![
-                        Type::Bool,
-                        Type::Int,
-                        Type::Float,
-                        Type::String,
-                        Type::Point,
-                        Type::VecF32,
-                    ]))),
-                ]))
-                .is_some()
-            {
-                return Err(
-                    "Property values can only be of primitive types or arrays of primitive types",
-                )?;
-            }
+            validate_node_property(value)?;
         }
         self.set_nodes_attrs.insert(id.into(), attrs);
         Ok(())
@@ -189,30 +221,7 @@ impl Pending {
         key: Arc<String>,
         value: Value,
     ) -> Result<(), String> {
-        if value
-            .value_of_type(&Type::Union(vec![
-                Type::Bool,
-                Type::Int,
-                Type::Float,
-                Type::String,
-                Type::Point,
-                Type::VecF32,
-                Type::Null,
-                Type::List(Box::new(Type::Union(vec![
-                    Type::Bool,
-                    Type::Int,
-                    Type::Float,
-                    Type::String,
-                    Type::Point,
-                    Type::VecF32,
-                ]))),
-            ]))
-            .is_some()
-        {
-            return Err(
-                "Property values can only be of primitive types or arrays of primitive types",
-            )?;
-        }
+        validate_node_property(&value)?;
         self.set_nodes_attrs
             .entry(id.into())
             .or_default()
@@ -368,28 +377,7 @@ impl Pending {
         attrs: OrderMap<Arc<String>, Value>,
     ) -> Result<(), String> {
         for (_, value) in attrs.iter() {
-            if value
-                .value_of_type(&Type::Union(vec![
-                    Type::Bool,
-                    Type::Int,
-                    Type::Float,
-                    Type::String,
-                    Type::Point,
-                    Type::VecF32,
-                    Type::Null,
-                    Type::List(Box::new(Type::Union(vec![
-                        Type::Bool,
-                        Type::Int,
-                        Type::Float,
-                        Type::String,
-                    ]))),
-                ]))
-                .is_some()
-            {
-                return Err(
-                    "Property values can only be of primitive types or arrays of primitive types",
-                )?;
-            }
+            validate_relationship_property(value)?;
         }
         self.set_relationships_attrs.insert(id.into(), attrs);
         Ok(())
@@ -401,28 +389,7 @@ impl Pending {
         key: Arc<String>,
         value: Value,
     ) -> Result<(), String> {
-        if value
-            .value_of_type(&Type::Union(vec![
-                Type::Bool,
-                Type::Int,
-                Type::Float,
-                Type::String,
-                Type::Point,
-                Type::VecF32,
-                Type::Null,
-                Type::List(Box::new(Type::Union(vec![
-                    Type::Bool,
-                    Type::Int,
-                    Type::Float,
-                    Type::String,
-                ]))),
-            ]))
-            .is_some()
-        {
-            return Err(
-                "Property values can only be of primitive types or arrays of primitive types",
-            )?;
-        }
+        validate_relationship_property(&value)?;
         self.set_relationships_attrs
             .entry(id.into())
             .or_default()
@@ -578,15 +545,18 @@ impl Pending {
                 .delete_nodes(&self.deleted_nodes, &mut self.index_remove_docs)?;
             self.deleted_nodes.clear();
         }
-        if !self.deleted_relationships.is_empty() {
-            stats.borrow_mut().relationships_deleted += self.deleted_relationships.len();
-            let rels = std::mem::take(&mut self.deleted_relationships);
-            g.borrow_mut().delete_relationships(rels)?;
-        }
+        // Commit attribute changes and indexes before relationship deletes.
+        // This ensures that if commit_attrs fails, no relationship deletions
+        // have been applied yet (they are harder to roll back).
         {
             let mut g = g.borrow_mut();
             g.commit_attrs()?;
             g.commit_index(&mut self.index_add_docs, &mut self.index_remove_docs);
+        }
+        if !self.deleted_relationships.is_empty() {
+            stats.borrow_mut().relationships_deleted += self.deleted_relationships.len();
+            let rels = std::mem::take(&mut self.deleted_relationships);
+            g.borrow_mut().delete_relationships(rels)?;
         }
         Ok(())
     }

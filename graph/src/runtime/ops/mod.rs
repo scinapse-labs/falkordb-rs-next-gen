@@ -93,3 +93,25 @@ pub use skip::SkipOp;
 pub use sort::SortOp;
 pub use union::UnionOp;
 pub use unwind::UnwindOp;
+
+use std::collections::VecDeque;
+
+use super::{batch::BATCH_SIZE, env::Env};
+
+/// Drain rows from `pending` into `envs` until `BATCH_SIZE` is reached
+/// or all pending rows are exhausted.
+///
+/// Shared helper used by operators that buffer intermediate results
+/// (CondTraverse, ExpandInto, Unwind, ForEach, CondVarLenTraverse, LoadCsv).
+pub fn drain_pending<'a>(
+    pending: &mut VecDeque<Env<'a>>,
+    envs: &mut Vec<Env<'a>>,
+) {
+    while envs.len() < BATCH_SIZE {
+        if let Some(row) = pending.pop_front() {
+            envs.push(row);
+        } else {
+            break;
+        }
+    }
+}

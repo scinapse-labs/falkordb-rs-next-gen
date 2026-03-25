@@ -254,6 +254,20 @@ pub fn query_mut(
             let ctx = Context::new(ctx);
 
             let res = graph.execute_query(&ctx, &query, compact, write);
+
+            // Log memory tracking BEFORE freeing the context.
+            if track_mem {
+                let (allocated, deallocated) = current_thread_usage();
+                disable_tracking();
+                ctx.log(
+                    redis_module::logging::RedisLogLevel::Notice,
+                    &format!(
+                        "Allocated: {allocated} bytes, Deallocated: {deallocated} bytes, Net: {}",
+                        allocated as isize - deallocated as isize
+                    ),
+                );
+            }
+
             match res {
                 Ok((is_write, cached)) => {
                     if is_write {
@@ -274,17 +288,6 @@ pub fn query_mut(
                     drop(bc);
                     unsafe { raw::RedisModule_FreeThreadSafeContext.unwrap()(ctx.ctx) };
                 }
-            }
-            if track_mem {
-                let (allocated, deallocated) = current_thread_usage();
-                disable_tracking();
-                ctx.log(
-                    redis_module::logging::RedisLogLevel::Notice,
-                    &format!(
-                        "Allocated: {allocated} bytes, Deallocated: {deallocated} bytes, Net: {}",
-                        allocated as isize - deallocated as isize
-                    ),
-                );
             }
         },
         None,
@@ -316,7 +319,9 @@ fn query_sync(
                     Ok(new_graph) => {
                         g.graph.commit(new_graph);
                         // Flush dirty cache entries to fjall if over budget.
-                        let _ = g.graph.read().borrow().maybe_flush_caches();
+                        if let Err(e) = g.graph.read().borrow().maybe_flush_caches() {
+                            eprintln!("FalkorDB: cache flush failed: {e}");
+                        }
                     }
                     Err(err) => {
                         g.graph.rollback();
@@ -363,7 +368,9 @@ pub fn process_write_queued_query(graph: &Arc<RwLock<ThreadedGraph>>) {
                     drop(bc);
                     graph.graph.commit(g);
                     // Flush dirty cache entries to fjall if over budget.
-                    let _ = graph.graph.read().borrow().maybe_flush_caches();
+                    if let Err(e) = graph.graph.read().borrow().maybe_flush_caches() {
+                        eprintln!("FalkorDB: cache flush failed: {e}");
+                    }
                 }
                 Err(err) => {
                     let cerr = CString::new(err).unwrap();

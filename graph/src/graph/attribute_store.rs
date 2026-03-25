@@ -113,6 +113,12 @@ impl AttributeStore {
     }
 
     /// Get-or-create the fjall keyspace lazily.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the fjall keyspace cannot be created or cleared. This is
+    /// intentional: a failure here means the storage backend is broken and
+    /// the process cannot continue safely.
     fn keyspace(&self) -> &Keyspace {
         self.keyspace.get_or_init(|| {
             let exists = self.database.keyspace_exists(&self.keyspace_name);
@@ -124,9 +130,9 @@ impl AttributeStore {
                         .expect_point_read_hits(true)
                         .manual_journal_persist(true)
                 })
-                .unwrap();
+                .expect("failed to create fjall keyspace");
             if exists && ks.approximate_len() > 0 {
-                ks.clear().unwrap();
+                ks.clear().expect("failed to clear fjall keyspace");
             }
             ks
         })
@@ -480,7 +486,14 @@ impl AttributeStore {
                 batch.insert(self.keyspace(), composite_key, value.to_bytes());
             }
         }
-        batch.durability(None).commit().map_err(|e| e.to_string())?;
+        batch.durability(None).commit().map_err(|e| {
+            // Re-insert entries to prevent data loss on commit failure.
+            for (entity_id, attrs) in dirty_entries {
+                self.cache
+                    .insert_entity(entity_id, attrs, self.version, true);
+            }
+            e.to_string()
+        })?;
 
         Ok(())
     }
