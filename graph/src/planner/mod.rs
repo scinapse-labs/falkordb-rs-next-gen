@@ -411,7 +411,7 @@ impl Planner {
     /// Check whether a rebuilt expression subtree references any of the given
     /// inline-pattern variable IDs.
     fn contains_inline_var(
-        node: DynNode<ExprIR<Variable>>,
+        node: &DynNode<ExprIR<Variable>>,
         inline_var_ids: &HashSet<u32>,
     ) -> bool {
         let mut tr = Traversal.bfs().over_nodes();
@@ -436,7 +436,7 @@ impl Planner {
     /// and a list of extracted comprehensions ready for plan building.
     fn extract_pattern_comprehensions(
         &mut self,
-        node: DynNode<ExprIR<Variable>>,
+        node: &DynNode<ExprIR<Variable>>,
         scope_id: u32,
         extracted: &mut Vec<(
             Variable,
@@ -451,7 +451,8 @@ impl Planner {
                 let var = self.fresh_var(scope_id, Type::List(Box::new(Type::Any)));
 
                 let where_tree = {
-                    let t = self.extract_pattern_comprehensions(node.child(0), scope_id, extracted);
+                    let t =
+                        self.extract_pattern_comprehensions(&node.child(0), scope_id, extracted);
                     if matches!(t.root().data(), ExprIR::Bool(true)) {
                         None
                     } else {
@@ -459,7 +460,7 @@ impl Planner {
                     }
                 };
                 let result_tree = Arc::new(self.extract_pattern_comprehensions(
-                    node.child(1),
+                    &node.child(1),
                     scope_id,
                     extracted,
                 ));
@@ -499,7 +500,7 @@ impl Planner {
                 let mut new_tree = DynTree::new(node.data().clone());
                 for child in node.children() {
                     let child_tree =
-                        self.extract_pattern_comprehensions(child, scope_id, extracted);
+                        self.extract_pattern_comprehensions(&child, scope_id, extracted);
                     new_tree.root_mut().push_child_tree(child_tree);
                 }
                 new_tree
@@ -518,6 +519,9 @@ impl Planner {
         result_expr: &Arc<DynTree<ExprIR<Variable>>>,
         paths: &[Arc<QueryPath<Variable>>],
     ) -> DynTree<IR> {
+        use crate::runtime::functions::{FnType, get_functions};
+        use crate::runtime::value::Value;
+
         let saved = self.visited.clone();
         let mut sub_plan = self.plan_match(graph, None);
         self.visited = saved;
@@ -535,8 +539,6 @@ impl Planner {
         Self::add_argument_to_leaves(&mut sub_plan);
 
         // Build collect(result_expr) aggregation expression
-        use crate::runtime::functions::{FnType, get_functions};
-        use crate::runtime::value::Value;
         let collect_fn = get_functions()
             .get("collect", &FnType::Aggregation(Value::Null, None))
             .expect("collect function not registered");
@@ -558,7 +560,7 @@ impl Planner {
         let collect_expr = Arc::new(collect_expr);
 
         // Create Aggregate node: names=[var], group_by_keys=[], aggregations=[(var, collect(expr))]
-        let aggregate = tree!(
+        tree!(
             IR::Aggregate(
                 vec![var.clone()],
                 vec![],
@@ -566,9 +568,7 @@ impl Planner {
                 vec![]
             ),
             sub_plan
-        );
-
-        aggregate
+        )
     }
 
     /// Recursively decompose an expression (that may contain inline-pattern
@@ -577,7 +577,7 @@ impl Planner {
     /// evaluates to true are passed through.
     fn expr_to_plan(
         &mut self,
-        node: DynNode<ExprIR<Variable>>,
+        node: &DynNode<ExprIR<Variable>>,
         inline_map: &HashMap<u32, QueryGraph<Arc<String>, Arc<String>, Variable>>,
         input: DynTree<IR>,
     ) -> DynTree<IR> {
@@ -587,7 +587,7 @@ impl Planner {
         if matches!(node.data(), ExprIR::Paren)
             && let Some(child) = node.get_child(0)
         {
-            return self.expr_to_plan(child, inline_map, input);
+            return self.expr_to_plan(&child, inline_map, input);
         }
 
         // Inline-pattern variable → SemiApply (pass if pattern exists)
@@ -609,7 +609,7 @@ impl Planner {
         }
 
         // Pure scalar (no inline var refs) → Filter
-        if !Self::contains_inline_var(node.clone(), &inline_var_ids) {
+        if !Self::contains_inline_var(node, &inline_var_ids) {
             let expr_tree = node.clone_as_tree();
             return tree!(IR::Filter(Arc::new(expr_tree)), input);
         }
@@ -630,7 +630,7 @@ impl Planner {
         if matches!(node.data(), ExprIR::Not)
             && let Some(child) = node.get_child(0)
         {
-            let inner = self.expr_to_plan(child, inline_map, tree!(IR::Argument));
+            let inner = self.expr_to_plan(&child, inline_map, tree!(IR::Argument));
             return tree!(IR::AntiSemiApply, input, inner);
         }
 
@@ -644,7 +644,7 @@ impl Planner {
     /// `input` becomes the bound branch (child 0).
     fn or_expr_to_plan(
         &mut self,
-        or_node: DynNode<ExprIR<Variable>>,
+        or_node: &DynNode<ExprIR<Variable>>,
         inline_map: &HashMap<u32, QueryGraph<Arc<String>, Arc<String>, Variable>>,
         input: DynTree<IR>,
     ) -> DynTree<IR> {
@@ -679,7 +679,7 @@ impl Planner {
                 continue;
             }
             // Pure scalar → Filter(expr, Argument)
-            if !Self::contains_inline_var(child.clone(), &inline_var_ids) {
+            if !Self::contains_inline_var(&child, &inline_var_ids) {
                 let expr_tree = child.clone_as_tree();
                 let branch = tree!(IR::Filter(Arc::new(expr_tree)), tree!(IR::Argument));
                 scalar_branches.push(branch);
@@ -687,7 +687,7 @@ impl Planner {
             }
             // Complex child (AND with patterns, nested OR, etc.):
             // Recursively build a sub-plan starting from Argument.
-            let branch = self.expr_to_plan(child, inline_map, tree!(IR::Argument));
+            let branch = self.expr_to_plan(&child, inline_map, tree!(IR::Argument));
             other_branches.push((branch, false));
         }
 
@@ -710,7 +710,7 @@ impl Planner {
     /// Scalars are applied first (cheap), then pattern / complex conditions.
     fn and_expr_to_plan(
         &mut self,
-        and_node: DynNode<ExprIR<Variable>>,
+        and_node: &DynNode<ExprIR<Variable>>,
         inline_map: &HashMap<u32, QueryGraph<Arc<String>, Arc<String>, Variable>>,
         input: DynTree<IR>,
     ) -> DynTree<IR> {
@@ -725,7 +725,7 @@ impl Planner {
 
         for child_tree in &child_trees {
             let child = child_tree.root();
-            if Self::contains_inline_var(child.clone(), &inline_var_ids) {
+            if Self::contains_inline_var(&child, &inline_var_ids) {
                 non_scalar_trees.push(child_tree);
             } else {
                 // Skip trivial Bool(true) from extractable pattern replacement
@@ -749,7 +749,7 @@ impl Planner {
 
         // Apply non-scalar conditions sequentially (each filters the stream).
         for child_tree in non_scalar_trees {
-            plan = self.expr_to_plan(child_tree.root(), inline_map, plan);
+            plan = self.expr_to_plan(&child_tree.root(), inline_map, plan);
         }
 
         plan
@@ -776,7 +776,7 @@ impl Planner {
     /// extractable) but resets to `false` under OR, NOT, and other operators.
     fn collect_patterns_and_rebuild(
         &mut self,
-        node: DynNode<ExprIR<Variable>>,
+        node: &DynNode<ExprIR<Variable>>,
         extractable: &mut Vec<(QueryGraph<Arc<String>, Arc<String>, Variable>, bool)>,
         inline: &mut HashMap<u32, QueryGraph<Arc<String>, Arc<String>, Variable>>,
         can_extract: bool,
@@ -837,7 +837,7 @@ impl Planner {
                 let mut new_tree = DynTree::new(node.data().clone());
                 for child in node.children() {
                     let child_tree =
-                        self.collect_patterns_and_rebuild(child, extractable, inline, false);
+                        self.collect_patterns_and_rebuild(&child, extractable, inline, false);
                     new_tree.root_mut().push_child_tree(child_tree);
                 }
                 new_tree
@@ -848,7 +848,7 @@ impl Planner {
                 let mut new_tree = DynTree::new(ExprIR::And);
                 for child in node.children() {
                     let child_tree =
-                        self.collect_patterns_and_rebuild(child, extractable, inline, can_extract);
+                        self.collect_patterns_and_rebuild(&child, extractable, inline, can_extract);
                     new_tree.root_mut().push_child_tree(child_tree);
                 }
                 new_tree
@@ -860,7 +860,7 @@ impl Planner {
                 let mut new_tree = DynTree::new(node.data().clone());
                 for child in node.children() {
                     let child_tree =
-                        self.collect_patterns_and_rebuild(child, extractable, inline, false);
+                        self.collect_patterns_and_rebuild(&child, extractable, inline, false);
                     new_tree.root_mut().push_child_tree(child_tree);
                 }
                 new_tree
@@ -1105,7 +1105,7 @@ impl Planner {
             let mut extractable = vec![];
             let mut inline = HashMap::new();
             let rebuilt = self.collect_patterns_and_rebuild(
-                filter.root(),
+                &filter.root(),
                 &mut extractable,
                 &mut inline,
                 true,
@@ -1114,7 +1114,7 @@ impl Planner {
             // When there are inline patterns, recursively decompose the
             // rebuilt expression into multiplexer / semi-apply / filter nodes.
             if !inline.is_empty() {
-                res = self.expr_to_plan(rebuilt.root(), &inline, res);
+                res = self.expr_to_plan(&rebuilt.root(), &inline, res);
             } else if !matches!(rebuilt.root().data(), ExprIR::Bool(true)) {
                 res = tree!(IR::Filter(Arc::new(rebuilt)), res);
             }
@@ -1170,14 +1170,14 @@ impl Planner {
     ) -> DynTree<IR> {
         // Check if any expressions contain pattern comprehensions or patterns.
         // Only rebuild expressions if patterns need to be extracted.
-        fn has_patterns(node: DynNode<ExprIR<Variable>>) -> bool {
+        fn has_patterns(node: &DynNode<ExprIR<Variable>>) -> bool {
             match node.data() {
                 ExprIR::PatternComprehension(_) | ExprIR::Pattern(_) => true,
-                _ => node.children().any(has_patterns),
+                _ => node.children().any(|c| has_patterns(&c)),
             }
         }
-        let needs_extraction = exprs.iter().any(|(_, e)| has_patterns(e.root()))
-            || orderby.iter().any(|(e, _)| has_patterns(e.root()));
+        let needs_extraction = exprs.iter().any(|(_, e)| has_patterns(&e.root()))
+            || orderby.iter().any(|(e, _)| has_patterns(&e.root()));
 
         // Extract pattern comprehensions from all projection expressions BEFORE
         // clearing visited — the sub-plans need to know which variables are
@@ -1193,7 +1193,7 @@ impl Planner {
                 .into_iter()
                 .map(|(var, expr)| {
                     let rebuilt = self.extract_pattern_comprehensions(
-                        expr.root(),
+                        &expr.root(),
                         pre_scope_id,
                         &mut all_extracted,
                     );
@@ -1209,7 +1209,7 @@ impl Planner {
                 .into_iter()
                 .map(|(expr, desc)| {
                     let rebuilt = self.extract_pattern_comprehensions(
-                        expr.root(),
+                        &expr.root(),
                         pre_scope_id,
                         &mut all_extracted,
                     );
@@ -1326,7 +1326,7 @@ impl Planner {
             let mut extractable = vec![];
             let mut inline = HashMap::new();
             let rebuilt = self.collect_patterns_and_rebuild(
-                filter.root(),
+                &filter.root(),
                 &mut extractable,
                 &mut inline,
                 true,
@@ -1336,7 +1336,7 @@ impl Planner {
                 if inline.is_empty() {
                     res = tree!(IR::Filter(Arc::new(rebuilt)), res);
                 } else {
-                    res = self.expr_to_plan(rebuilt.root(), &inline, res);
+                    res = self.expr_to_plan(&rebuilt.root(), &inline, res);
                 }
             }
 
@@ -1783,7 +1783,23 @@ impl Planner {
                 // clauses know these variables are bound.
                 self.visited = saved_visited;
                 if is_returning {
-                    if !remap.is_empty() {
+                    if remap.is_empty() {
+                        // No remapping needed (shouldn't happen for returning subqueries)
+                        match inner_plan.root().data() {
+                            IR::Project(vars, _) => {
+                                for (var, _) in vars {
+                                    self.visited.insert((var.id, var.scope_id));
+                                }
+                            }
+                            IR::Aggregate(names, _, _, _) => {
+                                for var in names {
+                                    self.visited.insert((var.id, var.scope_id));
+                                }
+                            }
+                            _ => {}
+                        }
+                        tree!(IR::Apply, inner_plan)
+                    } else {
                         // Build a Project that remaps inner return IDs to outer IDs.
                         // This prevents inner scope IDs from colliding with outer
                         // variable IDs in the Apply merge.
@@ -1800,22 +1816,6 @@ impl Planner {
                             self.visited.insert((outer_var.id, outer_var.scope_id));
                         }
                         tree!(IR::Apply, project)
-                    } else {
-                        // No remapping needed (shouldn't happen for returning subqueries)
-                        match inner_plan.root().data() {
-                            IR::Project(vars, _) => {
-                                for (var, _) in vars {
-                                    self.visited.insert((var.id, var.scope_id));
-                                }
-                            }
-                            IR::Aggregate(names, _, _, _) => {
-                                for var in names {
-                                    self.visited.insert((var.id, var.scope_id));
-                                }
-                            }
-                            _ => {}
-                        }
-                        tree!(IR::Apply, inner_plan)
                     }
                 } else {
                     // Non-returning: side-effect only, wrap in Optional so
@@ -1830,14 +1830,14 @@ impl Planner {
                 self.visited.insert((var.id, var.scope_id));
 
                 // Plan the body clauses as a sub-plan
-                let mut body_plans: Vec<DynTree<IR>> =
+                let body_plans: Vec<DynTree<IR>> =
                     body.into_iter().map(|clause| self.plan(clause)).collect();
 
                 // Restore visited to pre-FOREACH state
                 self.visited = saved_visited;
 
                 // Stitch body plans together (same as plan_query stitching)
-                let mut body_iter = body_plans.drain(..).rev();
+                let mut body_iter = body_plans.into_iter().rev();
                 let mut body_plan = body_iter.next().unwrap();
                 let mut idx = body_plan.root().idx();
                 for n in body_iter {

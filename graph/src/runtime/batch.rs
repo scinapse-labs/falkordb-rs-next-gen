@@ -723,7 +723,7 @@ impl<'a> BatchOp<'a> {
                 }
             }
             Self::Union(op) => {
-                op.store_argument_batch(batch);
+                op.store_argument_batch(&batch);
                 if let Some(ref mut c) = op.current
                     && let Some(ref envs) = op.argument_batch
                 {

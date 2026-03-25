@@ -49,7 +49,7 @@ RUN ln -sf /usr/bin/clang-21 /usr/local/bin/clang && \
 RUN python3 -m venv /data/venv
 
 # Install Python test dependencies (setuptools needed for pkg_resources)
-RUN /data/venv/bin/pip install setuptools behave falkordb hypothesis pytest pytest-benchmark git+https://github.com/falkordb/RLTest.git@master
+RUN /data/venv/bin/pip install setuptools behave falkordb hypothesis pytest pytest-benchmark RLTest
 
 # Install Rust (needed before running scripts)
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y

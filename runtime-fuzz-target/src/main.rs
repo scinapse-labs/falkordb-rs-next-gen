@@ -1,3 +1,6 @@
+// Dependency version duplicates are from transitive dependencies.
+#![allow(clippy::multiple_crate_versions)]
+
 use std::collections::HashMap;
 
 use graph::{
@@ -42,6 +45,7 @@ fn main() {
                 false,
                 String::new(),
                 &pool,
+                -1,
             );
             let _ = runtime.query();
         }

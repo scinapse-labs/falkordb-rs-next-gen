@@ -22,10 +22,12 @@
 //! Any hard failure during critical init steps returns `Status::Err` so Redis
 //! can reject loading an incomplete module.
 
+use crate::config::{CONFIGURATION_TEMP_FOLDER, OMP_THREAD_COUNT, get_thread_count};
 use graph::{
     graph::graphblas::matrix::init,
     index::redisearch::{REDISEARCH_INIT_LIBRARY, RediSearch_Init},
     runtime::functions::init_functions,
+    threadpool::init_thread_pool,
 };
 use redis_module::{
     Context, REDISMODULE_OK, RedisModule_Alloc, RedisModule_Calloc, RedisModule_Free,
@@ -68,9 +70,34 @@ pub fn graph_init(
         debug_assert_eq!(res, REDISMODULE_OK as c_int);
     }
     match init_functions() {
-        Ok(()) => Status::Ok,
-        Err(_) => Status::Err,
+        Ok(()) => {}
+        Err(_) => return Status::Err,
     }
+    // Validate TEMP_FOLDER: must be an existing writable directory.
+    {
+        let tf_guard = CONFIGURATION_TEMP_FOLDER.lock(ctx);
+        let tf = tf_guard.as_str();
+        let path = std::path::Path::new(tf);
+        if !path.is_dir() {
+            ctx.log_warning(&format!("TEMP_FOLDER '{tf}' is not a valid directory"));
+            return Status::Err;
+        }
+        // Check write access by attempting to create a temp file.
+        let test_path = path.join(".falkordb_temp_test");
+        if std::fs::File::create(&test_path).is_ok() {
+            let _ = std::fs::remove_file(&test_path);
+        } else {
+            ctx.log_warning(&format!("TEMP_FOLDER '{tf}' is not writable"));
+            return Status::Err;
+        }
+    }
+
+    // Initialize the thread pool with the configured thread count.
+    // THREAD_COUNT may come from module args (parsed by redis_module macro).
+    let tc = get_thread_count(ctx) as usize;
+    let _ = init_thread_pool(tc);
+    OMP_THREAD_COUNT.store(tc as i64, std::sync::atomic::Ordering::Relaxed);
+    Status::Ok
 }
 
 const unsafe extern "C" fn on_flush(

@@ -3,7 +3,10 @@ tests/flow/test_aggregation
 tests/flow/test_bound_variables
 tests/flow/test_cache
 tests/flow/test_call_subquery.py
+tests/flow/test_commands_registration.py
 tests/flow/test_comprehension_functions
+tests/flow/test_concurrent_query.py
+tests/flow/test_config.py
 tests/flow/test_create_clause
 tests/flow/test_distinct
 tests/flow/test_empty_query
@@ -17,11 +20,14 @@ tests/flow/test_graph_deletion
 tests/flow/test_graph_merge
 tests/flow/test_imdb
 tests/flow/test_index_create
+tests/flow/test_keyspace_accesses.py
 tests/flow/test_list
 tests/flow/test_load_csv
 tests/flow/test_map
 tests/flow/test_mix_labels
+tests/flow/test_multi_exec.py
 tests/flow/test_multi_pattern
+tests/flow/test_multi_writer.py
 tests/flow/test_multiple_edges
 tests/flow/test_node_by_id
 tests/flow/test_optional_match
@@ -35,6 +41,7 @@ tests/flow/test_point
 tests/flow/test_query_validation
 tests/flow/test_reversed_patterns
 tests/flow/test_reduce.py
+tests/flow/test_pending_queries_limit.py
 tests/flow/test_self_pointing_node
 tests/flow/test_star_projections.py
 tests/flow/test_temporal

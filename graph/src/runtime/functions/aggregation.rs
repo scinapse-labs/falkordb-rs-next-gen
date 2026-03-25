@@ -56,7 +56,7 @@ pub fn register(funcs: &mut Functions) {
             match (iter.next(), iter.next()) {
                 (Some(a), Some(Value::Null)) => Ok(Value::List(Arc::new(thin_vec![a]))),
                 (Some(a), Some(Value::List(mut l))) => {
-                    if let Value::Null = a {
+                    if a == Value::Null {
                         return Ok(Value::List(l));
                     }
                     Arc::make_mut(&mut l).push(a);

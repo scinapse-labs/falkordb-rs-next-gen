@@ -37,7 +37,7 @@ class testKeyspaceAccesses(FlowTestsBase):
             assert(False)
         except redis.exceptions.ResponseError as e:
             # Expecting an error.
-            assert("WRONGTYPE" in str(e))
+            assert("WRONGTYPE" in str(e) or "Existing key has wrong Redis type" in str(e))
             pass
 
     # Fail gracefully on attempting a graph deletion of an empty key.

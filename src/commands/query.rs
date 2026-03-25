@@ -24,7 +24,7 @@ use crate::{
     redis_type::GRAPH_TYPE,
 };
 use parking_lot::RwLock;
-use redis_module::{Context, NextArg, RedisResult, RedisString, RedisValue};
+use redis_module::{Context, NextArg, RedisResult, RedisString};
 use std::sync::Arc;
 #[cfg(feature = "fuzz")]
 use std::{fs::File, io::Write};
@@ -61,18 +61,30 @@ pub fn graph_query(
         }
     }
 
-    let key = ctx.open_key_writable(&key_str);
+    // Try read-only key access first to avoid triggering WATCH on existing graphs.
+    let read_key = ctx.open_key(&key_str);
+    let key_name = Arc::new(key_str.to_string());
 
-    if let Some(graph) = key.get_value::<Arc<RwLock<ThreadedGraph>>>(&GRAPH_TYPE)? {
-        query_mut(ctx, graph, query, compact, true, track_memory);
-    } else {
-        let graph = Arc::new(RwLock::new(ThreadedGraph::new(
-            *CONFIGURATION_CACHE_SIZE.lock(ctx) as usize,
-            &key_str.to_string(),
-        )));
-        query_mut(ctx, &graph, query, compact, true, track_memory);
-        key.set_value(&GRAPH_TYPE, graph)?;
+    if let Some(graph) = read_key.get_value::<Arc<RwLock<ThreadedGraph>>>(&GRAPH_TYPE)? {
+        let graph = graph.clone();
+        drop(read_key);
+        return query_mut(ctx, &graph, query, compact, true, track_memory, key_name);
     }
 
-    RedisResult::Ok(RedisValue::NoReply)
+    // Graph doesn't exist - open writable key to create it.
+    drop(read_key);
+    let key = ctx.open_key_writable(&key_str);
+    // Re-check: another client may have created it between our read and write open.
+    if let Some(graph) = key.get_value::<Arc<RwLock<ThreadedGraph>>>(&GRAPH_TYPE)? {
+        let graph = graph.clone();
+        return query_mut(ctx, &graph, query, compact, true, track_memory, key_name);
+    }
+
+    let graph = Arc::new(RwLock::new(ThreadedGraph::new(
+        *CONFIGURATION_CACHE_SIZE.lock(ctx) as usize,
+        &key_str.to_string(),
+    )));
+    let result = query_mut(ctx, &graph, query, compact, true, track_memory, key_name);
+    key.set_value(&GRAPH_TYPE, graph)?;
+    result
 }

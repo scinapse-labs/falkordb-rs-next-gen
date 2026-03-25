@@ -159,6 +159,8 @@ impl Runtime<'_> {
                     }
                     endpoints.push((*from_id, *to_id));
                 }
+                drop(g);
+                drop(pending);
             }
 
             // Reserve all relationship IDs at once

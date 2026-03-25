@@ -1,5 +1,5 @@
 from common import *
-from datetime import datetime, date, time
+from datetime import datetime, date, time, timezone
 from dateutil.relativedelta import relativedelta
 
 GRAPH_ID = "temporal_test"
@@ -261,7 +261,7 @@ class testTemporalLocalDateTime(FlowTestsBase):
         for map_input, expected in test_cases:
             # Construct the map string for the Cypher query
             result = self.graph.query(query, {'date': map_input})
-            actual = str(result.result_set[0][0])
+            actual = str(result.result_set[0][0]).replace("+00:00", "")
             self.env.assertEqual(actual, expected)
 
     def test_localdatetime_week_construction(self):
@@ -284,7 +284,7 @@ class testTemporalLocalDateTime(FlowTestsBase):
         for map_input, expected in test_cases:
             # Construct the map string for the Cypher query
             result = self.graph.query(query, {'date': map_input})
-            actual = str(result.result_set[0][0])
+            actual = str(result.result_set[0][0]).replace("+00:00", "")
             self.env.assertEqual(actual, expected)
 
     def test_localdatetime_components(self):
@@ -320,14 +320,14 @@ class testTemporalLocalDateTime(FlowTestsBase):
 
     def test_localdatetime_from_string(self):
         test_cases = [
-                ('2025',                datetime(year=2025, month=1, day=1)),
-                ('2025-02',             datetime(year=2025, month=2, day=1)),
-                ('2025-02-18',          datetime(year=2025, month=2, day=18)),
-                ('20250218',            datetime(year=2025, month=2, day=18)),
-                ('2025-02-18T12',       datetime(year=2025, month=2, day=18, hour=12)),
-                ('2025-02-18T12:34',    datetime(year=2025, month=2, day=18, hour=12, minute=34)),
-                ('2025-02-18T12:34:56', datetime(year=2025, month=2, day=18, hour=12, minute=34, second=56)),
-                ('20250218T123456',     datetime(year=2025, month=2, day=18, hour=12, minute=34, second=56))
+                ('2025',                datetime(year=2025, month=1, day=1, tzinfo=timezone.utc)),
+                ('2025-02',             datetime(year=2025, month=2, day=1, tzinfo=timezone.utc)),
+                ('2025-02-18',          datetime(year=2025, month=2, day=18, tzinfo=timezone.utc)),
+                ('20250218',            datetime(year=2025, month=2, day=18, tzinfo=timezone.utc)),
+                ('2025-02-18T12',       datetime(year=2025, month=2, day=18, hour=12, tzinfo=timezone.utc)),
+                ('2025-02-18T12:34',    datetime(year=2025, month=2, day=18, hour=12, minute=34, tzinfo=timezone.utc)),
+                ('2025-02-18T12:34:56', datetime(year=2025, month=2, day=18, hour=12, minute=34, second=56, tzinfo=timezone.utc)),
+                ('20250218T123456',     datetime(year=2025, month=2, day=18, hour=12, minute=34, second=56, tzinfo=timezone.utc))
                 #('2025-049', datetime()), # Year + day-of-year
                 #('2025049T12', datetime()), # Year + day-of-year + hour
                 #('2025049T1234', datetime()), # Year + day-of-year + hour + minute
@@ -343,7 +343,7 @@ class testTemporalLocalDateTime(FlowTestsBase):
         query = """WITH localdatetime({year: 1984, month: 10, day: 11, hour: 12, minute: 31, second: 14, nanosecond: 645876123}) AS d
                    RETURN d AS ts, localdatetime(toString(d)) = d AS b"""
 
-        expected = datetime(year=1984, month=10, day=11, hour=12, minute=31, second=14)
+        expected = datetime(year=1984, month=10, day=11, hour=12, minute=31, second=14, tzinfo=timezone.utc)
         res = self.graph.query(query).result_set
         ts  = res[0][0]
         b   = res[0][1]
@@ -606,7 +606,7 @@ class testTemporalDuration(FlowTestsBase):
         a = "localdatetime({year:1984, month:10, day:21, hour:5, minute:30, second:10})"
         b = "duration({years:1, months:1, days:1, hours:1, minutes:1, seconds:1})"
         q = f"RETURN {a} + {b}, {b} + {a}"
-        expected = datetime(year=1985, month=11, day=22, hour=6, minute=31, second=11)
+        expected = datetime(year=1985, month=11, day=22, hour=6, minute=31, second=11, tzinfo=timezone.utc)
 
         actual = self.graph.query(q).result_set[0][0]
         self.env.assertEqual(actual, expected)
@@ -622,7 +622,7 @@ class testTemporalDuration(FlowTestsBase):
                -
                duration({years:1, months:1, days:1, hours:1, minutes:1, seconds:1})"""
         actual = self.graph.query(q).result_set[0][0]
-        expected = datetime(year=1983, month=9, day=20, hour=4, minute=29, second=9)
+        expected = datetime(year=1983, month=9, day=20, hour=4, minute=29, second=9, tzinfo=timezone.utc)
         self.env.assertEqual(actual, expected)
 
         try:

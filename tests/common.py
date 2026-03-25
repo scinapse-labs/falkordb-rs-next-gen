@@ -12,7 +12,7 @@ g = None
 shutdown = False
 
 
-def start_redis(release=None):
+def start_redis(release=None, moduleEnvs=[]):
     global redis_server, client, g, shutdown
     port = os.environ.get("PORT", "6379")
     if release is None:
@@ -35,7 +35,7 @@ def start_redis(release=None):
             os.remove("redis-test.log")
         redis_server = subprocess.Popen(executable="/usr/local/bin/redis-server",
                                         args=["--save", "", "--port", port, "--logfile", "redis-test.log",
-                                              "--loadmodule", target],
+                                              "--loadmodule", target] + moduleEnvs,
                                         stdout=subprocess.PIPE)
     while True:
         try:

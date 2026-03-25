@@ -26,17 +26,21 @@ fn date_from_map(map: &OrderMap<Arc<String>, Value>) -> Result<NaiveDate, String
     let year = get_int_field(map, "year").unwrap_or(1970) as i32;
 
     if let Some(week) = get_int_field(map, "week") {
-        let dow = get_int_field(map, "dayOfWeek").unwrap_or(1) as u32;
+        let dow_raw = get_int_field(map, "dayOfWeek").unwrap_or(1);
+        if !(0..=6).contains(&dow_raw) {
+            return Err(format!("Invalid dayOfWeek: {dow_raw}, expected 0..6"));
+        }
+        let dow = dow_raw as u32;
         // Find Monday of ISO week 1 for the given year
         let jan4 =
             NaiveDate::from_ymd_opt(year, 1, 4).ok_or_else(|| format!("Invalid year: {year}"))?;
         let weekday_of_jan4 = jan4.weekday().num_days_from_monday(); // Mon=0..Sun=6
-        let iso_week1_monday = jan4 - chrono::Duration::days(weekday_of_jan4 as i64);
+        let iso_week1_monday = jan4 - chrono::Duration::days(i64::from(weekday_of_jan4));
         // Add (week-1)*7 days to get to target week Monday
         let target_monday = iso_week1_monday + chrono::Duration::days((week - 1) * 7);
-        // Add dayOfWeek offset: our dow 0=Sun,1=Mon,...,6=Sat
+        // Add dayOfWeek offset: dow 0=Sun,1=Mon,...,6=Sat
         // Monday is already our base, so offset from Monday
-        let day_offset = if dow == 0 { 6 } else { dow as i64 - 1 };
+        let day_offset = if dow == 0 { 6 } else { i64::from(dow) - 1 };
         let result = target_monday + chrono::Duration::days(day_offset);
         return Ok(result);
     }
@@ -75,7 +79,7 @@ fn parse_date_string(s: &str) -> Result<NaiveDate, String> {
         // Negative year - not supported
         return Err(format!("Unsupported date string: {s}"));
     }
-    let digits_only: String = s.chars().filter(|c| c.is_ascii_digit()).collect();
+    let digits_only: String = s.chars().filter(char::is_ascii_digit).collect();
     let has_hyphens = s.contains('-');
 
     if has_hyphens {
@@ -214,7 +218,7 @@ fn parse_time_string(s: &str) -> Result<NaiveTime, String> {
         };
         NaiveTime::from_hms_opt(hour, minute, second).ok_or_else(|| format!("Invalid time: {s}"))
     } else {
-        let digits: String = s.chars().filter(|c| c.is_ascii_digit()).collect();
+        let digits: String = s.chars().filter(char::is_ascii_digit).collect();
         match digits.len() {
             2 => {
                 let hour: u32 = digits.parse().map_err(|_| format!("Invalid hour: {s}"))?;
@@ -249,11 +253,9 @@ fn parse_time_string(s: &str) -> Result<NaiveTime, String> {
 // Parse ISO 8601 datetime string.
 fn parse_datetime_string(s: &str) -> Result<NaiveDateTime, String> {
     // Split on T to separate date and time
-    let (date_part, time_part) = if let Some(t_pos) = s.find('T') {
-        (&s[..t_pos], Some(&s[t_pos + 1..]))
-    } else {
-        (s, None)
-    };
+    let (date_part, time_part) = s
+        .find('T')
+        .map_or((s, None), |t_pos| (&s[..t_pos], Some(&s[t_pos + 1..])));
 
     let date = parse_date_string(date_part)?;
 
@@ -272,11 +274,9 @@ fn parse_duration_string(s: &str) -> Result<(i64, i64, i64, i64, i64, i64, i64),
         .strip_prefix('P')
         .ok_or_else(|| format!("Duration string must start with 'P': {s}"))?;
 
-    let (date_part, time_part) = if let Some(t_pos) = s.find('T') {
-        (&s[..t_pos], Some(&s[t_pos + 1..]))
-    } else {
-        (s, None)
-    };
+    let (date_part, time_part) = s
+        .find('T')
+        .map_or((s, None), |t_pos| (&s[..t_pos], Some(&s[t_pos + 1..])));
 
     let mut years = 0i64;
     let mut months = 0i64;
@@ -377,6 +377,17 @@ pub fn decompose_duration(dur_secs: i64) -> Result<(i32, i32, i64), String> {
 }
 
 pub fn register(funcs: &mut Functions) {
+    // ── timestamp() ──
+    cypher_fn!(funcs, "timestamp",
+        args: [],
+        ret: Type::Int,
+        fn timestamp_fn(_, args) {
+            debug_assert!(args.is_empty());
+            let now = Utc::now();
+            Ok(Value::Int(now.timestamp_millis()))
+        }
+    );
+
     // ── date() ──
     cypher_fn!(funcs, "date",
         args: [Type::Union(vec![Type::Map, Type::String, Type::Null])],

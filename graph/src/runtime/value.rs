@@ -591,8 +591,7 @@ fn days_in_month(
     } else {
         NaiveDate::from_ymd_opt(year, month + 1, 1)
     }
-    .map(|d| d.pred_opt().unwrap().day())
-    .unwrap_or(30)
+    .map_or(30, |d| d.pred_opt().unwrap().day())
 }
 
 impl Hash for Value {
@@ -773,7 +772,7 @@ impl Add for Value {
                 };
                 let (ya, ma, sa) = decompose_duration(a)?;
                 let (yb, mb, sb) = decompose_duration(b)?;
-                let total_months = (ya + yb) as i64 * 12 + (ma + mb) as i64;
+                let total_months = i64::from(ya + yb) * 12 + i64::from(ma + mb);
                 let years = total_months / 12;
                 let months = total_months % 12;
                 let ts = construct_duration_secs(years, months, 0, 0, 0, 0, sa + sb)?;
@@ -818,7 +817,7 @@ impl Sub for Value {
                 };
                 let (ya, ma, sa) = decompose_duration(a)?;
                 let (yb, mb, sb) = decompose_duration(b)?;
-                let total_months = (ya - yb) as i64 * 12 + (ma - mb) as i64;
+                let total_months = i64::from(ya - yb) * 12 + i64::from(ma - mb);
                 let years = total_months / 12;
                 let months = total_months % 12;
                 let ts = construct_duration_secs(years, months, 0, 0, 0, 0, sa - sb)?;

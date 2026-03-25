@@ -80,6 +80,12 @@ impl ThreadPool {
         };
         sender.send(Box::new(job)).unwrap();
     }
+    pub fn pending_count(&self) -> usize {
+        self.sender
+            .iter()
+            .map(crossfire::BlockingTxTrait::len)
+            .sum()
+    }
 }
 
 static GLOBAL_THREAD_POOL: OnceCell<ThreadPool> = OnceCell::new();
@@ -91,6 +97,25 @@ pub fn spawn<F>(
     F: FnOnce() + Send + 'static,
 {
     GLOBAL_THREAD_POOL
-        .get_or_init(|| ThreadPool::new(num_cpus::get()))
+        .get()
+        .expect("Thread pool not initialized")
         .spawn(job, idx);
+}
+
+/// Get the total number of pending jobs across all worker channels.
+pub fn pending_count() -> usize {
+    GLOBAL_THREAD_POOL
+        .get()
+        .expect("Thread pool not initialized")
+        .pending_count()
+}
+
+/// Initialize the global thread pool with a specific size.
+/// Must be called before any `spawn` calls. Returns `Ok(())` if the pool
+/// was successfully initialized, or `Err(())` if it was already initialized.
+#[allow(clippy::result_unit_err)]
+pub fn init_thread_pool(size: usize) -> Result<(), ()> {
+    GLOBAL_THREAD_POOL
+        .set(ThreadPool::new(size))
+        .map_err(|_| ())
 }

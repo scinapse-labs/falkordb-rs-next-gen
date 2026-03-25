@@ -117,15 +117,12 @@ impl<'a> Iterator for NodeByFulltextScanOp<'a> {
                     }
                     Err(e) => return Some(Err(e)),
                 };
-                let iter = match self
-                    .runtime
-                    .g
-                    .borrow()
-                    .fulltext_query_nodes(&label_str, &query_str)
-                {
+                let g = self.runtime.g.borrow();
+                let iter = match g.fulltext_query_nodes(&label_str, &query_str) {
                     Ok(iter) => Box::new(iter),
                     Err(e) => return Some(Err(e)),
                 };
+                drop(g);
 
                 self.pending
                     .push_back((vars.clone_pooled(self.runtime.env_pool), iter));

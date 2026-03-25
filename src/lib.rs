@@ -27,6 +27,13 @@
 
 #![allow(clippy::cast_possible_wrap)]
 #![allow(clippy::non_std_lazy_statics)]
+#![allow(clippy::cast_possible_truncation)]
+#![allow(clippy::cast_sign_loss)]
+#![allow(clippy::cast_precision_loss)]
+#![allow(clippy::cast_lossless)]
+#![allow(clippy::significant_drop_tightening)]
+// Dependency version duplicates are outside our control.
+#![allow(clippy::multiple_crate_versions)]
 
 mod allocator;
 mod commands;
@@ -41,13 +48,18 @@ use commands::{
     graph_config, graph_delete, graph_explain, graph_list, graph_memory, graph_query, graph_record,
     graph_ro_query,
 };
-use config::{CONFIGURATION_CACHE_SIZE, CONFIGURATION_IMPORT_FOLDER};
+use config::{
+    CONFIGURATION_CACHE_SIZE, CONFIGURATION_CMD_INFO, CONFIGURATION_DELAY_INDEXING,
+    CONFIGURATION_IMPORT_FOLDER, CONFIGURATION_JS_HEAP_SIZE, CONFIGURATION_JS_STACK_SIZE,
+    CONFIGURATION_NODE_CREATION_BUFFER, CONFIGURATION_TEMP_FOLDER, CONFIGURATION_THREAD_COUNT,
+    CONFIGURATION_VKEY_MAX_ENTITY_COUNT,
+};
 use module_init::graph_init;
 use redis_module::{configuration::ConfigurationFlags, redis_module};
 use redis_type::GRAPH_TYPE;
 
 redis_module! {
-    name: "falkordb",
+    name: "graph",
     version: 1,
     allocator: (ThreadCountingAllocator, ThreadCountingAllocator),
     data_types: [GRAPH_TYPE],
@@ -64,12 +76,21 @@ redis_module! {
     ],
     configurations: [
         i64: [
-            ["CACHE_SIZE", &*CONFIGURATION_CACHE_SIZE, 25, 0, 1000, ConfigurationFlags::DEFAULT, None],
+            ["CACHE_SIZE", &*CONFIGURATION_CACHE_SIZE, 25, 0, 1000, ConfigurationFlags::IMMUTABLE, None],
+            ["THREAD_COUNT", &*CONFIGURATION_THREAD_COUNT, 0, 0, 1024, ConfigurationFlags::IMMUTABLE, None],
+            ["NODE_CREATION_BUFFER", &*CONFIGURATION_NODE_CREATION_BUFFER, 16384, 0, 1_073_741_824, ConfigurationFlags::IMMUTABLE, None],
+            ["VKEY_MAX_ENTITY_COUNT", &*CONFIGURATION_VKEY_MAX_ENTITY_COUNT, 100_000, 1, 1_073_741_824, ConfigurationFlags::DEFAULT, None],
+            ["JS_HEAP_SIZE", &*CONFIGURATION_JS_HEAP_SIZE, 268_435_456, 0, 1_073_741_824, ConfigurationFlags::DEFAULT, None],
+            ["JS_STACK_SIZE", &*CONFIGURATION_JS_STACK_SIZE, 1_048_576, 0, 1_073_741_824, ConfigurationFlags::DEFAULT, None],
         ],
         string: [
-            ["IMPORT_FOLDER", &*CONFIGURATION_IMPORT_FOLDER, "/var/lib/FalkorDB/import/", ConfigurationFlags::DEFAULT, None],
+            ["IMPORT_FOLDER", &*CONFIGURATION_IMPORT_FOLDER, "/var/lib/FalkorDB/import/", ConfigurationFlags::IMMUTABLE, None],
+            ["TEMP_FOLDER", &*CONFIGURATION_TEMP_FOLDER, "/tmp", ConfigurationFlags::IMMUTABLE, None],
         ],
-        bool: [],
+        bool: [
+            ["CMD_INFO", &*CONFIGURATION_CMD_INFO, true, ConfigurationFlags::IMMUTABLE, None],
+            ["DELAY_INDEXING", &*CONFIGURATION_DELAY_INDEXING, false, ConfigurationFlags::IMMUTABLE, None],
+        ],
         enum: [],
         module_args_as_configuration: true,
     ]

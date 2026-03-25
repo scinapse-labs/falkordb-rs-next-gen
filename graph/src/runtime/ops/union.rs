@@ -38,7 +38,7 @@ impl<'a> UnionOp<'a> {
     /// Store an argument batch to be passed to each Union branch.
     pub fn store_argument_batch(
         &mut self,
-        batch: Batch<'a>,
+        batch: &Batch<'a>,
     ) {
         self.argument_batch = Some(
             batch

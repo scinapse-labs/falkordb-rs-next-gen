@@ -141,10 +141,7 @@ pub fn register(funcs: &mut Functions) {
             match list {
                 Some(Value::Null) => Ok(Value::Null),
                 Some(Value::List(vs)) => {
-                    let idx = match index {
-                        Some(Value::Int(i)) => i,
-                        _ => return Ok(Value::Null),
-                    };
+                    let Some(Value::Int(idx)) = index else { return Ok(Value::Null) };
                     let count = match count {
                         Some(Value::Int(c)) => c,
                         None => 1,
@@ -222,10 +219,7 @@ pub fn register(funcs: &mut Functions) {
             match list {
                 Some(Value::Null) => Ok(Value::Null),
                 Some(Value::List(vs)) => {
-                    let idx = match index {
-                        Some(Value::Int(i)) => i,
-                        _ => return Ok(Value::Null),
-                    };
+                    let Some(Value::Int(idx)) = index else { return Ok(Value::Null) };
                     let val = match value {
                         Some(Value::Null) | None => return Ok(Value::List(vs)),
                         Some(v) => v,
@@ -282,10 +276,7 @@ pub fn register(funcs: &mut Functions) {
                         Some(Value::List(v)) => v,
                         _ => unreachable!(),
                     };
-                    let idx = match index {
-                        Some(Value::Int(i)) => i,
-                        _ => return Ok(Value::Null),
-                    };
+                    let Some(Value::Int(idx)) = index else { return Ok(Value::Null) };
                     let allow_dup = match allow_dup {
                         Some(Value::Bool(b)) => b,
                         None => true,

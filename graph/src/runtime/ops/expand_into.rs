@@ -182,6 +182,8 @@ impl<'a> ExpandIntoOp<'a> {
                 out.push(row);
             }
         }
+        drop(g);
+        drop(pending);
         Ok(())
     }
 

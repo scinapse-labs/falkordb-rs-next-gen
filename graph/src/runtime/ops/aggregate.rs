@@ -503,6 +503,7 @@ impl<'a> AggregateOp<'a> {
     /// Processes a single batch using per-row evaluation.
     /// Shared by both the per-row fallback path and the vectorized path
     /// (when a specific batch can't use bulk extraction).
+    #[allow(clippy::too_many_arguments)]
     fn consume_batch_per_row(
         runtime: &'a Runtime<'a>,
         keys: &[(Variable, QueryExpr<Variable>)],

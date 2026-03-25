@@ -249,6 +249,7 @@ impl Indexer {
             let after = index.index_count();
             return Some((before - after, after));
         }
+        drop(index);
         None
     }
 
@@ -321,6 +322,7 @@ impl Indexer {
             debug_assert!(res > 0);
             return res == 1;
         }
+        drop(index);
         false
     }
 
@@ -378,6 +380,7 @@ impl Indexer {
                 index.delete_document(id);
             }
         }
+        drop(index);
     }
 
     #[must_use]
@@ -471,6 +474,7 @@ impl Indexer {
         if let Some(index) = index.get_mut(label) {
             index.recreate_index(label)?;
         }
+        drop(index);
         Ok(())
     }
 

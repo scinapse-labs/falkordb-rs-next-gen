@@ -1,6 +1,29 @@
 #![allow(clippy::arc_with_non_send_sync)]
 #![allow(clippy::type_complexity)]
 #![allow(clippy::module_inception)]
+// Dependency version duplicates are from transitive dependencies.
+#![allow(clippy::multiple_crate_versions)]
+// Cast warnings — inherent to architecture: graph IDs are u64, Cypher uses i64,
+// matrices use u32/u16, and many cross-type conversions are unavoidable.
+#![allow(clippy::cast_possible_truncation)]
+#![allow(clippy::cast_sign_loss)]
+#![allow(clippy::cast_possible_wrap)]
+#![allow(clippy::cast_precision_loss)]
+#![allow(clippy::cast_lossless)]
+// Functions in this codebase are often long due to match arms over IR/AST variants.
+#![allow(clippy::too_many_lines)]
+// Significant-drop false positives on moved/consumed values in nursery lint.
+#![allow(clippy::significant_drop_tightening)]
+// Raw pointer casts used in GraphBLAS FFI.
+#![allow(clippy::ref_as_ptr)]
+// Indexer must be Send despite raw pointers from C FFI.
+#![allow(clippy::non_send_fields_in_send_ty)]
+// Inherent to floating-point comparison in filter/index code.
+#![allow(clippy::float_cmp)]
+// Unused self in trait-like method signatures.
+#![allow(clippy::unused_self)]
+// collect() sometimes needed for lifetime reasons.
+#![allow(clippy::needless_collect)]
 
 //! # FalkorDB Graph Engine
 //!

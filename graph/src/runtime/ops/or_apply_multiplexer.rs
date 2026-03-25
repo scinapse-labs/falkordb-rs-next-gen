@@ -99,6 +99,7 @@ impl<'a> Iterator for OrApplyMultiplexerOp<'a> {
                         Err(e) => return Some(Err(e)),
                     }
                 }
+                drop(subtree);
 
                 let is_anti = self.anti_flags[branch_num];
                 for (i, _) in active.iter().enumerate() {
