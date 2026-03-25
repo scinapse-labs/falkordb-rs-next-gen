@@ -177,8 +177,8 @@ impl AttributeStore {
         &mut self,
         key: u64,
     ) -> Result<(), String> {
-        // Invalidate the cached entry and write removes to fjall.
-        self.cache.invalidate(key);
+        // Flush any pending dirty attributes to fjall before invalidating the cache.
+        self.flush_and_invalidate(key)?;
         self.dirty_entities.insert(key);
 
         let prefix = key.to_be_bytes();
@@ -298,8 +298,8 @@ impl AttributeStore {
                         .unwrap_or(false)
                 });
             if exists {
-                // Update cache: remove the attr from the cached entry.
-                self.cache.invalidate(key);
+                // Flush any pending dirty attributes to fjall before invalidating the cache.
+                self.flush_and_invalidate(key)?;
                 self.dirty_entities.insert(key);
                 // Also persist the delete to fjall so cold path is correct.
                 let composite_key = make_key(key, attr_idx);
@@ -316,9 +316,9 @@ impl AttributeStore {
         &mut self,
         keys: &RoaringTreemap,
     ) -> Result<(), String> {
-        // Invalidate cache entries.
+        // Flush pending dirty attributes for each entity before invalidating cache entries.
         for key in keys {
-            self.cache.invalidate(key);
+            self.flush_and_invalidate(key)?;
             self.dirty_entities.insert(key);
         }
         // Also remove from fjall for durability.
@@ -454,6 +454,30 @@ impl AttributeStore {
         }
         batch.durability(None).commit().map_err(|e| e.to_string())?;
 
+        Ok(())
+    }
+
+    /// Flush an entity's pending dirty attributes to fjall, then invalidate from cache.
+    ///
+    /// This ensures that any unflushed writes to the cache are persisted to fjall
+    /// before the cache entry is removed, preventing data loss when the entry is
+    /// about to be deleted from fjall.
+    fn flush_and_invalidate(
+        &self,
+        entity_id: u64,
+    ) -> Result<(), String> {
+        if let Some(cached) = self.cache.get_entity(entity_id, self.version) {
+            if !cached.is_empty() {
+                // Write cached attributes to fjall before losing the cache entry.
+                let mut batch = self.database.batch();
+                for &(attr_idx, ref value) in &cached {
+                    let composite_key = make_key(entity_id, attr_idx);
+                    batch.insert(self.keyspace(), composite_key, value.to_bytes());
+                }
+                batch.durability(None).commit().map_err(|e| e.to_string())?;
+            }
+        }
+        self.cache.invalidate(entity_id);
         Ok(())
     }
 
