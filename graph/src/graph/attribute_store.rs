@@ -303,14 +303,17 @@ impl AttributeStore {
                         .unwrap_or(false)
                 });
             if exists {
-                // Flush any pending dirty attributes to fjall before invalidating the cache.
-                self.flush_and_invalidate(key)?;
+                // Try to remove from cache. If not in cache, populate from fjall first.
+                let removed = self.cache.remove_attr_from_entity(key, attr_idx);
+                if !removed {
+                    // Attr is in fjall but not in cache. Populate cache from fjall,
+                    // then remove the attr from the cached entry.
+                    let _ = self.populate_cache_from_fjall(key);
+                    self.cache.remove_attr_from_entity(key, attr_idx);
+                }
                 self.dirty_entities.insert(key);
-                // Also persist the delete to fjall so cold path is correct.
-                let composite_key = make_key(key, attr_idx);
-                self.keyspace()
-                    .remove(composite_key)
-                    .map_err(|e| e.to_string())?;
+                // Don't immediately delete from fjall; let the flush logic persist the removal
+                // when the entity is flushed with its updated attribute set.
                 return Ok(true);
             }
         }

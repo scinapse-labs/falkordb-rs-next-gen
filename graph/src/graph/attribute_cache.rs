@@ -207,6 +207,31 @@ impl AttributeCache {
         )
     }
 
+    /// Remove a single attribute from a cached entity, keeping the entry dirty.
+    ///
+    /// This is used by `remove_attr` to remove only a specific attribute while
+    /// preserving other cached attributes. The entry remains marked dirty and
+    /// will be flushed to fjall along with other pending changes.
+    ///
+    /// Returns `true` if the attribute was found and removed, `false` if the
+    /// entity was not in cache or the attribute didn't exist.
+    pub fn remove_attr_from_entity(
+        &self,
+        entity_id: u64,
+        attr_idx: u16,
+    ) -> bool {
+        if let Some(mut entry) = self.entries.get(&entity_id) {
+            if let Ok(pos) = entry.attrs.binary_search_by_key(&attr_idx, |(idx, _)| *idx) {
+                entry.attrs.remove(pos);
+                entry.dirty = true;
+                // Update the cache with the modified entry
+                self.entries.insert(entity_id, entry);
+                return true;
+            }
+        }
+        false
+    }
+
     /// Returns `true` when the cache is over its memory budget.
     #[must_use]
     pub fn over_budget(&self) -> bool {
