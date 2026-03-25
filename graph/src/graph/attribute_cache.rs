@@ -119,13 +119,19 @@ impl AttributeCache {
     }
 
     /// Insert (or replace) the full attribute set for an entity.
+    ///
+    /// The incoming `attrs` are sorted by `attr_idx` before storing to maintain
+    /// the invariant required by binary searches in `get_attr`, `contains_attr`,
+    /// and other methods that rely on sorted access.
     pub fn insert_entity(
         &self,
         entity_id: u64,
-        attrs: Vec<(u16, Value)>,
+        mut attrs: Vec<(u16, Value)>,
         version: u64,
         dirty: bool,
     ) {
+        // Ensure attrs are sorted by attr_idx to support binary searches.
+        attrs.sort_by_key(|item| item.0);
         let entry = CachedEntity {
             attrs,
             version,
