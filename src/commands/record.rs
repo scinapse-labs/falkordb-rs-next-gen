@@ -82,9 +82,7 @@ fn record_mut(
                 let vars = plan.node(*idx).get_variables();
                 raw::reply_with_array(ctx.ctx, vars.len() as _);
                 for name in &vars {
-                    if !bound.test(name.id as usize) {
-                        raw::reply_with_null(ctx.ctx);
-                    } else {
+                    if bound.test(name.id as usize) {
                         match values.get(name.id as usize) {
                             None => {
                                 raw::reply_with_null(ctx.ctx);
@@ -93,11 +91,14 @@ fn record_mut(
                                 reply_verbose_value(ctx, &runtime, value);
                             }
                         }
+                    } else {
+                        raw::reply_with_null(ctx.ctx);
                     }
                 }
             }
         }
     }
+    drop(runtime);
 
     raw::reply_with_array(ctx.ctx, ids.len() as _);
     for idx in plan.root().indices::<Bfs>() {

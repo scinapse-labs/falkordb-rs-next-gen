@@ -143,7 +143,7 @@ impl<'a> NodeByIndexScanOp<'a> {
                 }
                 Ok(IndexQuery::And(evaluated))
             }
-            _ => todo!(),
+            IndexQuery::Or(_) => todo!(),
         }
     }
 

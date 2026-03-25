@@ -289,11 +289,7 @@ fn try_single_filter_index_scan(
     ) {
         return None;
     }
-    let Some((attr, attr_side, constant_side)) =
-        extract_attribute_and_expression_from_filter(filter)
-    else {
-        return None;
-    };
+    let (attr, attr_side, constant_side) = extract_attribute_and_expression_from_filter(filter)?;
     if !graph.is_indexed(&node.labels[0], &attr, &IndexType::Range) {
         return None;
     }
@@ -367,16 +363,14 @@ fn utilize_index(
                             remaining_conjuncts.push(conjunct);
                         }
                     }
-                    if let Some(combined_query) = merged {
-                        Some((
+                    merged.map(|combined_query| {
+                        (
                             node.clone(),
                             node.labels[0].clone(),
                             Arc::new(combined_query),
                             remaining_conjuncts,
-                        ))
-                    } else {
-                        None
-                    }
+                        )
+                    })
                 } else {
                     // Single comparison filter
                     try_single_filter_index_scan(node, filter, graph)
@@ -600,10 +594,9 @@ fn push_filters_down(optimized_plan: &mut DynTree<IR>) {
             // available in the right branch via Argument.
             if let Some(child) = optimized_plan.node(idx).get_child(0)
                 && matches!(child.data(), IR::Apply)
+                && let Some((_, left_vars)) = children.first()
             {
-                if let Some((_, left_vars)) = children.first() {
-                    inherited.extend(left_vars.iter());
-                }
+                inherited.extend(left_vars.iter());
             }
 
             // Case 2: Filter is inside an Apply's right branch.
@@ -651,7 +644,7 @@ fn push_filters_down(optimized_plan: &mut DynTree<IR>) {
 
             // Augment variable sets for subtrees containing Argument leaves.
             if !inherited.is_empty() {
-                for (child_idx, vars) in children.iter_mut() {
+                for (child_idx, vars) in &mut children {
                     if subtree_contains(optimized_plan, *child_idx, |ir| matches!(ir, IR::Argument))
                     {
                         vars.extend(&inherited);

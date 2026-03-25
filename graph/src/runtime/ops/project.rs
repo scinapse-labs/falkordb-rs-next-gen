@@ -181,7 +181,7 @@ impl<'a> ProjectOp<'a> {
     /// Per-row fallback: evaluates each projection expression row-by-row.
     fn eval_per_row(
         &self,
-        batch: Batch<'a>,
+        batch: &Batch<'a>,
     ) -> Result<Batch<'a>, String> {
         let cap = self.trees.len() + self.copy_from_parent.len();
         let mut result_envs = Vec::with_capacity(batch.active_len());
@@ -224,10 +224,9 @@ impl<'a> Iterator for ProjectOp<'a> {
     fn next(&mut self) -> Option<Self::Item> {
         // Lazily analyze projections on the first call.
         if matches!(self.vectorized, ProjectionCache::NotAnalyzed) {
-            self.vectorized = match self.analyze_projections() {
-                Some(kinds) => ProjectionCache::Batchable(kinds),
-                None => ProjectionCache::NotBatchable,
-            };
+            self.vectorized = self
+                .analyze_projections()
+                .map_or(ProjectionCache::NotBatchable, ProjectionCache::Batchable);
         }
 
         let batch = match self.child.next()? {
@@ -244,12 +243,12 @@ impl<'a> Iterator for ProjectOp<'a> {
                     // Disable for future batches and fall through to per-row
                     // on the same batch.
                     self.vectorized = ProjectionCache::NotBatchable;
-                    return Some(self.eval_per_row(batch));
+                    return Some(self.eval_per_row(&batch));
                 }
             }
         }
 
         // Per-row fallback path.
-        Some(self.eval_per_row(batch))
+        Some(self.eval_per_row(&batch))
     }
 }

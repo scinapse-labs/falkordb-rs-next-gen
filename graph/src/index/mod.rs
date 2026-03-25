@@ -493,8 +493,8 @@ impl Index {
                         field.name.as_ptr(),
                         max,
                         min,
-                        include_max as i32,
-                        include_min as i32,
+                        i32::from(include_max),
+                        i32::from(include_min),
                     )
                 }
             }
@@ -508,8 +508,8 @@ impl Index {
                     RediSearch_CreateGeoNode(
                         self.rs_idx,
                         field.name.as_ptr(),
-                        point.latitude as f64,
-                        point.longitude as f64,
+                        f64::from(point.latitude),
+                        f64::from(point.longitude),
                         radius,
                         RSGeoDistance_RS_GEO_DISTANCE_M,
                     )
@@ -525,8 +525,8 @@ impl Index {
                     RediSearch_CreateGeoNode(
                         self.rs_idx,
                         field.name.as_ptr(),
-                        point.latitude as f64,
-                        point.longitude as f64,
+                        f64::from(point.latitude),
+                        f64::from(point.longitude),
                         radius as f64,
                         RSGeoDistance_RS_GEO_DISTANCE_M,
                     )
@@ -564,7 +564,8 @@ impl Index {
         let cstr = CString::new(query).map_err(|e| e.to_string())?;
         let mut err: *mut c_char = null_mut();
         unsafe {
-            let iter = RediSearch_IterateQuery(self.rs_idx, cstr.as_ptr(), query.len(), &mut err);
+            let iter =
+                RediSearch_IterateQuery(self.rs_idx, cstr.as_ptr(), query.len(), &raw mut err);
             if !err.is_null() {
                 let msg = CStr::from_ptr(err).to_string_lossy().into_owned();
                 drop(CString::from_raw(err));

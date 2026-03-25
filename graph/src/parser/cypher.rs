@@ -647,7 +647,7 @@ impl<'a> Parser<'a> {
             QueryIR::Query(clauses, _) => clauses
                 .last()
                 .is_some_and(|c| matches!(c, QueryIR::Return { .. })),
-            QueryIR::Union(branches, _) => branches.iter().all(|b| Self::body_has_return(b)),
+            QueryIR::Union(branches, _) => branches.iter().all(Self::body_has_return),
             _ => false,
         }
     }

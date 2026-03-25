@@ -61,10 +61,12 @@ use std::{
 
 use crate::allocator::{current_thread_usage, disable_tracking, enable_tracking, reset_counter};
 
+type WriteMessage = (BlockedClient, Arc<String>, bool, bool, Arc<String>);
+
 pub struct ThreadedGraph {
     pub graph: MvccGraph,
-    pub sender: Tx<Array<(BlockedClient, Arc<String>, bool, bool, Arc<String>)>>,
-    pub receiver: Rx<Array<(BlockedClient, Arc<String>, bool, bool, Arc<String>)>>,
+    pub sender: Tx<Array<WriteMessage>>,
+    pub receiver: Rx<Array<WriteMessage>>,
     pub write_loop: AtomicBool,
 }
 
@@ -122,7 +124,7 @@ impl ThreadedGraph {
         let runtime = Runtime::new(
             g,
             parameters,
-            write,
+            is_write,
             plan,
             false,
             (*CONFIGURATION_IMPORT_FOLDER.lock(ctx)).clone(),
@@ -132,10 +134,12 @@ impl ThreadedGraph {
         let mut result = runtime.query()?;
         result.stats.cached = cached;
         if compact {
-            reply_compact(ctx, &runtime, result);
+            reply_compact(ctx, &runtime, &result);
         } else {
-            reply_verbose(ctx, &runtime, result);
+            reply_verbose(ctx, &runtime, &result);
         }
+        drop(result);
+        drop(runtime);
         Ok((is_write, cached))
     }
 
@@ -173,9 +177,9 @@ impl ThreadedGraph {
         let mut result = runtime.query()?;
         result.stats.cached = cached;
         if compact {
-            reply_compact(ctx, &runtime, result);
+            reply_compact(ctx, &runtime, &result);
         } else {
-            reply_verbose(ctx, &runtime, result);
+            reply_verbose(ctx, &runtime, &result);
         }
         Ok(g)
     }
@@ -236,8 +240,8 @@ pub fn query_mut(
                 enable_tracking();
             }
             let g = graph.clone();
-            let graph = graph.clone();
-            let graph = graph.read();
+            let binding = graph.clone();
+            let graph = binding.read();
             let bc = bc;
             let ctx = unsafe { raw::RedisModule_GetThreadSafeContext.unwrap()(bc.inner) };
             let ctx = Context::new(ctx);
@@ -310,6 +314,7 @@ fn query_sync(
                         return Err(redis_module::RedisError::String(err));
                     }
                 }
+                drop(g);
             }
         }
         Err(err) => {

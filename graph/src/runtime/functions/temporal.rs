@@ -31,12 +31,12 @@ fn date_from_map(map: &OrderMap<Arc<String>, Value>) -> Result<NaiveDate, String
         let jan4 =
             NaiveDate::from_ymd_opt(year, 1, 4).ok_or_else(|| format!("Invalid year: {year}"))?;
         let weekday_of_jan4 = jan4.weekday().num_days_from_monday(); // Mon=0..Sun=6
-        let iso_week1_monday = jan4 - chrono::Duration::days(weekday_of_jan4 as i64);
+        let iso_week1_monday = jan4 - chrono::Duration::days(i64::from(weekday_of_jan4));
         // Add (week-1)*7 days to get to target week Monday
         let target_monday = iso_week1_monday + chrono::Duration::days((week - 1) * 7);
         // Add dayOfWeek offset: our dow 0=Sun,1=Mon,...,6=Sat
         // Monday is already our base, so offset from Monday
-        let day_offset = if dow == 0 { 6 } else { dow as i64 - 1 };
+        let day_offset = if dow == 0 { 6 } else { i64::from(dow) - 1 };
         let result = target_monday + chrono::Duration::days(day_offset);
         return Ok(result);
     }
@@ -75,7 +75,7 @@ fn parse_date_string(s: &str) -> Result<NaiveDate, String> {
         // Negative year - not supported
         return Err(format!("Unsupported date string: {s}"));
     }
-    let digits_only: String = s.chars().filter(|c| c.is_ascii_digit()).collect();
+    let digits_only: String = s.chars().filter(char::is_ascii_digit).collect();
     let has_hyphens = s.contains('-');
 
     if has_hyphens {
@@ -214,7 +214,7 @@ fn parse_time_string(s: &str) -> Result<NaiveTime, String> {
         };
         NaiveTime::from_hms_opt(hour, minute, second).ok_or_else(|| format!("Invalid time: {s}"))
     } else {
-        let digits: String = s.chars().filter(|c| c.is_ascii_digit()).collect();
+        let digits: String = s.chars().filter(char::is_ascii_digit).collect();
         match digits.len() {
             2 => {
                 let hour: u32 = digits.parse().map_err(|_| format!("Invalid hour: {s}"))?;
@@ -249,11 +249,9 @@ fn parse_time_string(s: &str) -> Result<NaiveTime, String> {
 // Parse ISO 8601 datetime string.
 fn parse_datetime_string(s: &str) -> Result<NaiveDateTime, String> {
     // Split on T to separate date and time
-    let (date_part, time_part) = if let Some(t_pos) = s.find('T') {
-        (&s[..t_pos], Some(&s[t_pos + 1..]))
-    } else {
-        (s, None)
-    };
+    let (date_part, time_part) = s
+        .find('T')
+        .map_or((s, None), |t_pos| (&s[..t_pos], Some(&s[t_pos + 1..])));
 
     let date = parse_date_string(date_part)?;
 
@@ -272,11 +270,9 @@ fn parse_duration_string(s: &str) -> Result<(i64, i64, i64, i64, i64, i64, i64),
         .strip_prefix('P')
         .ok_or_else(|| format!("Duration string must start with 'P': {s}"))?;
 
-    let (date_part, time_part) = if let Some(t_pos) = s.find('T') {
-        (&s[..t_pos], Some(&s[t_pos + 1..]))
-    } else {
-        (s, None)
-    };
+    let (date_part, time_part) = s
+        .find('T')
+        .map_or((s, None), |t_pos| (&s[..t_pos], Some(&s[t_pos + 1..])));
 
     let mut years = 0i64;
     let mut months = 0i64;

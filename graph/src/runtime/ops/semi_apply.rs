@@ -82,6 +82,7 @@ impl<'a> Iterator for SemiApplyOp<'a> {
                     Err(e) => return Some(Err(e)),
                 }
             }
+            drop(subtree);
 
             // Build selection based on match/anti semantics.
             let mut passing = Vec::new();

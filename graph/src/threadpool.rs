@@ -81,7 +81,10 @@ impl ThreadPool {
         sender.send(Box::new(job)).unwrap();
     }
     pub fn pending_count(&self) -> usize {
-        self.sender.iter().map(|tx| tx.len()).sum()
+        self.sender
+            .iter()
+            .map(crossfire::BlockingTxTrait::len)
+            .sum()
     }
 }
 
@@ -110,6 +113,7 @@ pub fn pending_count() -> usize {
 /// Initialize the global thread pool with a specific size.
 /// Must be called before any `spawn` calls. Returns `Ok(())` if the pool
 /// was successfully initialized, or `Err(())` if it was already initialized.
+#[allow(clippy::result_unit_err)]
 pub fn init_thread_pool(size: usize) -> Result<(), ()> {
     GLOBAL_THREAD_POOL
         .set(ThreadPool::new(size))

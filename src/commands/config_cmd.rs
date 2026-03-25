@@ -3,7 +3,14 @@
 //! Implements graph-specific runtime configuration get/set semantics.
 //! Supports GET <name>, GET *, SET <name> <value>, and multi-SET.
 
-use crate::config::*;
+use crate::config::{
+    ASYNC_DELETE, BOLT_PORT, CONFIG_NAMES, CONFIGURATION_CACHE_SIZE, CONFIGURATION_CMD_INFO,
+    CONFIGURATION_DELAY_INDEXING, CONFIGURATION_IMPORT_FOLDER, CONFIGURATION_JS_HEAP_SIZE,
+    CONFIGURATION_JS_STACK_SIZE, CONFIGURATION_NODE_CREATION_BUFFER, CONFIGURATION_TEMP_FOLDER,
+    CONFIGURATION_VKEY_MAX_ENTITY_COUNT, DELTA_MAX_PENDING_CHANGES, EFFECTS_THRESHOLD,
+    MAX_INFO_QUERIES, MAX_QUEUED_QUERIES, OMP_THREAD_COUNT, QUERY_MEM_CAPACITY, RESULTSET_SIZE,
+    TIMEOUT, TIMEOUT_DEFAULT, TIMEOUT_MAX, get_thread_count, normalize_node_creation_buffer,
+};
 use redis_module::{Context, NextArg, RedisResult, RedisString, RedisValue};
 use std::sync::atomic::Ordering;
 
@@ -38,19 +45,11 @@ fn config_get_one(
         "NODE_CREATION_BUFFER" => RedisValue::Integer(normalize_node_creation_buffer(
             *CONFIGURATION_NODE_CREATION_BUFFER.lock(ctx),
         )),
-        "CMD_INFO" => RedisValue::Integer(if *CONFIGURATION_CMD_INFO.lock(ctx) {
-            1
-        } else {
-            0
-        }),
+        "CMD_INFO" => RedisValue::Integer(i64::from(*CONFIGURATION_CMD_INFO.lock(ctx))),
         "MAX_INFO_QUERIES" => RedisValue::Integer(MAX_INFO_QUERIES.load(Ordering::Relaxed)),
         "EFFECTS_THRESHOLD" => RedisValue::Integer(EFFECTS_THRESHOLD.load(Ordering::Relaxed)),
         "BOLT_PORT" => RedisValue::Integer(BOLT_PORT.load(Ordering::Relaxed)),
-        "DELAY_INDEXING" => RedisValue::Integer(if *CONFIGURATION_DELAY_INDEXING.lock(ctx) {
-            1
-        } else {
-            0
-        }),
+        "DELAY_INDEXING" => RedisValue::Integer(i64::from(*CONFIGURATION_DELAY_INDEXING.lock(ctx))),
         "IMPORT_FOLDER" => RedisValue::BulkString((*CONFIGURATION_IMPORT_FOLDER.lock(ctx)).clone()),
         "TEMP_FOLDER" => RedisValue::BulkString((*CONFIGURATION_TEMP_FOLDER.lock(ctx)).clone()),
         "JS_HEAP_SIZE" => RedisValue::Integer(*CONFIGURATION_JS_HEAP_SIZE.lock(ctx)),
@@ -139,7 +138,7 @@ enum ConfigValue {
 fn apply_config_set(
     ctx: &Context,
     name: &str,
-    val: ConfigValue,
+    val: &ConfigValue,
 ) {
     match name {
         "TIMEOUT" => TIMEOUT.store(val.as_i64(), Ordering::Relaxed),
@@ -165,16 +164,16 @@ fn apply_config_set(
 }
 
 impl ConfigValue {
-    fn as_i64(&self) -> i64 {
+    const fn as_i64(&self) -> i64 {
         match self {
-            ConfigValue::Int(v) => *v,
-            ConfigValue::Uint(v) => *v as i64,
+            Self::Int(v) => *v,
+            Self::Uint(v) => *v as i64,
         }
     }
-    fn as_u64(&self) -> u64 {
+    const fn as_u64(&self) -> u64 {
         match self {
-            ConfigValue::Int(v) => *v as u64,
-            ConfigValue::Uint(v) => *v,
+            Self::Int(v) => *v as u64,
+            Self::Uint(v) => *v,
         }
     }
 }
@@ -206,11 +205,8 @@ pub fn graph_config(
         "SET" => {
             // Collect all name-value pairs.
             let mut pairs = Vec::new();
-            loop {
-                let name = match args.next_str() {
-                    Ok(n) => n.to_uppercase(),
-                    Err(_) => break,
-                };
+            while let Ok(n) = args.next_str() {
+                let name = n.to_uppercase();
                 let value = args.next_str().map_err(|_| {
                     redis_module::RedisError::Str("Missing value for configuration parameter")
                 })?;
@@ -233,13 +229,13 @@ pub fn graph_config(
 
             // Apply all validated values.
             for (name, val) in validated {
-                apply_config_set(ctx, name, val);
+                apply_config_set(ctx, name, &val);
             }
 
             Ok(RedisValue::SimpleStringStatic("OK"))
         }
-        _ => Err(redis_module::RedisError::String(format!(
-            "Unknown subcommand for GRAPH.CONFIG"
-        ))),
+        _ => Err(redis_module::RedisError::String(
+            "Unknown subcommand for GRAPH.CONFIG".to_string(),
+        )),
     }
 }

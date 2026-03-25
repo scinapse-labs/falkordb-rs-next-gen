@@ -206,11 +206,9 @@ impl<T: MemoryPolicy> GetVariables for DynNode<'_, IR, T> {
                     }
                 }
                 IR::CondTraverse(query_relationship, _)
-                | IR::CondVarLenTraverse(query_relationship) => {
+                | IR::CondVarLenTraverse(query_relationship)
+                | IR::ExpandInto(query_relationship, _) => {
                     vars.push(query_relationship.alias.clone());
-                }
-                IR::ExpandInto(query_relationship, _) => {
-                    vars.push(query_relationship.alias.clone())
                 }
                 IR::PathBuilder(query_paths) => {
                     for path in query_paths {
@@ -291,6 +289,7 @@ impl<'a> Runtime<'a> {
     }
 
     #[must_use]
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         g: Arc<AtomicRefCell<Graph>>,
         parameters: HashMap<String, Value>,
@@ -343,6 +342,14 @@ impl<'a> Runtime<'a> {
                         .collect();
                     batch.set_selection(sel);
                     result.push(batch);
+                    // Drain remaining batches so CommitOp and pending
+                    // mutations run to completion, but only for write
+                    // queries that actually have a Commit in the plan.
+                    if self.write {
+                        for remaining in &mut batch_op {
+                            remaining?;
+                        }
+                    }
                     break;
                 }
                 result.push(batch);
@@ -930,6 +937,9 @@ impl<'a> Runtime<'a> {
             );
             values.push(val);
         }
+        drop(g);
+        drop(deleted);
+        drop(pending);
 
         classify_column(values)
     }

@@ -128,10 +128,8 @@ impl Binder {
                     self.update_all_node_labels(clause);
                 }
             }
-            QueryIR::CallSubquery(_, _, _) => {
-                // Labels already applied in bind_call_subquery — skip to
-                // avoid overwriting inner labels with colliding outer scope IDs.
-            }
+            // Labels already applied in bind_call_subquery — skip to
+            // avoid overwriting inner labels with colliding outer scope IDs.
             _ => {}
         }
     }
@@ -556,7 +554,7 @@ impl Binder {
                     HashMap::new()
                 };
 
-                let skip_count = if has_import { 1 } else { 0 };
+                let skip_count = usize::from(has_import);
                 let mut bound = Vec::with_capacity(clauses.len());
 
                 // Create a new scope for the CALL body (NOT via push_scope —
@@ -619,7 +617,7 @@ impl Binder {
 
                     // Build bound clauses: explicit import WITH + remaining
                     let mut bound = if let QueryIR::Query(clauses, write) = branch {
-                        let skip_count = if has_import { 1 } else { 0 };
+                        let skip_count = usize::from(has_import);
                         let mut bound_clauses = Vec::with_capacity(clauses.len());
 
                         if !imported.is_empty() {
@@ -688,15 +686,14 @@ impl Binder {
         for (name, outer_var) in imported {
             let inner_var = self.project_name(name, outer_var.ty.clone());
             // Carry forward node_labels for Node-typed imports
-            if outer_var.ty == Type::Node {
-                if let Some(labels) = self
+            if outer_var.ty == Type::Node
+                && let Some(labels) = self
                     .node_labels
                     .get(&(outer_var.scope_id, outer_var.id))
                     .cloned()
-                {
-                    self.node_labels
-                        .insert((inner_var.scope_id, inner_var.id), labels);
-                }
+            {
+                self.node_labels
+                    .insert((inner_var.scope_id, inner_var.id), labels);
             }
             let outer_expr = Arc::new(DynTree::new(ExprIR::Variable(outer_var.clone())));
             projections.push((inner_var, outer_expr));

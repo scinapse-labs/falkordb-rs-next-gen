@@ -28,7 +28,7 @@ pub struct CartesianProductOp<'a> {
 }
 
 impl<'a> CartesianProductOp<'a> {
-    pub fn new(
+    pub const fn new(
         runtime: &'a Runtime<'a>,
         child: Box<BatchOp<'a>>,
         right_children: Vec<BatchOp<'a>>,

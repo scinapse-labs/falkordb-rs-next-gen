@@ -19,15 +19,15 @@ lazy_static! {
     pub static ref CONFIGURATION_NODE_CREATION_BUFFER: RedisGILGuard<i64> =
         RedisGILGuard::new(16384.into());
     pub static ref CONFIGURATION_VKEY_MAX_ENTITY_COUNT: RedisGILGuard<i64> =
-        RedisGILGuard::new(100000.into());
+        RedisGILGuard::new(100_000.into());
     pub static ref CONFIGURATION_CMD_INFO: RedisGILGuard<bool> = RedisGILGuard::new(true);
     pub static ref CONFIGURATION_DELAY_INDEXING: RedisGILGuard<bool> = RedisGILGuard::new(false);
     pub static ref CONFIGURATION_TEMP_FOLDER: RedisGILGuard<String> =
         RedisGILGuard::new("/tmp".into());
     pub static ref CONFIGURATION_JS_HEAP_SIZE: RedisGILGuard<i64> =
-        RedisGILGuard::new((256 * 1024 * 1024_i64).into());
+        RedisGILGuard::new(256 * 1024 * 1024_i64);
     pub static ref CONFIGURATION_JS_STACK_SIZE: RedisGILGuard<i64> =
-        RedisGILGuard::new((1024 * 1024_i64).into());
+        RedisGILGuard::new(1024 * 1024_i64);
 }
 
 // ── Runtime-configurable atomics ──

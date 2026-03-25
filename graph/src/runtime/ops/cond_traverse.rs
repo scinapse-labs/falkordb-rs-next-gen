@@ -156,6 +156,8 @@ impl<'a> CondTraverseOp<'a> {
             );
         }
 
+        drop(g);
+
         Ok(())
     }
 

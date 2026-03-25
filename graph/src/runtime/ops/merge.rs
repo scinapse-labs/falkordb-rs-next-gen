@@ -334,6 +334,7 @@ impl<'a> Iterator for MergeOp<'a> {
                     }
                 }
             }
+            drop(subtree);
 
             // Process each input row in order.
             for (i, input_env) in input_envs.iter().enumerate() {
