@@ -28,7 +28,10 @@ macro_rules! match_token {
     };
     ($lexer:expr => $token:ident) => {
         match $lexer.current()? {
-            Token::Keyword(Keyword::$token, _) => {
+            Token::IdentifierOrKeyword {
+                keyword: Some(Keyword::$token),
+                ..
+            } => {
                 $lexer.next();
             }
             _ => {
@@ -55,7 +58,10 @@ macro_rules! optional_match_token {
     };
     ($lexer:expr => $token:ident) => {
         match $lexer.current()? {
-            Token::Keyword(Keyword::$token, _) => {
+            Token::IdentifierOrKeyword {
+                keyword: Some(Keyword::$token),
+                ..
+            } => {
                 $lexer.next();
                 true
             }

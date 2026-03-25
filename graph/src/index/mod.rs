@@ -101,7 +101,10 @@ pub struct IndexInfo {
 
 #[derive(Debug)]
 pub enum IndexQuery<T> {
-    Equal(Arc<String>, T),
+    Equal {
+        key: Arc<String>,
+        value: T,
+    },
     Range {
         key: Arc<String>,
         min: Option<T>,
@@ -446,7 +449,10 @@ impl Index {
         query: IndexQuery<Value>,
     ) -> *mut redisearch::RSQNode {
         match query {
-            IndexQuery::Equal(key, Value::Int(value)) => {
+            IndexQuery::Equal {
+                key,
+                value: Value::Int(value),
+            } => {
                 let field = &self.fields.get(&key).unwrap()[0];
                 unsafe {
                     RediSearch_CreateNumericNode(
@@ -459,7 +465,10 @@ impl Index {
                     )
                 }
             }
-            IndexQuery::Equal(key, Value::String(value)) => {
+            IndexQuery::Equal {
+                key,
+                value: Value::String(value),
+            } => {
                 let field = &self.fields.get(&key).unwrap()[0];
                 let query = unsafe { RediSearch_CreateTagNode(self.rs_idx, field.name.as_ptr()) };
                 let msg = CString::new(value.as_str()).unwrap();

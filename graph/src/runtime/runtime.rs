@@ -156,11 +156,18 @@ impl<T: MemoryPolicy> GetVariables for DynNode<'_, IR, T> {
         for node in self.walk::<Bfs>() {
             match node {
                 IR::Optional(variables) => vars.extend(variables.iter().cloned()),
-                IR::ProcedureCall(_, _, named_outputs) => {
+                IR::ProcedureCall {
+                    yields: named_outputs,
+                    ..
+                } => {
                     vars.extend(named_outputs.clone());
                 }
-                IR::Unwind(_, variable) => vars.push(variable.clone()),
-                IR::Create(query_graph) | IR::Merge(query_graph, _, _) => {
+                IR::Unwind { var: variable, .. } => vars.push(variable.clone()),
+                IR::Create(query_graph)
+                | IR::Merge {
+                    pattern: query_graph,
+                    ..
+                } => {
                     for node in query_graph.nodes() {
                         vars.push(node.alias.clone());
                     }
@@ -171,10 +178,10 @@ impl<T: MemoryPolicy> GetVariables for DynNode<'_, IR, T> {
                         vars.push(path.var.clone());
                     }
                 }
-                IR::ForEach(_, var) | IR::LoadCsv { var, .. } => {
+                IR::ForEach { var, .. } | IR::LoadCsv { var, .. } => {
                     vars.push(var.clone());
                 }
-                IR::Delete(_, _)
+                IR::Delete { .. }
                 | IR::Argument
                 | IR::Set(_)
                 | IR::Remove(_)
@@ -205,9 +212,15 @@ impl<T: MemoryPolicy> GetVariables for DynNode<'_, IR, T> {
                         vars.push(score.clone());
                     }
                 }
-                IR::CondTraverse(query_relationship, _)
+                IR::CondTraverse {
+                    relationship: query_relationship,
+                    ..
+                }
                 | IR::CondVarLenTraverse(query_relationship)
-                | IR::ExpandInto(query_relationship, _) => {
+                | IR::ExpandInto {
+                    relationship: query_relationship,
+                    ..
+                } => {
                     vars.push(query_relationship.alias.clone());
                 }
                 IR::PathBuilder(query_paths) => {
@@ -215,10 +228,12 @@ impl<T: MemoryPolicy> GetVariables for DynNode<'_, IR, T> {
                         vars.push(path.var.clone());
                     }
                 }
-                IR::Aggregate(variables, _, _, _) => {
+                IR::Aggregate {
+                    names: variables, ..
+                } => {
                     vars.extend(variables.iter().cloned());
                 }
-                IR::Project(items, _) => {
+                IR::Project { exprs: items, .. } => {
                     vars.extend(items.iter().map(|v| v.0.clone()));
                     break;
                 }
@@ -235,11 +250,14 @@ pub(crate) trait ReturnNames {
 impl ReturnNames for DynNode<'_, IR> {
     fn get_return_names(&self) -> Vec<Variable> {
         match self.data() {
-            IR::Project(trees, _) => trees.iter().map(|v| v.0.clone()).collect(),
+            IR::Project { exprs: trees, .. } => trees.iter().map(|v| v.0.clone()).collect(),
             IR::Commit => self
                 .get_child(0)
                 .map_or(vec![], |child| child.get_return_names()),
-            IR::ProcedureCall(_, _, named_outputs) => named_outputs.clone(),
+            IR::ProcedureCall {
+                yields: named_outputs,
+                ..
+            } => named_outputs.clone(),
             IR::NodeByFulltextScan { node, score, .. } => {
                 let mut v = vec![node.clone()];
                 if let Some(score) = score {
@@ -251,7 +269,7 @@ impl ReturnNames for DynNode<'_, IR> {
                 self.child(0).get_return_names()
             }
             IR::Union => self.child(0).get_return_names(),
-            IR::Aggregate(names, _, _, _) => names.clone(),
+            IR::Aggregate { names, .. } => names.clone(),
             _ => vec![],
         }
     }
@@ -417,7 +435,10 @@ impl<'a> Runtime<'a> {
                     idx,
                 )))
             }
-            IR::Project(trees, copy_from_parent) => {
+            IR::Project {
+                exprs: trees,
+                copies: copy_from_parent,
+            } => {
                 let child = self.child_batch_op(idx)?;
                 Ok(BatchOp::Project(ProjectOp::new(
                     self,
@@ -486,7 +507,12 @@ impl<'a> Runtime<'a> {
                     idx,
                 )))
             }
-            IR::Aggregate(_, keys, agg, copy_from_parent) => {
+            IR::Aggregate {
+                keys,
+                aggregations: agg,
+                projections: copy_from_parent,
+                ..
+            } => {
                 let child = self.child_batch_op(idx)?;
                 Ok(BatchOp::Aggregate(AggregateOp::new(
                     self,
@@ -497,7 +523,10 @@ impl<'a> Runtime<'a> {
                     idx,
                 )))
             }
-            IR::Unwind(list, name) => {
+            IR::Unwind {
+                expr: list,
+                var: name,
+            } => {
                 let child = self.child_batch_op(idx)?;
                 Ok(BatchOp::Unwind(UnwindOp::new(
                     self,
@@ -507,7 +536,10 @@ impl<'a> Runtime<'a> {
                     idx,
                 )))
             }
-            IR::CondTraverse(relationship_pattern, emit_relationship) => {
+            IR::CondTraverse {
+                relationship: relationship_pattern,
+                emit_relationship,
+            } => {
                 let child = self.child_batch_op(idx)?;
                 Ok(BatchOp::CondTraverse(CondTraverseOp::new(
                     self,
@@ -517,7 +549,10 @@ impl<'a> Runtime<'a> {
                     idx,
                 )))
             }
-            IR::ExpandInto(relationship_pattern, emit_relationship) => {
+            IR::ExpandInto {
+                relationship: relationship_pattern,
+                emit_relationship,
+            } => {
                 let child = self.child_batch_op(idx)?;
                 Ok(BatchOp::ExpandInto(ExpandIntoOp::new(
                     self,
@@ -600,7 +635,7 @@ impl<'a> Runtime<'a> {
                     idx,
                 )))
             }
-            IR::Delete(trees, _) => {
+            IR::Delete { exprs: trees, .. } => {
                 let child = self.child_batch_op(idx)?;
                 Ok(BatchOp::Delete(DeleteOp::new(
                     self,
@@ -622,7 +657,11 @@ impl<'a> Runtime<'a> {
                     idx,
                 )))
             }
-            IR::Merge(pattern, on_create_set_items, on_match_set_items) => {
+            IR::Merge {
+                pattern,
+                on_create: on_create_set_items,
+                on_match: on_match_set_items,
+            } => {
                 let child = if self.plan.node(idx).num_children() > 1 {
                     self.run_batch(self.plan.node(idx).child(0).idx())?
                 } else {
@@ -641,7 +680,7 @@ impl<'a> Runtime<'a> {
                 let child = self.child_batch_op(idx)?;
                 Ok(BatchOp::Commit(CommitOp::new(self, Box::new(child), idx)?))
             }
-            IR::ForEach(list, var) => {
+            IR::ForEach { list, var } => {
                 // ForEach has 1 or 2 children:
                 //   - If 2 children: child(0) = input from preceding clause, child(1) = body sub-plan
                 //   - If 1 child: child(0) = body sub-plan, input comes via Argument
@@ -687,9 +726,17 @@ impl<'a> Runtime<'a> {
                     idx,
                 )))
             }
-            IR::ProcedureCall(func, trees, name_outputs) => Ok(BatchOp::ProcedureCall(
-                ProcedureCallOp::new(self, func, trees, name_outputs, idx)?,
-            )),
+            IR::ProcedureCall {
+                func,
+                args: trees,
+                yields: name_outputs,
+            } => Ok(BatchOp::ProcedureCall(ProcedureCallOp::new(
+                self,
+                func,
+                trees,
+                name_outputs,
+                idx,
+            )?)),
             IR::NodeByFulltextScan {
                 node,
                 label,

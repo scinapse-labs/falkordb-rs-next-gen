@@ -55,7 +55,7 @@ impl<'a> NodeByIndexScanOp<'a> {
         vars: &Env<'_>,
     ) -> Result<IndexQuery<Value>, String> {
         match query {
-            IndexQuery::Equal(key, value) => {
+            IndexQuery::Equal { key, value } => {
                 let value = {
                     ExprEval::from_runtime(runtime).eval(
                         value,
@@ -64,7 +64,10 @@ impl<'a> NodeByIndexScanOp<'a> {
                         None,
                     )
                 }?;
-                Ok(IndexQuery::Equal(key.clone(), value))
+                Ok(IndexQuery::Equal {
+                    key: key.clone(),
+                    value,
+                })
             }
             IndexQuery::Range {
                 key,

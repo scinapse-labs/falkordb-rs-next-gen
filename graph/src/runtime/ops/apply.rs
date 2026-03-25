@@ -76,11 +76,11 @@ impl<'a> ApplyOp<'a> {
         let can_batch = !subtree_contains(&runtime.plan, child_idx, |ir| {
             matches!(
                 ir,
-                IR::Aggregate(..)
+                IR::Aggregate { .. }
                     | IR::CartesianProduct
                     | IR::Optional(_)
                     | IR::Apply
-                    | IR::Merge(..)
+                    | IR::Merge { .. }
                     | IR::Union
                     | IR::Sort(_)
                     | IR::Limit(_)

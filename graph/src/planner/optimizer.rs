@@ -102,7 +102,10 @@ fn try_property_index_scan(
         ExprIR::Eq => Some((
             node.clone(),
             node.labels[0].clone(),
-            Arc::new(IndexQuery::Equal(attr.clone(), Arc::new(constant_node))),
+            Arc::new(IndexQuery::Equal {
+                key: attr.clone(),
+                value: Arc::new(constant_node),
+            }),
         )),
         ExprIR::Gt => Some((
             node.clone(),
@@ -409,10 +412,10 @@ fn utilize_index(
                 *op.data_mut() = IR::NodeByIndexScan {
                     node: node.clone(),
                     index: node.labels[0].clone(),
-                    query: Arc::new(IndexQuery::Equal(
-                        attr.clone(),
-                        Arc::new(filter.root().child(1).clone_as_tree()),
-                    )),
+                    query: Arc::new(IndexQuery::Equal {
+                        key: attr.clone(),
+                        value: Arc::new(filter.root().child(1).clone_as_tree()),
+                    }),
                 };
             }
         }
@@ -571,8 +574,9 @@ fn push_filters_down(optimized_plan: &mut DynTree<IR>) {
                     c.num_children() > 0
                         && !matches!(
                             c.data(),
-                            IR::Project(..)
-                                | IR::Aggregate(..)
+                            IR::Project { .. }
+                                | IR::Aggregate { .. }
+                                | IR::Merge { .. }
                                 | IR::Argument
                                 | IR::SemiApply
                                 | IR::AntiSemiApply
@@ -635,7 +639,7 @@ fn push_filters_down(optimized_plan: &mut DynTree<IR>) {
                         }
                         break;
                     }
-                    if matches!(parent.data(), IR::Merge(..)) {
+                    if matches!(parent.data(), IR::Merge { .. }) {
                         break;
                     }
                     ancestor = parent.idx();

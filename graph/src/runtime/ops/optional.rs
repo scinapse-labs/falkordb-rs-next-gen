@@ -69,7 +69,7 @@ impl<'a> OptionalOp<'a> {
         };
 
         let can_batch = !subtree_contains(&runtime.plan, optional_child_idx, |ir| {
-            matches!(ir, IR::Aggregate(..) | IR::CartesianProduct)
+            matches!(ir, IR::Aggregate { .. } | IR::CartesianProduct)
         });
 
         Self {

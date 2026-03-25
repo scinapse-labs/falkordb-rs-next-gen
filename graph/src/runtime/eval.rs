@@ -512,7 +512,10 @@ impl<'a> ExprEval<'a> {
                 ExprIR::FuncInvocation(func) => {
                     let rt = self.rt()?;
                     if agg_group_key.is_none()
-                        && let FnType::Aggregation(_, finalize) = &func.fn_type
+                        && let FnType::Aggregation {
+                            finalizer: finalize,
+                            ..
+                        } = &func.fn_type
                         && let ExprIR::Variable(key) = node.child(node.num_children() - 1).data()
                     {
                         let e = env.ok_or_else(|| String::from("Variable not found"))?;
@@ -565,7 +568,10 @@ impl<'a> ExprEval<'a> {
                 ExprIR::MapProjection => {
                     res.push(self.eval_map_projection(ir, idx, env, agg_group_key)?);
                 }
-                ExprIR::Quantifier(quantifier, var) => {
+                ExprIR::Quantifier {
+                    quantifier_type: quantifier,
+                    var,
+                } => {
                     let list = self.eval(ir, node.child(0).idx(), env, agg_group_key)?;
                     match list {
                         Value::List(values) => {
@@ -622,7 +628,10 @@ impl<'a> ExprEval<'a> {
 
                     res.push(Value::List(Arc::new(acc)));
                 }
-                ExprIR::Reduce(acc_var, iter_var) => {
+                ExprIR::Reduce {
+                    accumulator: acc_var,
+                    iterator: iter_var,
+                } => {
                     // child[0] = init, child[1] = list, child[2] = body
                     let init = self.eval(ir, node.child(0).idx(), env, agg_group_key)?;
                     let list = self.eval(ir, node.child(1).idx(), env, agg_group_key)?;

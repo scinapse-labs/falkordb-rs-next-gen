@@ -66,19 +66,29 @@ pub enum IR {
     /// OPTIONAL MATCH - returns nulls if no match
     Optional(Vec<Variable>),
     /// CALL procedure with arguments, yielding outputs
-    ProcedureCall(Arc<GraphFn>, Vec<QueryExpr<Variable>>, Vec<Variable>),
+    ProcedureCall {
+        func: Arc<GraphFn>,
+        args: Vec<QueryExpr<Variable>>,
+        yields: Vec<Variable>,
+    },
     /// UNWIND list AS variable
-    Unwind(QueryExpr<Variable>, Variable),
+    Unwind {
+        expr: QueryExpr<Variable>,
+        var: Variable,
+    },
     /// CREATE pattern
     Create(QueryGraph<Arc<String>, Arc<String>, Variable>),
     /// MERGE pattern with ON CREATE/ON MATCH actions
-    Merge(
-        QueryGraph<Arc<String>, Arc<String>, Variable>,
-        Vec<SetItem<Arc<String>, Variable>>,
-        Vec<SetItem<Arc<String>, Variable>>,
-    ),
+    Merge {
+        pattern: QueryGraph<Arc<String>, Arc<String>, Variable>,
+        on_create: Vec<SetItem<Arc<String>, Variable>>,
+        on_match: Vec<SetItem<Arc<String>, Variable>>,
+    },
     /// DELETE entities (detach flag for relationships)
-    Delete(Vec<QueryExpr<Variable>>, bool),
+    Delete {
+        exprs: Vec<QueryExpr<Variable>>,
+        detach: bool,
+    },
     /// SET properties/labels
     Set(Vec<SetItem<Arc<String>, Variable>>),
     /// REMOVE properties/labels
@@ -113,18 +123,18 @@ pub enum IR {
     /// Traverse relationships from known nodes.
     /// `emit_relationship`: when false, anonymous edge optimization applies —
     /// only one row per (src, dst) pair is emitted instead of one per edge.
-    CondTraverse(
-        Arc<QueryRelationship<Arc<String>, Arc<String>, Variable>>,
-        bool,
-    ),
+    CondTraverse {
+        relationship: Arc<QueryRelationship<Arc<String>, Arc<String>, Variable>>,
+        emit_relationship: bool,
+    },
     /// Variable-length traversal (BFS) from known nodes
     CondVarLenTraverse(Arc<QueryRelationship<Arc<String>, Arc<String>, Variable>>),
     /// Check relationship between two known nodes.
     /// `emit_relationship`: when false, anonymous edge optimization applies.
-    ExpandInto(
-        Arc<QueryRelationship<Arc<String>, Arc<String>, Variable>>,
-        bool,
-    ),
+    ExpandInto {
+        relationship: Arc<QueryRelationship<Arc<String>, Arc<String>, Variable>>,
+        emit_relationship: bool,
+    },
     /// Build path objects from matched patterns
     PathBuilder(Vec<Arc<QueryPath<Variable>>>),
     /// Apply filter predicate
@@ -158,17 +168,17 @@ pub enum IR {
     /// Limit to N rows
     Limit(QueryExpr<Variable>),
     /// Aggregate with grouping keys, aggregations, copy_from_parent, and projections
-    Aggregate(
-        Vec<Variable>,
-        Vec<(Variable, QueryExpr<Variable>)>,
-        Vec<(Variable, QueryExpr<Variable>)>,
-        Vec<(Variable, Variable)>,
-    ),
+    Aggregate {
+        names: Vec<Variable>,
+        keys: Vec<(Variable, QueryExpr<Variable>)>,
+        aggregations: Vec<(Variable, QueryExpr<Variable>)>,
+        projections: Vec<(Variable, Variable)>,
+    },
     /// Project expressions to new variables
-    Project(
-        Vec<(Variable, QueryExpr<Variable>)>,
-        Vec<(Variable, Variable)>,
-    ),
+    Project {
+        exprs: Vec<(Variable, QueryExpr<Variable>)>,
+        copies: Vec<(Variable, Variable)>,
+    },
     /// Remove duplicate rows
     Distinct,
     /// UNION of multiple sub-query branches.
@@ -178,7 +188,10 @@ pub enum IR {
     Commit,
     /// FOREACH(var IN list | body_plan)
     /// Children: child(0) = body sub-plan
-    ForEach(QueryExpr<Variable>, Variable),
+    ForEach {
+        list: QueryExpr<Variable>,
+        var: Variable,
+    },
     /// CREATE INDEX operation
     CreateIndex {
         label: Arc<String>,
@@ -216,13 +229,13 @@ impl Display for IR {
         match self {
             Self::Argument => write!(f, "Argument"),
             Self::Optional(_) => write!(f, "Optional"),
-            Self::ProcedureCall(_, _, _) => write!(f, "ProcedureCall"),
-            Self::Unwind(_, _) => {
+            Self::ProcedureCall { .. } => write!(f, "ProcedureCall"),
+            Self::Unwind { .. } => {
                 write!(f, "Unwind")
             }
             Self::Create(pattern) => write!(f, "Create | {pattern}"),
-            Self::Merge(pattern, _, _) => write!(f, "Merge | {pattern}"),
-            Self::Delete(_, _) => write!(f, "Delete"),
+            Self::Merge { pattern, .. } => write!(f, "Merge | {pattern}"),
+            Self::Delete { .. } => write!(f, "Delete"),
             Self::Set(_) | Self::Remove(_) => write!(f, "Update"),
             Self::AllNodeScan(node) => {
                 write!(f, "All Node Scan | {node}")
@@ -240,9 +253,13 @@ impl Display for IR {
                 write!(f, "Node By Label and ID Scan | {node}")
             }
             Self::NodeByIdSeek { .. } => write!(f, "NodeByIdSeek"),
-            Self::CondTraverse(rel, _) => write!(f, "Conditional Traverse | {rel}"),
+            Self::CondTraverse {
+                relationship: rel, ..
+            } => write!(f, "Conditional Traverse | {rel}"),
             Self::CondVarLenTraverse(rel) => write!(f, "Variable Length Traverse | {rel}"),
-            Self::ExpandInto(rel, _) => write!(f, "Expand Into | {rel}"),
+            Self::ExpandInto {
+                relationship: rel, ..
+            } => write!(f, "Expand Into | {rel}"),
             Self::PathBuilder(_) => write!(f, "PathBuilder"),
             Self::Filter(_) => write!(f, "Filter"),
             Self::CartesianProduct => write!(f, "Cartesian Product"),
@@ -254,10 +271,10 @@ impl Display for IR {
             Self::Sort(_) => write!(f, "Sort"),
             Self::Skip(_) => write!(f, "Skip"),
             Self::Limit(_) => write!(f, "Limit"),
-            Self::Aggregate(..) => write!(f, "Aggregate"),
-            Self::Project(_, _) => write!(f, "Project"),
+            Self::Aggregate { .. } => write!(f, "Aggregate"),
+            Self::Project { .. } => write!(f, "Project"),
             Self::Commit => write!(f, "Commit"),
-            Self::ForEach(_, var) => write!(f, "ForEach | {var}"),
+            Self::ForEach { var, .. } => write!(f, "ForEach | {var}"),
             Self::Union => write!(f, "Union"),
             Self::Distinct => write!(f, "Distinct"),
             Self::CreateIndex { label, attrs, .. } => {
@@ -383,7 +400,7 @@ impl Planner {
         let mut stack = vec![tree.root().idx()];
         while let Some(idx) = stack.pop() {
             let node = tree.node(idx);
-            if matches!(node.data(), IR::Merge(..)) {
+            if matches!(node.data(), IR::Merge { .. }) {
                 // Only descend into the input pipeline (child 0), not the
                 // match branch (last child). If MERGE has only 1 child
                 // (match-only), skip entirely — the runtime creates an
@@ -540,7 +557,13 @@ impl Planner {
 
         // Build collect(result_expr) aggregation expression
         let collect_fn = get_functions()
-            .get("collect", &FnType::Aggregation(Value::Null, None))
+            .get(
+                "collect",
+                &FnType::Aggregation {
+                    initial: Value::Null,
+                    finalizer: None,
+                },
+            )
             .expect("collect function not registered");
 
         // Mint a fresh variable for the aggregation accumulator slot.
@@ -561,12 +584,12 @@ impl Planner {
 
         // Create Aggregate node: names=[var], group_by_keys=[], aggregations=[(var, collect(expr))]
         tree!(
-            IR::Aggregate(
-                vec![var.clone()],
-                vec![],
-                vec![(var.clone(), collect_expr)],
-                vec![]
-            ),
+            IR::Aggregate {
+                names: vec![var.clone()],
+                keys: vec![],
+                aggregations: vec![(var.clone(), collect_expr)],
+                projections: vec![]
+            },
             sub_plan
         )
     }
@@ -935,7 +958,13 @@ impl Planner {
                             None,
                             None,
                         ));
-                        vec.push(tree!(IR::ExpandInto(rel, false), tree!(IR::Argument)));
+                        vec.push(tree!(
+                            IR::ExpandInto {
+                                relationship: rel,
+                                emit_relationship: false
+                            },
+                            tree!(IR::Argument)
+                        ));
                     }
                 } else {
                     let (clean_node, attr_filter) = inline_node_attrs_to_filter(&node);
@@ -992,7 +1021,10 @@ impl Planner {
                     scan = tree!(IR::Filter(Arc::new(filter_expr)), scan);
                 }
                 tree!(
-                    IR::ExpandInto(relationship.clone(), emit_rel(relationship)),
+                    IR::ExpandInto {
+                        relationship: relationship.clone(),
+                        emit_relationship: emit_rel(relationship)
+                    },
                     scan
                 )
             } else if self
@@ -1002,14 +1034,17 @@ impl Planner {
                     .visited
                     .contains(&(relationship.to.alias.id, relationship.to.alias.scope_id))
             {
-                tree!(IR::ExpandInto(relationship.clone(), emit_rel(relationship)))
+                tree!(IR::ExpandInto {
+                    relationship: relationship.clone(),
+                    emit_relationship: emit_rel(relationship)
+                })
             } else if relationship.min_hops.is_some() {
                 tree!(IR::CondVarLenTraverse(relationship.clone()))
             } else {
-                tree!(IR::CondTraverse(
-                    relationship.clone(),
-                    emit_rel(relationship)
-                ))
+                tree!(IR::CondTraverse {
+                    relationship: relationship.clone(),
+                    emit_relationship: emit_rel(relationship)
+                })
             };
             // Check destination node for inline attributes (e.g., (b {val: 'v2'}))
             // and add a Filter if present.
@@ -1042,7 +1077,10 @@ impl Planner {
                         scan = tree!(IR::Filter(Arc::new(filter_expr)), scan);
                     }
                     tree!(
-                        IR::ExpandInto(relationship.clone(), emit_rel(relationship)),
+                        IR::ExpandInto {
+                            relationship: relationship.clone(),
+                            emit_relationship: emit_rel(relationship)
+                        },
                         scan,
                         res
                     )
@@ -1054,14 +1092,20 @@ impl Planner {
                         .contains(&(relationship.to.alias.id, relationship.to.alias.scope_id))
                 {
                     tree!(
-                        IR::ExpandInto(relationship.clone(), emit_rel(relationship)),
+                        IR::ExpandInto {
+                            relationship: relationship.clone(),
+                            emit_relationship: emit_rel(relationship)
+                        },
                         res
                     )
                 } else if relationship.min_hops.is_some() {
                     tree!(IR::CondVarLenTraverse(relationship.clone()), res)
                 } else {
                     tree!(
-                        IR::CondTraverse(relationship.clone(), emit_rel(relationship)),
+                        IR::CondTraverse {
+                            relationship: relationship.clone(),
+                            emit_relationship: emit_rel(relationship)
+                        },
                         res
                     )
                 };
@@ -1263,14 +1307,17 @@ impl Planner {
                     group_by_keys.push((name, expr));
                 }
             }
-            tree!(IR::Aggregate(
+            tree!(IR::Aggregate {
                 names,
-                group_by_keys,
+                keys: group_by_keys,
                 aggregations,
-                copy_from_parent
-            ))
+                projections: copy_from_parent
+            })
         } else {
-            tree!(IR::Project(exprs, copy_from_parent))
+            tree!(IR::Project {
+                exprs,
+                copies: copy_from_parent
+            })
         };
         // If this clause follows write operations, insert a Commit node
         // so mutations are flushed before the projection reads results.
@@ -1308,7 +1355,7 @@ impl Planner {
                 res.node_mut(insert_idx).push_child_tree(chain);
             }
         }
-        if distinct && !matches!(res.root().data(), IR::Aggregate(..)) {
+        if distinct && !matches!(res.root().data(), IR::Aggregate { .. }) {
             res = tree!(IR::Distinct, res);
         }
         if !orderby.is_empty() {
@@ -1394,12 +1441,10 @@ impl Planner {
         }
         // If we landed on a Project/Aggregate, walk past Commit and Apply
         // children — the preceding clause feeds below them.
-        if matches!(res.node(idx).data(), |IR::Project(_, _)| IR::Aggregate(
-            _,
-            _,
-            _,
-            _
-        )) && res.node(idx).num_children() > 0
+        if matches!(
+            res.node(idx).data(),
+            |IR::Project { .. }| IR::Aggregate { .. }
+        ) && res.node(idx).num_children() > 0
         {
             if matches!(res.node(idx).child(0).data(), IR::Commit) {
                 idx = res.node(idx).child(0).idx();
@@ -1427,7 +1472,7 @@ impl Planner {
                 let mut stack: Vec<_> = cp_children;
                 while let Some(n) = stack.pop() {
                     let node = res.node(n);
-                    if matches!(node.data(), IR::Merge(..)) {
+                    if matches!(node.data(), IR::Merge { .. }) {
                         if node.num_children() > 1 {
                             stack.push(node.child(0).idx());
                         }
@@ -1462,18 +1507,16 @@ impl Planner {
                     | IR::SemiApply
                     | IR::AntiSemiApply
                     | IR::OrApplyMultiplexer(_)
-                    | IR::CondTraverse(_, _)
+                    | IR::CondTraverse { .. }
                     | IR::CondVarLenTraverse(_)
-                    | IR::ExpandInto(_, _))
+                    | IR::ExpandInto { .. })
             {
                 idx = res.node(idx).child(0).idx();
             }
-            if matches!(res.node(idx).data(), |IR::Project(_, _)| IR::Aggregate(
-                _,
-                _,
-                _,
-                _
-            )) && res.node(idx).num_children() > 0
+            if matches!(
+                res.node(idx).data(),
+                |IR::Project { .. }| IR::Aggregate { .. }
+            ) && res.node(idx).num_children() > 0
             {
                 if matches!(res.node(idx).child(0).data(), IR::Commit) {
                     idx = res.node(idx).child(0).idx();
@@ -1520,9 +1563,9 @@ impl Planner {
                 | IR::NodeByIndexScan { .. }
                 | IR::NodeByIdSeek { .. }
                 | IR::NodeByLabelAndIdScan { .. }
-                | IR::CondTraverse(_, _)
+                | IR::CondTraverse { .. }
                 | IR::CondVarLenTraverse(_)
-                | IR::ExpandInto(_, _)
+                | IR::ExpandInto { .. }
                 | IR::CartesianProduct
                 | IR::Argument
                 | IR::PathBuilder(_) => return false,
@@ -1572,7 +1615,13 @@ impl Planner {
         match ir {
             // CALL procedure: special-case fulltext index procedures into
             // native CreateIndex/DropIndex IR nodes.
-            QueryIR::Call(proc, exprs, named_outputs, filter, _yielded) => {
+            QueryIR::Call {
+                func: proc,
+                args: exprs,
+                yields: named_outputs,
+                filter,
+                explicit_yield: _yielded,
+            } => {
                 if proc.name == "db.idx.fulltext.drop" {
                     let ExprIR::String(label) = exprs[0].root().data() else {
                         unreachable!()
@@ -1600,10 +1649,18 @@ impl Planner {
                 if let Some(filter) = filter {
                     return tree!(
                         IR::Filter(filter),
-                        tree!(IR::ProcedureCall(proc, exprs, named_outputs))
+                        tree!(IR::ProcedureCall {
+                            func: proc,
+                            args: exprs,
+                            yields: named_outputs
+                        })
                     );
                 }
-                tree!(IR::ProcedureCall(proc, exprs, named_outputs))
+                tree!(IR::ProcedureCall {
+                    func: proc,
+                    args: exprs,
+                    yields: named_outputs
+                })
             }
             // MATCH / OPTIONAL MATCH
             QueryIR::Match {
@@ -1650,17 +1707,25 @@ impl Planner {
                     }
                 }
             }
-            QueryIR::Unwind(expr, alias) => tree!(IR::Unwind(expr, alias)),
+            QueryIR::Unwind { expr, var: alias } => tree!(IR::Unwind { expr, var: alias }),
             // MERGE: try to match the full pattern first; the Merge IR node
             // decides at runtime whether to create the missing parts.
             // filter_visited strips already-bound entities from the create pattern.
-            QueryIR::Merge(pattern, on_create_set_items, on_match_set_items) => {
+            QueryIR::Merge {
+                pattern,
+                on_create: on_create_set_items,
+                on_match: on_match_set_items,
+            } => {
                 let create_pattern = pattern.filter_visited(&self.visited);
                 let mut match_branch = self.plan_match(&pattern, None);
                 Self::add_argument_to_leaves(&mut match_branch);
 
                 tree!(
-                    IR::Merge(create_pattern, on_create_set_items, on_match_set_items),
+                    IR::Merge {
+                        pattern: create_pattern,
+                        on_create: on_create_set_items,
+                        on_match: on_match_set_items
+                    },
                     match_branch
                 )
             }
@@ -1674,7 +1739,13 @@ impl Planner {
                 }
                 tree!(IR::Create(filtered))
             }
-            QueryIR::Delete(exprs, is_detach) => tree!(IR::Delete(exprs, is_detach)),
+            QueryIR::Delete {
+                exprs,
+                detach: is_detach,
+            } => tree!(IR::Delete {
+                exprs,
+                detach: is_detach
+            }),
             QueryIR::Set(items) => tree!(IR::Set(items)),
             QueryIR::Remove(items) => tree!(IR::Remove(items)),
             QueryIR::LoadCsv {
@@ -1759,8 +1830,8 @@ impl Planner {
                 })
             }
             // Multi-clause query: plan each clause and stitch together.
-            QueryIR::Query(q, write) => self.plan_query(q, write),
-            QueryIR::Union(branches, all) => {
+            QueryIR::Query { clauses: q, write } => self.plan_query(q, write),
+            QueryIR::Union { branches, all } => {
                 let mut res = tree!(IR::Union; branches.into_iter().map(|branch| {
                     let mut planner = Self::default();
                     planner.plan(branch)
@@ -1770,7 +1841,11 @@ impl Planner {
                 }
                 res
             }
-            QueryIR::CallSubquery(body, is_returning, remap) => {
+            QueryIR::CallSubquery {
+                body,
+                is_returning,
+                remap,
+            } => {
                 let saved_visited = self.visited.clone();
 
                 // Plan the inner body
@@ -1786,12 +1861,12 @@ impl Planner {
                     if remap.is_empty() {
                         // No remapping needed (shouldn't happen for returning subqueries)
                         match inner_plan.root().data() {
-                            IR::Project(vars, _) => {
+                            IR::Project { exprs: vars, .. } => {
                                 for (var, _) in vars {
                                     self.visited.insert((var.id, var.scope_id));
                                 }
                             }
-                            IR::Aggregate(names, _, _, _) => {
+                            IR::Aggregate { names, .. } => {
                                 for var in names {
                                     self.visited.insert((var.id, var.scope_id));
                                 }
@@ -1811,7 +1886,13 @@ impl Planner {
                                 (outer_var.clone(), expr)
                             })
                             .collect();
-                        let project = tree!(IR::Project(exprs, vec![]), inner_plan);
+                        let project = tree!(
+                            IR::Project {
+                                exprs,
+                                copies: vec![]
+                            },
+                            inner_plan
+                        );
                         for (_, outer_var) in &remap {
                             self.visited.insert((outer_var.id, outer_var.scope_id));
                         }
@@ -1823,7 +1904,11 @@ impl Planner {
                     tree!(IR::Apply, tree!(IR::Optional(vec![]), inner_plan))
                 }
             }
-            QueryIR::ForEach(list_expr, var, body) => {
+            QueryIR::ForEach {
+                list: list_expr,
+                var,
+                body,
+            } => {
                 // Add the loop variable to visited so body clauses (MERGE, CREATE)
                 // know it's already bound and don't create new entities for it.
                 let saved_visited = self.visited.clone();
@@ -1855,7 +1940,13 @@ impl Planner {
                 // after the entire FOREACH completes.
                 // Add Argument leaves so the body gets the loop env
                 Self::add_argument_to_leaves(&mut body_plan);
-                tree!(IR::ForEach(list_expr, var), body_plan)
+                tree!(
+                    IR::ForEach {
+                        list: list_expr,
+                        var
+                    },
+                    body_plan
+                )
             }
         }
     }
