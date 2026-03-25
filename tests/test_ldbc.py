@@ -35,8 +35,7 @@ def setup_module(module):
     ]
     for file in files:
         download_ldbc_data(file)
-    common.start_redis()
-    common.client.config_set("IMPORT_FOLDER", "data/")
+    common.start_redis(moduleEnvs=["IMPORT_FOLDER", "data/"])
 
 
 def teardown_module(module):
