@@ -142,8 +142,8 @@ impl Runtime<'_> {
                         .pending
                         .borrow_mut()
                         .remove_pending_relationships_for_node(id);
-                    for (rel_id, _src, _dest, type_name) in pending_rels {
-                        let attrs = self.get_relationship_attrs(rel_id).collect();
+                    for (rel_id, _src, _dest, type_name, attrs) in pending_rels {
+                        let attrs = attrs.unwrap_or_default();
                         self.g.borrow_mut().return_relationship_id(rel_id);
                         self.deleted_relationships
                             .borrow_mut()
