@@ -135,7 +135,7 @@ impl AttributeStore {
                         .manual_journal_persist(true)
                 })
                 .expect("failed to create fjall keyspace");
-            if ks_exists {
+            if ks_exists && ks.approximate_len() > 0 {
                 ks.clear().expect("failed to clear existing fjall keyspace");
             }
             ks
