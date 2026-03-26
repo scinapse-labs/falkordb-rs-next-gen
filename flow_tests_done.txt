@@ -11,6 +11,7 @@ tests/flow/test_create_clause
 tests/flow/test_distinct
 tests/flow/test_empty_query
 tests/flow/test_entity_update
+tests/flow/test_execution_plan_print.py
 tests/flow/test_expand_into
 tests/flow/test_filters
 tests/flow/test_foreach
@@ -23,6 +24,7 @@ tests/flow/test_index_create
 tests/flow/test_keyspace_accesses.py
 tests/flow/test_list
 tests/flow/test_load_csv
+tests/flow/test_maintain_record_order.py
 tests/flow/test_map
 tests/flow/test_mix_labels
 tests/flow/test_multi_exec.py
