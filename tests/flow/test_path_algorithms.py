@@ -120,7 +120,7 @@ class testAllShortestPaths():
             try:
                 self.graph.query(query)
                 self.env.assertTrue(False)
-            except redis.exceptions.ResponseError as e:
+            except redis.ResponseError as e:
                 self.env.assertContains("sourceNode and targetNode are required", str(e))
 
         # all queries should produce a run-time errors
@@ -135,7 +135,7 @@ class testAllShortestPaths():
             try:
                 self.graph.query(query)
                 self.env.assertTrue(False)
-            except redis.exceptions.ResponseError as e:
+            except redis.ResponseError as e:
                 self.env.assertContains("sourceNode and targetNode must be of type Node", str(e))
 
         # all queries should produce a run-time errors
@@ -150,7 +150,7 @@ class testAllShortestPaths():
             try:
                 self.graph.query(query)
                 self.env.assertTrue(False)
-            except redis.exceptions.ResponseError as e:
+            except redis.ResponseError as e:
                 self.env.assertContains("relTypes must be array of strings", str(e))
 
         # all queries should produce a run-time errors
@@ -164,7 +164,7 @@ class testAllShortestPaths():
             try:
                 self.graph.query(query)
                 self.env.assertTrue(False)
-            except redis.exceptions.ResponseError as e:
+            except redis.ResponseError as e:
                 self.env.assertContains("relDirection values must be 'incoming', 'outgoing' or 'both'", str(e))
 
         query = """MATCH (n:L {v: 1}), (m:L {v: 5}) CALL algo.SPpaths({sourceNode: n, targetNode: m, maxLen: 'a'})"""
@@ -172,42 +172,42 @@ class testAllShortestPaths():
         try:
             self.graph.query(query)
             self.env.assertTrue(False)
-        except redis.exceptions.ResponseError as e:
+        except redis.ResponseError as e:
             self.env.assertContains("maxLen must be integer", str(e))
 
         query = """MATCH (n:L {v: 1}), (m:L {v: 5}) CALL algo.SPpaths({sourceNode: n, targetNode: m, weightProp: 1})"""
         try:
             self.graph.query(query)
             self.env.assertTrue(False)
-        except redis.exceptions.ResponseError as e:
+        except redis.ResponseError as e:
             self.env.assertContains("weightProp must be string", str(e))
 
         query = """MATCH (n:L {v: 1}), (m:L {v: 5}) CALL algo.SPpaths({sourceNode: n, targetNode: m, costProp: 1})"""
         try:
             self.graph.query(query)
             self.env.assertTrue(False)
-        except redis.exceptions.ResponseError as e:
+        except redis.ResponseError as e:
             self.env.assertContains("costProp must be string", str(e))
 
         query = """MATCH (n:L {v: 1}), (m:L {v: 5}) CALL algo.SPpaths({sourceNode: n, targetNode: m, maxCost: '1'})"""
         try:
             self.graph.query(query)
             self.env.assertTrue(False)
-        except redis.exceptions.ResponseError as e:
+        except redis.ResponseError as e:
             self.env.assertContains("maxCost must be numeric", str(e))
 
         query = """MATCH (n:L {v: 1}), (m:L {v: 5}) CALL algo.SPpaths({sourceNode: n, targetNode: m, pathCount: '1'})"""
         try:
             self.graph.query(query)
             self.env.assertTrue(False)
-        except redis.exceptions.ResponseError as e:
+        except redis.ResponseError as e:
             self.env.assertContains("pathCount must be integer", str(e))
 
         query = """MATCH (n:L {v: 1}), (m:L {v: 5}) CALL algo.SPpaths({sourceNode: n, targetNode: m, pathCount: -1})"""
         try:
             self.graph.query(query)
             self.env.assertTrue(False)
-        except redis.exceptions.ResponseError as e:
+        except redis.ResponseError as e:
             self.env.assertContains("pathCount must be a non-negative integer", str(e))
 
     def test01_SSpaths_validations(self):
@@ -216,7 +216,7 @@ class testAllShortestPaths():
         try:
             self.graph.query(query)
             self.env.assertTrue(False)
-        except redis.exceptions.ResponseError as e:
+        except redis.ResponseError as e:
             self.env.assertContains("sourceNode is required", str(e))
 
         query = """MATCH (n:L {v: 1}) CALL algo.SSpaths({sourceNode: 1})"""
@@ -224,7 +224,7 @@ class testAllShortestPaths():
         try:
             self.graph.query(query)
             self.env.assertTrue(False)
-        except redis.exceptions.ResponseError as e:
+        except redis.ResponseError as e:
             self.env.assertContains("sourceNode must be of type Node", str(e))
 
         # all queries should produce a run-time errors
@@ -239,7 +239,7 @@ class testAllShortestPaths():
             try:
                 self.graph.query(query)
                 self.env.assertTrue(False)
-            except redis.exceptions.ResponseError as e:
+            except redis.ResponseError as e:
                 self.env.assertContains("relTypes must be array of strings", str(e))
 
         # all queries should produce a run-time errors
@@ -253,7 +253,7 @@ class testAllShortestPaths():
             try:
                 self.graph.query(query)
                 self.env.assertTrue(False)
-            except redis.exceptions.ResponseError as e:
+            except redis.ResponseError as e:
                 self.env.assertContains("relDirection values must be 'incoming', 'outgoing' or 'both'", str(e))
 
         query = """MATCH (n:L {v: 1}), (m:L {v: 5}) CALL algo.SSpaths({sourceNode: n, maxLen: 'a'})"""
@@ -261,42 +261,42 @@ class testAllShortestPaths():
         try:
             self.graph.query(query)
             self.env.assertTrue(False)
-        except redis.exceptions.ResponseError as e:
+        except redis.ResponseError as e:
             self.env.assertContains("maxLen must be integer", str(e))
 
         query = """MATCH (n:L {v: 1}), (m:L {v: 5}) CALL algo.SSpaths({sourceNode: n, weightProp: 1})"""
         try:
             self.graph.query(query)
             self.env.assertTrue(False)
-        except redis.exceptions.ResponseError as e:
+        except redis.ResponseError as e:
             self.env.assertContains("weightProp must be string", str(e))
 
         query = """MATCH (n:L {v: 1}), (m:L {v: 5}) CALL algo.SSpaths({sourceNode: n, costProp: 1})"""
         try:
             self.graph.query(query)
             self.env.assertTrue(False)
-        except redis.exceptions.ResponseError as e:
+        except redis.ResponseError as e:
             self.env.assertContains("costProp must be string", str(e))
 
         query = """MATCH (n:L {v: 1}), (m:L {v: 5}) CALL algo.SSpaths({sourceNode: n, maxCost: '1'})"""
         try:
             self.graph.query(query)
             self.env.assertTrue(False)
-        except redis.exceptions.ResponseError as e:
+        except redis.ResponseError as e:
             self.env.assertContains("maxCost must be numeric", str(e))
 
         query = """MATCH (n:L {v: 1}), (m:L {v: 5}) CALL algo.SSpaths({sourceNode: n, pathCount: '1'})"""
         try:
             self.graph.query(query)
             self.env.assertTrue(False)
-        except redis.exceptions.ResponseError as e:
+        except redis.ResponseError as e:
             self.env.assertContains("pathCount must be integer", str(e))
 
         query = """MATCH (n:L {v: 1}), (m:L {v: 5}) CALL algo.SSpaths({sourceNode: n, pathCount: -1})"""
         try:
             self.graph.query(query)
             self.env.assertTrue(False)
-        except redis.exceptions.ResponseError as e:
+        except redis.ResponseError as e:
             self.env.assertContains("pathCount must be a non-negative integer", str(e))
 
     def sp_query(self, source, target, relTypes, maxLen, maxCost, pathCount, relDirection):

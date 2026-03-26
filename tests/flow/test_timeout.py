@@ -268,7 +268,7 @@ class testQueryTimeout():
                    CREATE (:P{v:x * y + y})"""
             self.graph.profile(q)
             self.env.assertTrue(False)
-        except redis.exceptions.ResponseError as e:
+        except redis.ResponseError as e:
             # expecting to get a timeout error
             self.env.assertContains("Query timed out", str(e))
 

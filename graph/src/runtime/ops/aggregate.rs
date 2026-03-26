@@ -772,11 +772,7 @@ impl<'a> Iterator for AggregateOp<'a> {
                 // to downstream operators and collide with variables in
                 // subsequent scopes that reuse the same slot IDs.
                 for (_, tree) in self.agg {
-                    let root = tree.root();
-                    let last_child = root.child(root.num_children() - 1);
-                    if let ExprIR::Variable(acc_var) = last_child.data() {
-                        acc.unbind(acc_var);
-                    }
+                    unbind_agg_accumulators(&tree.root(), &mut acc);
                 }
                 Ok::<Env<'_>, String>(acc)
             })() {
@@ -825,6 +821,32 @@ fn column_to_values(
             .collect(),
         Column::Values(data) => data.clone(),
         _ => vec![Value::Null; len],
+    }
+}
+
+/// Recursively walks an expression tree and unbinds each aggregate function's
+/// accumulator variable from the environment. This mirrors the recursion in
+/// `set_agg_expr_zero` / `run_agg_expr`: when an aggregate `FuncInvocation` is
+/// found, its last child (the accumulator `Variable`) is unbound; otherwise we
+/// recurse into children.
+fn unbind_agg_accumulators(
+    ir: &DynNode<ExprIR<Variable>>,
+    acc: &mut Env,
+) {
+    match ir.data() {
+        ExprIR::FuncInvocation(func) if func.is_aggregate() => {
+            let num_children = ir.num_children();
+            if num_children >= 2
+                && let ExprIR::Variable(acc_var) = ir.child(num_children - 1).data()
+            {
+                acc.unbind(acc_var);
+            }
+        }
+        _ => {
+            for child in ir.children() {
+                unbind_agg_accumulators(&child, acc);
+            }
+        }
     }
 }
 

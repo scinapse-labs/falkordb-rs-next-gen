@@ -71,7 +71,7 @@ class testGraphCreationFlow(FlowTestsBase):
             query = """CREATE (a {val: 2}), (b {val: a.val})"""
             self.graph.query(query)
             self.env.assertTrue(False)
-        except redis.exceptions.ResponseError as e:
+        except redis.ResponseError as e:
             self.env.assertContains("'a' not defined", str(e))
 
     def test06_create_project_volatile_value(self):
@@ -102,7 +102,7 @@ class testGraphCreationFlow(FlowTestsBase):
             try:
                 self.graph.query(query)
                 self.env.assertTrue(False)
-            except redis.exceptions.ResponseError as e:
+            except redis.ResponseError as e:
                 self.env.assertContains("Property values can only be of primitive types or arrays of primitive types", str(e))
 
     # test creating a node with multiple attributes with the same name
@@ -141,7 +141,7 @@ class testGraphCreationFlow(FlowTestsBase):
             try:
                 self.graph.query(query)
                 self.env.assertTrue(False)
-            except redis.exceptions.ResponseError as e:
+            except redis.ResponseError as e:
                 self.env.assertContains("The bound variable 'r' can't be redeclared in a CREATE clause", str(e))
 
     # test creating queries with matching relationship type :R|R

@@ -191,7 +191,7 @@ class testReduce():
             try:
                 self.graph.query(query)
                 self.env.assertTrue(False)
-            except redis.exceptions.ResponseError as e:
+            except redis.ResponseError as e:
                 # Expecting an error.
                 self.env.assertContains("Unknown function 'reduce'", str(e))
                 pass
@@ -209,7 +209,7 @@ class testReduce():
             try:
                 self.graph.query(query)
                 self.env.assertTrue(False)
-            except redis.exceptions.ResponseError as e:
+            except redis.ResponseError as e:
                 # Expecting an error.
                 self.env.assertContains("Invalid use of aggregating function 'min'", str(e))
                 pass

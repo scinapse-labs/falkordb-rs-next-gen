@@ -496,7 +496,7 @@ class testGraphMergeFlow():
             query = """MATCH p=() MERGE () ON MATCH SET p.prop4 = 5"""
             self.graph.query(query)
             assert(False)
-        except redis.exceptions.ResponseError as e:
+        except redis.ResponseError as e:
             self.env.assertContains("Type mismatch", str(e))
             self.env.assertContains("Path", str(e))
 
@@ -506,7 +506,7 @@ class testGraphMergeFlow():
             query = """MERGE (n {v: NULL})"""
             self.graph.query(query)
             assert(False)
-        except redis.exceptions.ResponseError as e:
+        except redis.ResponseError as e:
             # Expecting an error.
             self.env.assertContains("Cannot merge node using null property value", str(e))
             pass
@@ -521,7 +521,7 @@ class testGraphMergeFlow():
             query = """MERGE (a:L {v: a.v})"""
             self.graph.query(query)
             assert(False)
-        except redis.exceptions.ResponseError as e:
+        except redis.ResponseError as e:
             # Expecting an error.
             self.env.assertContains("'a' not defined", str(e))
 
@@ -619,7 +619,7 @@ class testGraphMergeFlow():
         query = """MERGE ()-[:R2]->(a:L1)-[:R1]->(a:L2) RETURN *"""
         try:
             self.graph.explain(query)
-        except redis.exceptions.ResponseError as e:
+        except redis.ResponseError as e:
             # Expecting an error.
             assert("can't be redeclared in a MERGE clause" in str(e))
 

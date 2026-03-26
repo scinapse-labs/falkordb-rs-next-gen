@@ -2,6 +2,7 @@ from cmath import isinf, isnan
 from common import *
 import json
 import math
+import redis
 
 people = ["Roi", "Alon", "Ailon", "Boaz"]
 
@@ -45,7 +46,7 @@ class testFunctionCallsFlow(FlowTestsBase):
         try:
             self.graph.query(query)
             assert(False)
-        except redis.exceptions.ResponseError as e:
+        except redis.ResponseError as e:
             self.env.assertContains(expected_err_msg, str(e))
 
     def expect_type_error(self, query):
@@ -1114,7 +1115,7 @@ class testFunctionCallsFlow(FlowTestsBase):
             try:
                 self.graph.query(query)
                 self.env.assertTrue(False)
-            except redis.exceptions.ResponseError as e:
+            except redis.ResponseError as e:
                 # Expecting a type error.
                 self.env.assertContains("Type mismatch", str(e))
 
@@ -2409,7 +2410,7 @@ class testFunctionCallsFlow(FlowTestsBase):
             try:
                 self.graph.query(query)
                 self.env.assertTrue(False)
-            except redis.exceptions.ResponseError as e:
+            except redis.ResponseError as e:
                 # Expecting a type error.
                 self.env.assertContains("Type mismatch", str(e))
 
@@ -2426,7 +2427,7 @@ class testFunctionCallsFlow(FlowTestsBase):
             try:
                 self.graph.query(query)
                 self.env.assertTrue(False)
-            except redis.exceptions.ResponseError as e:
+            except redis.ResponseError as e:
                 # Expecting a type error.
                 self.env.assertContains("Received", str(e))
 

@@ -101,7 +101,7 @@ class testMSF(FlowTestsBase):
             try:
                 self.graph.query(q)
                 self.env.assertFalse(True)
-            except redis.exceptions.ResponseError as e:
+            except redis.ResponseError as e:
                 pass
 
     def test_msf_on_empty_graph(self):

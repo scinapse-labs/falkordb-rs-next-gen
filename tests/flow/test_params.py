@@ -268,7 +268,7 @@ class testParams(FlowTestsBase):
             try:
                 result = self.graph.query(q)
                 assert(False)
-            except redis.exceptions.ResponseError as e:
+            except redis.ResponseError as e:
                 pass
 
     def test_expression_on_param(self):
@@ -305,7 +305,7 @@ class testParams(FlowTestsBase):
         try:
             self.graph.query(query, params)
             assert(False)
-        except redis.exceptions.ResponseError as e:
+        except redis.ResponseError as e:
             pass
 
     def test_missing_parameter(self):
