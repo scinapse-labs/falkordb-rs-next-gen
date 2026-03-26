@@ -39,7 +39,7 @@ use std::{
 use thin_vec::{ThinVec, thin_vec};
 
 use crate::{
-    graph::graph::{LabelId, NodeId, RelationshipId, TypeId},
+    graph::graph::{LabelId, NodeId, RelationshipId},
     runtime::{functions::Type, ordermap::OrderMap, runtime::Runtime},
 };
 
@@ -74,17 +74,17 @@ impl DeletedNode {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct DeletedRelationship {
-    pub type_id: TypeId,
+    pub type_name: Arc<String>,
     pub attrs: OrderMap<Arc<String>, Value>,
 }
 
 impl DeletedRelationship {
     #[must_use]
-    pub const fn new(
-        type_id: TypeId,
+    pub fn new(
+        type_name: Arc<String>,
         attrs: OrderMap<Arc<String>, Value>,
     ) -> Self {
-        Self { type_id, attrs }
+        Self { type_name, attrs }
     }
 }
 

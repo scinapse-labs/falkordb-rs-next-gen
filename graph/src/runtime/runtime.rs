@@ -1056,7 +1056,7 @@ impl<'a> Runtime<'a> {
         id: RelationshipId,
     ) -> Option<Arc<String>> {
         if let Some(dr) = self.deleted_relationships.borrow().get(&id) {
-            return Some(self.g.borrow().get_type(dr.type_id).unwrap());
+            return Some(dr.type_name.clone());
         }
         if let Some(type_name) = self.pending.borrow().get_relationship_type(id) {
             return Some(type_name);
@@ -1064,6 +1064,26 @@ impl<'a> Runtime<'a> {
         self.g
             .borrow()
             .get_type(self.g.borrow().get_relationship_type_id(id))
+    }
+
+    pub fn get_node_indegree(
+        &self,
+        id: NodeId,
+    ) -> usize {
+        if self.deleted_nodes.borrow().contains_key(&id) {
+            return 0;
+        }
+        self.g.borrow().get_node_indegree(id)
+    }
+
+    pub fn get_node_outdegree(
+        &self,
+        id: NodeId,
+    ) -> usize {
+        if self.deleted_nodes.borrow().contains_key(&id) {
+            return 0;
+        }
+        self.g.borrow().get_node_outdegree(id)
     }
 }
 

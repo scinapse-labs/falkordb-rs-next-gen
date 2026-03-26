@@ -126,10 +126,28 @@ impl Runtime<'_> {
                         ),
                     );
                 } else if !self.g.borrow().is_node_deleted(id) {
-                    for (src, dest, id) in self.g.borrow().get_node_relationships(id) {
+                    // Cascade-delete committed relationships
+                    for (src, dest, rel_id) in self.g.borrow().get_node_relationships(id) {
+                        let type_name = self.get_relationship_type(rel_id).unwrap();
+                        let attrs = self.get_relationship_attrs(rel_id).collect();
                         self.pending
                             .borrow_mut()
-                            .deleted_relationship(id, src, dest);
+                            .deleted_relationship(rel_id, src, dest);
+                        self.deleted_relationships
+                            .borrow_mut()
+                            .insert(rel_id, DeletedRelationship::new(type_name, attrs));
+                    }
+                    // Cascade-delete pending-created relationships incident on this node
+                    let pending_rels = self
+                        .pending
+                        .borrow_mut()
+                        .remove_pending_relationships_for_node(id);
+                    for (rel_id, _src, _dest, type_name, attrs) in pending_rels {
+                        let attrs = attrs.unwrap_or_default();
+                        self.g.borrow_mut().return_relationship_id(rel_id);
+                        self.deleted_relationships
+                            .borrow_mut()
+                            .insert(rel_id, DeletedRelationship::new(type_name, attrs));
                     }
                     self.pending.borrow_mut().deleted_node(id);
                     let labels = self.g.borrow().get_node_label_ids(id).collect();
@@ -148,19 +166,16 @@ impl Runtime<'_> {
                 {
                     // Already pending deletion, nothing to do
                 } else if !self.g.borrow().is_relationship_deleted(rel_id) {
+                    // Snapshot attrs BEFORE marking as deleted so pending data
+                    // is still accessible via get_relationship_attrs.
+                    let type_name = self.get_relationship_type(rel_id).unwrap();
+                    let attrs = self.get_relationship_attrs(rel_id).collect();
                     self.pending
                         .borrow_mut()
                         .deleted_relationship(rel_id, src, dest);
-                    if !self.pending.borrow().is_relationship_created(rel_id) {
-                        // Only snapshot committed relationships for RETURN access.
-                        // Pending-created relationships still have their data available
-                        // in pending.created_relationships.
-                        let type_id = self.g.borrow().get_relationship_type_id(rel_id);
-                        let attrs = self.get_relationship_attrs(rel_id).collect();
-                        self.deleted_relationships
-                            .borrow_mut()
-                            .insert(rel_id, DeletedRelationship::new(type_id, attrs));
-                    }
+                    self.deleted_relationships
+                        .borrow_mut()
+                        .insert(rel_id, DeletedRelationship::new(type_name, attrs));
                 }
             }
             Value::Path(values) => {

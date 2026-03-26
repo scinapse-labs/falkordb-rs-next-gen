@@ -345,6 +345,38 @@ impl Pending {
         (label_ids, attrs, rels)
     }
 
+    /// Remove and return all pending-created relationships incident on the
+    /// given node, along with their staged attributes. Also cleans up
+    /// `set_relationships_attrs` and `deleted_relationships` entries for
+    /// each removed relationship so that commit() has no stale state.
+    pub fn remove_pending_relationships_for_node(
+        &mut self,
+        id: NodeId,
+    ) -> Vec<(
+        RelationshipId,
+        NodeId,
+        NodeId,
+        Arc<String>,
+        Option<OrderMap<Arc<String>, Value>>,
+    )> {
+        let rels: Vec<_> = self
+            .created_relationships
+            .iter()
+            .filter(|(_, r)| r.from == id || r.to == id)
+            .map(|(rid, r)| (*rid, r.from, r.to, r.type_name.clone()))
+            .collect();
+
+        let mut result = Vec::with_capacity(rels.len());
+        for (rel_id, from, to, type_name) in rels {
+            self.created_relationships.remove(&rel_id);
+            let attrs = self.set_relationships_attrs.remove(&rel_id.into());
+            self.deleted_relationships.remove(&rel_id);
+            result.push((rel_id, from, to, type_name, attrs));
+        }
+
+        result
+    }
+
     pub fn created_relationships(
         &mut self,
         rels: Vec<(RelationshipId, NodeId, NodeId, Arc<String>)>,

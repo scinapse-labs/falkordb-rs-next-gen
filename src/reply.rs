@@ -148,15 +148,17 @@ pub fn reply_compact_value(
             raw::reply_with_long_long(ctx.ctx, u64::from(*rel_id) as _);
             let dr = runtime.deleted_relationships.borrow();
             if let Some(x) = dr.get(rel_id) {
-                raw::reply_with_long_long(ctx.ctx, usize::from(x.type_id) as _);
+                let bg = runtime.g.borrow();
+                let type_id = bg.get_type_id(&x.type_name).unwrap();
+                raw::reply_with_long_long(ctx.ctx, usize::from(type_id) as _);
                 raw::reply_with_long_long(ctx.ctx, u64::from(*rel_src) as _);
                 raw::reply_with_long_long(ctx.ctx, u64::from(*rel_dst) as _);
+                let node_attr_offset = bg.node_attribute_count();
                 raw::reply_with_array(ctx.ctx, x.attrs.len() as _);
-                let bg = runtime.g.borrow();
                 for (key, value) in x.attrs.iter() {
                     raw::reply_with_array(ctx.ctx, 3);
                     let key = bg.get_relationship_attribute_id(key).unwrap();
-                    raw::reply_with_long_long(ctx.ctx, key as _);
+                    raw::reply_with_long_long(ctx.ctx, (key + node_attr_offset) as _);
                     reply_compact_value(ctx, runtime, value);
                 }
                 drop(bg);
@@ -168,12 +170,13 @@ pub fn reply_compact_value(
                 );
                 raw::reply_with_long_long(ctx.ctx, u64::from(*rel_src) as _);
                 raw::reply_with_long_long(ctx.ctx, u64::from(*rel_dst) as _);
+                let node_attr_offset = bg.node_attribute_count() as i64;
                 raw::reply_with_array(ctx.ctx, i64::from(raw::REDISMODULE_POSTPONED_LEN));
                 let attrs_len = bg
                     .get_relationship_all_attrs_by_id(*rel_id)
                     .inspect(|(key, value)| {
                         raw::reply_with_array(ctx.ctx, 3);
-                        raw::reply_with_long_long(ctx.ctx, i64::from(*key));
+                        raw::reply_with_long_long(ctx.ctx, i64::from(*key) + node_attr_offset);
                         reply_compact_value(ctx, runtime, value);
                     })
                     .count();
@@ -395,7 +398,9 @@ pub fn reply_verbose_value(
             raw::reply_with_long_long(ctx.ctx, u64::from(*rel_id) as _);
             let dr = runtime.deleted_relationships.borrow();
             if let Some(x) = dr.get(rel_id) {
-                raw::reply_with_long_long(ctx.ctx, usize::from(x.type_id) as _);
+                let bg = runtime.g.borrow();
+                let type_id = bg.get_type_id(&x.type_name).unwrap();
+                raw::reply_with_long_long(ctx.ctx, usize::from(type_id) as _);
                 raw::reply_with_long_long(ctx.ctx, u64::from(*rel_src) as _);
                 raw::reply_with_long_long(ctx.ctx, u64::from(*rel_dst) as _);
                 raw::reply_with_array(ctx.ctx, x.attrs.len() as _);
