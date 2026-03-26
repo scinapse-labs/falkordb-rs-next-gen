@@ -524,17 +524,23 @@ impl AttributeStore {
     /// This ensures that any unflushed writes to the cache are persisted to fjall
     /// before the cache entry is removed, preventing data loss when the entry is
     /// about to be deleted from fjall.
+    ///
+    /// However, if the entity was modified by the current transaction
+    /// (`dirty_entities`), the flush is skipped — those writes are uncommitted
+    /// and must not be persisted to fjall until `commit()`.  This prevents
+    /// rollback from leaving current-tx inserts in the durable store.
     fn flush_and_invalidate(
         &self,
         entity_id: u64,
     ) -> Result<(), String> {
-        if let Some((cached, dirty)) = self.cache.get_entity_with_dirty(entity_id, self.version)
+        if !self.dirty_entities.contains(entity_id)
+            && let Some((cached, dirty)) = self.cache.get_entity_with_dirty(entity_id, self.version)
             && dirty
             && !cached.is_empty()
         {
             // Write dirty cached attributes to fjall before losing the cache entry.
-            // This preserves data for rollback: if the transaction aborts, the
-            // cache entry is gone but fjall still has the flushed data.
+            // Safe to flush: these are pre-existing dirty entries from prior
+            // transactions, not from the active one.
             let mut batch = self.database.batch();
             for &(attr_idx, ref value) in &cached {
                 let composite_key = make_key(entity_id, attr_idx);

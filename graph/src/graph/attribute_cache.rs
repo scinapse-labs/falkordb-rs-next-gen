@@ -11,8 +11,8 @@
 //! Uses [`quick_cache`] internally — a sharded, lock-free concurrent cache
 //! with CLOCK-based approximate LRU eviction and byte-weighted capacity.
 
-use quick_cache::Weighter;
 use quick_cache::sync::Cache;
+use quick_cache::{DefaultHashBuilder, Lifecycle, Weighter};
 
 use crate::runtime::value::Value;
 
@@ -44,12 +44,48 @@ impl Weighter<u64, CachedEntity> for EntityWeighter {
     }
 }
 
+/// Lifecycle that pins dirty entries so they cannot be evicted before flushing.
+#[derive(Clone, Default)]
+struct DirtyPinLifecycle;
+
+impl Lifecycle<u64, CachedEntity> for DirtyPinLifecycle {
+    type RequestState = [Option<(u64, CachedEntity)>; 2];
+
+    #[inline]
+    fn is_pinned(
+        &self,
+        _key: &u64,
+        val: &CachedEntity,
+    ) -> bool {
+        val.dirty
+    }
+
+    #[inline]
+    fn begin_request(&self) -> Self::RequestState {
+        [None, None]
+    }
+
+    #[inline]
+    fn on_evict(
+        &self,
+        state: &mut Self::RequestState,
+        key: u64,
+        val: CachedEntity,
+    ) {
+        if state[0].is_none() {
+            state[0] = Some((key, val));
+        } else if state[1].is_none() {
+            state[1] = Some((key, val));
+        }
+    }
+}
+
 /// Shared, version-stamped, entity-level attribute cache.
 ///
 /// Thread-safety is handled internally by `quick_cache` via sharded locks —
 /// concurrent reads do not block each other.
 pub struct AttributeCache {
-    entries: Cache<u64, CachedEntity, EntityWeighter>,
+    entries: Cache<u64, CachedEntity, EntityWeighter, DefaultHashBuilder, DirtyPinLifecycle>,
 }
 
 impl AttributeCache {
@@ -59,7 +95,13 @@ impl AttributeCache {
         // Use a modest item estimate — quick_cache grows internally as needed.
         // The weight_capacity is the actual byte budget that governs eviction.
         Self {
-            entries: Cache::with_weighter(1024, max_bytes as u64, EntityWeighter),
+            entries: Cache::with(
+                1024,
+                max_bytes as u64,
+                EntityWeighter,
+                DefaultHashBuilder::default(),
+                DirtyPinLifecycle,
+            ),
         }
     }
 

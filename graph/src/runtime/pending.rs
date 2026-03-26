@@ -529,18 +529,18 @@ impl Pending {
                 .delete_nodes(&self.deleted_nodes, &mut self.index_remove_docs)?;
             self.deleted_nodes.clear();
         }
-        // Commit attribute changes and indexes before relationship deletes.
-        // This ensures that if commit_attrs fails, no relationship deletions
-        // have been applied yet (they are harder to roll back).
-        {
-            let mut g = g.borrow_mut();
-            g.commit_attrs()?;
-            g.commit_index(&mut self.index_add_docs, &mut self.index_remove_docs);
-        }
         if !self.deleted_relationships.is_empty() {
             stats.borrow_mut().relationships_deleted += self.deleted_relationships.len();
             let rels = std::mem::take(&mut self.deleted_relationships);
             g.borrow_mut().delete_relationships(rels)?;
+        }
+        // Commit attribute changes and indexes after all deletions have been
+        // applied. This ensures relationship_attrs.remove() pending_deletes
+        // (staged by delete_relationships) are included in commit_attrs().
+        {
+            let mut g = g.borrow_mut();
+            g.commit_attrs()?;
+            g.commit_index(&mut self.index_add_docs, &mut self.index_remove_docs);
         }
         Ok(())
     }
