@@ -125,7 +125,6 @@ impl AttributeStore {
     /// the process cannot continue safely.
     fn keyspace(&self) -> &Keyspace {
         self.keyspace.get_or_init(|| {
-            let exists = self.database.keyspace_exists(&self.keyspace_name);
             let ks = self
                 .database
                 .keyspace(&self.keyspace_name, || {
@@ -135,11 +134,7 @@ impl AttributeStore {
                         .manual_journal_persist(true)
                 })
                 .expect("failed to create fjall keyspace");
-            if exists && ks.approximate_len() > 0 {
-                ks.clear().expect("failed to clear fjall keyspace");
-            }
-            // Take the snapshot AFTER clearing so it does not see stale data.
-            let _ = self.snapshot.set(self.database.snapshot());
+            let _ = ks.clear();
             ks
         })
     }
@@ -150,7 +145,13 @@ impl AttributeStore {
     /// `keyspace()` call (which clears stale data first).  Subsequent MVCC
     /// versions (`new_version`) and commits set it eagerly.
     fn snapshot(&self) -> &Snapshot {
-        self.snapshot.get_or_init(|| self.database.snapshot())
+        self.snapshot.get_or_init(|| {
+            // Ensure the keyspace is initialized (and stale data cleared) before
+            // taking a snapshot, so the new version never sees data from a
+            // previously-deleted graph that reused the same keyspace name.
+            let _ = self.keyspace();
+            self.database.snapshot()
+        })
     }
 
     #[must_use]
@@ -158,11 +159,9 @@ impl AttributeStore {
         &self,
         version: u64,
     ) -> Self {
-        let snapshot = OnceCell::new();
-        let _ = snapshot.set(self.database.snapshot());
         Self {
             database: self.database.clone(),
-            snapshot,
+            snapshot: self.snapshot.clone(),
             keyspace: self.keyspace.clone(),
             keyspace_name: self.keyspace_name.clone(),
             attrs_name: self.attrs_name.clone(),
@@ -191,12 +190,9 @@ impl AttributeStore {
             return Vec::new();
         }
         let prefix = entity_id.to_be_bytes();
-        // Call keyspace() first to ensure the keyspace is created/cleared
-        // before the snapshot is taken (keyspace init also inits the snapshot).
-        let ks = self.keyspace();
         let attrs: Vec<(u16, Value)> = self
             .snapshot()
-            .prefix(ks, prefix)
+            .prefix(self.keyspace(), prefix)
             .filter_map(|entry| {
                 let (k, data) = entry.into_inner().ok()?;
                 let idx = extract_attr_idx(&k)?;
@@ -328,9 +324,8 @@ impl AttributeStore {
                 .contains_attr(key, attr_idx, self.version)
                 .unwrap_or_else(|| {
                     let composite_key = make_key(key, attr_idx);
-                    let ks = self.keyspace();
                     self.snapshot()
-                        .contains_key(ks, composite_key)
+                        .contains_key(self.keyspace(), composite_key)
                         .unwrap_or(false)
                 });
             if exists {
