@@ -314,6 +314,17 @@ impl SupportAggregation for DynTree<ExprIR<Variable>> {
     }
 }
 
+impl SupportAggregation for DynTree<ExprIR<Arc<String>>> {
+    fn is_aggregation(&self) -> bool {
+        self.root().indices::<Dfs>().any(|idx| {
+            matches!(
+                self.node(idx).data(),
+                ExprIR::FuncInvocation(func) if func.is_aggregate()
+            )
+        })
+    }
+}
+
 /// A node pattern in a MATCH or CREATE clause.
 ///
 /// Represents patterns like `(n:Person {name: 'Alice'})` where:
@@ -503,6 +514,16 @@ impl<T, L, TVar: Clone + Hash + Eq> QueryGraph<T, L, TVar> {
         }
         self.nodes.push(node);
         true
+    }
+
+    pub fn replace_node(
+        &mut self,
+        alias: &TVar,
+        node: Arc<QueryNode<L, TVar>>,
+    ) {
+        if let Some(pos) = self.nodes.iter().position(|n| n.alias == *alias) {
+            self.nodes[pos] = node;
+        }
     }
 
     pub fn add_relationship(

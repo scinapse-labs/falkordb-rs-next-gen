@@ -87,6 +87,14 @@ impl<'a> Env<'a> {
         self.bound.test(key.id as usize)
     }
 
+    /// Clear the bound bit for a variable slot, making it appear unbound.
+    pub fn unbind(
+        &mut self,
+        key: &Variable,
+    ) {
+        self.bound.clear(key.id as usize);
+    }
+
     #[must_use]
     pub fn get(
         &self,

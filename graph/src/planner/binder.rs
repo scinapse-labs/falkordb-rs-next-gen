@@ -32,7 +32,7 @@ use crate::parser::ast::{
 use crate::runtime::functions::Type;
 use crate::runtime::orderset::OrderSet;
 use crate::tree;
-use orx_tree::{Dfs, DynNode, DynTree, NodeRef};
+use orx_tree::{Dfs, Dyn, DynNode, DynTree, NodeRef};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
@@ -939,13 +939,37 @@ impl Binder {
             })
             .collect();
 
+        // When an ORDER BY expression is an aggregation that matches a
+        // projected aggregation, rewrite it to reference the projected alias
+        // before binding, so the binder resolves it as a simple variable in
+        // the child scope.  E.g. RETURN count(x) AS cnt ORDER BY count(x)
+        // becomes ORDER BY cnt.
+        let orderby: Vec<_> = orderby
+            .iter()
+            .map(|(expr, desc)| {
+                if expr.is_aggregation() {
+                    for (name, proj_expr) in exprs {
+                        if proj_expr.is_aggregation()
+                            && raw_exprs_structurally_equal(expr, proj_expr)
+                        {
+                            // Replace with a reference to the projected alias
+                            let replacement =
+                                Arc::new(DynTree::new(ExprIR::Variable(name.clone())));
+                            return (replacement, *desc);
+                        }
+                    }
+                }
+                (expr.clone(), *desc)
+            })
+            .collect();
+
         let orderby = orderby
             .iter()
             .map(|(expr, desc)| Ok((self.bind_expr(expr)?, *desc)))
             .collect::<Result<Vec<_>, String>>()?;
 
         // Reject aggregation functions inside ORDER BY expressions
-        // e.g. RETURN x ORDER BY MAX(x)
+        // that don't match any projected aggregation.
         for (expr, _) in &orderby {
             if expr.is_aggregation() {
                 return Err(String::from("failed to map aggregation expression"));
@@ -1088,7 +1112,33 @@ impl Binder {
                 .iter()
                 .find(|n| n.alias.name.as_ref().unwrap().clone() == relationship.from.alias)
             {
-                bound_node.clone()
+                // Node already bound.  If the relationship endpoint carries
+                // additional inline attrs or labels (e.g. reversed pattern
+                // `(c:country)<-[:visited]-(f:person)` where `f` was already
+                // bound by an earlier hop), create an enriched clone for the
+                // relationship's from/to field so the planner can emit filters.
+                let has_extra_labels = relationship
+                    .from
+                    .labels
+                    .iter()
+                    .any(|l| !bound_node.labels.contains(l));
+                let has_extra_attrs = relationship.from.attrs.root().num_children() > 0;
+                if has_extra_labels || has_extra_attrs {
+                    let from_attrs = self.bind_expr(&relationship.from.attrs)?;
+                    let mut merged_labels = bound_node.labels.clone();
+                    for l in relationship.from.labels.iter() {
+                        if !merged_labels.contains(l) {
+                            merged_labels.insert(l.clone());
+                        }
+                    }
+                    Arc::new(QueryNode::new(
+                        bound_node.alias.clone(),
+                        merged_labels,
+                        from_attrs,
+                    ))
+                } else {
+                    bound_node.clone()
+                }
             } else {
                 let from_alias = self.define_name_in_scope(
                     relationship.from.alias.clone(),
@@ -1114,7 +1164,28 @@ impl Binder {
                 .iter()
                 .find(|n| n.alias.name.as_ref().unwrap().clone() == relationship.to.alias)
             {
-                bound_node.clone()
+                let has_extra_labels = relationship
+                    .to
+                    .labels
+                    .iter()
+                    .any(|l| !bound_node.labels.contains(l));
+                let has_extra_attrs = relationship.to.attrs.root().num_children() > 0;
+                if has_extra_labels || has_extra_attrs {
+                    let to_attrs = self.bind_expr(&relationship.to.attrs)?;
+                    let mut merged_labels = bound_node.labels.clone();
+                    for l in relationship.to.labels.iter() {
+                        if !merged_labels.contains(l) {
+                            merged_labels.insert(l.clone());
+                        }
+                    }
+                    Arc::new(QueryNode::new(
+                        bound_node.alias.clone(),
+                        merged_labels,
+                        to_attrs,
+                    ))
+                } else {
+                    bound_node.clone()
+                }
             } else {
                 let to_alias = self.define_name_in_scope(
                     relationship.to.alias.clone(),
@@ -1923,4 +1994,65 @@ impl Binder {
             | ExprIR::Pattern(_) => false,
         }
     }
+}
+
+/// Compare two raw (pre-bind) expression trees structurally, ignoring
+/// internal `__agg_order_by_placeholder__` variables that the parser
+/// appends to aggregate functions.
+fn raw_exprs_structurally_equal(
+    a: &DynTree<ExprIR<Arc<String>>>,
+    b: &DynTree<ExprIR<Arc<String>>>,
+) -> bool {
+    fn is_agg_placeholder(node: &ExprIR<Arc<String>>) -> bool {
+        matches!(node, ExprIR::Variable(v) if v.as_str() == "__agg_order_by_placeholder__")
+    }
+
+    fn nodes_eq(
+        a: &DynTree<ExprIR<Arc<String>>>,
+        a_idx: orx_tree::NodeIdx<Dyn<ExprIR<Arc<String>>>>,
+        b: &DynTree<ExprIR<Arc<String>>>,
+        b_idx: orx_tree::NodeIdx<Dyn<ExprIR<Arc<String>>>>,
+    ) -> bool {
+        let a_node = a.node(a_idx);
+        let b_node = b.node(b_idx);
+
+        let a_children: Vec<_> = (0..a_node.num_children())
+            .filter(|&i| !is_agg_placeholder(a_node.child(i).data()))
+            .collect();
+        let b_children: Vec<_> = (0..b_node.num_children())
+            .filter(|&i| !is_agg_placeholder(b_node.child(i).data()))
+            .collect();
+
+        if a_children.len() != b_children.len() {
+            return false;
+        }
+
+        if !expr_ir_eq(a_node.data(), b_node.data()) {
+            return false;
+        }
+
+        a_children
+            .iter()
+            .zip(b_children.iter())
+            .all(|(&ai, &bi)| nodes_eq(a, a_node.child(ai).idx(), b, b_node.child(bi).idx()))
+    }
+
+    fn expr_ir_eq(
+        a: &ExprIR<Arc<String>>,
+        b: &ExprIR<Arc<String>>,
+    ) -> bool {
+        match (a, b) {
+            (ExprIR::Variable(va), ExprIR::Variable(vb)) => va == vb,
+            (ExprIR::FuncInvocation(fa), ExprIR::FuncInvocation(fb)) => fa.name == fb.name,
+            (ExprIR::String(sa), ExprIR::String(sb)) => sa == sb,
+            (ExprIR::Integer(ia), ExprIR::Integer(ib)) => ia == ib,
+            (ExprIR::Float(fa), ExprIR::Float(fb)) => fa == fb,
+            (ExprIR::Bool(ba), ExprIR::Bool(bb)) => ba == bb,
+            (ExprIR::Property(pa), ExprIR::Property(pb)) => pa == pb,
+            (ExprIR::Parameter(pa), ExprIR::Parameter(pb)) => pa == pb,
+            _ => std::mem::discriminant(a) == std::mem::discriminant(b),
+        }
+    }
+
+    nodes_eq(a, a.root().idx(), b, b.root().idx())
 }

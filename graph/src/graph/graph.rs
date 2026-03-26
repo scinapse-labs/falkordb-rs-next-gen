@@ -824,6 +824,27 @@ impl Graph {
             })
     }
 
+    /// Get all relationships for a node, optionally filtered by relationship types.
+    /// When `types` is empty, returns relationships of all types (equivalent to `[*]`).
+    pub fn get_node_relationships_by_type(
+        &self,
+        id: NodeId,
+        types: &[Arc<String>],
+    ) -> impl Iterator<Item = (NodeId, NodeId, RelationshipId)> + '_ {
+        let matrices: Vec<&Tensor> = if types.is_empty() {
+            self.relationship_matrices.iter().collect()
+        } else {
+            types
+                .iter()
+                .filter_map(|t| self.get_relationship_matrix(t))
+                .collect()
+        };
+        matrices
+            .into_iter()
+            .flat_map(move |m| m.iter(id.0, id.0, false).chain(m.iter(id.0, id.0, true)))
+            .map(|(src, dest, id)| (NodeId(src), NodeId(dest), RelationshipId(id)))
+    }
+
     /// Count the number of incoming edges to a node.
     #[must_use]
     pub fn get_node_indegree(
@@ -836,6 +857,20 @@ impl Graph {
             .count()
     }
 
+    /// Count the number of incoming edges to a node, filtered by relationship types.
+    #[must_use]
+    pub fn get_node_indegree_by_type(
+        &self,
+        id: NodeId,
+        types: &[Arc<String>],
+    ) -> usize {
+        types
+            .iter()
+            .filter_map(|t| self.get_relationship_matrix(t))
+            .flat_map(|m| m.iter(id.0, id.0, true))
+            .count()
+    }
+
     /// Count the number of outgoing edges from a node.
     #[must_use]
     pub fn get_node_outdegree(
@@ -845,6 +880,20 @@ impl Graph {
         self.relationship_matrices
             .iter()
             .flat_map(move |m| m.iter(id.0, id.0, false))
+            .count()
+    }
+
+    /// Count the number of outgoing edges from a node, filtered by relationship types.
+    #[must_use]
+    pub fn get_node_outdegree_by_type(
+        &self,
+        id: NodeId,
+        types: &[Arc<String>],
+    ) -> usize {
+        types
+            .iter()
+            .filter_map(|t| self.get_relationship_matrix(t))
+            .flat_map(|m| m.iter(id.0, id.0, false))
             .count()
     }
 

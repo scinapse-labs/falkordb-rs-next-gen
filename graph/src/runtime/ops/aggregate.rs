@@ -768,6 +768,16 @@ impl<'a> Iterator for AggregateOp<'a> {
                     }
                 }
                 acc.merge(&key);
+                // Unbind internal accumulator variables so they don't leak
+                // to downstream operators and collide with variables in
+                // subsequent scopes that reuse the same slot IDs.
+                for (_, tree) in self.agg {
+                    let root = tree.root();
+                    let last_child = root.child(root.num_children() - 1);
+                    if let ExprIR::Variable(acc_var) = last_child.data() {
+                        acc.unbind(acc_var);
+                    }
+                }
                 Ok::<Env<'_>, String>(acc)
             })() {
                 Ok(env) => envs.push(env),

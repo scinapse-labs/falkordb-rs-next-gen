@@ -1076,6 +1076,17 @@ impl<'a> Runtime<'a> {
         self.g.borrow().get_node_indegree(id)
     }
 
+    pub fn get_node_indegree_by_type(
+        &self,
+        id: NodeId,
+        types: &[Arc<String>],
+    ) -> usize {
+        if self.deleted_nodes.borrow().contains_key(&id) {
+            return 0;
+        }
+        self.g.borrow().get_node_indegree_by_type(id, types)
+    }
+
     pub fn get_node_outdegree(
         &self,
         id: NodeId,
@@ -1084,6 +1095,17 @@ impl<'a> Runtime<'a> {
             return 0;
         }
         self.g.borrow().get_node_outdegree(id)
+    }
+
+    pub fn get_node_outdegree_by_type(
+        &self,
+        id: NodeId,
+        types: &[Arc<String>],
+    ) -> usize {
+        if self.deleted_nodes.borrow().contains_key(&id) {
+            return 0;
+        }
+        self.g.borrow().get_node_outdegree_by_type(id, types)
     }
 }
 

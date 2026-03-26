@@ -81,20 +81,38 @@ impl<'a> Iterator for SortOp<'a> {
                 }
             }
 
-            items.sort_by(|(_, a), (_, b)| {
-                a.iter()
-                    .zip(b)
-                    .fold(Ordering::Equal, |acc, ((a, desc_a), (b, _))| {
-                        if acc != Ordering::Equal {
-                            return acc;
+            items.sort_by(|(env_a, a), (env_b, b)| {
+                let primary =
+                    a.iter()
+                        .zip(b)
+                        .fold(Ordering::Equal, |acc, ((a, desc_a), (b, _))| {
+                            if acc != Ordering::Equal {
+                                return acc;
+                            }
+                            let (ordering, _) = a.compare_value(b);
+                            if *desc_a {
+                                ordering.reverse()
+                            } else {
+                                ordering
+                            }
+                        });
+                if primary != Ordering::Equal {
+                    return primary;
+                }
+                // Tiebreaker: compare env values slot-by-slot for deterministic
+                // ordering when primary sort keys are equal.
+                let len = env_a.len().min(env_b.len());
+                for i in 0..len {
+                    if let (Some(va), Some(vb)) =
+                        (env_a.get_by_id(i as u32), env_b.get_by_id(i as u32))
+                    {
+                        let (ord, _) = va.compare_value(vb);
+                        if ord != Ordering::Equal {
+                            return ord;
                         }
-                        let (ordering, _) = a.compare_value(b);
-                        if *desc_a {
-                            ordering.reverse()
-                        } else {
-                            ordering
-                        }
-                    })
+                    }
+                }
+                env_a.len().cmp(&env_b.len())
             });
 
             // Reverse so we can pop from the end in O(1) while preserving
