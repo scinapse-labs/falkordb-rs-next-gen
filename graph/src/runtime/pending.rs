@@ -345,6 +345,27 @@ impl Pending {
         (label_ids, attrs, rels)
     }
 
+    /// Remove and return all pending-created relationships incident on the
+    /// given node. Used when cascade-deleting a committed node that also
+    /// has pending-created edges.
+    pub fn remove_pending_relationships_for_node(
+        &mut self,
+        id: NodeId,
+    ) -> Vec<(RelationshipId, NodeId, NodeId, Arc<String>)> {
+        let rels: Vec<_> = self
+            .created_relationships
+            .iter()
+            .filter(|(_, r)| r.from == id || r.to == id)
+            .map(|(rid, r)| (*rid, r.from, r.to, r.type_name.clone()))
+            .collect();
+
+        for (rel_id, _, _, _) in &rels {
+            self.created_relationships.remove(rel_id);
+        }
+
+        rels
+    }
+
     pub fn created_relationships(
         &mut self,
         rels: Vec<(RelationshipId, NodeId, NodeId, Arc<String>)>,

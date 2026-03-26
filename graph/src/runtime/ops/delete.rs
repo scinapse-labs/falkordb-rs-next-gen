@@ -126,12 +126,25 @@ impl Runtime<'_> {
                         ),
                     );
                 } else if !self.g.borrow().is_node_deleted(id) {
+                    // Cascade-delete committed relationships
                     for (src, dest, rel_id) in self.g.borrow().get_node_relationships(id) {
                         let type_name = self.get_relationship_type(rel_id).unwrap();
                         let attrs = self.get_relationship_attrs(rel_id).collect();
                         self.pending
                             .borrow_mut()
                             .deleted_relationship(rel_id, src, dest);
+                        self.deleted_relationships
+                            .borrow_mut()
+                            .insert(rel_id, DeletedRelationship::new(type_name, attrs));
+                    }
+                    // Cascade-delete pending-created relationships incident on this node
+                    let pending_rels = self
+                        .pending
+                        .borrow_mut()
+                        .remove_pending_relationships_for_node(id);
+                    for (rel_id, _src, _dest, type_name) in pending_rels {
+                        let attrs = self.get_relationship_attrs(rel_id).collect();
+                        self.g.borrow_mut().return_relationship_id(rel_id);
                         self.deleted_relationships
                             .borrow_mut()
                             .insert(rel_id, DeletedRelationship::new(type_name, attrs));
