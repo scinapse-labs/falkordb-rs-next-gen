@@ -125,6 +125,7 @@ impl AttributeStore {
     /// the process cannot continue safely.
     fn keyspace(&self) -> &Keyspace {
         self.keyspace.get_or_init(|| {
+            let ks_exists = self.database.keyspace_exists(&self.keyspace_name);
             let ks = self
                 .database
                 .keyspace(&self.keyspace_name, || {
@@ -134,7 +135,9 @@ impl AttributeStore {
                         .manual_journal_persist(true)
                 })
                 .expect("failed to create fjall keyspace");
-            let _ = ks.clear();
+            if ks_exists {
+                ks.clear().expect("failed to clear existing fjall keyspace");
+            }
             ks
         })
     }
