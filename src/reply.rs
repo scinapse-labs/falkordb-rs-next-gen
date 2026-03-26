@@ -549,7 +549,7 @@ pub fn reply_stats(
     raw::reply_with_string_buffer(ctx.ctx, str.as_ptr().cast::<c_char>(), str.len());
 }
 
-pub fn reply_verbose(
+fn reply_result<const COMPACT: bool>(
     ctx: &Context,
     runtime: &Runtime<'_>,
     result: &ResultSummary<'_>,
@@ -575,11 +575,24 @@ pub fn reply_verbose(
         for row in batch.active_env_iter() {
             raw::reply_with_array(ctx.ctx, runtime.return_names.len() as _);
             for name in &runtime.return_names {
-                reply_verbose_value(ctx, runtime, row.get(name).unwrap());
+                if COMPACT {
+                    raw::reply_with_array(ctx.ctx, 2);
+                    reply_compact_value(ctx, runtime, row.get(name).unwrap());
+                } else {
+                    reply_verbose_value(ctx, runtime, row.get(name).unwrap());
+                }
             }
         }
     }
     reply_stats(ctx, &result.stats, runtime.g.borrow().version);
+}
+
+pub fn reply_verbose(
+    ctx: &Context,
+    runtime: &Runtime<'_>,
+    result: &ResultSummary<'_>,
+) {
+    reply_result::<false>(ctx, runtime, result);
 }
 
 pub fn reply_compact(
@@ -587,31 +600,5 @@ pub fn reply_compact(
     runtime: &Runtime<'_>,
     result: &ResultSummary<'_>,
 ) {
-    raw::reply_with_array(ctx.ctx, 3);
-    raw::reply_with_array(ctx.ctx, runtime.return_names.len() as _);
-    for name in &runtime.return_names {
-        raw::reply_with_array(ctx.ctx, 2);
-        raw::reply_with_long_long(ctx.ctx, 1);
-        raw::reply_with_string_buffer(
-            ctx.ctx,
-            name.as_str().as_ptr().cast::<c_char>(),
-            name.as_str().len(),
-        );
-    }
-    let total: usize = result
-        .result
-        .iter()
-        .map(graph::runtime::batch::Batch::active_len)
-        .sum();
-    raw::reply_with_array(ctx.ctx, total as _);
-    for batch in &result.result {
-        for row in batch.active_env_iter() {
-            raw::reply_with_array(ctx.ctx, runtime.return_names.len() as _);
-            for name in &runtime.return_names {
-                raw::reply_with_array(ctx.ctx, 2);
-                reply_compact_value(ctx, runtime, row.get(name).unwrap());
-            }
-        }
-    }
-    reply_stats(ctx, &result.stats, runtime.g.borrow().version);
+    reply_result::<true>(ctx, runtime, result);
 }

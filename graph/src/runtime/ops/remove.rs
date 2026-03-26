@@ -111,7 +111,7 @@ impl Runtime<'_> {
                     )
                 }
                 _ => {
-                    unreachable!();
+                    unreachable!("remove target must be Property or hasLabels");
                 }
             };
             match entity {

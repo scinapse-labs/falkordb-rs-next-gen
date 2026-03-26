@@ -150,7 +150,7 @@ impl Runtime<'_> {
                             Some(property),
                         ),
                         _ => {
-                            unreachable!();
+                            unreachable!("set target must be Variable or Property");
                         }
                     };
                     match entity {

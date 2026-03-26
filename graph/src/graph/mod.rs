@@ -25,6 +25,7 @@
 //! library for graph algorithms using linear algebra. The [`graphblas`]
 //! submodule contains the FFI bindings (auto-generated).
 
+pub mod attribute_cache;
 pub mod attribute_store;
 pub mod cow;
 pub mod graph;

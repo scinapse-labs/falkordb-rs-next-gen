@@ -159,67 +159,67 @@ impl std::fmt::Display for Token {
     }
 }
 
-const KEYWORDS: &[(&str, Keyword)] = &[
-    ("CALL", Keyword::Call),
-    ("YIELD", Keyword::Yield),
-    ("OPTIONAL", Keyword::Optional),
-    ("MATCH", Keyword::Match),
-    ("UNWIND", Keyword::Unwind),
-    ("MERGE", Keyword::Merge),
-    ("CREATE", Keyword::Create),
-    ("DETACH", Keyword::Detach),
-    ("DELETE", Keyword::Delete),
-    ("SET", Keyword::Set),
-    ("REMOVE", Keyword::Remove),
-    ("WHERE", Keyword::Where),
-    ("WITH", Keyword::With),
-    ("RETURN", Keyword::Return),
-    ("AS", Keyword::As),
-    ("NULL", Keyword::Null),
-    ("OR", Keyword::Or),
-    ("XOR", Keyword::Xor),
-    ("AND", Keyword::And),
-    ("NOT", Keyword::Not),
-    ("IS", Keyword::Is),
-    ("IN", Keyword::In),
-    ("STARTS", Keyword::Starts),
-    ("ENDS", Keyword::Ends),
-    ("CONTAINS", Keyword::Contains),
-    ("TRUE", Keyword::True),
-    ("FALSE", Keyword::False),
-    ("CASE", Keyword::Case),
-    ("WHEN", Keyword::When),
-    ("THEN", Keyword::Then),
-    ("ELSE", Keyword::Else),
-    ("END", Keyword::End),
-    ("ALL", Keyword::All),
-    ("ANY", Keyword::Any),
-    ("NONE", Keyword::None),
-    ("SINGLE", Keyword::Single),
-    ("DISTINCT", Keyword::Distinct),
-    ("ORDER", Keyword::Order),
-    ("BY", Keyword::By),
-    ("ASC", Keyword::Asc),
-    ("ASCENDING", Keyword::Ascending),
-    ("DESC", Keyword::Desc),
-    ("DESCENDING", Keyword::Descending),
-    ("SKIP", Keyword::Skip),
-    ("LIMIT", Keyword::Limit),
-    ("LOAD", Keyword::Load),
-    ("CSV", Keyword::Csv),
-    ("HEADERS", Keyword::Headers),
-    ("FROM", Keyword::From),
-    ("FIELDTERMINATOR", Keyword::Fieldterminator),
-    ("DROP", Keyword::Drop),
-    ("INDEX", Keyword::Index),
-    ("FULLTEXT", Keyword::Fulltext),
-    ("VECTOR", Keyword::Vector),
-    ("OPTIONS", Keyword::Options),
-    ("FOR", Keyword::For),
-    ("FOREACH", Keyword::Foreach),
-    ("ON", Keyword::On),
-    ("UNION", Keyword::Union),
-];
+static KEYWORD_MAP: phf::Map<&'static str, Keyword> = phf::phf_map! {
+    "CALL" => Keyword::Call,
+    "YIELD" => Keyword::Yield,
+    "OPTIONAL" => Keyword::Optional,
+    "MATCH" => Keyword::Match,
+    "UNWIND" => Keyword::Unwind,
+    "MERGE" => Keyword::Merge,
+    "CREATE" => Keyword::Create,
+    "DETACH" => Keyword::Detach,
+    "DELETE" => Keyword::Delete,
+    "SET" => Keyword::Set,
+    "REMOVE" => Keyword::Remove,
+    "WHERE" => Keyword::Where,
+    "WITH" => Keyword::With,
+    "RETURN" => Keyword::Return,
+    "AS" => Keyword::As,
+    "NULL" => Keyword::Null,
+    "OR" => Keyword::Or,
+    "XOR" => Keyword::Xor,
+    "AND" => Keyword::And,
+    "NOT" => Keyword::Not,
+    "IS" => Keyword::Is,
+    "IN" => Keyword::In,
+    "STARTS" => Keyword::Starts,
+    "ENDS" => Keyword::Ends,
+    "CONTAINS" => Keyword::Contains,
+    "TRUE" => Keyword::True,
+    "FALSE" => Keyword::False,
+    "CASE" => Keyword::Case,
+    "WHEN" => Keyword::When,
+    "THEN" => Keyword::Then,
+    "ELSE" => Keyword::Else,
+    "END" => Keyword::End,
+    "ALL" => Keyword::All,
+    "ANY" => Keyword::Any,
+    "NONE" => Keyword::None,
+    "SINGLE" => Keyword::Single,
+    "DISTINCT" => Keyword::Distinct,
+    "ORDER" => Keyword::Order,
+    "BY" => Keyword::By,
+    "ASC" => Keyword::Asc,
+    "ASCENDING" => Keyword::Ascending,
+    "DESC" => Keyword::Desc,
+    "DESCENDING" => Keyword::Descending,
+    "SKIP" => Keyword::Skip,
+    "LIMIT" => Keyword::Limit,
+    "LOAD" => Keyword::Load,
+    "CSV" => Keyword::Csv,
+    "HEADERS" => Keyword::Headers,
+    "FROM" => Keyword::From,
+    "FIELDTERMINATOR" => Keyword::Fieldterminator,
+    "DROP" => Keyword::Drop,
+    "INDEX" => Keyword::Index,
+    "FULLTEXT" => Keyword::Fulltext,
+    "VECTOR" => Keyword::Vector,
+    "OPTIONS" => Keyword::Options,
+    "FOR" => Keyword::For,
+    "FOREACH" => Keyword::Foreach,
+    "ON" => Keyword::On,
+    "UNION" => Keyword::Union,
+};
 
 const MIN_I64: [&str; 5] = [
     "0b1000000000000000000000000000000000000000000000000000000000000000", // binary
@@ -383,72 +383,8 @@ impl<'a> Lexer<'a> {
                     _ => Ok((Token::Dot, 1)),
                 },
                 '|' => Ok((Token::Pipe, 1)),
-                '\'' => {
-                    let mut len = 1;
-                    let mut end = false;
-                    while let Some(c) = chars.next() {
-                        if c == '\\' {
-                            match chars.next() {
-                                Some(c) => {
-                                    len += c.len_utf8();
-                                }
-                                None => {
-                                    return Err((
-                                        format!(
-                                            "Invalid escape sequence in string at pos: {}",
-                                            pos + len
-                                        ),
-                                        len + 1,
-                                    ));
-                                }
-                            }
-                        } else if c == '\'' {
-                            end = true;
-                            break;
-                        }
-                        len += c.len_utf8();
-                    }
-                    if !end {
-                        return Err((format!("Unterminated string starting at pos: {pos}"), len));
-                    }
-                    match cypher_unescape(&str[pos + 1..pos + len]) {
-                        Ok(unescaped) => Ok((Token::String(Arc::new(unescaped)), len + 1)),
-                        Err(e) => Err((format!("{e} at pos: {pos}"), len + 1)),
-                    }
-                }
-                '\"' => {
-                    let mut len = 1;
-                    let mut end = false;
-                    while let Some(c) = chars.next() {
-                        if c == '\\' {
-                            match chars.next() {
-                                Some(c) => {
-                                    len += c.len_utf8();
-                                }
-                                None => {
-                                    return Err((
-                                        format!(
-                                            "Invalid escape sequence in string at pos: {}",
-                                            pos + len
-                                        ),
-                                        len + 1,
-                                    ));
-                                }
-                            }
-                        } else if c == '\"' {
-                            end = true;
-                            break;
-                        }
-                        len += c.len_utf8();
-                    }
-                    if !end {
-                        return Err((format!("Unterminated string starting at pos: {pos}"), len));
-                    }
-                    match cypher_unescape(&str[pos + 1..pos + len]) {
-                        Ok(unescaped) => Ok((Token::String(Arc::new(unescaped)), len + 1)),
-                        Err(e) => Err((format!("{e} at pos: {pos}"), len + 1)),
-                    }
-                }
+                '\'' => Self::lex_string_literal(str, chars, pos, '\''),
+                '\"' => Self::lex_string_literal(str, chars, pos, '\"'),
                 d @ '0'..='9' => Self::lex_numeric(str, chars, pos, d, 1),
                 '$' => {
                     let mut len = 1;
@@ -490,19 +426,25 @@ impl<'a> Lexer<'a> {
                         len += 1;
                     }
 
-                    let token = KEYWORDS
-                        .iter()
-                        .find(|&other| str[pos..pos + len].eq_ignore_ascii_case(other.0))
-                        .map_or_else(
-                            || Token::IdentifierOrKeyword {
-                                ident: Arc::new(String::from(&str[pos..pos + len])),
-                                keyword: None,
-                            },
-                            |o| Token::IdentifierOrKeyword {
-                                ident: Arc::new(String::from(&str[pos..pos + len])),
-                                keyword: Some(o.1.clone()),
-                            },
-                        );
+                    let ident = &str[pos..pos + len];
+                    // Keyword lookup: the char match above guarantees ASCII,
+                    // so uppercase in-place on a stack buffer and probe the
+                    // compile-time perfect-hash map.
+                    let keyword = if len <= 32 {
+                        let mut buf = [0u8; 32];
+                        buf[..len].copy_from_slice(ident.as_bytes());
+                        buf[..len].make_ascii_uppercase();
+                        // SAFETY: source was ASCII (guaranteed by the char
+                        // match), make_ascii_uppercase preserves ASCII.
+                        let upper = unsafe { std::str::from_utf8_unchecked(&buf[..len]) };
+                        KEYWORD_MAP.get(upper).cloned()
+                    } else {
+                        None
+                    };
+                    let token = Token::IdentifierOrKeyword {
+                        ident: Arc::new(String::from(ident)),
+                        keyword,
+                    };
                     Ok((token, len))
                 }
                 '`' => {
@@ -532,6 +474,42 @@ impl<'a> Lexer<'a> {
             };
         }
         Ok((Token::EndOfFile, 0))
+    }
+
+    fn lex_string_literal(
+        str: &'a str,
+        mut chars: Chars,
+        pos: usize,
+        quote: char,
+    ) -> Result<(Token, usize), (String, usize)> {
+        let mut len = 1;
+        let mut end = false;
+        while let Some(c) = chars.next() {
+            if c == '\\' {
+                match chars.next() {
+                    Some(c) => {
+                        len += c.len_utf8();
+                    }
+                    None => {
+                        return Err((
+                            format!("Invalid escape sequence in string at pos: {}", pos + len),
+                            len + 1,
+                        ));
+                    }
+                }
+            } else if c == quote {
+                end = true;
+                break;
+            }
+            len += c.len_utf8();
+        }
+        if !end {
+            return Err((format!("Unterminated string starting at pos: {pos}"), len));
+        }
+        match cypher_unescape(&str[pos + 1..pos + len]) {
+            Ok(unescaped) => Ok((Token::String(Arc::new(unescaped)), len + 1)),
+            Err(e) => Err((format!("{e} at pos: {pos}"), len + 1)),
+        }
     }
 
     #[allow(clippy::too_many_lines)]

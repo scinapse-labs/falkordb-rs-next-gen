@@ -149,21 +149,6 @@ impl<'a> LoadCsvOp<'a> {
         }
         Ok(())
     }
-
-    /// Drains rows from `self.pending` into `envs` until `BATCH_SIZE` is reached
-    /// or all pending rows are exhausted.
-    fn drain_pending(
-        &mut self,
-        envs: &mut Vec<Env<'a>>,
-    ) {
-        while envs.len() < BATCH_SIZE {
-            if let Some(row) = self.pending.pop_front() {
-                envs.push(row);
-            } else {
-                break;
-            }
-        }
-    }
 }
 
 impl<'a> Iterator for LoadCsvOp<'a> {
@@ -173,7 +158,7 @@ impl<'a> Iterator for LoadCsvOp<'a> {
         let mut envs = Vec::with_capacity(BATCH_SIZE);
 
         // Drain leftover rows from previous call.
-        self.drain_pending(&mut envs);
+        super::drain_pending(&mut self.pending, &mut envs);
 
         while envs.len() < BATCH_SIZE {
             let batch = match self.child.next() {
@@ -253,7 +238,7 @@ impl<'a> Iterator for LoadCsvOp<'a> {
                     Err(e) => return Some(Err(e)),
                 }
 
-                self.drain_pending(&mut envs);
+                super::drain_pending(&mut self.pending, &mut envs);
 
                 if envs.len() >= BATCH_SIZE {
                     break;

@@ -283,7 +283,7 @@ impl Document {
                         RSFLDTYPE_NUMERIC,
                     );
                 }
-                Value::List(_) => todo!(),
+                Value::List(_) => {} // List indexing not yet supported; skip field
                 Value::VecF32(vec) => {
                     RediSearch_DocumentAddFieldVector(
                         self.rs_doc,
@@ -444,6 +444,9 @@ impl Index {
     }
 
     /// Build a RediSearch query node from an `IndexQuery`.
+    ///
+    /// Returns a null pointer if the query references unknown fields or
+    /// unsupported value types.
     fn build_query_node(
         &self,
         query: IndexQuery<Value>,
@@ -453,7 +456,10 @@ impl Index {
                 key,
                 value: Value::Int(value),
             } => {
-                let field = &self.fields.get(&key).unwrap()[0];
+                let Some(fields) = self.fields.get(&key) else {
+                    return std::ptr::null_mut();
+                };
+                let field = &fields[0];
                 unsafe {
                     RediSearch_CreateNumericNode(
                         self.rs_idx,
@@ -469,9 +475,14 @@ impl Index {
                 key,
                 value: Value::String(value),
             } => {
-                let field = &self.fields.get(&key).unwrap()[0];
+                let Some(fields) = self.fields.get(&key) else {
+                    return std::ptr::null_mut();
+                };
+                let field = &fields[0];
                 let query = unsafe { RediSearch_CreateTagNode(self.rs_idx, field.name.as_ptr()) };
-                let msg = CString::new(value.as_str()).unwrap();
+                let Ok(msg) = CString::new(value.as_str()) else {
+                    return std::ptr::null_mut();
+                };
                 let child = unsafe {
                     RediSearch_CreateTagTokenNode(self.rs_idx, msg.as_ptr().cast::<c_char>())
                 };
@@ -493,9 +504,14 @@ impl Index {
                     (Some(Value::Int(min)), None) => (min as f64, RSRANGE_INF),
                     (None, Some(Value::Int(max))) => (RSRANGE_NEG_INF, max as f64),
                     (Some(Value::Int(min)), Some(Value::Int(max))) => (min as f64, max as f64),
-                    _ => todo!(),
+                    (Some(Value::Int(min)), Some(Value::Float(max))) => (min as f64, max),
+                    (Some(Value::Float(min)), Some(Value::Int(max))) => (min, max as f64),
+                    _ => return std::ptr::null_mut(),
                 };
-                let field = &self.fields.get(&key).unwrap()[0];
+                let Some(fields) = self.fields.get(&key) else {
+                    return std::ptr::null_mut();
+                };
+                let field = &fields[0];
                 unsafe {
                     RediSearch_CreateNumericNode(
                         self.rs_idx,
@@ -510,33 +526,24 @@ impl Index {
             IndexQuery::Point {
                 key,
                 point: Value::Point(point),
-                radius: Value::Float(radius),
+                radius,
             } => {
-                let field = &self.fields.get(&key).unwrap()[0];
+                let r = match radius {
+                    Value::Float(f) => f,
+                    Value::Int(i) => i as f64,
+                    _ => return std::ptr::null_mut(),
+                };
+                let Some(fields) = self.fields.get(&key) else {
+                    return std::ptr::null_mut();
+                };
+                let field = &fields[0];
                 unsafe {
                     RediSearch_CreateGeoNode(
                         self.rs_idx,
                         field.name.as_ptr(),
                         f64::from(point.latitude),
                         f64::from(point.longitude),
-                        radius,
-                        RSGeoDistance_RS_GEO_DISTANCE_M,
-                    )
-                }
-            }
-            IndexQuery::Point {
-                key,
-                point: Value::Point(point),
-                radius: Value::Int(radius),
-            } => {
-                let field = &self.fields.get(&key).unwrap()[0];
-                unsafe {
-                    RediSearch_CreateGeoNode(
-                        self.rs_idx,
-                        field.name.as_ptr(),
-                        f64::from(point.latitude),
-                        f64::from(point.longitude),
-                        radius as f64,
+                        r,
                         RSGeoDistance_RS_GEO_DISTANCE_M,
                     )
                 }
@@ -549,7 +556,7 @@ impl Index {
                 }
                 intersect
             }
-            _ => todo!(),
+            _ => std::ptr::null_mut(),
         }
     }
 

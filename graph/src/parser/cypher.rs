@@ -820,21 +820,17 @@ impl<'a> Parser<'a> {
         Ok(None)
     }
 
-    fn parse_with_clause(
-        &mut self,
-        write: bool,
-    ) -> Result<RawQueryIR, String> {
-        let distinct = optional_match_token!(self.lexer => Distinct);
-        let (all, exprs) = if optional_match_token!(self.lexer, Star) {
-            // WITH * carries forward the current named_in_scope unchanged
-            if optional_match_token!(self.lexer, Comma) {
-                (true, self.parse_named_exprs(true)?)
-            } else {
-                (true, vec![])
-            }
-        } else {
-            (false, self.parse_named_exprs(true)?)
-        };
+    /// Parse ORDER BY, SKIP, and LIMIT clauses shared by WITH and RETURN.
+    fn parse_orderby_skip_limit(
+        &mut self
+    ) -> Result<
+        (
+            Vec<(QueryExpr<Arc<String>>, bool)>,
+            Option<QueryExpr<Arc<String>>>,
+            Option<QueryExpr<Arc<String>>>,
+        ),
+        String,
+    > {
         let orderby = if optional_match_token!(self.lexer => Order) {
             self.parse_orderby()?
         } else {
@@ -882,6 +878,25 @@ impl<'a> Parser<'a> {
         } else {
             None
         };
+        Ok((orderby, skip, limit))
+    }
+
+    fn parse_with_clause(
+        &mut self,
+        write: bool,
+    ) -> Result<RawQueryIR, String> {
+        let distinct = optional_match_token!(self.lexer => Distinct);
+        let (all, exprs) = if optional_match_token!(self.lexer, Star) {
+            // WITH * carries forward the current named_in_scope unchanged
+            if optional_match_token!(self.lexer, Comma) {
+                (true, self.parse_named_exprs(true)?)
+            } else {
+                (true, vec![])
+            }
+        } else {
+            (false, self.parse_named_exprs(true)?)
+        };
+        let (orderby, skip, limit) = self.parse_orderby_skip_limit()?;
         let filter = self.parse_where()?;
         Ok(QueryIR::With {
             distinct,
@@ -910,53 +925,7 @@ impl<'a> Parser<'a> {
         } else {
             (false, self.parse_named_exprs(false)?)
         };
-        let orderby = if optional_match_token!(self.lexer => Order) {
-            self.parse_orderby()?
-        } else {
-            vec![]
-        };
-        let skip = if optional_match_token!(self.lexer => Skip) {
-            let skip = Arc::new(self.parse_expr(false)?);
-            match skip.root().data() {
-                ExprIR::Integer(i) => {
-                    if *i < 0 {
-                        return Err(self.lexer.format_error(
-                            "SKIP specified value of invalid type, must be a positive integer",
-                        ));
-                    }
-                }
-                ExprIR::Parameter(_) => {}
-                _ => {
-                    return Err(self.lexer.format_error(
-                        "SKIP specified value of invalid type, must be a positive integer",
-                    ));
-                }
-            }
-            Some(skip)
-        } else {
-            None
-        };
-        let limit = if optional_match_token!(self.lexer => Limit) {
-            let limit = Arc::new(self.parse_expr(false)?);
-            match limit.root().data() {
-                ExprIR::Integer(i) => {
-                    if *i < 0 {
-                        return Err(self.lexer.format_error(
-                            "LIMIT specified value of invalid type, must be a positive integer",
-                        ));
-                    }
-                }
-                ExprIR::Parameter(_) => {}
-                _ => {
-                    return Err(self.lexer.format_error(
-                        "LIMIT specified value of invalid type, must be a positive integer",
-                    ));
-                }
-            }
-            Some(limit)
-        } else {
-            None
-        };
+        let (orderby, skip, limit) = self.parse_orderby_skip_limit()?;
 
         Ok(QueryIR::Return {
             distinct,

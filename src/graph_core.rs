@@ -174,7 +174,14 @@ impl ThreadedGraph {
             &env_pool,
             RESULTSET_SIZE.load(Ordering::Relaxed),
         );
-        let mut result = runtime.query()?;
+        let mut result = match runtime.query() {
+            Ok(r) => r,
+            Err(err) => {
+                // Clean up dirty cache entries before the graph is dropped.
+                g.borrow_mut().rollback_cache();
+                return Err(err);
+            }
+        };
         result.stats.cached = cached;
         if compact {
             reply_compact(ctx, &runtime, &result);
@@ -247,12 +254,26 @@ pub fn query_mut(
             let ctx = Context::new(ctx);
 
             let res = graph.execute_query(&ctx, &query, compact, write);
+
+            // Log memory tracking BEFORE freeing the context.
+            if track_mem {
+                let (allocated, deallocated) = current_thread_usage();
+                disable_tracking();
+                ctx.log(
+                    redis_module::logging::RedisLogLevel::Notice,
+                    &format!(
+                        "Allocated: {allocated} bytes, Deallocated: {deallocated} bytes, Net: {}",
+                        allocated as isize - deallocated as isize
+                    ),
+                );
+            }
+
             match res {
                 Ok((is_write, cached)) => {
                     if is_write {
                         graph
                             .sender
-                            .send((bc, query, compact, cached, key_name.clone()))
+                            .send((bc, query, compact, cached, key_name))
                             .unwrap();
                         drop(graph);
                         process_write_queued_query(&g);
@@ -267,17 +288,6 @@ pub fn query_mut(
                     drop(bc);
                     unsafe { raw::RedisModule_FreeThreadSafeContext.unwrap()(ctx.ctx) };
                 }
-            }
-            if track_mem {
-                let (allocated, deallocated) = current_thread_usage();
-                disable_tracking();
-                ctx.log(
-                    redis_module::logging::RedisLogLevel::Notice,
-                    &format!(
-                        "Allocated: {allocated} bytes, Deallocated: {deallocated} bytes, Net: {}",
-                        allocated as isize - deallocated as isize
-                    ),
-                );
             }
         },
         None,
@@ -308,6 +318,11 @@ fn query_sync(
                 match res {
                     Ok(new_graph) => {
                         g.graph.commit(new_graph);
+                        // Flush dirty cache entries to fjall if over budget.
+                        let value = g.graph.read().borrow().maybe_flush_caches();
+                        if let Err(e) = value {
+                            eprintln!("FalkorDB: cache flush failed: {e}");
+                        }
                     }
                     Err(err) => {
                         g.graph.rollback();
@@ -353,6 +368,11 @@ pub fn process_write_queued_query(graph: &Arc<RwLock<ThreadedGraph>>) {
                     };
                     drop(bc);
                     graph.graph.commit(g);
+                    // Flush dirty cache entries to fjall if over budget.
+                    let value = graph.graph.read().borrow().maybe_flush_caches();
+                    if let Err(e) = value {
+                        eprintln!("FalkorDB: cache flush failed: {e}");
+                    }
                 }
                 Err(err) => {
                     let cerr = CString::new(err).unwrap();
