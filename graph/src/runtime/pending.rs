@@ -495,6 +495,76 @@ impl Pending {
             .is_some_and(|(from_id, to_id)| *from_id == from && *to_id == to)
     }
 
+    /// Count pending-created relationships whose destination is `node_id` and
+    /// whose type name matches one of `types` (or all if `types` is empty).
+    #[must_use]
+    pub fn pending_indegree(
+        &self,
+        node_id: NodeId,
+        types: &[Arc<String>],
+    ) -> usize {
+        self.created_relationships
+            .values()
+            .filter(|r| r.to == node_id && (types.is_empty() || types.contains(&r.type_name)))
+            .count()
+    }
+
+    /// Count pending-created relationships whose source is `node_id` and
+    /// whose type name matches one of `types` (or all if `types` is empty).
+    #[must_use]
+    pub fn pending_outdegree(
+        &self,
+        node_id: NodeId,
+        types: &[Arc<String>],
+    ) -> usize {
+        self.created_relationships
+            .values()
+            .filter(|r| r.from == node_id && (types.is_empty() || types.contains(&r.type_name)))
+            .count()
+    }
+
+    /// Count pending-deleted relationships whose destination is `node_id` and
+    /// whose type name matches one of `types` (or all if `types` is empty).
+    /// Requires access to the graph to resolve relationship type IDs.
+    #[must_use]
+    pub fn pending_deleted_indegree(
+        &self,
+        node_id: NodeId,
+        types: &[Arc<String>],
+        g: &Graph,
+    ) -> usize {
+        self.deleted_relationships
+            .iter()
+            .filter(|(rel_id, (_from, to))| {
+                *to == node_id
+                    && (types.is_empty()
+                        || g.get_type(g.get_relationship_type_id(**rel_id))
+                            .is_some_and(|t| types.contains(&t)))
+            })
+            .count()
+    }
+
+    /// Count pending-deleted relationships whose source is `node_id` and
+    /// whose type name matches one of `types` (or all if `types` is empty).
+    /// Requires access to the graph to resolve relationship type IDs.
+    #[must_use]
+    pub fn pending_deleted_outdegree(
+        &self,
+        node_id: NodeId,
+        types: &[Arc<String>],
+        g: &Graph,
+    ) -> usize {
+        self.deleted_relationships
+            .iter()
+            .filter(|(rel_id, (from, _to))| {
+                *from == node_id
+                    && (types.is_empty()
+                        || g.get_type(g.get_relationship_type_id(**rel_id))
+                            .is_some_and(|t| types.contains(&t)))
+            })
+            .count()
+    }
+
     pub fn commit(
         &mut self,
         g: &AtomicRefCell<Graph>,

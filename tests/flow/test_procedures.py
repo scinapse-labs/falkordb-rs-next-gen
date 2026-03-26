@@ -80,7 +80,7 @@ class testProcedures(FlowTestsBase):
                                       args=["fruit", "Orange1"],
                                       emit=["unknown"])
             self.env.assertFalse(1)
-        except redis.exceptions.ResponseError:
+        except redis.ResponseError:
             # Expecting an error.
             pass
 
@@ -91,7 +91,7 @@ class testProcedures(FlowTestsBase):
                                       args=["fruit", "Orange1"],
                                       emit=["node", "node"])
             self.env.assertFalse(1)
-        except redis.exceptions.ResponseError:
+        except redis.ResponseError:
             # Expecting an error.
             pass
 
@@ -101,7 +101,7 @@ class testProcedures(FlowTestsBase):
         try:
             self.graph.call_procedure("db.idx.fulltext.queryNodes")
             self.env.assertFalse(1)
-        except redis.exceptions.ResponseError:
+        except redis.ResponseError:
             # Expecting an error.
             pass
 
@@ -110,7 +110,7 @@ class testProcedures(FlowTestsBase):
         try:
             self.graph.call_procedure("db.idx.fulltext.queryNodes", args=["arg1"])
             self.env.assertFalse(1)
-        except redis.exceptions.ResponseError:
+        except redis.ResponseError:
             # Expecting an error.
             pass
 
@@ -121,7 +121,7 @@ class testProcedures(FlowTestsBase):
                                       args=["fruit", "query", "fruit", "query"],
                                       emit=["node"])
             self.env.assertFalse(1)
-        except redis.exceptions.ResponseError:
+        except redis.ResponseError:
             # Expecting an error.
             pass
 
@@ -286,14 +286,14 @@ class testProcedures(FlowTestsBase):
             query = """CALL db.idx.fulltext.queryNodes('fruit', 'Orange || Apple') YIELD node RETURN node"""
             self.graph.query(query)
             self.env.assertFalse(1)
-        except redis.exceptions.ResponseError:
+        except redis.ResponseError:
             # Expecting an error.
             pass
 
     def test09_procedure_lookup(self):
         try:
             self.graph.call_procedure("dB.LaBeLS")
-        except redis.exceptions.ResponseError:
+        except redis.ResponseError:
             # This should not cause an error
             self.env.assertFalse(1)
             pass
@@ -302,13 +302,13 @@ class testProcedures(FlowTestsBase):
             # looking for a non existing procedure
             self.graph.call_procedure("db.nonExistingProc")
             self.env.assertFalse(1)
-        except redis.exceptions.ResponseError:
+        except redis.ResponseError:
             # Expecting an error.
             pass
 
         try:
             self.graph.call_procedure("db.IDX.FulLText.QueRyNoDes", args=["fruit", "or"])
-        except redis.exceptions.ResponseError:
+        except redis.ResponseError:
             # This should not cause an error
             self.env.assertFalse(1)
             pass

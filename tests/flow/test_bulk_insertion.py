@@ -316,7 +316,7 @@ class testGraphBulkInsertFlow(FlowTestsBase):
         try:
             self.db.execute_command("GRAPH.BULK", "a", "a", "a")
             self.env.assertTrue(False)
-        except redis.exceptions.ResponseError as e:
+        except redis.ResponseError as e:
             self.env.assertContains("Invalid graph operation on empty key", str(e))
 
     # Verify that numeric, boolean, and null types are properly handled

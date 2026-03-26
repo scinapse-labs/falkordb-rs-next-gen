@@ -693,7 +693,7 @@ class testIndexScanFlow():
         try:
             self.graph.query("MATCH (u:User) WHERE distance(point({latitude:40.5, longitude: 30.4}, u.loc)) < 20000 RETURN u")
             self.env.assertTrue(False)
-        except redis.exceptions.ResponseError as e:
+        except redis.ResponseError as e:
             self.env.assertContains("Received 1 arguments to function 'distance', expected at least 2", str(e))
 
     def test_22_pickup_on_index_creation(self):

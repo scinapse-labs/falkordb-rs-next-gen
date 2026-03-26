@@ -87,6 +87,21 @@ impl<'a> Env<'a> {
         self.bound.test(key.id as usize)
     }
 
+    /// Clear the bound bit for a variable slot, making it appear unbound.
+    ///
+    /// Note: this intentionally does NOT reset the stored value. The bound bit
+    /// is only checked by `Hash` / `merge` / `is_bound`; readers like `get()`
+    /// still see the old value, but that is acceptable because `unbind` is only
+    /// called at the end of aggregate finalization where the accumulator ID
+    /// may alias a different output variable's slot — clearing the value would
+    /// destroy that result.
+    pub fn unbind(
+        &mut self,
+        key: &Variable,
+    ) {
+        self.bound.clear(key.id as usize);
+    }
+
     #[must_use]
     pub fn get(
         &self,

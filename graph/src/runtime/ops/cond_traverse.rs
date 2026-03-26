@@ -223,10 +223,12 @@ impl<'a> CondTraverseOp<'a> {
                 }
             }
             // When emit_relationship is false (anonymous edge not in a named
-            // path) and there are no type or attribute filters, skip per-edge
-            // iteration and emit one row per (src, dst) pair.
+            // path) and there are no edge attribute filters, skip per-edge
+            // iteration and emit one row per (src, dst) pair.  The outer
+            // `get_relationships` iterator already returns unique matrix-level
+            // pairs, so one representative edge per pair is sufficient.
             let has_edge_filter = matches!(filter_attrs, Value::Map(m) if !m.is_empty());
-            if !emit_relationship && rp.types.is_empty() && !has_edge_filter {
+            if !emit_relationship && !has_edge_filter {
                 if let Some(id) = g.get_src_dest_relationships(src, dst, &rp.types).next() {
                     let mut row = env.clone_pooled(runtime.env_pool);
                     row.insert(&rp.alias, Value::Relationship(Box::new((id, src, dst))));

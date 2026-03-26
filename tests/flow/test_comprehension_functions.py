@@ -162,14 +162,14 @@ class testComprehensionFunctions(FlowTestsBase):
         try:
             self.graph.query("RETURN any(x IN [1,2])")
             assert(False)
-        except redis.exceptions.ResponseError as e:
+        except redis.ResponseError as e:
             # Expecting a type error.
             self.env.assertContains("requires a WHERE predicate", str(e))
 
         try:
             self.graph.query("RETURN all(x IN [1,2])")
             assert(False)
-        except redis.exceptions.ResponseError as e:
+        except redis.ResponseError as e:
             # Expecting a type error.
             self.env.assertContains("requires a WHERE predicate", str(e))
 

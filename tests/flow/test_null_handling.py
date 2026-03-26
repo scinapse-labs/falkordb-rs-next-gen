@@ -18,7 +18,7 @@ class testNullHandlingFlow(FlowTestsBase):
             query = """MATCH (a) OPTIONAL MATCH (a)-[nonexistent_edge]->(nonexistent_node) CREATE (nonexistent_node)-[:E]->(a)"""
             self.graph.query(query)
             assert(False)
-        except redis.exceptions.ResponseError:
+        except redis.ResponseError:
             # Expecting an error.
             pass
 
@@ -26,7 +26,7 @@ class testNullHandlingFlow(FlowTestsBase):
             query = """MATCH (a) OPTIONAL MATCH (a)-[nonexistent_edge]->(nonexistent_node) CREATE (a)-[:E]->(nonexistent_node)"""
             self.graph.query(query)
             assert(False)
-        except redis.exceptions.ResponseError:
+        except redis.ResponseError:
             # Expecting an error.
             pass
 
@@ -36,7 +36,7 @@ class testNullHandlingFlow(FlowTestsBase):
             query = """MATCH (a) OPTIONAL MATCH (a)-[nonexistent_edge]->(nonexistent_node) MERGE (nonexistent_node)-[:E]->(a)"""
             self.graph.query(query)
             assert(False)
-        except redis.exceptions.ResponseError:
+        except redis.ResponseError:
             # Expecting an error.
             pass
 
@@ -44,7 +44,7 @@ class testNullHandlingFlow(FlowTestsBase):
             query = """MATCH (a) OPTIONAL MATCH (a)-[nonexistent_edge]->(nonexistent_node) MERGE (a)-[:E]->(nonexistent_node)"""
             self.graph.query(query)
             assert(False)
-        except redis.exceptions.ResponseError:
+        except redis.ResponseError:
             # Expecting an error.
             pass
 

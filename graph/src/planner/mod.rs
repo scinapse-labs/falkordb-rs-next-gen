@@ -1027,6 +1027,20 @@ impl Planner {
                     },
                     scan
                 )
+            } else if relationship.min_hops.is_some() {
+                let mut cvlt = tree!(IR::CondVarLenTraverse(relationship.clone()));
+                // Add from-node inline attr filter (e.g. {name:'Roi Lipman'})
+                // since CondVarLenTraverse does not check from-node attrs internally.
+                if !self
+                    .visited
+                    .contains(&(relationship.from.alias.id, relationship.from.alias.scope_id))
+                {
+                    let (_, from_attr_filter) = inline_node_attrs_to_filter(&relationship.from);
+                    if let Some(filter_expr) = from_attr_filter {
+                        cvlt = tree!(IR::Filter(Arc::new(filter_expr)), cvlt);
+                    }
+                }
+                cvlt
             } else if self
                 .visited
                 .contains(&(relationship.from.alias.id, relationship.from.alias.scope_id))
@@ -1034,12 +1048,22 @@ impl Planner {
                     .visited
                     .contains(&(relationship.to.alias.id, relationship.to.alias.scope_id))
             {
-                tree!(IR::ExpandInto {
+                let mut ei = tree!(IR::ExpandInto {
                     relationship: relationship.clone(),
                     emit_relationship: emit_rel(relationship)
-                })
-            } else if relationship.min_hops.is_some() {
-                tree!(IR::CondVarLenTraverse(relationship.clone()))
+                });
+                // Both endpoints already bound — check for inline attrs
+                // that need filtering (e.g. reversed patterns where attrs
+                // appear on a later occurrence of an already-bound node).
+                let (_, from_attr_filter) = inline_node_attrs_to_filter(&relationship.from);
+                if let Some(filter_expr) = from_attr_filter {
+                    ei = tree!(IR::Filter(Arc::new(filter_expr)), ei);
+                }
+                let (_, to_attr_filter) = inline_node_attrs_to_filter(&relationship.to);
+                if let Some(filter_expr) = to_attr_filter {
+                    ei = tree!(IR::Filter(Arc::new(filter_expr)), ei);
+                }
+                ei
             } else {
                 tree!(IR::CondTraverse {
                     relationship: relationship.clone(),
@@ -1084,6 +1108,18 @@ impl Planner {
                         scan,
                         res
                     )
+                } else if relationship.min_hops.is_some() {
+                    let mut cvlt = tree!(IR::CondVarLenTraverse(relationship.clone()), res);
+                    if !self
+                        .visited
+                        .contains(&(relationship.from.alias.id, relationship.from.alias.scope_id))
+                    {
+                        let (_, from_attr_filter) = inline_node_attrs_to_filter(&relationship.from);
+                        if let Some(filter_expr) = from_attr_filter {
+                            cvlt = tree!(IR::Filter(Arc::new(filter_expr)), cvlt);
+                        }
+                    }
+                    cvlt
                 } else if self
                     .visited
                     .contains(&(relationship.from.alias.id, relationship.from.alias.scope_id))
@@ -1091,15 +1127,22 @@ impl Planner {
                         .visited
                         .contains(&(relationship.to.alias.id, relationship.to.alias.scope_id))
                 {
-                    tree!(
+                    let mut ei = tree!(
                         IR::ExpandInto {
                             relationship: relationship.clone(),
                             emit_relationship: emit_rel(relationship)
                         },
                         res
-                    )
-                } else if relationship.min_hops.is_some() {
-                    tree!(IR::CondVarLenTraverse(relationship.clone()), res)
+                    );
+                    let (_, from_attr_filter) = inline_node_attrs_to_filter(&relationship.from);
+                    if let Some(filter_expr) = from_attr_filter {
+                        ei = tree!(IR::Filter(Arc::new(filter_expr)), ei);
+                    }
+                    let (_, to_attr_filter) = inline_node_attrs_to_filter(&relationship.to);
+                    if let Some(filter_expr) = to_attr_filter {
+                        ei = tree!(IR::Filter(Arc::new(filter_expr)), ei);
+                    }
+                    ei
                 } else {
                     tree!(
                         IR::CondTraverse {

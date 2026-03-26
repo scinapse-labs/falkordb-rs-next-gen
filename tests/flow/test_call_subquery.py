@@ -28,7 +28,7 @@ class testCallSubqueryFlow():
         try:
             self.graph.query(query)
             assert(False)
-        except redis.exceptions.ResponseError as e:
+        except redis.ResponseError as e:
             self.env.assertContains(expected_err_msg, str(e))
 
     def test01_test_validations(self):

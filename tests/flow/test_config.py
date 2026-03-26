@@ -70,7 +70,7 @@ class testConfig(FlowTestsBase):
         try:
             self.db.config_get(fake_config_name)
             assert(False)
-        except redis.exceptions.ResponseError as e:
+        except redis.ResponseError as e:
             # Expecting an error.
             assert("Unknown configuration field" in str(e))
             pass
@@ -122,7 +122,7 @@ class testConfig(FlowTestsBase):
             # a runtime configuration, expecting this command to fail
             response = self.redis_con.execute_command("GRAPH.CONFIG SET QUERY_MEM_CAPACITY 150 THREAD_COUNT 40")
             assert(False)
-        except redis.exceptions.ResponseError as e:
+        except redis.ResponseError as e:
             # Expecting an error.
             assert("This configuration parameter cannot be set at run-time" in str(e))
 
@@ -131,7 +131,7 @@ class testConfig(FlowTestsBase):
             # configuration, expecting this command to fail
             response = self.redis_con.execute_command("GRAPH.CONFIG SET QUERY_MEM_CAPACITY 150 FAKE_CONFIG_NAME 40")
             assert(False)
-        except redis.exceptions.ResponseError as e:
+        except redis.ResponseError as e:
             # Expecting an error.
             assert("Unknown configuration field" in str(e))
 
@@ -140,7 +140,7 @@ class testConfig(FlowTestsBase):
             # MAX_QUEUED_QUERIES, expecting this command to fail
             response = self.redis_con.execute_command("GRAPH.CONFIG SET QUERY_MEM_CAPACITY 150 MAX_QUEUED_QUERIES -1")
             assert(False)
-        except redis.exceptions.ResponseError as e:
+        except redis.ResponseError as e:
             # Expecting an error.
             assert("Failed to set config value" in str(e))
 
@@ -156,7 +156,7 @@ class testConfig(FlowTestsBase):
         try:
             self.db.config_set(fake_config_name, " 5")
             assert(False)
-        except redis.exceptions.ResponseError as e:
+        except redis.ResponseError as e:
             # Expecting an error.
             assert("Unknown configuration field" in str(e))
             pass
@@ -168,7 +168,7 @@ class testConfig(FlowTestsBase):
         try:
             response = self.redis_con.execute_command("GRAPH.CONFIG DREP " + config_name + " 3")
             assert(False)
-        except redis.exceptions.ResponseError as e:
+        except redis.ResponseError as e:
             assert("Unknown subcommand for GRAPH.CONFIG" in str(e))
             pass
 
@@ -284,7 +284,7 @@ class testConfig(FlowTestsBase):
             # MAX_QUEUED_QUERIES must be a positive value
             self.db.config_set("MAX_QUEUED_QUERIES", 0)
             assert(False)
-        except redis.exceptions.ResponseError as e:
+        except redis.ResponseError as e:
             assert("Failed to set config value MAX_QUEUED_QUERIES to 0" in str(e))
             pass
 
@@ -294,7 +294,7 @@ class testConfig(FlowTestsBase):
             try:
                 self.db.config_set(f"{config}", -1)
                 assert(False)
-            except redis.exceptions.ResponseError as e:
+            except redis.ResponseError as e:
                 assert("Failed to set config value %s to -1" % config in str(e))
                 pass
 
@@ -304,7 +304,7 @@ class testConfig(FlowTestsBase):
             try:
                 self.db.config_set(config, "invalid")
                 assert(False)
-            except redis.exceptions.ResponseError as e:
+            except redis.ResponseError as e:
                 assert(("Failed to set config value %s to invalid" % config) in str(e))
 
     def test10_set_get_vkey_max_entity_count(self):

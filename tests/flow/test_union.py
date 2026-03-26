@@ -51,7 +51,7 @@ class testUnion(FlowTestsBase):
             q = """RETURN 1 as one UNION RETURN 1 as two"""
             self.graph.query(q)
             assert(False)
-        except redis.exceptions.ResponseError:
+        except redis.ResponseError:
             # Expecting an error.
             pass
 
@@ -75,7 +75,7 @@ class testUnion(FlowTestsBase):
                        MATCH ()-[e]->() RETURN e"""
             self.graph.query(query)
             assert(False)
-        except redis.exceptions.ResponseError:
+        except redis.ResponseError:
             # Expecting an error.
             pass
 

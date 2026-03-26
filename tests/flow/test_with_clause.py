@@ -264,7 +264,7 @@ class testWithClause(FlowTestsBase):
             try:
                 self.graph.query(query)
                 self.env.assertTrue(False)
-            except redis.exceptions.ResponseError as e:
+            except redis.ResponseError as e:
                 # Expecting an error.
                 self.env.assertContains("not defined", str(e))
 

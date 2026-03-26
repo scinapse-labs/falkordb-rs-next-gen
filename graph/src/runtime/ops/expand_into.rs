@@ -133,7 +133,7 @@ impl<'a> ExpandIntoOp<'a> {
         let g = runtime.g.borrow();
         let pending = runtime.pending.borrow();
         for (edge_src, edge_dst) in &edge_pairs {
-            if !self.emit_relationship && rp.types.is_empty() && !has_edge_filter {
+            if !self.emit_relationship && !has_edge_filter {
                 if let Some(id) = g
                     .get_src_dest_relationships(*edge_src, *edge_dst, &rp.types)
                     .find(|id| !pending.is_relationship_deleted(*id, *edge_src, *edge_dst))

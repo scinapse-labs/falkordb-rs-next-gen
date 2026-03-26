@@ -2,6 +2,7 @@ from cmath import isinf, isnan
 from common import *
 import json
 import math
+import redis
 
 people = ["Roi", "Alon", "Ailon", "Boaz"]
 
@@ -45,7 +46,7 @@ class testFunctionCallsFlow(FlowTestsBase):
         try:
             self.graph.query(query)
             assert(False)
-        except redis.exceptions.ResponseError as e:
+        except redis.ResponseError as e:
             self.env.assertContains(expected_err_msg, str(e))
 
     def expect_type_error(self, query):
@@ -1114,7 +1115,7 @@ class testFunctionCallsFlow(FlowTestsBase):
             try:
                 self.graph.query(query)
                 self.env.assertTrue(False)
-            except redis.exceptions.ResponseError as e:
+            except redis.ResponseError as e:
                 # Expecting a type error.
                 self.env.assertContains("Type mismatch", str(e))
 
@@ -2255,181 +2256,180 @@ class testFunctionCallsFlow(FlowTestsBase):
         for query, expected_result in query_to_expected_result.items():
             self.get_res_and_assertEquals(query, expected_result)
 
-    #@todo Barak: Enable after implementing in/out degree functions
-    #def test88_in_out_degree(self):
-    #    # clear graph
-    #    self.graph.delete()
+    def test88_in_out_degree(self):
+        # clear graph
+        self.graph.delete()
 
-    #    # given the graph (a)
-    #    # in/out degree of 'a' is 0
-    #    self.graph.query("CREATE (a:A)")
-    #    result_set = self.graph.query("MATCH (a:A) RETURN inDegree(a), outDegree(a)").result_set
-    #    in_degree = result_set[0][0]
-    #    out_degree = result_set[0][1]
-    #    self.env.assertEqual(in_degree, 0)
-    #    self.env.assertEqual(out_degree, 0)
+        # given the graph (a)
+        # in/out degree of 'a' is 0
+        self.graph.query("CREATE (a:A)")
+        result_set = self.graph.query("MATCH (a:A) RETURN inDegree(a), outDegree(a)").result_set
+        in_degree = result_set[0][0]
+        out_degree = result_set[0][1]
+        self.env.assertEqual(in_degree, 0)
+        self.env.assertEqual(out_degree, 0)
 
-    #    # given the graph: (a)-[:E]->(b)
-    #    # in degree of 'a' is 0
-    #    # out degree of 'a' is 1
-    #    # in degree of 'b' is 1
-    #    # out degree of 'b' is 0
-    #    self.graph.query("MATCH (a:A) CREATE (a)-[:E]->(b:B)")
-    #    result_set = self.graph.query("MATCH (a:A), (b:B) RETURN inDegree(a), outDegree(a), inDegree(b), outDegree(b)").result_set
-    #    a_in_degree = result_set[0][0]
-    #    a_out_degree = result_set[0][1]
-    #    b_in_degree = result_set[0][2]
-    #    b_out_degree = result_set[0][3]
-    #    self.env.assertEqual(a_in_degree, 0)
-    #    self.env.assertEqual(a_out_degree, 1)
-    #    self.env.assertEqual(b_in_degree, 1)
-    #    self.env.assertEqual(b_out_degree, 0)
+        # given the graph: (a)-[:E]->(b)
+        # in degree of 'a' is 0
+        # out degree of 'a' is 1
+        # in degree of 'b' is 1
+        # out degree of 'b' is 0
+        self.graph.query("MATCH (a:A) CREATE (a)-[:E]->(b:B)")
+        result_set = self.graph.query("MATCH (a:A), (b:B) RETURN inDegree(a), outDegree(a), inDegree(b), outDegree(b)").result_set
+        a_in_degree = result_set[0][0]
+        a_out_degree = result_set[0][1]
+        b_in_degree = result_set[0][2]
+        b_out_degree = result_set[0][3]
+        self.env.assertEqual(a_in_degree, 0)
+        self.env.assertEqual(a_out_degree, 1)
+        self.env.assertEqual(b_in_degree, 1)
+        self.env.assertEqual(b_out_degree, 0)
 
-    #    # given the graph (a)-[:E]->(b), (a)-[:E]->(b)
-    #    # in degree of 'a' is 0
-    #    # out degree of 'a' is 2
-    #    # in degree of 'b' is 2
-    #    # out degree of 'b' is 0
-    #    self.graph.query("MATCH (a:A), (b:B) CREATE (a)-[:E]->(b)")
-    #    result_set = self.graph.query("MATCH (a:A), (b:B) RETURN inDegree(a), outDegree(a), inDegree(b), outDegree(b)").result_set
-    #    a_in_degree = result_set[0][0]
-    #    a_out_degree = result_set[0][1]
-    #    b_in_degree = result_set[0][2]
-    #    b_out_degree = result_set[0][3]
-    #    self.env.assertEqual(a_in_degree, 0)
-    #    self.env.assertEqual(a_out_degree, 2)
-    #    self.env.assertEqual(b_in_degree, 2)
-    #    self.env.assertEqual(b_out_degree, 0)
+        # given the graph (a)-[:E]->(b), (a)-[:E]->(b)
+        # in degree of 'a' is 0
+        # out degree of 'a' is 2
+        # in degree of 'b' is 2
+        # out degree of 'b' is 0
+        self.graph.query("MATCH (a:A), (b:B) CREATE (a)-[:E]->(b)")
+        result_set = self.graph.query("MATCH (a:A), (b:B) RETURN inDegree(a), outDegree(a), inDegree(b), outDegree(b)").result_set
+        a_in_degree = result_set[0][0]
+        a_out_degree = result_set[0][1]
+        b_in_degree = result_set[0][2]
+        b_out_degree = result_set[0][3]
+        self.env.assertEqual(a_in_degree, 0)
+        self.env.assertEqual(a_out_degree, 2)
+        self.env.assertEqual(b_in_degree, 2)
+        self.env.assertEqual(b_out_degree, 0)
 
-    #    # given the graph (a)-[:E]->(b), (a)-[:E]->(b) (a)-[:E0]->(b), (a)-[:E1]->(b)
-    #    # in degree of 'a' is 0
-    #    # out degree of 'a' is 4
-    #    # in degree of 'b' is 4
-    #    # out degree of 'b' is 0
-    #    self.graph.query("MATCH (a:A), (b:B) CREATE (a)-[:E0]->(b), (a)-[:E1]->(b)")
-    #    result_set = self.graph.query("MATCH (a:A), (b:B) RETURN inDegree(a), outDegree(a), inDegree(b), outDegree(b)").result_set
-    #    a_in_degree = result_set[0][0]
-    #    a_out_degree = result_set[0][1]
-    #    b_in_degree = result_set[0][2]
-    #    b_out_degree = result_set[0][3]
-    #    self.env.assertEqual(a_in_degree, 0)
-    #    self.env.assertEqual(a_out_degree, 4)
-    #    self.env.assertEqual(b_in_degree, 4)
-    #    self.env.assertEqual(b_out_degree, 0)
+        # given the graph (a)-[:E]->(b), (a)-[:E]->(b) (a)-[:E0]->(b), (a)-[:E1]->(b)
+        # in degree of 'a' is 0
+        # out degree of 'a' is 4
+        # in degree of 'b' is 4
+        # out degree of 'b' is 0
+        self.graph.query("MATCH (a:A), (b:B) CREATE (a)-[:E0]->(b), (a)-[:E1]->(b)")
+        result_set = self.graph.query("MATCH (a:A), (b:B) RETURN inDegree(a), outDegree(a), inDegree(b), outDegree(b)").result_set
+        a_in_degree = result_set[0][0]
+        a_out_degree = result_set[0][1]
+        b_in_degree = result_set[0][2]
+        b_out_degree = result_set[0][3]
+        self.env.assertEqual(a_in_degree, 0)
+        self.env.assertEqual(a_out_degree, 4)
+        self.env.assertEqual(b_in_degree, 4)
+        self.env.assertEqual(b_out_degree, 0)
 
-    #    # given the graph (a)-[:E]->(b), (a)-[:E]->(b) (a)-[:E0]->(b), (a)-[:E1]->(b)
-    #    # in degree of 'a' for relation 'E' is 0
-    #    # out degree of 'a' for relation 'E' is 2
-    #    # in degree of 'b' for relation 'E' is 2
-    #    # out degree of 'b' for relation 'E' is 0
-    #    result_set = self.graph.query("MATCH (a:A), (b:B) RETURN inDegree(a, 'E'), outDegree(a, 'E'), inDegree(b, 'E'), outDegree(b, 'E')").result_set
-    #    a_in_degree = result_set[0][0]
-    #    a_out_degree = result_set[0][1]
-    #    b_in_degree = result_set[0][2]
-    #    b_out_degree = result_set[0][3]
-    #    self.env.assertEqual(a_in_degree, 0)
-    #    self.env.assertEqual(a_out_degree, 2)
-    #    self.env.assertEqual(b_in_degree, 2)
-    #    self.env.assertEqual(b_out_degree, 0)
+        # given the graph (a)-[:E]->(b), (a)-[:E]->(b) (a)-[:E0]->(b), (a)-[:E1]->(b)
+        # in degree of 'a' for relation 'E' is 0
+        # out degree of 'a' for relation 'E' is 2
+        # in degree of 'b' for relation 'E' is 2
+        # out degree of 'b' for relation 'E' is 0
+        result_set = self.graph.query("MATCH (a:A), (b:B) RETURN inDegree(a, 'E'), outDegree(a, 'E'), inDegree(b, 'E'), outDegree(b, 'E')").result_set
+        a_in_degree = result_set[0][0]
+        a_out_degree = result_set[0][1]
+        b_in_degree = result_set[0][2]
+        b_out_degree = result_set[0][3]
+        self.env.assertEqual(a_in_degree, 0)
+        self.env.assertEqual(a_out_degree, 2)
+        self.env.assertEqual(b_in_degree, 2)
+        self.env.assertEqual(b_out_degree, 0)
 
-    #    # given the graph (a)-[:E]->(b), (a)-[:E]->(b) (a)-[:E0]->(b), (a)-[:E1]->(b)
-    #    # in degree of 'a' for relationships 'E0' and 'E1' is 0
-    #    # out degree of 'a' for relationships 'E0' and 'E1' is 2
-    #    # in degree of 'b' for relationships 'E0' and 'E1' is 2
-    #    # out degree of 'b' for relationships 'E0' and 'E1' is 0
-    #    result_set = self.graph.query("MATCH (a:A), (b:B) RETURN inDegree(a, 'E0', 'E1'), outDegree(a, 'E0', 'E1'), inDegree(b, 'E0', 'E1'), outDegree(b, 'E0', 'E1')").result_set
-    #    a_in_degree = result_set[0][0]
-    #    a_out_degree = result_set[0][1]
-    #    b_in_degree = result_set[0][2]
-    #    b_out_degree = result_set[0][3]
-    #    self.env.assertEqual(a_in_degree, 0)
-    #    self.env.assertEqual(a_out_degree, 2)
-    #    self.env.assertEqual(b_in_degree, 2)
-    #    self.env.assertEqual(b_out_degree, 0)
+        # given the graph (a)-[:E]->(b), (a)-[:E]->(b) (a)-[:E0]->(b), (a)-[:E1]->(b)
+        # in degree of 'a' for relationships 'E0' and 'E1' is 0
+        # out degree of 'a' for relationships 'E0' and 'E1' is 2
+        # in degree of 'b' for relationships 'E0' and 'E1' is 2
+        # out degree of 'b' for relationships 'E0' and 'E1' is 0
+        result_set = self.graph.query("MATCH (a:A), (b:B) RETURN inDegree(a, 'E0', 'E1'), outDegree(a, 'E0', 'E1'), inDegree(b, 'E0', 'E1'), outDegree(b, 'E0', 'E1')").result_set
+        a_in_degree = result_set[0][0]
+        a_out_degree = result_set[0][1]
+        b_in_degree = result_set[0][2]
+        b_out_degree = result_set[0][3]
+        self.env.assertEqual(a_in_degree, 0)
+        self.env.assertEqual(a_out_degree, 2)
+        self.env.assertEqual(b_in_degree, 2)
+        self.env.assertEqual(b_out_degree, 0)
 
-    #    # given the graph (a)-[:E]->(b), (a)-[:E]->(b) (a)-[:E0]->(b), (a)-[:E1]->(b)
-    #    # in degree of 'a' for relationships 'E', 'E0' and 'E1' is 0
-    #    # out degree of 'a' for relationships 'E', 'E0' and 'E1' is 4
-    #    # in degree of 'b' for relationships 'E', 'E0' and 'E1' is 4
-    #    # out degree of 'b' for relationships 'E', 'E0' and 'E1' is 0
-    #    result_set = self.graph.query("MATCH (a:A), (b:B) RETURN inDegree(a, 'E', 'E0', 'E1'), outDegree(a, 'E', 'E0', 'E1'), inDegree(b, 'E', 'E0', 'E1'), outDegree(b, 'E', 'E0', 'E1')").result_set
-    #    a_in_degree = result_set[0][0]
-    #    a_out_degree = result_set[0][1]
-    #    b_in_degree = result_set[0][2]
-    #    b_out_degree = result_set[0][3]
-    #    self.env.assertEqual(a_in_degree, 0)
-    #    self.env.assertEqual(a_out_degree, 4)
-    #    self.env.assertEqual(b_in_degree, 4)
-    #    self.env.assertEqual(b_out_degree, 0)
+        # given the graph (a)-[:E]->(b), (a)-[:E]->(b) (a)-[:E0]->(b), (a)-[:E1]->(b)
+        # in degree of 'a' for relationships 'E', 'E0' and 'E1' is 0
+        # out degree of 'a' for relationships 'E', 'E0' and 'E1' is 4
+        # in degree of 'b' for relationships 'E', 'E0' and 'E1' is 4
+        # out degree of 'b' for relationships 'E', 'E0' and 'E1' is 0
+        result_set = self.graph.query("MATCH (a:A), (b:B) RETURN inDegree(a, 'E', 'E0', 'E1'), outDegree(a, 'E', 'E0', 'E1'), inDegree(b, 'E', 'E0', 'E1'), outDegree(b, 'E', 'E0', 'E1')").result_set
+        a_in_degree = result_set[0][0]
+        a_out_degree = result_set[0][1]
+        b_in_degree = result_set[0][2]
+        b_out_degree = result_set[0][3]
+        self.env.assertEqual(a_in_degree, 0)
+        self.env.assertEqual(a_out_degree, 4)
+        self.env.assertEqual(b_in_degree, 4)
+        self.env.assertEqual(b_out_degree, 0)
 
-    #    # in/out degree a none existing relationship type is 0
-    #    result_set = self.graph.query("MATCH (a:A) RETURN inDegree(a, 'none_existing'), outDegree(a, 'none_existing')").result_set
-    #    in_degree = result_set[0][0]
-    #    out_degree = result_set[0][1]
-    #    self.env.assertEqual(in_degree, 0)
-    #    self.env.assertEqual(out_degree, 0)
+        # in/out degree a none existing relationship type is 0
+        result_set = self.graph.query("MATCH (a:A) RETURN inDegree(a, 'none_existing'), outDegree(a, 'none_existing')").result_set
+        in_degree = result_set[0][0]
+        out_degree = result_set[0][1]
+        self.env.assertEqual(in_degree, 0)
+        self.env.assertEqual(out_degree, 0)
 
-    #    # clear graph
-    #    self.graph.delete()
+        # clear graph
+        self.graph.delete()
 
-    #    # given the graph (a)-[:E]->(a)
-    #    # in/out degree of 'a' is 1
-    #    self.graph.query("CREATE (a)-[:E]->(a)")
-    #    result_set = self.graph.query("MATCH (a) RETURN inDegree(a), outDegree(a)").result_set
-    #    in_degree = result_set[0][0]
-    #    out_degree = result_set[0][1]
-    #    self.env.assertEqual(in_degree, 1)
-    #    self.env.assertEqual(out_degree, 1)
+        # given the graph (a)-[:E]->(a)
+        # in/out degree of 'a' is 1
+        self.graph.query("CREATE (a)-[:E]->(a)")
+        result_set = self.graph.query("MATCH (a) RETURN inDegree(a), outDegree(a)").result_set
+        in_degree = result_set[0][0]
+        out_degree = result_set[0][1]
+        self.env.assertEqual(in_degree, 1)
+        self.env.assertEqual(out_degree, 1)
 
-    #    # given the graph (a)-[:R]->(b)
-    #    # out degree of 'a' is 1
-    #    # in degree of 'b' is 1
-    #    self.graph.query("CREATE (a:A)-[:R]->(b:B)")
-    #    queries = [
-    #        """MATCH (a:A) RETURN outdegree(a, 'R')""",
-    #        """MATCH (a:A) RETURN outdegree(a, ['R'])""",
-    #        """MATCH (a:A) RETURN outdegree(a, 'R', 'R')""",
-    #        """MATCH (b:B) RETURN indegree(b, 'R')""",
-    #        """MATCH (b:B) RETURN indegree(b, ['R', 'R'])""",
-    #        """MATCH (b:B) RETURN indegree(b, 'R', 'R')""",
-    #    ]
-    #    for query in queries:
-    #        actual_result = self.graph.query(query)
-    #        self.env.assertEqual(actual_result.result_set, [[1]])
+        # given the graph (a)-[:R]->(b)
+        # out degree of 'a' is 1
+        # in degree of 'b' is 1
+        self.graph.query("CREATE (a:A)-[:R]->(b:B)")
+        queries = [
+            """MATCH (a:A) RETURN outdegree(a, 'R')""",
+            """MATCH (a:A) RETURN outdegree(a, ['R'])""",
+            """MATCH (a:A) RETURN outdegree(a, 'R', 'R')""",
+            """MATCH (b:B) RETURN indegree(b, 'R')""",
+            """MATCH (b:B) RETURN indegree(b, ['R', 'R'])""",
+            """MATCH (b:B) RETURN indegree(b, 'R', 'R')""",
+        ]
+        for query in queries:
+            actual_result = self.graph.query(query)
+            self.env.assertEqual(actual_result.result_set, [[1]])
 
-    #    # test type mismatch
-    #    queries = [
-    #        """MATCH (a:A) RETURN outdegree(a, a)""",           # node
-    #        """MATCH (a:A) RETURN outdegree(a, [1])""",         # integer
-    #        """MATCH (a:A) RETURN outdegree(a, [1.4])""",       # float
-    #        """MATCH (a:A) RETURN outdegree(a, 'R', 1)""",      # integer after string
-    #        """MATCH (a:A) RETURN outdegree(a, ['R', 1])""",    # integer element in list
-    #        """MATCH (a:A) RETURN outdegree(a, 'R', ['R'])""",  # wrong signature: string and list
-    #        ]
-    #    for query in queries:
-    #        try:
-    #            self.graph.query(query)
-    #            self.env.assertTrue(False)
-    #        except redis.exceptions.ResponseError as e:
-    #            # Expecting a type error.
-    #            self.env.assertContains("Type mismatch", str(e))
+        # test type mismatch
+        queries = [
+            """MATCH (a:A) RETURN outdegree(a, a)""",           # node
+            """MATCH (a:A) RETURN outdegree(a, [1])""",         # integer
+            """MATCH (a:A) RETURN outdegree(a, [1.4])""",       # float
+            """MATCH (a:A) RETURN outdegree(a, 'R', 1)""",      # integer after string
+            """MATCH (a:A) RETURN outdegree(a, ['R', 1])""",    # integer element in list
+            """MATCH (a:A) RETURN outdegree(a, 'R', ['R'])""",  # wrong signature: string and list
+            ]
+        for query in queries:
+            try:
+                self.graph.query(query)
+                self.env.assertTrue(False)
+            except redis.ResponseError as e:
+                # Expecting a type error.
+                self.env.assertContains("Type mismatch", str(e))
 
-    #    # test wrong argument number
-    #    queries = [
-    #        """MATCH (a:A) RETURN outdegree()""",
-    #        """MATCH (a:A) RETURN outdegree(a, ['R'], 'a')""",
-    #        """MATCH (a:A) RETURN outdegree(a, ['R'], ['R'])""",
-    #        """MATCH (b:B) RETURN indegree()""",
-    #        """MATCH (b:B) RETURN indegree(b, ['R'], 'a')""",
-    #        """MATCH (b:B) RETURN indegree(b, ['R'], ['R'])""",
-    #        ]
-    #    for query in queries:
-    #        try:
-    #            self.graph.query(query)
-    #            self.env.assertTrue(False)
-    #        except redis.exceptions.ResponseError as e:
-    #            # Expecting a type error.
-    #            self.env.assertContains("Received", str(e))
+        # test wrong argument number
+        queries = [
+            """MATCH (a:A) RETURN outdegree()""",
+            """MATCH (a:A) RETURN outdegree(a, ['R'], 'a')""",
+            """MATCH (a:A) RETURN outdegree(a, ['R'], ['R'])""",
+            """MATCH (b:B) RETURN indegree()""",
+            """MATCH (b:B) RETURN indegree(b, ['R'], 'a')""",
+            """MATCH (b:B) RETURN indegree(b, ['R'], ['R'])""",
+            ]
+        for query in queries:
+            try:
+                self.graph.query(query)
+                self.env.assertTrue(False)
+            except redis.ResponseError as e:
+                # Expecting a type error.
+                self.env.assertContains("Received", str(e))
 
 
     def test89_JOIN(self):

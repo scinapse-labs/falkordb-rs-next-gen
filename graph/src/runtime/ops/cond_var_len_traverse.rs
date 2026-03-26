@@ -1,12 +1,11 @@
-//! Batch-mode variable-length traverse operator — multi-hop BFS relationship expansion.
+//! Batch-mode variable-length traverse operator — multi-hop relationship expansion.
 //!
 //! Implements Cypher patterns like `(a)-[*2..5]->(b)`. For each active row
-//! in each input batch, performs a breadth-first search from the source node
-//! up to `max_hops` away, yielding result rows for destinations reached at
-//! or beyond `min_hops`. Output rows are accumulated into batches of up to
-//! `BATCH_SIZE`.
+//! in each input batch, enumerates all simple paths (no repeated nodes within
+//! a single path) from the source node up to `max_hops` away, yielding result
+//! rows for destinations reached at or beyond `min_hops`. Output rows are
+//! accumulated into batches of up to `BATCH_SIZE`.
 
-use std::collections::HashSet;
 use std::collections::VecDeque;
 use std::sync::Arc;
 
@@ -20,6 +19,7 @@ use crate::runtime::{
     value::Value,
 };
 use orx_tree::{Dyn, NodeIdx};
+use roaring::RoaringTreemap;
 use thin_vec::ThinVec;
 
 pub struct CondVarLenTraverseOp<'a> {
@@ -77,9 +77,8 @@ impl<'a> CondVarLenTraverseOp<'a> {
         let bidirectional = relationship_pattern.bidirectional;
 
         // When `to` is bound but `from` is unbound (e.g. `(:L1)<-[:R1*]-()`)
-        // we reverse the BFS: start from the bound `to` node and follow
-        // edges in the opposite direction, emitting the BFS destinations as
-        // the `from` binding.
+        // we reverse the traversal: start from the bound `to` node and follow
+        // edges in the opposite direction, emitting destinations as `from`.
         let reversed = from_id.is_none() && to_id.is_some() && !bidirectional;
 
         // Get starting nodes
@@ -105,8 +104,8 @@ impl<'a> CondVarLenTraverseOp<'a> {
         };
         let dest_id = if reversed { from_id } else { to_id };
 
-        // Each frontier entry tracks: (current_node, path_of_edges)
-        // where path_of_edges is a list of Value::Relationship for path building.
+        let g = self.runtime.g.borrow();
+
         for start_node in start_nodes {
             // Handle 0-hop case: start node itself is a valid result.
             if min_hops == 0 && (dest_id.is_none() || dest_id == Some(start_node)) {
@@ -120,78 +119,75 @@ impl<'a> CondVarLenTraverseOp<'a> {
                 out.push(env);
             }
 
-            let mut frontier: Vec<(NodeId, ThinVec<Value>)> = vec![(start_node, ThinVec::new())];
-            let mut visited: HashSet<NodeId> = HashSet::new();
-            visited.insert(start_node);
+            // DFS to enumerate all simple paths (no repeated nodes within a
+            // single path). Each stack frame: (node, path, visited_set, hop).
+            let mut stack: Vec<(NodeId, ThinVec<Value>, RoaringTreemap)> = Vec::new();
+            let mut initial_visited = RoaringTreemap::new();
+            initial_visited.insert(u64::from(start_node));
+            stack.push((start_node, ThinVec::new(), initial_visited));
 
-            let g = self.runtime.g.borrow();
+            while let Some((current, path, visited)) = stack.pop() {
+                let hop = path.len() as u32 + 1;
+                if hop > max_hops {
+                    continue;
+                }
 
-            for hop in 1..=max_hops {
-                let mut next_frontier_set: HashSet<NodeId> = HashSet::new();
-                let mut next_frontier: Vec<(NodeId, ThinVec<Value>)> = Vec::new();
-                for (current, path) in &frontier {
-                    for (edge_src, edge_dst, edge_id) in g.get_node_relationships(*current) {
-                        let neighbor = if reversed {
-                            // Reversed BFS: follow incoming edges
-                            // (edges where current is the dst, neighbor is the src)
-                            if edge_dst == *current {
-                                Some(edge_src)
-                            } else {
-                                None
-                            }
-                        } else if edge_src == *current {
-                            Some(edge_dst)
-                        } else if bidirectional && edge_dst == *current {
+                for (edge_src, edge_dst, edge_id) in
+                    g.get_node_relationships_by_type(current, &relationship_pattern.types)
+                {
+                    let neighbor = if reversed {
+                        if edge_dst == current {
                             Some(edge_src)
                         } else {
                             None
-                        };
-                        if let Some(dest) = neighbor
-                            && !visited.contains(&dest)
-                        {
-                            let mut new_path = path.clone();
-                            new_path.push(Value::Relationship(Box::new((edge_id, *current, dest))));
+                        }
+                    } else if edge_src == current {
+                        Some(edge_dst)
+                    } else if bidirectional && edge_dst == current {
+                        Some(edge_src)
+                    } else {
+                        None
+                    };
+                    if let Some(dest) = neighbor
+                        && !visited.contains(u64::from(dest))
+                    {
+                        let mut new_path = path.clone();
+                        new_path.push(Value::Relationship(Box::new((edge_id, current, dest))));
 
-                            if hop >= min_hops
-                                && (dest_id.is_none() || dest_id == Some(dest))
-                                && (dest_labels.is_empty()
-                                    || dest_labels
-                                        .iter()
-                                        .all(|l| g.get_node_labels(dest).any(|nl| nl == *l)))
-                            {
-                                let mut env = vars.clone_pooled(self.runtime.env_pool);
-                                if reversed {
-                                    env.insert(&relationship_pattern.from.alias, Value::Node(dest));
-                                    env.insert(
-                                        &relationship_pattern.to.alias,
-                                        Value::Node(start_node),
-                                    );
-                                } else {
-                                    env.insert(
-                                        &relationship_pattern.from.alias,
-                                        Value::Node(start_node),
-                                    );
-                                    env.insert(&relationship_pattern.to.alias, Value::Node(dest));
-                                }
+                        // Emit result if within hop range and destination matches
+                        if hop >= min_hops
+                            && (dest_id.is_none() || dest_id == Some(dest))
+                            && (dest_labels.is_empty()
+                                || dest_labels
+                                    .iter()
+                                    .all(|l| g.get_node_labels(dest).any(|nl| nl == *l)))
+                        {
+                            let mut env = vars.clone_pooled(self.runtime.env_pool);
+                            if reversed {
+                                env.insert(&relationship_pattern.from.alias, Value::Node(dest));
+                                env.insert(&relationship_pattern.to.alias, Value::Node(start_node));
+                            } else {
                                 env.insert(
-                                    &relationship_pattern.alias,
-                                    Value::List(Arc::new(new_path.clone())),
+                                    &relationship_pattern.from.alias,
+                                    Value::Node(start_node),
                                 );
-                                out.push(env);
+                                env.insert(&relationship_pattern.to.alias, Value::Node(dest));
                             }
-                            if next_frontier_set.insert(dest) {
-                                next_frontier.push((dest, new_path));
-                            }
+                            env.insert(
+                                &relationship_pattern.alias,
+                                Value::List(Arc::new(new_path.clone())),
+                            );
+                            out.push(env);
+                        }
+
+                        // Continue DFS from dest if we haven't reached max_hops
+                        if hop < max_hops {
+                            let mut next_visited = visited.clone();
+                            next_visited.insert(u64::from(dest));
+                            stack.push((dest, new_path, next_visited));
                         }
                     }
                 }
-                if next_frontier.is_empty() {
-                    break;
-                }
-                for (node, _) in &next_frontier {
-                    visited.insert(*node);
-                }
-                frontier = next_frontier;
             }
         }
     }

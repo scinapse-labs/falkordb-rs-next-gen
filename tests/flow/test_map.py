@@ -196,7 +196,7 @@ class testMap(FlowTestsBase):
             query = """WITH {val: 5} AS map RETURN map[0]"""
             self.graph.query(query)
             self.env.assertTrue(False)
-        except redis.exceptions.ResponseError as e:
+        except redis.ResponseError as e:
             self.env.assertContains("Type mismatch", str(e))
 
     # Validate that map projections with invalid identifiers error gracefully.
@@ -205,7 +205,7 @@ class testMap(FlowTestsBase):
             query = """RETURN 5 {v: 'b'}"""
             self.graph.query(query)
             self.env.assertTrue(False)
-        except redis.exceptions.ResponseError as e:
+        except redis.ResponseError as e:
             self.env.assertContains("Encountered unhandled type", str(e))
 
     # validate that function accesses of scalar-reducible maps do not access invalid memory
@@ -228,7 +228,7 @@ class testMap(FlowTestsBase):
         query = """RETURN {name: 'John', age: 30} + 1"""
         try:
             self.graph.query(query)
-        except redis.exceptions.ResponseError as e:
+        except redis.ResponseError as e:
             self.env.assertContains("Cannot merge a map with a non-map value", str(e))
 
     def test10_map_merge_null(self):

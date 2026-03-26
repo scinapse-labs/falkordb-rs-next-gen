@@ -72,4 +72,20 @@ impl BitSet {
             *a |= b;
         }
     }
+
+    pub fn clear(
+        &mut self,
+        bit: usize,
+    ) {
+        let word = bit / 64;
+        let mask = 1u64 << (bit % 64);
+        if word == 0 {
+            self.inline &= !mask;
+        } else {
+            let idx = word - 1;
+            if idx < self.overflow.len() {
+                self.overflow[idx] &= !mask;
+            }
+        }
+    }
 }

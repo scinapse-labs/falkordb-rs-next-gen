@@ -133,7 +133,7 @@ class testList(FlowTestsBase):
         try:
             self.graph.query(query)
             assert(False)
-        except redis.exceptions.ResponseError:
+        except redis.ResponseError:
             # Expecting an error.
             pass
 

@@ -1073,7 +1073,28 @@ impl<'a> Runtime<'a> {
         if self.deleted_nodes.borrow().contains_key(&id) {
             return 0;
         }
-        self.g.borrow().get_node_indegree(id)
+        let g = self.g.borrow();
+        let base = g.get_node_indegree(id);
+        let pending = self.pending.borrow();
+        let added = pending.pending_indegree(id, &[]);
+        let removed = pending.pending_deleted_indegree(id, &[], &g);
+        base + added - removed
+    }
+
+    pub fn get_node_indegree_by_type(
+        &self,
+        id: NodeId,
+        types: &[Arc<String>],
+    ) -> usize {
+        if self.deleted_nodes.borrow().contains_key(&id) {
+            return 0;
+        }
+        let g = self.g.borrow();
+        let base = g.get_node_indegree_by_type(id, types);
+        let pending = self.pending.borrow();
+        let added = pending.pending_indegree(id, types);
+        let removed = pending.pending_deleted_indegree(id, types, &g);
+        base + added - removed
     }
 
     pub fn get_node_outdegree(
@@ -1083,7 +1104,28 @@ impl<'a> Runtime<'a> {
         if self.deleted_nodes.borrow().contains_key(&id) {
             return 0;
         }
-        self.g.borrow().get_node_outdegree(id)
+        let g = self.g.borrow();
+        let base = g.get_node_outdegree(id);
+        let pending = self.pending.borrow();
+        let added = pending.pending_outdegree(id, &[]);
+        let removed = pending.pending_deleted_outdegree(id, &[], &g);
+        base + added - removed
+    }
+
+    pub fn get_node_outdegree_by_type(
+        &self,
+        id: NodeId,
+        types: &[Arc<String>],
+    ) -> usize {
+        if self.deleted_nodes.borrow().contains_key(&id) {
+            return 0;
+        }
+        let g = self.g.borrow();
+        let base = g.get_node_outdegree_by_type(id, types);
+        let pending = self.pending.borrow();
+        let added = pending.pending_outdegree(id, types);
+        let removed = pending.pending_deleted_outdegree(id, types, &g);
+        base + added - removed
     }
 }
 
