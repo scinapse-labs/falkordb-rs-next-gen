@@ -269,17 +269,14 @@ pub fn register(funcs: &mut Functions) {
         ret: Type::Union(vec![Type::Int, Type::Null]),
         fn indegree(runtime, args) {
             let (id, types) = parse_degree_args("indegree", args)?;
-            match id {
-                Some(id) => {
+            id.map_or_else(|| Ok(Value::Null), |id| {
                     let count = if types.is_empty() {
                         runtime.get_node_indegree(id)
                     } else {
                         runtime.get_node_indegree_by_type(id, &types)
                     };
                     Ok(Value::Int(count as i64))
-                }
-                None => Ok(Value::Null),
-            }
+                })
         }
     );
 
@@ -288,17 +285,14 @@ pub fn register(funcs: &mut Functions) {
         ret: Type::Union(vec![Type::Int, Type::Null]),
         fn outdegree(runtime, args) {
             let (id, types) = parse_degree_args("outdegree", args)?;
-            match id {
-                Some(id) => {
+            id.map_or_else(|| Ok(Value::Null), |id| {
                     let count = if types.is_empty() {
                         runtime.get_node_outdegree(id)
                     } else {
                         runtime.get_node_outdegree_by_type(id, &types)
                     };
                     Ok(Value::Int(count as i64))
-                }
-                None => Ok(Value::Null),
-            }
+                })
         }
     );
 }
@@ -307,8 +301,8 @@ pub fn register(funcs: &mut Functions) {
 ///
 /// Accepted call signatures:
 ///   degree(node)                          → all types
-///   degree(node, 'type1', 'type2', ...)   → filter by string varargs
-///   degree(node, ['type1', 'type2'])      → filter by list of strings
+///   degree(node, `type1`, `type2`, ...)   → filter by string varargs
+///   degree(node, [`type1`, `type2`])      → filter by list of strings
 fn parse_degree_args(
     fn_name: &str,
     args: ThinVec<Value>,

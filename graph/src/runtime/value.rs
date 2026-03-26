@@ -80,7 +80,7 @@ pub struct DeletedRelationship {
 
 impl DeletedRelationship {
     #[must_use]
-    pub fn new(
+    pub const fn new(
         type_name: Arc<String>,
         attrs: OrderMap<Arc<String>, Value>,
     ) -> Self {

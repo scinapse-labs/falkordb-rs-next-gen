@@ -634,7 +634,7 @@ impl Graph {
     }
 
     #[must_use]
-    pub fn node_attribute_count(&self) -> usize {
+    pub const fn node_attribute_count(&self) -> usize {
         self.node_attrs.attrs_name.len()
     }
 
