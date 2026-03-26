@@ -68,28 +68,29 @@ impl PendingRelationship {
 const INVALID_PROPERTY_MSG: &str =
     "Property values can only be of primitive types or arrays of primitive types";
 
-/// Validate that a value is a valid node property type.
-fn validate_node_property(value: &Value) -> Result<(), String> {
-    if value
-        .value_of_type(&Type::Union(vec![
+static VALID_PROPERTY_TYPE: std::sync::LazyLock<Type> = std::sync::LazyLock::new(|| {
+    Type::Union(vec![
+        Type::Bool,
+        Type::Int,
+        Type::Float,
+        Type::String,
+        Type::Point,
+        Type::VecF32,
+        Type::Null,
+        Type::List(Box::new(Type::Union(vec![
             Type::Bool,
             Type::Int,
             Type::Float,
             Type::String,
             Type::Point,
             Type::VecF32,
-            Type::Null,
-            Type::List(Box::new(Type::Union(vec![
-                Type::Bool,
-                Type::Int,
-                Type::Float,
-                Type::String,
-                Type::Point,
-                Type::VecF32,
-            ]))),
-        ]))
-        .is_some()
-    {
+        ]))),
+    ])
+});
+
+/// Validate that a value is a valid node property type.
+fn validate_node_property(value: &Value) -> Result<(), String> {
+    if value.value_of_type(&VALID_PROPERTY_TYPE).is_some() {
         return Err(INVALID_PROPERTY_MSG.into());
     }
     Ok(())
@@ -97,24 +98,7 @@ fn validate_node_property(value: &Value) -> Result<(), String> {
 
 /// Validate that a value is a valid relationship property type.
 fn validate_relationship_property(value: &Value) -> Result<(), String> {
-    if value
-        .value_of_type(&Type::Union(vec![
-            Type::Bool,
-            Type::Int,
-            Type::Float,
-            Type::String,
-            Type::Point,
-            Type::VecF32,
-            Type::Null,
-            Type::List(Box::new(Type::Union(vec![
-                Type::Bool,
-                Type::Int,
-                Type::Float,
-                Type::String,
-            ]))),
-        ]))
-        .is_some()
-    {
+    if value.value_of_type(&VALID_PROPERTY_TYPE).is_some() {
         return Err(INVALID_PROPERTY_MSG.into());
     }
     Ok(())
