@@ -261,4 +261,28 @@ pub fn register(funcs: &mut Functions) {
             }
         }
     );
+
+    cypher_fn!(funcs, "indegree",
+        args: [Type::Union(vec![Type::Node, Type::Null])],
+        ret: Type::Union(vec![Type::Int, Type::Null]),
+        fn indegree(runtime, args) {
+            match args.into_iter().next() {
+                Some(Value::Node(id)) => Ok(Value::Int(runtime.get_node_indegree(id) as i64)),
+                Some(Value::Null) => Ok(Value::Null),
+                _ => unreachable!(),
+            }
+        }
+    );
+
+    cypher_fn!(funcs, "outdegree",
+        args: [Type::Union(vec![Type::Node, Type::Null])],
+        ret: Type::Union(vec![Type::Int, Type::Null]),
+        fn outdegree(runtime, args) {
+            match args.into_iter().next() {
+                Some(Value::Node(id)) => Ok(Value::Int(runtime.get_node_outdegree(id) as i64)),
+                Some(Value::Null) => Ok(Value::Null),
+                _ => unreachable!(),
+            }
+        }
+    );
 }

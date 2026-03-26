@@ -634,6 +634,11 @@ impl Graph {
     }
 
     #[must_use]
+    pub fn node_attribute_count(&self) -> usize {
+        self.node_attrs.attrs_name.len()
+    }
+
+    #[must_use]
     pub fn get_relationship_attribute_id(
         &self,
         attr: &Arc<String>,
@@ -817,6 +822,30 @@ impl Graph {
                 let dest_node = NodeId(dest);
                 (src_node, dest_node, RelationshipId(id))
             })
+    }
+
+    /// Count the number of incoming edges to a node.
+    #[must_use]
+    pub fn get_node_indegree(
+        &self,
+        id: NodeId,
+    ) -> usize {
+        self.relationship_matrices
+            .iter()
+            .flat_map(move |m| m.iter(id.0, id.0, true))
+            .count()
+    }
+
+    /// Count the number of outgoing edges from a node.
+    #[must_use]
+    pub fn get_node_outdegree(
+        &self,
+        id: NodeId,
+    ) -> usize {
+        self.relationship_matrices
+            .iter()
+            .flat_map(move |m| m.iter(id.0, id.0, false))
+            .count()
     }
 
     #[must_use]

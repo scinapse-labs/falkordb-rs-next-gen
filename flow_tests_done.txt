@@ -38,10 +38,11 @@ tests/flow/test_path.py
 tests/flow/test_path_filter
 tests/flow/test_path_projections.py
 tests/flow/test_point
-tests/flow/test_query_validation
-tests/flow/test_reversed_patterns
-tests/flow/test_reduce.py
 tests/flow/test_pending_queries_limit.py
+tests/flow/test_query_validation
+tests/flow/test_reduce.py
+tests/flow/test_reversed_patterns
+tests/flow/test_results.py
 tests/flow/test_self_pointing_node
 tests/flow/test_star_projections.py
 tests/flow/test_temporal
