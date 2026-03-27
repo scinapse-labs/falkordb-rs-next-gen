@@ -53,7 +53,6 @@ tests/flow/test_graph_info.py
 tests/flow/test_ro_query.py
 tests/flow/test_slowlog.py
 tests/flow/test_procedures.py
-tests/flow/test_udf.py
 
 ## Memory & Resource Management
 tests/flow/test_memory_usage.py

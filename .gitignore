@@ -34,3 +34,4 @@ redisearch
 .github/copilot-instructions.md
 attrs/
 .cargo-cache
+logs/

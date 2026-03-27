@@ -221,7 +221,11 @@ pub struct Graph {
 }
 
 /// Wrapper for plan trees to implement Send+Sync.
-struct PlanTree(DynTree<IR>);
+/// Also stores the UDF version at cache time for invalidation.
+struct PlanTree {
+    plan: DynTree<IR>,
+    udf_version: u64,
+}
 
 #[allow(clippy::non_send_fields_in_send_ty)]
 unsafe impl Send for PlanTree {}
@@ -527,17 +531,23 @@ impl Graph {
         let mut parser = Parser::new(query);
         let (parameters, query) = parser.parse_parameters()?;
 
+        let current_udf_version = crate::runtime::functions::udf_version();
+
         {
             let mut cache = self.cache.lock();
             if let Some(plan) = cache.get(query) {
-                let optimize_plan = optimize(&plan.0, self);
-                return Ok(Plan::new(
-                    Arc::new(optimize_plan),
-                    true,
-                    parameters,
-                    parse_duration,
-                    plan_duration,
-                ));
+                if plan.udf_version == current_udf_version {
+                    let optimize_plan = optimize(&plan.plan, self);
+                    return Ok(Plan::new(
+                        Arc::new(optimize_plan),
+                        true,
+                        parameters,
+                        parse_duration,
+                        plan_duration,
+                    ));
+                }
+                // UDF version mismatch — discard stale cache entry
+                cache.pop(query);
             }
         }
 
@@ -553,7 +563,17 @@ impl Graph {
         let optimize_plan = optimize(&plan, self);
         plan_duration = start.elapsed();
 
-        self.cache.lock().push(query.to_string(), PlanTree(plan));
+        // Only cache the plan if UDF version hasn't changed during planning.
+        // A drift means the plan may reference stale UDF bindings.
+        if crate::runtime::functions::udf_version() == current_udf_version {
+            self.cache.lock().push(
+                query.to_string(),
+                PlanTree {
+                    plan,
+                    udf_version: current_udf_version,
+                },
+            );
+        }
         Ok(Plan::new(
             Arc::new(optimize_plan),
             false,
