@@ -24,6 +24,9 @@ pub fn setup_validate_globals(
     // falkor.register stores name+func in global JS objects (avoids Rust lifetime issues)
     ctx.eval::<(), _>(
         "globalThis.__falkor_register = function(name, func) {\n\
+             if (typeof func !== 'function') {\n\
+                 throw new Error(\"Failed to register UDF library: second argument must be a function\");\n\
+             }\n\
              if (globalThis.__falkor_registered_names.indexOf(name) >= 0) {\n\
                  throw new Error(\"Failed to register UDF library: function '\" + name + \"' already registered\");\n\
              }\n\
@@ -79,6 +82,9 @@ pub fn setup_runtime_globals(ctx: &Ctx<'_>) -> Result<(), String> {
         "globalThis.__falkor_registered_funcs = {};\n\
          globalThis.__falkor_current_lib = '';\n\
          globalThis.__falkor_register = function(name, func) {\n\
+             if (typeof func !== 'function') {\n\
+                 throw new Error(\"Failed to register UDF library: second argument must be a function\");\n\
+             }\n\
              var qname = globalThis.__falkor_current_lib ? globalThis.__falkor_current_lib + '.' + name : name;\n\
              globalThis.__falkor_registered_funcs[qname] = func;\n\
          };",
@@ -140,6 +146,14 @@ pub fn collect_runtime_funcs(
     let keys: Vec<String> = funcs_obj.keys::<String>().filter_map(Result::ok).collect();
 
     for key in keys {
+        let val: rquickjs::Value = funcs_obj
+            .get(&key)
+            .map_err(|e| format!("Failed to get function '{key}': {e}"))?;
+        if !val.is_function() {
+            return Err(format!(
+                "Expected a function for '{key}', got non-function value"
+            ));
+        }
         let func: Function = funcs_obj
             .get(&key)
             .map_err(|e| format!("Failed to get function '{key}': {e}"))?;

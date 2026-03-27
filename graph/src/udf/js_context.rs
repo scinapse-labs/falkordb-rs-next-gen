@@ -72,6 +72,15 @@ thread_local! {
 /// Returns the list of function names registered via `falkor.register()`.
 pub fn validate_script(code: &str) -> Result<Vec<String>, String> {
     let rt = JsRuntime::new().map_err(|e| format!("Failed to create JS runtime: {e}"))?;
+    rt.set_memory_limit(JS_HEAP_SIZE.load(Ordering::Relaxed) as usize);
+    rt.set_max_stack_size(JS_STACK_SIZE.load(Ordering::Relaxed) as usize);
+
+    let timeout_ms = JS_TIMEOUT_MS.load(Ordering::Relaxed);
+    if timeout_ms > 0 {
+        let deadline = Instant::now() + Duration::from_millis(timeout_ms as u64);
+        rt.set_interrupt_handler(Some(Box::new(move || Instant::now() > deadline)));
+    }
+
     let ctx = Context::full(&rt).map_err(|e| format!("Failed to create JS context: {e}"))?;
 
     ctx.with(|ctx| {

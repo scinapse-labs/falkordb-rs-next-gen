@@ -19,9 +19,11 @@ pub fn value_to_js<'js>(
             .into_js(ctx)
             .map_err(|e| format!("JS conversion error: {e}")),
         Value::Int(i) => {
-            let f = *i as f64;
-            if f as i64 == *i {
-                f.into_js(ctx)
+            // JS Number can safely represent integers up to ±(2^53 - 1).
+            const MAX_SAFE_INTEGER: i64 = (1_i64 << 53) - 1;
+            if *i >= -MAX_SAFE_INTEGER && *i <= MAX_SAFE_INTEGER {
+                (*i as f64)
+                    .into_js(ctx)
                     .map_err(|e| format!("JS conversion error: {e}"))
             } else {
                 // Large integers -> BigInt
@@ -84,14 +86,18 @@ pub fn value_to_js<'js>(
         Value::Datetime(ts) => {
             let ms = *ts * 1000;
             let date: JsValue = ctx
-                .eval(format!("new Date({ms})"))
+                .eval(format!(
+                    "(function() {{ var d = new Date({ms}); d.__falkor_temporal_type = 'datetime'; return d; }})()"
+                ))
                 .map_err(|e| format!("JS Date conversion error: {e}"))?;
             Ok(date)
         }
         Value::Date(ts) => {
             let ms = *ts * 1000;
             let date: JsValue = ctx
-                .eval(format!("new Date({ms})"))
+                .eval(format!(
+                    "(function() {{ var d = new Date({ms}); d.__falkor_temporal_type = 'date'; return d; }})()"
+                ))
                 .map_err(|e| format!("JS Date conversion error: {e}"))?;
             Ok(date)
         }
@@ -221,7 +227,14 @@ pub fn js_to_value(val: JsValue<'_>) -> Result<Value, String> {
                     let ms: f64 = get_time
                         .call((This(obj.clone()),))
                         .map_err(|e| format!("Date getTime error: {e}"))?;
-                    return Ok(Value::Datetime((ms / 1000.0) as i64));
+                    let secs = (ms / 1000.0) as i64;
+                    // Check the temporal type metadata to distinguish Date from Datetime
+                    if let Ok(tt) = obj.get::<_, String>("__falkor_temporal_type")
+                        && tt == "date"
+                    {
+                        return Ok(Value::Date(secs));
+                    }
+                    return Ok(Value::Datetime(secs));
                 }
                 "RegExp" => {
                     let to_string: rquickjs::Function = obj

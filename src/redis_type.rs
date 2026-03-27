@@ -80,7 +80,11 @@ unsafe extern "C" fn graph_aux_load(
         libs.push((name, code));
     }
 
-    // Load all libraries, registering their functions
+    // Load all libraries, registering their functions.
+    // Clear existing UDFs first so stale functions from a previous snapshot
+    // don't remain callable after loading the new payload.
+    repo.flush();
+    graph::runtime::functions::flush_udfs();
     match repo.deserialize(libs) {
         Ok(()) => {
             // Register bridge functions for each library's functions

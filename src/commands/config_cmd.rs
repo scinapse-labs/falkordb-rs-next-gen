@@ -108,6 +108,11 @@ fn validate_config_set(
             let v: i64 = value
                 .parse()
                 .map_err(|_| format!("Failed to set config value {name} to {value}"))?;
+            if v < 0 {
+                return Err(format!(
+                    "Failed to set config value {name} to {value} - value must be non-negative"
+                ));
+            }
             Ok(ConfigValue::Int(v))
         }
         // Read-only configs
@@ -157,15 +162,11 @@ fn apply_config_set(
             *CONFIGURATION_JS_HEAP_SIZE.lock(ctx) = val.as_i64();
             graph::udf::js_context::JS_HEAP_SIZE
                 .store(val.as_i64(), std::sync::atomic::Ordering::Relaxed);
-            // Bump UDF repo version to force JS context rebuild with new heap limit
-            graph::udf::get_udf_repo().bump_version();
         }
         "JS_STACK_SIZE" => {
             *CONFIGURATION_JS_STACK_SIZE.lock(ctx) = val.as_i64();
             graph::udf::js_context::JS_STACK_SIZE
                 .store(val.as_i64(), std::sync::atomic::Ordering::Relaxed);
-            // Bump UDF repo version to force JS context rebuild with new stack limit
-            graph::udf::get_udf_repo().bump_version();
         }
         _ => {}
     }
@@ -236,8 +237,18 @@ pub fn graph_config(
             }
 
             // Apply all validated values.
+            let mut js_config_changed = false;
             for (name, val) in validated {
+                if name == "JS_HEAP_SIZE" || name == "JS_STACK_SIZE" {
+                    js_config_changed = true;
+                }
                 apply_config_set(ctx, name, &val);
+            }
+
+            // Bump UDF repo version once after all JS config fields are applied
+            // so concurrent queries cannot rebuild between fields.
+            if js_config_changed {
+                graph::udf::get_udf_repo().bump_version();
             }
 
             Ok(RedisValue::SimpleStringStatic("OK"))

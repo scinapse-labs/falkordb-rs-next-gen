@@ -531,8 +531,9 @@ impl Graph {
         let mut parser = Parser::new(query);
         let (parameters, query) = parser.parse_parameters()?;
 
+        let current_udf_version = crate::runtime::functions::udf_version();
+
         {
-            let current_udf_version = crate::runtime::functions::udf_version();
             let mut cache = self.cache.lock();
             if let Some(plan) = cache.get(query) {
                 if plan.udf_version == current_udf_version {
@@ -566,7 +567,7 @@ impl Graph {
             query.to_string(),
             PlanTree {
                 plan,
-                udf_version: crate::runtime::functions::udf_version(),
+                udf_version: current_udf_version,
             },
         );
         Ok(Plan::new(

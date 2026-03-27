@@ -1,6 +1,8 @@
 use std::cell::RefCell;
 use std::collections::HashSet;
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
+use std::time::{Duration, Instant};
 
 use atomic_refcell::AtomicRefCell;
 use rquickjs::{Array, Ctx, Function, Object, Value as JsValue};
@@ -275,11 +277,14 @@ fn js_get_neighbors_entry<'js>(
 ) -> Result<JsValue<'js>, rquickjs::Error> {
     match js_get_neighbors(&ctx, node_id, config.0.as_ref()) {
         Ok(val) => Ok(val),
-        Err(e) => Err(ctx.throw(
-            rquickjs::String::from_str(ctx.clone(), &e)
-                .unwrap()
-                .into_value(),
-        )),
+        Err(e) => {
+            let msg = match rquickjs::String::from_str(ctx.clone(), &e) {
+                Ok(s) => s,
+                Err(_) => rquickjs::String::from_str(ctx.clone(), "internal error")
+                    .map_err(|_| rquickjs::Error::Exception)?,
+            };
+            Err(ctx.throw(msg.into_value()))
+        }
     }
 }
 
@@ -339,16 +344,24 @@ fn js_get_neighbors<'js>(
         if let Ok(val) = cfg.get::<_, JsValue>("distance")
             && !val.is_undefined()
         {
-            if let Some(d) = val.as_int() {
-                if d < 0 {
-                    return Err("'distance' must be a non-negative integer".into());
-                }
+            let d = if let Some(i) = val.as_int() {
+                i as i64
             } else if let Some(f) = val.as_float() {
-                if f < 0.0 {
+                if f < 0.0 || f != f.floor() {
                     return Err("'distance' must be a non-negative integer".into());
                 }
+                f as i64
             } else {
                 return Err("'distance' must be a non-negative integer".into());
+            };
+            if d < 0 {
+                return Err("'distance' must be a non-negative integer".into());
+            }
+            if d != 1 {
+                return Err(
+                    "getNeighbors only supports distance=1; use graph.traverse() for multi-hop"
+                        .into(),
+                );
             }
         }
     }
@@ -415,11 +428,14 @@ pub fn js_traverse<'js>(
 ) -> Result<JsValue<'js>, rquickjs::Error> {
     match js_traverse_impl(&ctx, &nodes, config.0.as_ref()) {
         Ok(val) => Ok(val),
-        Err(e) => Err(ctx.throw(
-            rquickjs::String::from_str(ctx.clone(), &e)
-                .unwrap()
-                .into_value(),
-        )),
+        Err(e) => {
+            let msg = match rquickjs::String::from_str(ctx.clone(), &e) {
+                Ok(s) => s,
+                Err(_) => rquickjs::String::from_str(ctx.clone(), "internal error")
+                    .map_err(|_| rquickjs::Error::Exception)?,
+            };
+            Err(ctx.throw(msg.into_value()))
+        }
     }
 }
 
@@ -480,6 +496,14 @@ fn js_traverse_impl<'js>(
         // Per-source traversal: each source node gets its own independent BFS
         let outer_results = Array::new(ctx.clone()).map_err(|e| format!("JS array error: {e}"))?;
 
+        // Build a deadline from the UDF timeout so the BFS cannot run forever.
+        let timeout_ms = crate::udf::js_context::JS_TIMEOUT_MS.load(Ordering::Relaxed);
+        let deadline = if timeout_ms > 0 {
+            Some(Instant::now() + Duration::from_millis(timeout_ms as u64))
+        } else {
+            None
+        };
+
         for (src_idx, &start_id) in source_ids.iter().enumerate() {
             let inner_results =
                 Array::new(ctx.clone()).map_err(|e| format!("JS array error: {e}"))?;
@@ -490,6 +514,13 @@ fn js_traverse_impl<'js>(
             let mut frontier = vec![start_id];
 
             for _ in 0..max_depth {
+                // Check deadline before processing each depth level
+                if let Some(dl) = deadline
+                    && Instant::now() > dl
+                {
+                    return Err("UDF Exception: Query timed out".to_string());
+                }
+
                 let mut next_frontier = Vec::new();
                 let mut edges_to_create: Vec<(u64, u64, u64)> = Vec::new();
 
@@ -521,14 +552,24 @@ fn js_traverse_impl<'js>(
                                 }
                             }
 
+                            // Collect edges unconditionally (parallel/back-edges to
+                            // already-visited nodes are still valid edges).
+                            if return_type == "edges" {
+                                edges_to_create.push((rel_id, src_id, dst_id));
+                            }
+
                             if visited.insert(neighbor_id) {
                                 next_frontier.push(neighbor_id);
-                                if return_type == "edges" {
-                                    edges_to_create.push((rel_id, src_id, dst_id));
-                                }
                             }
                         }
                     }
+                }
+
+                // Check deadline after building the frontier
+                if let Some(dl) = deadline
+                    && Instant::now() > dl
+                {
+                    return Err("UDF Exception: Query timed out".to_string());
                 }
 
                 if return_type == "nodes" {

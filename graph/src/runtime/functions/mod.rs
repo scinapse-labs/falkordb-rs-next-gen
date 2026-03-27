@@ -663,8 +663,11 @@ impl Functions {
         {
             return Ok(graph_fn.clone());
         }
-        // Fall back to dynamic UDF registry
-        if let Some(reg) = UDF_FUNCTIONS.get() {
+        // Fall back to dynamic UDF registry (only for scalar/UDF function lookups,
+        // not for Procedure or Aggregation which have distinct semantics).
+        if matches!(fn_type, FnType::Function | FnType::Udf)
+            && let Some(reg) = UDF_FUNCTIONS.get()
+        {
             let guard = reg.read();
             if let Some(graph_fn) = guard.get(lower.as_str()) {
                 return Ok(graph_fn.clone());
