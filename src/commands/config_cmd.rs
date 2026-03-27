@@ -155,9 +155,17 @@ fn apply_config_set(
         }
         "JS_HEAP_SIZE" => {
             *CONFIGURATION_JS_HEAP_SIZE.lock(ctx) = val.as_i64();
+            graph::udf::js_context::JS_HEAP_SIZE
+                .store(val.as_i64(), std::sync::atomic::Ordering::Relaxed);
+            // Bump UDF repo version to force JS context rebuild with new heap limit
+            graph::udf::get_udf_repo().bump_version();
         }
         "JS_STACK_SIZE" => {
             *CONFIGURATION_JS_STACK_SIZE.lock(ctx) = val.as_i64();
+            graph::udf::js_context::JS_STACK_SIZE
+                .store(val.as_i64(), std::sync::atomic::Ordering::Relaxed);
+            // Bump UDF repo version to force JS context rebuild with new stack limit
+            graph::udf::get_udf_repo().bump_version();
         }
         _ => {}
     }

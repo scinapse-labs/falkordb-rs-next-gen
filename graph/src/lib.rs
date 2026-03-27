@@ -69,3 +69,4 @@ pub mod parser;
 pub mod planner;
 pub mod runtime;
 pub mod threadpool;
+pub mod udf;

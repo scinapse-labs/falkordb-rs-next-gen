@@ -12,14 +12,15 @@
 //!              +--> on key delete/overwrite/expire:
 //!                        Redis invokes `free` callback -> graph_free()
 //! ```
-//!
-//! `rdb_load`/`rdb_save` are currently placeholders; long-term persistence
-//! support is designed to plug in here.
 
 use crate::graph_core::graph_free;
+use graph::runtime::functions::{GraphFn, register_udf};
+use graph::udf::get_udf_repo;
+use redis_module::raw::{load_string_buffer, load_unsigned, save_string, save_unsigned};
 use redis_module::{
     REDISMODULE_TYPE_METHOD_VERSION, RedisModuleIO, RedisModuleTypeMethods, native_types::RedisType,
 };
+use std::sync::Arc;
 use std::{os::raw::c_void, ptr::null_mut};
 
 #[unsafe(no_mangle)]
@@ -39,6 +40,64 @@ unsafe extern "C" fn graph_rdb_save(
 ) {
 }
 
+/// Save UDF libraries to RDB.
+#[unsafe(no_mangle)]
+unsafe extern "C" fn graph_aux_save(
+    rdb: *mut RedisModuleIO,
+    _when: i32,
+) {
+    let repo = get_udf_repo();
+    let libs = repo.serialize();
+    save_unsigned(rdb, libs.len() as u64);
+    for (name, code) in &libs {
+        save_string(rdb, name);
+        save_string(rdb, code);
+    }
+}
+
+/// Load UDF libraries from RDB.
+#[unsafe(no_mangle)]
+unsafe extern "C" fn graph_aux_load(
+    rdb: *mut RedisModuleIO,
+    _encver: i32,
+    _when: i32,
+) -> i32 {
+    let count = match load_unsigned(rdb) {
+        Ok(c) => c,
+        Err(_) => return 1, // REDISMODULE_ERR
+    };
+
+    let repo = get_udf_repo();
+    let mut libs = Vec::with_capacity(count as usize);
+    for _ in 0..count {
+        let name = match load_string_buffer(rdb) {
+            Ok(buf) => String::from_utf8_lossy(buf.as_ref()).to_string(),
+            Err(_) => return 1,
+        };
+        let code = match load_string_buffer(rdb) {
+            Ok(buf) => String::from_utf8_lossy(buf.as_ref()).to_string(),
+            Err(_) => return 1,
+        };
+        libs.push((name, code));
+    }
+
+    // Load all libraries, registering their functions
+    match repo.deserialize(libs) {
+        Ok(()) => {
+            // Register bridge functions for each library's functions
+            let all_libs = repo.get_all_libraries();
+            for lib in &all_libs {
+                for qname in &lib.function_names {
+                    let graph_fn = Arc::new(GraphFn::new_udf(qname));
+                    register_udf(qname, graph_fn);
+                }
+            }
+            0 // REDISMODULE_OK
+        }
+        Err(_) => 1, // REDISMODULE_ERR
+    }
+}
+
 pub static GRAPH_TYPE: RedisType = RedisType::new(
     "graphdata",
     0,
@@ -52,10 +111,10 @@ pub static GRAPH_TYPE: RedisType = RedisType::new(
         mem_usage: None,
         digest: None,
 
-        aux_load: None,
+        aux_load: Some(graph_aux_load),
         aux_save: None,
-        aux_save2: None,
-        aux_save_triggers: 0,
+        aux_save2: Some(graph_aux_save),
+        aux_save_triggers: 1, // REDISMODULE_AUX_BEFORE_RDB
 
         free_effort: None,
         unlink: None,

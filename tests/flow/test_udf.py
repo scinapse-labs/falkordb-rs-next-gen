@@ -679,25 +679,22 @@ class testUDF():
         self.db.udf_load("MultiTraversal", script, True)
 
         # 1. Setup the Graph (Reusing the Person/City/Company schema)
-        q = """CREATE (Alice:Person {name: 'Alice'}),
-        (Bob:Person {name: 'Bob'}),
-        (Charlie:Person {name: 'Charlie'}),
-        (David:Person {name: 'David'}),
-        (London:City {name: 'London'}),
-        (Paris:City {name: 'Paris'}),
-        (FalkorDB:Company {name: 'FalkorDB'}),
-
-        (Alice)-[akb:KNOWS]->(Bob),
-        (Bob)-[bka:KNOWS]->(Alice),
-        (Bob)-[bkc:KNOWS]->(Charlie),
-        (Alice)-[awf:WORKS_AT]->(FalkorDB),
-        (Alice)-[all:LIVES_IN]->(London),
-        (Bob)-[blp:LIVES_IN]->(Paris),
-        (Charlie)-[cvl:VISITED]->(London)
-
-        RETURN Alice, Bob, Charlie, David, London, Paris, FalkorDB,
-               akb, bka, bkc, awf, all, blp, cvl
-        """
+        q = ("CREATE (Alice:Person {name: 'Alice'}), "
+             "(Bob:Person {name: 'Bob'}), "
+             "(Charlie:Person {name: 'Charlie'}), "
+             "(David:Person {name: 'David'}), "
+             "(London:City {name: 'London'}), "
+             "(Paris:City {name: 'Paris'}), "
+             "(FalkorDB:Company {name: 'FalkorDB'}), "
+             "(Alice)-[akb:KNOWS]->(Bob), "
+             "(Bob)-[bka:KNOWS]->(Alice), "
+             "(Bob)-[bkc:KNOWS]->(Charlie), "
+             "(Alice)-[awf:WORKS_AT]->(FalkorDB), "
+             "(Alice)-[alil:LIVES_IN]->(London), "
+             "(Bob)-[blp:LIVES_IN]->(Paris), "
+             "(Charlie)-[cvl:VISITED]->(London) "
+             "RETURN Alice, Bob, Charlie, David, London, Paris, FalkorDB, "
+             "akb, bka, bkc, awf, alil, blp, cvl")
 
         res = self.graph.query(q).result_set[0]
         alice, bob, charlie, david, london, paris, falkorDB = res[0:7]

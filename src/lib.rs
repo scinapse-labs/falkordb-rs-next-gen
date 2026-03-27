@@ -46,7 +46,7 @@ mod reply;
 use allocator::ThreadCountingAllocator;
 use commands::{
     graph_config, graph_delete, graph_explain, graph_list, graph_memory, graph_query, graph_record,
-    graph_ro_query,
+    graph_ro_query, graph_udf,
 };
 use config::{
     CONFIGURATION_CACHE_SIZE, CONFIGURATION_CMD_INFO, CONFIGURATION_DELAY_INDEXING,
@@ -73,6 +73,7 @@ redis_module! {
         ["graph.RECORD", graph_record, "write deny-oom deny-script blocking", 1, 1, 1, ""],
         ["graph.MEMORY", graph_memory, "readonly deny-script", 1, 1, 1, ""],
         ["graph.CONFIG", graph_config, "readonly deny-script allow-busy", 0, 0, 0, ""],
+        ["graph.UDF", graph_udf, "write deny-script", 0, 0, 0, ""],
     ],
     configurations: [
         i64: [
@@ -80,8 +81,8 @@ redis_module! {
             ["THREAD_COUNT", &*CONFIGURATION_THREAD_COUNT, 0, 0, 1024, ConfigurationFlags::IMMUTABLE, None],
             ["NODE_CREATION_BUFFER", &*CONFIGURATION_NODE_CREATION_BUFFER, 16384, 0, 1_073_741_824, ConfigurationFlags::IMMUTABLE, None],
             ["VKEY_MAX_ENTITY_COUNT", &*CONFIGURATION_VKEY_MAX_ENTITY_COUNT, 100_000, 1, 1_073_741_824, ConfigurationFlags::DEFAULT, None],
-            ["JS_HEAP_SIZE", &*CONFIGURATION_JS_HEAP_SIZE, 268_435_456, 0, 1_073_741_824, ConfigurationFlags::DEFAULT, None],
-            ["JS_STACK_SIZE", &*CONFIGURATION_JS_STACK_SIZE, 1_048_576, 0, 1_073_741_824, ConfigurationFlags::DEFAULT, None],
+            ["JS_HEAP_SIZE", &*CONFIGURATION_JS_HEAP_SIZE, 268_435_456, 0, 4_294_967_296, ConfigurationFlags::DEFAULT, None],
+            ["JS_STACK_SIZE", &*CONFIGURATION_JS_STACK_SIZE, 1_048_576, 0, 4_294_967_296, ConfigurationFlags::DEFAULT, None],
         ],
         string: [
             ["IMPORT_FOLDER", &*CONFIGURATION_IMPORT_FOLDER, "/var/lib/FalkorDB/import/", ConfigurationFlags::IMMUTABLE, None],

@@ -28,7 +28,7 @@
 //! queue guarded by `write_loop`.
 
 use crate::{
-    config::{CONFIGURATION_IMPORT_FOLDER, MAX_QUEUED_QUERIES, RESULTSET_SIZE},
+    config::{CONFIGURATION_IMPORT_FOLDER, MAX_QUEUED_QUERIES, RESULTSET_SIZE, TIMEOUT_DEFAULT},
     reply::{reply_compact, reply_verbose},
 };
 use atomic_refcell::AtomicRefCell;
@@ -246,6 +246,10 @@ pub fn query_mut(
                 reset_counter();
                 enable_tracking();
             }
+            // Sync query timeout to UDF JS runtime
+            graph::udf::js_context::JS_TIMEOUT_MS
+                .store(TIMEOUT_DEFAULT.load(Ordering::Relaxed), Ordering::Relaxed);
+
             let g = graph.clone();
             let binding = graph.clone();
             let graph = binding.read();
@@ -305,6 +309,10 @@ fn query_sync(
     write: bool,
 ) -> RedisResult {
     // First pass: parse + detect if write, execute reads inline.
+    // Sync query timeout to UDF JS runtime
+    graph::udf::js_context::JS_TIMEOUT_MS
+        .store(TIMEOUT_DEFAULT.load(Ordering::Relaxed), Ordering::Relaxed);
+
     let res = {
         let g = graph.read();
         g.execute_query(ctx, query, compact, write)

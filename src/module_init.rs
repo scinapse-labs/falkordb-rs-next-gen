@@ -22,12 +22,16 @@
 //! Any hard failure during critical init steps returns `Status::Err` so Redis
 //! can reject loading an incomplete module.
 
-use crate::config::{CONFIGURATION_TEMP_FOLDER, OMP_THREAD_COUNT, get_thread_count};
+use crate::config::{
+    CONFIGURATION_JS_HEAP_SIZE, CONFIGURATION_JS_STACK_SIZE, CONFIGURATION_TEMP_FOLDER,
+    OMP_THREAD_COUNT, get_thread_count,
+};
 use graph::{
     graph::graphblas::matrix::init,
     index::redisearch::{REDISEARCH_INIT_LIBRARY, RediSearch_Init},
-    runtime::functions::init_functions,
+    runtime::functions::{init_functions, init_udf_functions},
     threadpool::init_thread_pool,
+    udf,
 };
 use redis_module::{
     Context, REDISMODULE_OK, RedisModule_Alloc, RedisModule_Calloc, RedisModule_Free,
@@ -72,6 +76,17 @@ pub fn graph_init(
     match init_functions() {
         Ok(()) => {}
         Err(_) => return Status::Err,
+    }
+    init_udf_functions();
+    udf::init_udf_repo();
+
+    // Sync JS config values to atomics accessible without Redis GIL
+    {
+        let heap_size = *CONFIGURATION_JS_HEAP_SIZE.lock(ctx);
+        let stack_size = *CONFIGURATION_JS_STACK_SIZE.lock(ctx);
+        graph::udf::js_context::JS_HEAP_SIZE.store(heap_size, std::sync::atomic::Ordering::Relaxed);
+        graph::udf::js_context::JS_STACK_SIZE
+            .store(stack_size, std::sync::atomic::Ordering::Relaxed);
     }
     // Validate TEMP_FOLDER: must be an existing writable directory.
     {
