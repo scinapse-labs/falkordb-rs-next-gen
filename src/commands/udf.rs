@@ -129,11 +129,7 @@ fn udf_flush(
     }
 
     let repo = get_udf_repo();
-    let removed_names = repo.flush();
-
-    for name in &removed_names {
-        unregister_udf(name);
-    }
+    repo.flush();
     flush_udfs();
 
     ctx.replicate_verbatim();
@@ -181,7 +177,7 @@ fn udf_list(
         ];
         if let Some(code) = lib.code {
             entry.push(RedisValue::BulkString("library_code".into()));
-            entry.push(RedisValue::BulkString(code.trim().to_string()));
+            entry.push(RedisValue::BulkString(code));
         }
         result.push(RedisValue::Array(entry));
     }

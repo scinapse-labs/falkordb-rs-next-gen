@@ -563,13 +563,17 @@ impl Graph {
         let optimize_plan = optimize(&plan, self);
         plan_duration = start.elapsed();
 
-        self.cache.lock().push(
-            query.to_string(),
-            PlanTree {
-                plan,
-                udf_version: current_udf_version,
-            },
-        );
+        // Only cache the plan if UDF version hasn't changed during planning.
+        // A drift means the plan may reference stale UDF bindings.
+        if crate::runtime::functions::udf_version() == current_udf_version {
+            self.cache.lock().push(
+                query.to_string(),
+                PlanTree {
+                    plan,
+                    udf_version: current_udf_version,
+                },
+            );
+        }
         Ok(Plan::new(
             Arc::new(optimize_plan),
             false,
