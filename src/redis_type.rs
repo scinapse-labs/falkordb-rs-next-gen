@@ -62,9 +62,8 @@ unsafe extern "C" fn graph_aux_load(
     _encver: i32,
     _when: i32,
 ) -> i32 {
-    let count = match load_unsigned(rdb) {
-        Ok(c) => c,
-        Err(_) => return 1, // REDISMODULE_ERR
+    let Ok(count) = load_unsigned(rdb) else {
+        return 1; // REDISMODULE_ERR
     };
 
     let repo = get_udf_repo();

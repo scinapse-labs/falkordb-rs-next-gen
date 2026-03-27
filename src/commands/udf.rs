@@ -142,25 +142,24 @@ fn udf_flush(
 
 fn udf_list(
     _ctx: &Context,
-    mut args: impl Iterator<Item = RedisString>,
+    args: impl Iterator<Item = RedisString>,
 ) -> RedisResult {
     let mut filter: Option<String> = None;
     let mut with_code = false;
 
     // Parse optional arguments: [<lib_name>] [WITHCODE]
     // The Python client sends: GRAPH.UDF LIST [lib_name] [WITHCODE]
-    while let Some(arg) = args.next() {
+    for arg in args {
         let s = arg
             .try_as_str()
             .map_err(|_| RedisError::Str("ERR invalid argument"))?;
-        match s.to_uppercase().as_str() {
-            "WITHCODE" => with_code = true,
-            _ => {
-                if filter.is_some() {
-                    return Err(RedisError::String(format!("Unknown option given: '{s}'")));
-                }
-                filter = Some(s.to_string());
+        if s.to_uppercase().as_str() == "WITHCODE" {
+            with_code = true;
+        } else {
+            if filter.is_some() {
+                return Err(RedisError::String(format!("Unknown option given: '{s}'")));
             }
+            filter = Some(s.to_string());
         }
     }
 

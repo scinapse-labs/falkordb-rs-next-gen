@@ -184,7 +184,7 @@ fn rebuild_context(
 pub fn call_udf_bridge(
     name: &str,
     rt: &Runtime,
-    args: ThinVec<Value>,
+    args: &ThinVec<Value>,
 ) -> Result<Value, String> {
     ensure_context_current()?;
 

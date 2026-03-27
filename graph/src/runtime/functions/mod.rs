@@ -452,7 +452,7 @@ impl Debug for GraphFn {
             .field("args_type", &self.args_type)
             .field("fn_type", &self.fn_type)
             .field("ret_type", &self.ret_type)
-            .finish()
+            .finish_non_exhaustive()
     }
 }
 
@@ -482,7 +482,7 @@ impl GraphFn {
         Self {
             name: String::from(name),
             func: Arc::new(move |rt, args| {
-                crate::udf::js_context::call_udf_bridge(&udf_name, rt, args)
+                crate::udf::js_context::call_udf_bridge(&udf_name, rt, &args)
             }),
             write: false,
             args_type: FnArguments::VarLength(Type::Any),

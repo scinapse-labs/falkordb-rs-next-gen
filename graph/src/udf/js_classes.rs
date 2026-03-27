@@ -267,6 +267,7 @@ pub fn create_js_path<'js>(
 
 /// Entry point for getNeighbors from JS. Takes (node_id, config?) as arguments.
 /// This is a standalone function (no closure captures) so rquickjs lifetime inference works.
+#[allow(clippy::needless_pass_by_value)]
 fn js_get_neighbors_entry<'js>(
     ctx: Ctx<'js>,
     node_id: u64,
@@ -406,6 +407,7 @@ fn js_get_neighbors<'js>(
 }
 
 /// graph.traverse(nodes, config) - multi-source BFS traversal.
+#[allow(clippy::needless_pass_by_value)]
 pub fn js_traverse<'js>(
     ctx: Ctx<'js>,
     nodes: Array<'js>,
@@ -510,8 +512,8 @@ fn js_traverse_impl<'js>(
                             let neighbor_id = if src_id == nid { dst_id } else { src_id };
 
                             if !label_filters.is_empty() {
-                                let neighbor_nid = NodeId::from(neighbor_id);
-                                let matches = g.get_node_labels(neighbor_nid).any(|label_name| {
+                                let nb_node_id = NodeId::from(neighbor_id);
+                                let matches = g.get_node_labels(nb_node_id).any(|label_name| {
                                     label_filters.iter().any(|f| f == label_name.as_str())
                                 });
                                 if !matches {
