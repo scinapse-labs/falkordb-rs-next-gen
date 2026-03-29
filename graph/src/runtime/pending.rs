@@ -62,23 +62,26 @@ impl PendingRelationship {
 const INVALID_PROPERTY_MSG: &str =
     "Property values can only be of primitive types or arrays of primitive types";
 
-fn is_valid_property(value: &Value) -> bool {
+fn is_valid_property(
+    value: &Value,
+    allow_null: bool,
+) -> bool {
     match value {
-        Value::Null
-        | Value::Bool(_)
+        Value::Null => allow_null,
+        Value::Bool(_)
         | Value::Int(_)
         | Value::Float(_)
         | Value::String(_)
         | Value::Point(_)
         | Value::VecF32(_) => true,
-        Value::List(items) => items.iter().all(is_valid_property),
+        Value::List(items) => items.iter().all(|v| is_valid_property(v, false)),
         _ => false,
     }
 }
 
 /// Validate that a value is a valid node property type.
 fn validate_node_property(value: &Value) -> Result<(), String> {
-    if !is_valid_property(value) {
+    if !is_valid_property(value, true) {
         return Err(INVALID_PROPERTY_MSG.into());
     }
     Ok(())
@@ -86,7 +89,7 @@ fn validate_node_property(value: &Value) -> Result<(), String> {
 
 /// Validate that a value is a valid relationship property type.
 fn validate_relationship_property(value: &Value) -> Result<(), String> {
-    if !is_valid_property(value) {
+    if !is_valid_property(value, true) {
         return Err(INVALID_PROPERTY_MSG.into());
     }
     Ok(())
