@@ -683,7 +683,10 @@ impl<'a> BatchOp<'a> {
                 *slot = Some(batch);
             }
             Self::Once(_) => {}
-            Self::ProcedureCall(op) => op.child.set_argument_batch(batch),
+            Self::ProcedureCall(op) => {
+                op.batches = None;
+                op.child.set_argument_batch(batch);
+            }
             Self::NodeByLabelScan(op) => op.child.set_argument_batch(batch),
             Self::Filter(op) => op.child.set_argument_batch(batch),
             Self::Project(op) => op.child.set_argument_batch(batch),
@@ -749,6 +752,12 @@ impl<'a> BatchOp<'a> {
             Self::OrApplyMultiplexer(op) => op.child.set_argument_batch(batch),
             Self::ForEach(op) => op.child.set_argument_batch(batch),
             Self::ValueHashJoin(op) => {
+                // Clear cached state so the join rematerializes for the new batch
+                op.hash_table = None;
+                op.left_envs.clear();
+                op.left_pos = 0;
+                op.right_match_envs.clear();
+                op.right_match_pos = 0;
                 let cloned: Vec<Env<'a>> = batch
                     .active_env_iter()
                     .map(|e| e.clone_pooled(op.runtime.env_pool))

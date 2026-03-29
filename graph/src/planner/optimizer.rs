@@ -1545,7 +1545,7 @@ fn select_scan_node(
 
             // Build the new subtree bottom-up.
             let mut subtree = existing_child.unwrap_or_else(|| make_scan_subtree(&best_node));
-            for (rel, emit, edges, transposed) in new_rels.into_iter().rev() {
+            for (rel, emit, edges, transposed) in new_rels.into_iter() {
                 subtree = tree!(
                     IR::CondTraverse {
                         relationship: rel,

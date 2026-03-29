@@ -1,5 +1,7 @@
 use std::fs;
 
+// Suppress too_many_lines: this build script handles multiple platform/configuration
+// cases and splitting it would reduce clarity.
 #[allow(clippy::too_many_lines)]
 fn main() {
     #[cfg(target_os = "macos")]

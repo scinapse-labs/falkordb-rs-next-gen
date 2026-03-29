@@ -1191,6 +1191,11 @@ impl Graph {
         self.deleted_relationships
             .extend(rels.keys().map(|id| id.0));
         self.relationship_count -= rels.len() as u64;
+
+        // Collect unique (src, dst) pairs to check adjacancy_matrix after deletion
+        let pairs: std::collections::HashSet<(u64, u64)> =
+            rels.values().map(|(src, dst)| (src.0, dst.0)).collect();
+
         for (type_id, rels) in &rels
             .into_iter()
             .map(|(id, (src, dst))| (id.0, src.0, dst.0))
@@ -1203,6 +1208,18 @@ impl Graph {
             let typ = self.relationship_types[type_id.0].clone();
             self.get_relationship_matrix_mut(&typ).remove_all(rels);
         }
+
+        // Update adjacancy_matrix: remove entries where no typed edges remain
+        for (src, dst) in pairs {
+            let has_edges = self
+                .relationship_matrices
+                .iter()
+                .any(|tensor| tensor.get(src, dst).next().is_some());
+            if !has_edges {
+                self.adjacancy_matrix.remove(src, dst);
+            }
+        }
+
         Ok(())
     }
 

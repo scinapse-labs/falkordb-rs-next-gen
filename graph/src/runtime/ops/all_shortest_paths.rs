@@ -85,7 +85,9 @@ impl<'a> AllShortestPathsOp<'a> {
         };
 
         let max_hops = rp.max_hops.unwrap_or(u32::MAX);
+        let min_hops = rp.min_hops.unwrap_or(1);
         let bidirectional = rp.bidirectional;
+        let reversed = rp.all_shortest_paths == AllShortestPaths::Reversed;
         let g = self.runtime.g.borrow();
 
         // BFS phase: find shortest distance and collect predecessors
@@ -121,15 +123,28 @@ impl<'a> AllShortestPathsOp<'a> {
             for (edge_src, edge_dst, edge_id) in
                 g.get_node_relationships_by_type(current_node, &rp.types)
             {
-                let neighbor = if edge_src == current_node {
-                    Some(u64::from(edge_dst))
-                } else if bidirectional && edge_dst == current_node && edge_src != current_node {
-                    Some(u64::from(edge_src))
-                } else if !bidirectional && edge_dst == current_node {
-                    // Skip incoming edges in directed mode
-                    None
+                let neighbor = if bidirectional {
+                    if edge_src == current_node {
+                        Some(u64::from(edge_dst))
+                    } else if edge_dst == current_node && edge_src != current_node {
+                        Some(u64::from(edge_src))
+                    } else {
+                        None
+                    }
+                } else if reversed {
+                    // Reversed directed: follow incoming edges
+                    if edge_dst == current_node {
+                        Some(u64::from(edge_src))
+                    } else {
+                        None
+                    }
                 } else {
-                    None
+                    // Forward directed: follow outgoing edges
+                    if edge_src == current_node {
+                        Some(u64::from(edge_dst))
+                    } else {
+                        None
+                    }
                 };
 
                 let Some(next) = neighbor else {
@@ -159,6 +174,10 @@ impl<'a> AllShortestPathsOp<'a> {
                 // When we find an edge back to src, record it as a predecessor
                 // even though src is already in dist at distance 0.
                 if is_cycle && next == src {
+                    if next_dist < min_hops {
+                        // Below min_hops: don't record as a valid cycle
+                        continue;
+                    }
                     if let Some(sd) = shortest_dist {
                         if next_dist == sd {
                             // Same-distance cycle: add predecessor
@@ -203,7 +222,7 @@ impl<'a> AllShortestPathsOp<'a> {
                         u64::from(edge_src),
                         u64::from(edge_dst),
                     ));
-                    if next == dst {
+                    if next == dst && next_dist >= min_hops {
                         shortest_dist = Some(next_dist);
                     }
                     // Only enqueue if we haven't exceeded max_hops

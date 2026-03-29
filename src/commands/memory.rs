@@ -53,9 +53,15 @@ pub fn graph_memory(
                 "ERR SAMPLES count must be a positive integer",
             ));
         }
-        count_s
+        let count = count_s
             .parse::<usize>()
-            .map_err(|_| RedisError::Str("ERR SAMPLES count must be a positive integer"))?
+            .map_err(|_| RedisError::Str("ERR SAMPLES count must be a positive integer"))?;
+        if count == 0 {
+            return Err(RedisError::Str(
+                "ERR SAMPLES count must be a positive integer",
+            ));
+        }
+        count
     } else {
         100
     };

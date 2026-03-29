@@ -489,12 +489,14 @@ impl Binder {
                     if yielded {
                         if let Some(ref original_field) = alias {
                             // YIELD field AS alias: Variable.name = original field,
-                            // registered in scope under alias name
-                            let var = self.fresh_var(
-                                Some(original_field.clone()),
-                                Type::Any,
-                                self.env_stack.len() as u32 - 1,
-                            );
+                            // registered in scope under alias name via normal resolution
+                            let var = self.define_name_in_scope(name.clone(), Type::Any, true)?;
+                            // Override the variable name to the original field for procedure map lookup
+                            let var = Variable {
+                                name: Some(original_field.clone()),
+                                ..var
+                            };
+                            // Re-insert under alias name with the updated variable
                             self.current_env_mut().insert(name.clone(), var.clone());
                             bound_vars.push(var);
                         } else {

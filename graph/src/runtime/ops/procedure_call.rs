@@ -30,7 +30,7 @@ pub struct ProcedureCallOp<'a> {
     func: &'a Arc<GraphFn>,
     trees: &'a [QueryExpr<Variable>],
     name_outputs: &'a [Variable],
-    batches: Option<std::vec::IntoIter<Batch<'a>>>,
+    pub(crate) batches: Option<std::vec::IntoIter<Batch<'a>>>,
     pub(crate) idx: NodeIdx<Dyn<IR>>,
 }
 

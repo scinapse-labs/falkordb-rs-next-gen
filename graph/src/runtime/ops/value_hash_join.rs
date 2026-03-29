@@ -27,14 +27,14 @@ pub struct ValueHashJoinOp<'a> {
     pub(crate) idx: NodeIdx<Dyn<IR>>,
     /// Hash table: hash(value) -> Vec<(Value, Vec<Env>)>
     /// We use a Vec of (key, envs) pairs per bucket to handle hash collisions.
-    hash_table: Option<HashMap<u64, Vec<(Value, Vec<Env<'a>>)>>>,
+    pub(crate) hash_table: Option<HashMap<u64, Vec<(Value, Vec<Env<'a>>)>>>,
     /// Current block of left-side rows being probed.
-    left_envs: Vec<Env<'a>>,
+    pub(crate) left_envs: Vec<Env<'a>>,
     /// Current position within `left_envs`.
-    left_pos: usize,
+    pub(crate) left_pos: usize,
     /// Current position within the matched right envs for the current left row.
-    right_match_envs: Vec<Env<'a>>,
-    right_match_pos: usize,
+    pub(crate) right_match_envs: Vec<Env<'a>>,
+    pub(crate) right_match_pos: usize,
 }
 
 impl<'a> ValueHashJoinOp<'a> {

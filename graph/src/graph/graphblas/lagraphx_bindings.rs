@@ -420,7 +420,7 @@ unsafe extern "C" {
     ) -> ::std::os::raw::c_int;
 
     pub fn LAGraph_norm2(
-        norm2: f32,
+        norm2: *mut f32,
         v: GrB_Vector,
         msg: *mut ::std::os::raw::c_char,
     ) -> ::std::os::raw::c_int;

@@ -932,9 +932,9 @@ fn register_msf(funcs: &mut Functions) {
 
             let g = runtime.g.borrow();
 
-            // Validate weight attribute exists if specified
+            // Validate weight attribute exists as a relationship attribute
             if let Some(ref attr) = weight_attr
-                && g.get_node_attribute_id(attr).is_none() && g.get_relationship_attribute_id(attr).is_none() {
+                && g.get_relationship_attribute_id(attr).is_none() {
                     return Err(format!("Weight attribute '{attr}' does not exist"));
                 }
 
@@ -1193,7 +1193,12 @@ fn parse_common_path_config(
 
     let max_len = match config.get(&Arc::new(String::from("maxLen"))) {
         None | Some(Value::Null) => u32::MAX,
-        Some(Value::Int(n)) => *n as u32,
+        Some(Value::Int(n)) => {
+            if *n < 0 {
+                return Err(String::from("maxLen must be non-negative integer"));
+            }
+            *n as u32
+        }
         _ => return Err(String::from("maxLen must be integer")),
     };
 

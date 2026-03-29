@@ -62,4 +62,9 @@ RUN cd redisearch && \
     cp -r RediSearch/bin bin  && \
     rm -rf RediSearch
 
+RUN groupadd -r app && useradd -r -g app -m -d /home/app app && \
+    chown -R app:app /data /redisearch venv
+
+USER app
+
 CMD "/bin/bash"

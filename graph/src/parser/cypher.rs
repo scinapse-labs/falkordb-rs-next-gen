@@ -1468,7 +1468,7 @@ impl<'a> Parser<'a> {
             (types, min, max, has_filter)
         } else {
             // -[]-  bare relationship
-            (vec![], 1, None, false)
+            (vec![], 1, Some(1), false)
         };
 
         match_token!(self.lexer, Dash);

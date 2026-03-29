@@ -52,7 +52,7 @@ class testTraversalConstruction():
 
         for q in queries:
             plan = str(self.graph.explain(q))
-            ops = plan.split(os.linesep)
+            ops = plan.splitlines()
             ops.reverse()
             self.env.assertTrue("Node By Label Scan" in ops[0])
 
@@ -65,7 +65,7 @@ class testTraversalConstruction():
         for e in entities:
             q = """MATCH (A)-->(B)-->(C) WHERE {}.val = 1 RETURN *""".format(e)
             plan = str(self.graph.explain(q))
-            ops = plan.split(os.linesep)
+            ops = plan.splitlines()
             ops.reverse()
 
             self.env.assertTrue("All Node Scan | ({})".format(e) in ops[0])
@@ -80,7 +80,7 @@ class testTraversalConstruction():
         for e in entities:
             q = "MATCH (X) WITH X as {} MATCH (A)-->(B)-->(C) RETURN *".format(e)
             plan = str(self.graph.explain(q))
-            ops = plan.split(os.linesep)
+            ops = plan.splitlines()
             ops.reverse()
             self.env.assertTrue("Conditional Traverse | ({}".format(e) in ops[2])
 

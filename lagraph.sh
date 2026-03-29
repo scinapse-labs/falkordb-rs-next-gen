@@ -5,6 +5,9 @@ LAGRAPH_VERSION="v1.2.1"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 INSTALL_DIR="$SCRIPT_DIR/lagraph_lib"
 
+if [ -d "LAGraph" ]; then
+    rm -rf LAGraph
+fi
 git clone --branch "$LAGRAPH_VERSION" --single-branch https://github.com/GraphBLAS/LAGraph.git
 cd LAGraph
 
@@ -31,7 +34,7 @@ cmake .. \
     -DSUITESPARSE_USE_FORTRAN=OFF \
     $OPENMP_FLAGS
 
-make -j$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)
+make -j"$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)"
 
 # Install to project directory
 mkdir -p "$INSTALL_DIR"

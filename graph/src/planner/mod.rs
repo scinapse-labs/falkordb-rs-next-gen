@@ -995,9 +995,7 @@ impl Planner {
                 let has_bound = if self
                     .visited
                     .contains(&(r.from.alias.id, r.from.alias.scope_id))
-                    || self
-                        .visited
-                        .contains(&(r.to.alias.id, r.to.alias.scope_id))
+                    || self.visited.contains(&(r.to.alias.id, r.to.alias.scope_id))
                 {
                     0
                 } else {
