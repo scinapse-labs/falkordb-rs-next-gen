@@ -27,6 +27,8 @@
 use std::collections::VecDeque;
 use std::sync::Arc;
 
+use crate::graph::graph::Graph;
+use crate::graph::graphblas::matrix::Matrix;
 use crate::parser::ast::{QueryRelationship, Variable};
 use crate::planner::IR;
 use crate::runtime::eval::ExprEval;
@@ -52,17 +54,86 @@ pub struct CondTraverseOp<'a> {
     /// one row per (src, dst) pair (false). Set by the planner based on
     /// whether the edge is named or referenced in a named path.
     emit_relationship: bool,
+    /// Alias IDs of sibling relationship variables in the same MATCH clause.
+    sibling_edges: &'a [u32],
+    /// When true, from/to have been swapped by the optimizer relative to the
+    /// edge direction in the graph. The scan labels and node assignments are
+    /// transposed accordingly.
+    transposed: bool,
     pub(crate) idx: NodeIdx<Dyn<IR>>,
+    /// Cached forward relationship matrix (built once, reused per row).
+    fwd_matrix: Matrix,
+    /// Cached reverse relationship matrix (only for bidirectional patterns).
+    rev_matrix: Option<Matrix>,
+    /// For bidirectional anonymous-edge CTs, tracks (source, dest) pairs
+    /// already emitted to deduplicate rows that reach the same pair via
+    /// different intermediate nodes — matching C FalkorDB's matrix-multiply
+    /// semantics.
+    bidir_dedup: Option<std::cell::RefCell<std::collections::HashSet<(u64, u64)>>>,
+    /// When the child is also an anonymous bidir CT, stores the child's
+    /// from-alias so the dedup key uses the original scan source (not the
+    /// intermediate node).  When None, dedup uses this CT's own from-alias.
+    dedup_source_alias: Option<Variable>,
 }
 
 impl<'a> CondTraverseOp<'a> {
-    pub const fn new(
+    pub fn new(
         runtime: &'a Runtime<'a>,
         child: Box<BatchOp<'a>>,
         relationship_pattern: &'a QueryRelationship<Arc<String>, Arc<String>, Variable>,
         emit_relationship: bool,
+        sibling_edges: &'a [u32],
+        transposed: bool,
         idx: NodeIdx<Dyn<IR>>,
     ) -> Self {
+        let rp = relationship_pattern;
+        let g = runtime.g.borrow();
+
+        let (fwd_src_labels, fwd_dst_labels) = if transposed {
+            (&rp.to.labels, &rp.from.labels)
+        } else {
+            (&rp.from.labels, &rp.to.labels)
+        };
+        let fwd_matrix = g.build_relationship_matrix(&rp.types, fwd_src_labels, fwd_dst_labels);
+
+        let rev_matrix = if rp.bidirectional {
+            let (rev_src_labels, rev_dst_labels) = if transposed {
+                (&rp.from.labels, &rp.to.labels)
+            } else {
+                (&rp.to.labels, &rp.from.labels)
+            };
+            Some(g.build_relationship_matrix(&rp.types, rev_src_labels, rev_dst_labels))
+        } else {
+            None
+        };
+
+        drop(g);
+
+        // When this CT and its child CT are both anonymous bidirectional
+        // edges, enable cross-row (from, to) deduplication to replicate
+        // C FalkorDB's matrix-multiply semantics.  Use the child's
+        // from-alias as the dedup source so we deduplicate by
+        // (original_scan_source, final_destination).
+        let (bidir_dedup, dedup_source_alias) = if !emit_relationship && rp.bidirectional {
+            if let BatchOp::CondTraverse(ref child_ct) = *child {
+                if !child_ct.emit_relationship && child_ct.rev_matrix.is_some() {
+                    (
+                        Some(std::cell::RefCell::new(std::collections::HashSet::<(
+                            u64,
+                            u64,
+                        )>::new())),
+                        Some(child_ct.relationship_pattern.from.alias.clone()),
+                    )
+                } else {
+                    (None, None)
+                }
+            } else {
+                (None, None)
+            }
+        } else {
+            (None, None)
+        };
+
         Self {
             runtime,
             child,
@@ -71,7 +142,13 @@ impl<'a> CondTraverseOp<'a> {
             current_batch: None,
             current_pos: 0,
             emit_relationship,
+            sibling_edges,
+            transposed,
             idx,
+            fwd_matrix,
+            rev_matrix,
+            bidir_dedup,
+            dedup_source_alias,
         }
     }
 
@@ -119,10 +196,19 @@ impl<'a> CondTraverseOp<'a> {
 
         let g = runtime.g.borrow();
 
-        // Process forward relationships without collecting into a Vec.
+        let transposed = self.transposed;
+
+        // Map from_id/to_id to the matrix's src/dst dimensions.
+        let (fwd_src_id, fwd_dst_id) = if transposed {
+            (to_id, from_id)
+        } else {
+            (from_id, to_id)
+        };
+        // Iterate the cached forward matrix instead of rebuilding it.
+        let start = out.len();
         Self::process_pairs(
-            g.get_relationships(&rp.types, &rp.from.labels, &rp.to.labels),
-            false,
+            Graph::iter_relationship_matrix(&self.fwd_matrix, fwd_src_id, fwd_dst_id),
+            transposed,
             from_id,
             to_id,
             &from_node_attrs,
@@ -134,14 +220,20 @@ impl<'a> CondTraverseOp<'a> {
             runtime,
             out,
             self.emit_relationship,
+            self.sibling_edges,
         );
 
         // Process reverse relationships for bidirectional patterns.
-        if rp.bidirectional {
+        if let Some(ref rev_matrix) = self.rev_matrix {
+            let (rev_src_id, rev_dst_id) = if transposed {
+                (from_id, to_id)
+            } else {
+                (to_id, from_id)
+            };
             Self::process_pairs(
-                g.get_relationships(&rp.types, &rp.to.labels, &rp.from.labels)
+                Graph::iter_relationship_matrix(rev_matrix, rev_src_id, rev_dst_id)
                     .filter(|(s, d)| s != d),
-                true,
+                !transposed,
                 from_id,
                 to_id,
                 &from_node_attrs,
@@ -153,7 +245,36 @@ impl<'a> CondTraverseOp<'a> {
                 runtime,
                 out,
                 self.emit_relationship,
+                self.sibling_edges,
             );
+        }
+
+        // When both this CT and its child are anonymous bidirectional,
+        // deduplicate output rows by (scan_source, final_dest) across
+        // expand_row calls — matching C FalkorDB's matrix-multiply semantics.
+        if let Some(ref dedup) = self.bidir_dedup {
+            let source_alias = self.dedup_source_alias.as_ref().unwrap();
+            let mut seen = dedup.borrow_mut();
+            let mut i = start;
+            while i < out.len() {
+                let key = {
+                    let f = out[i].get(source_alias);
+                    let t = out[i].get(&rp.to.alias);
+                    match (f, t) {
+                        (Some(Value::Node(fid)), Some(Value::Node(tid))) => {
+                            Some((u64::from(*fid), u64::from(*tid)))
+                        }
+                        _ => None,
+                    }
+                };
+                if let Some(k) = key
+                    && !seen.insert(k)
+                {
+                    out.swap_remove(i);
+                    continue;
+                }
+                i += 1;
+            }
         }
 
         drop(g);
@@ -177,6 +298,7 @@ impl<'a> CondTraverseOp<'a> {
         runtime: &'a Runtime<'a>,
         out: &mut Vec<Env<'a>>,
         emit_relationship: bool,
+        sibling_edges: &[u32],
     ) {
         for (src, dst) in pairs {
             let (from_node, to_node) = if is_reverse { (dst, src) } else { (src, dst) };
@@ -229,7 +351,10 @@ impl<'a> CondTraverseOp<'a> {
             // pairs, so one representative edge per pair is sufficient.
             let has_edge_filter = matches!(filter_attrs, Value::Map(m) if !m.is_empty());
             if !emit_relationship && !has_edge_filter {
-                if let Some(id) = g.get_src_dest_relationships(src, dst, &rp.types).next() {
+                if let Some(id) = g
+                    .get_src_dest_relationships(src, dst, &rp.types)
+                    .find(|id| !super::edge_already_used(env, *id, rp.alias.id, sibling_edges))
+                {
                     let mut row = env.clone_pooled(runtime.env_pool);
                     row.insert(&rp.alias, Value::Relationship(Box::new((id, src, dst))));
                     row.insert(&rp.from.alias, Value::Node(from_node));
@@ -241,6 +366,11 @@ impl<'a> CondTraverseOp<'a> {
 
             // Scan edges
             for id in g.get_src_dest_relationships(src, dst, &rp.types) {
+                // Relationship uniqueness: skip edges already bound to other
+                // relationship variables in this MATCH clause.
+                if super::edge_already_used(env, id, rp.alias.id, sibling_edges) {
+                    continue;
+                }
                 if let Value::Map(filter_map) = filter_attrs
                     && !filter_map.is_empty()
                 {
@@ -290,6 +420,11 @@ impl<'a> Iterator for CondTraverseOp<'a> {
                     Some(Ok(b)) => {
                         self.current_batch = Some(b);
                         self.current_pos = 0;
+                        // Reset bidirectional dedup for each new input batch so
+                        // that Apply/Optional scopes see fresh state.
+                        if let Some(ref dedup) = self.bidir_dedup {
+                            dedup.borrow_mut().clear();
+                        }
                     }
                     Some(Err(e)) => return Some(Err(e)),
                     None => break,

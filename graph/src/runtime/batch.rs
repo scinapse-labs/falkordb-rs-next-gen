@@ -45,6 +45,7 @@ use crate::runtime::value::Value;
 use orx_tree::{Dyn, NodeIdx};
 
 use super::ops::aggregate::AggregateOp;
+use super::ops::all_shortest_paths::AllShortestPathsOp;
 use super::ops::apply::ApplyOp;
 use super::ops::cartesian_product::CartesianProductOp;
 use super::ops::commit::CommitOp;
@@ -76,6 +77,7 @@ use super::ops::skip::SkipOp;
 use super::ops::sort::SortOp;
 use super::ops::union::UnionOp;
 use super::ops::unwind::UnwindOp;
+use super::ops::value_hash_join::ValueHashJoinOp;
 
 /// Maximum number of rows in a single batch.
 pub const BATCH_SIZE: usize = 1024;
@@ -659,10 +661,13 @@ pub enum BatchOp<'a> {
     NodeByLabelAndIdScan(NodeByLabelAndIdScanOp<'a>),
     /// Variable-length relationship traverse.
     CondVarLenTraverse(CondVarLenTraverseOp<'a>),
+    AllShortestPaths(AllShortestPathsOp<'a>),
     /// OR-apply multiplexer for disjunctive patterns.
     OrApplyMultiplexer(OrApplyMultiplexerOp<'a>),
     /// FOREACH loop operator.
     ForEach(ForEachOp<'a>),
+    /// Value Hash Join: hash-based equi-join of two sub-plans.
+    ValueHashJoin(ValueHashJoinOp<'a>),
 }
 
 impl<'a> BatchOp<'a> {
@@ -677,7 +682,8 @@ impl<'a> BatchOp<'a> {
             Self::Argument(slot) => {
                 *slot = Some(batch);
             }
-            Self::Once(_) | Self::ProcedureCall(_) => {}
+            Self::Once(_) => {}
+            Self::ProcedureCall(op) => op.child.set_argument_batch(batch),
             Self::NodeByLabelScan(op) => op.child.set_argument_batch(batch),
             Self::Filter(op) => op.child.set_argument_batch(batch),
             Self::Project(op) => op.child.set_argument_batch(batch),
@@ -739,8 +745,17 @@ impl<'a> BatchOp<'a> {
             Self::NodeByFulltextScan(op) => op.child.set_argument_batch(batch),
             Self::NodeByLabelAndIdScan(op) => op.child.set_argument_batch(batch),
             Self::CondVarLenTraverse(op) => op.child.set_argument_batch(batch),
+            Self::AllShortestPaths(op) => op.child.set_argument_batch(batch),
             Self::OrApplyMultiplexer(op) => op.child.set_argument_batch(batch),
             Self::ForEach(op) => op.child.set_argument_batch(batch),
+            Self::ValueHashJoin(op) => {
+                let cloned: Vec<Env<'a>> = batch
+                    .active_env_iter()
+                    .map(|e| e.clone_pooled(op.runtime.env_pool))
+                    .collect();
+                op.right.set_argument_batch(Batch::from_envs(cloned));
+                op.child.set_argument_batch(batch);
+            }
         }
     }
 
@@ -780,8 +795,10 @@ impl<'a> BatchOp<'a> {
             Self::NodeByFulltextScan(op) => Some((op.runtime, op.idx)),
             Self::NodeByLabelAndIdScan(op) => Some((op.runtime, op.idx)),
             Self::CondVarLenTraverse(op) => Some((op.runtime, op.idx)),
+            Self::AllShortestPaths(op) => Some((op.runtime, op.idx)),
             Self::OrApplyMultiplexer(op) => Some((op.runtime, op.idx)),
             Self::ForEach(op) => Some((op.runtime, op.idx)),
+            Self::ValueHashJoin(op) => Some((op.runtime, op.idx)),
         }
     }
 }
@@ -822,8 +839,10 @@ impl<'a> Iterator for BatchOp<'a> {
             Self::NodeByFulltextScan(op) => op.next(),
             Self::NodeByLabelAndIdScan(op) => op.next(),
             Self::CondVarLenTraverse(op) => op.next(),
+            Self::AllShortestPaths(op) => op.next(),
             Self::OrApplyMultiplexer(op) => op.next(),
             Self::ForEach(op) => op.next(),
+            Self::ValueHashJoin(op) => op.next(),
         };
         if let Some(ref res) = result
             && let Some((runtime, idx)) = self.inspect_context()

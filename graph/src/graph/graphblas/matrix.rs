@@ -31,6 +31,8 @@ use std::{mem::MaybeUninit, os::raw::c_void, ptr::null_mut, sync::Arc};
 
 use parking_lot::Mutex;
 
+use crate::graph::graphblas::lagraph_bindings::{LAGraph_Finalize, LAGraph_Init};
+
 use super::{
     GrB_BOOL, GrB_DESC_C, GrB_DESC_CT0, GrB_DESC_CT0T1, GrB_DESC_CT1, GrB_DESC_R, GrB_DESC_RC,
     GrB_DESC_RCT0, GrB_DESC_RCT0T1, GrB_DESC_RCT1, GrB_DESC_RS, GrB_DESC_RSC, GrB_DESC_RSCT0,
@@ -70,6 +72,10 @@ pub fn init(
             user_realloc_function,
             user_free_function,
         );
+
+        // Initialize LAGraph after GraphBLAS
+        let mut msg = [0i8; 256];
+        LAGraph_Init(msg.as_mut_ptr());
     }
 }
 
@@ -84,10 +90,11 @@ pub fn burble(burble: bool) {
     }
 }
 
-/// Finalizes the GraphBLAS library, releasing all resources.
+/// Finalizes LAGraph and GraphBLAS, releasing all resources.
 pub fn shutdown() {
     unsafe {
-        GrB_finalize();
+        let mut msg = [0i8; 256];
+        LAGraph_Finalize(msg.as_mut_ptr());
     }
 }
 
@@ -386,6 +393,13 @@ impl Drop for Matrix {
 }
 
 impl Matrix {
+    /// Returns the raw GrB_Matrix handle for FFI calls (e.g. LAGraph).
+    /// The caller must NOT free the returned handle.
+    #[must_use]
+    pub fn inner(&self) -> GrB_Matrix {
+        *self.m
+    }
+
     #[must_use]
     pub fn pending(&self) -> bool {
         unsafe {

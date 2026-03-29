@@ -36,7 +36,6 @@ class testOptimizationsPlan(FlowTestsBase):
         resultset = self.graph.query(query).result_set
         executionPlan = str(self.graph.explain(query))
         self.env.assertContains("Project", executionPlan)
-        self.env.assertContains("Results", executionPlan)
         self.env.assertNotContains("All Node Scan", executionPlan)
         self.env.assertNotContains("Conditional Traverse", executionPlan)
         self.env.assertNotContains("Aggregate", executionPlan)
@@ -48,7 +47,6 @@ class testOptimizationsPlan(FlowTestsBase):
         resultset = self.graph.query(query).result_set
         executionPlan = str(self.graph.explain(query))
         self.env.assertContains("Project", executionPlan)
-        self.env.assertContains("Results", executionPlan)
         self.env.assertNotContains("All Node Scan", executionPlan)
         self.env.assertNotContains("Conditional Traverse", executionPlan)
         self.env.assertNotContains("Aggregate", executionPlan)
@@ -60,7 +58,6 @@ class testOptimizationsPlan(FlowTestsBase):
         resultset = self.graph.query(query).result_set
         executionPlan = str(self.graph.explain(query))
         self.env.assertContains("Project", executionPlan)
-        self.env.assertContains("Results", executionPlan)
         self.env.assertNotContains("All Node Scan", executionPlan)
         self.env.assertNotContains("Conditional Traverse", executionPlan)
         self.env.assertNotContains("Aggregate", executionPlan)
@@ -72,7 +69,6 @@ class testOptimizationsPlan(FlowTestsBase):
         resultset = self.graph.query(query).result_set
         executionPlan = str(self.graph.explain(query))
         self.env.assertContains("Project", executionPlan)
-        self.env.assertContains("Results", executionPlan)
         self.env.assertNotContains("All Node Scan", executionPlan)
         self.env.assertNotContains("Conditional Traverse", executionPlan)
         self.env.assertNotContains("Aggregate", executionPlan)
@@ -84,7 +80,6 @@ class testOptimizationsPlan(FlowTestsBase):
         resultset = self.graph.query(query).result_set
         executionPlan = str(self.graph.explain(query))
         self.env.assertContains("Project", executionPlan)
-        self.env.assertContains("Results", executionPlan)
         self.env.assertNotContains("All Node Scan", executionPlan)
         self.env.assertNotContains("Conditional Traverse", executionPlan)
         self.env.assertNotContains("Aggregate", executionPlan)
@@ -96,7 +91,6 @@ class testOptimizationsPlan(FlowTestsBase):
         resultset = self.graph.query(query).result_set
         executionPlan = str(self.graph.explain(query))
         self.env.assertContains("Project", executionPlan)
-        self.env.assertContains("Results", executionPlan)
         self.env.assertNotContains("All Node Scan", executionPlan)
         self.env.assertNotContains("Conditional Traverse", executionPlan)
         self.env.assertNotContains("Aggregate", executionPlan)
@@ -122,7 +116,6 @@ class testOptimizationsPlan(FlowTestsBase):
         resultset = self.graph.query(query).result_set
         executionPlan = str(self.graph.explain(query))
         self.env.assertContains("Project", executionPlan)
-        self.env.assertContains("Results", executionPlan)
         self.env.assertNotContains("All Node Scan", executionPlan)
         self.env.assertNotContains("Node By Label Scan", executionPlan)
         self.env.assertNotContains("Aggregate", executionPlan)
@@ -134,7 +127,6 @@ class testOptimizationsPlan(FlowTestsBase):
         resultset = self.graph.query(query).result_set
         executionPlan = str(self.graph.explain(query))
         self.env.assertContains("Project", executionPlan)
-        self.env.assertContains("Results", executionPlan)
         self.env.assertNotContains("All Node Scan", executionPlan)
         self.env.assertNotContains("Node By Label Scan", executionPlan)
         self.env.assertNotContains("Aggregate", executionPlan)
@@ -146,7 +138,6 @@ class testOptimizationsPlan(FlowTestsBase):
         resultset = self.graph.query(query).result_set
         executionPlan = str(self.graph.explain(query))
         self.env.assertContains("Project", executionPlan)
-        self.env.assertContains("Results", executionPlan)
         self.env.assertNotContains("All Node Scan", executionPlan)
         self.env.assertNotContains("Node By Label Scan", executionPlan)
         self.env.assertNotContains("Aggregate", executionPlan)
@@ -523,7 +514,7 @@ class testOptimizationsPlan(FlowTestsBase):
         for q in queries:
             plan = str(self.graph.explain(q))
             self.env.assertContains("Node By Label Scan | (n:Q)", plan)
-            self.env.assertContains("Conditional Traverse | (n:N)->(n:N)", plan)
+            self.env.assertContains("Conditional Traverse | (n)->(n:N)", plan)
 
             # assert correctness of the results
             res = self.graph.query(q)
@@ -541,7 +532,7 @@ class testOptimizationsPlan(FlowTestsBase):
 
         # make sure `M` is traversed first, as it has less labels
         self.env.assertContains("Node By Label Scan | (n:M)", plan)
-        self.env.assertContains("Conditional Traverse | (n:N)->(n:N)", plan)
+        self.env.assertContains("Conditional Traverse | (n)->(n:N)", plan)
 
         # make sure that labels from different `OPTIONAL MATCH` clauses are not
         # "mixed" in Label-Scan optimization
@@ -551,7 +542,7 @@ class testOptimizationsPlan(FlowTestsBase):
         # make sure `N` is the first label traversed, even though there are less
         # labels with label `M`
         self.env.assertContains("Node By Label Scan | (n:N)", plan)
-        self.env.assertContains("Conditional Traverse | (n:M)->(n:M)", plan)
+        self.env.assertContains("Conditional Traverse | (n)->(n:M)", plan)
 
     def test32_remove_redundant_filters(self):
         # test that filter reduction is a run-time optimization

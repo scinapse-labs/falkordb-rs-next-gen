@@ -57,7 +57,7 @@ use crate::{
         graphblas::{
             matrix::{
                 Dup, MaskedElementWiseAdd, MaskedElementWiseMultiply, Matrix, MxM, New, Remove,
-                Set, Size,
+                Set, Size, Transpose,
             },
             tensor::Tensor,
             versioned_matrix::VersionedMatrix,
@@ -453,6 +453,15 @@ impl Graph {
         self.node_count
     }
 
+    /// Returns the number of nodes with the given label.
+    #[must_use]
+    pub fn label_node_count(
+        &self,
+        label: &str,
+    ) -> u64 {
+        self.get_label_matrix(label).map_or(0, Size::nvals)
+    }
+
     #[must_use]
     pub const fn relationship_count(&self) -> u64 {
         self.relationship_count
@@ -460,7 +469,7 @@ impl Graph {
 
     /// Number of nodes with the given label (by label index).
     #[must_use]
-    pub fn label_node_count(
+    pub fn label_node_count_by_idx(
         &self,
         label_idx: usize,
     ) -> u64 {
@@ -1218,17 +1227,20 @@ impl Graph {
             .flat_map(|iter| iter.map(|(_, id)| RelationshipId(id)))
     }
 
-    pub fn get_relationships(
+    /// Build a relationship matrix combining the given types and filtering by
+    /// source/destination labels.  The returned matrix can be cached and reused
+    /// across multiple calls to [`iter_relationship_matrix`].
+    pub fn build_relationship_matrix(
         &self,
         types: &[Arc<String>],
-        src_lables: &OrderSet<Arc<String>>,
+        src_labels: &OrderSet<Arc<String>>,
         dest_labels: &OrderSet<Arc<String>>,
-    ) -> impl Iterator<Item = (NodeId, NodeId)> + use<> {
+    ) -> Matrix {
         let matrices = types
             .iter()
             .filter_map(|relationship_type| self.get_relationship_matrix(relationship_type))
             .collect::<Vec<_>>();
-        let src_labels_matrices = src_lables
+        let src_labels_matrices = src_labels
             .iter()
             .map(|label| self.get_label_matrix(label))
             .collect::<Option<Vec<_>>>();
@@ -1236,8 +1248,6 @@ impl Graph {
             .iter()
             .map(|label| self.get_label_matrix(label))
             .collect::<Option<Vec<_>>>();
-        // If labels/types were requested but none exist in the graph,
-        // no results can match.
         let no_match = (!types.is_empty() && matrices.is_empty())
             || src_labels_matrices.is_none()
             || dest_labels_matrices.is_none();
@@ -1245,9 +1255,7 @@ impl Graph {
         let src_labels_matrices = src_labels_matrices.unwrap_or_default();
         let dest_labels_matrices = dest_labels_matrices.unwrap_or_default();
 
-        let m = if no_match {
-            // If labels/types were requested but none exist in the graph,
-            // no results can match - clear the matrix to return empty.
+        if no_match {
             self.zero_matrix.to_matrix()
         } else {
             let mut iter = matrices.into_iter();
@@ -1291,8 +1299,36 @@ impl Graph {
                 m.lmxm(&dest_matrix);
             }
             m
-        };
-        m.iter(0, u64::MAX)
+        }
+    }
+
+    /// Iterate a prebuilt relationship matrix, optionally restricting to a
+    /// single source row (`from_id`) and/or a single destination column
+    /// (`to_id`).
+    pub fn iter_relationship_matrix(
+        m: &Matrix,
+        from_id: Option<NodeId>,
+        to_id: Option<NodeId>,
+    ) -> impl Iterator<Item = (NodeId, NodeId)> + use<> {
+        let (min_row, max_row) = from_id.map_or((0, u64::MAX), |id| (id.0, id.0));
+        m.iter(min_row, max_row)
+            .filter(move |(_, dest)| to_id.is_none() || to_id.unwrap().0 == *dest)
+            .map(|(src, dest)| (NodeId(src), NodeId(dest)))
+    }
+
+    /// Convenience wrapper: build the matrix and iterate it in one call.
+    pub fn get_relationships(
+        &self,
+        types: &[Arc<String>],
+        src_labels: &OrderSet<Arc<String>>,
+        dest_labels: &OrderSet<Arc<String>>,
+        from_id: Option<NodeId>,
+        to_id: Option<NodeId>,
+    ) -> impl Iterator<Item = (NodeId, NodeId)> + use<> {
+        let m = self.build_relationship_matrix(types, src_labels, dest_labels);
+        let (min_row, max_row) = from_id.map_or((0, u64::MAX), |id| (id.0, id.0));
+        m.iter(min_row, max_row)
+            .filter(move |(_, dest)| to_id.is_none() || to_id.unwrap().0 == *dest)
             .map(|(src, dest)| (NodeId(src), NodeId(dest)))
     }
 
@@ -1560,6 +1596,62 @@ impl Graph {
         graph: Arc<AtomicRefCell<Self>>,
     ) {
         self.node_indexer.set_graph(graph);
+    }
+
+    /// Build a materialized boolean adjacency matrix filtered by relationship types.
+    /// If `rel_types` is empty, returns the full adjacency matrix.
+    /// The caller owns the returned `Matrix`.
+    pub fn build_adjacency_matrix(
+        &self,
+        rel_types: &[Arc<String>],
+    ) -> Matrix {
+        if rel_types.is_empty() {
+            self.adjacancy_matrix.to_matrix()
+        } else {
+            let mut result = Matrix::new(self.node_cap, self.node_cap);
+            for rel_type in rel_types {
+                if let Some(type_id) = self.get_type_id(rel_type) {
+                    let m = self.relationship_matrices[usize::from(type_id)]
+                        .matrix()
+                        .to_matrix();
+                    result.element_wise_add(None, None, Some(&m), None);
+                }
+            }
+            result
+        }
+    }
+
+    /// Build a materialized boolean adjacency matrix that is symmetric (A + A^T).
+    /// Used for undirected graph algorithms (WCC, CDLP, MSF).
+    pub fn build_symmetric_adjacency_matrix(
+        &self,
+        rel_types: &[Arc<String>],
+    ) -> Matrix {
+        let a = self.build_adjacency_matrix(rel_types);
+        let at = a.transpose();
+        let mut result = Matrix::new(self.node_cap, self.node_cap);
+        result.element_wise_add(None, Some(&a), Some(&at), None);
+        result
+    }
+
+    /// Build a diagonal boolean matrix of nodes matching any of the given labels.
+    /// If `labels` is empty, returns the all_nodes matrix.
+    pub fn build_node_mask_matrix(
+        &self,
+        labels: &[Arc<String>],
+    ) -> Matrix {
+        if labels.is_empty() {
+            self.all_nodes_matrix.to_matrix()
+        } else {
+            let mut result = Matrix::new(self.node_cap, self.node_cap);
+            for label in labels {
+                if let Some(label_id) = self.get_label_id(label) {
+                    let m = self.labels_matices[usize::from(label_id)].to_matrix();
+                    result.element_wise_add(None, None, Some(&m), None);
+                }
+            }
+            result
+        }
     }
 
     #[must_use]

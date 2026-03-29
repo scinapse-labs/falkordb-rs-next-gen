@@ -57,7 +57,7 @@
 use crate::entity_type::EntityType;
 use crate::index::indexer::IndexType;
 use crate::parser::ast::{
-    ExprIR, QuantifierType, QueryExpr, QueryGraph, QueryIR, QueryNode, QueryPath,
+    AllShortestPaths, ExprIR, QuantifierType, QueryExpr, QueryGraph, QueryIR, QueryNode, QueryPath,
     QueryRelationship, RawQueryIR, SetItem,
 };
 use crate::parser::lexer::{Keyword, Lexer, Token};
@@ -679,17 +679,33 @@ impl<'a> Parser<'a> {
         func.validate(args.len())
             .map_err(|e| e.replace("function", "procedure"))?;
         let mut named_outputs = vec![];
+        let mut yield_aliases: Vec<Option<Arc<String>>> = vec![];
         let (filter, yielded) = if optional_match_token!(self.lexer => Yield) {
             let ident = self.parse_ident()?;
-            named_outputs.push(ident);
+            if optional_match_token!(self.lexer => As) {
+                let alias = self.parse_ident()?;
+                yield_aliases.push(Some(ident));
+                named_outputs.push(alias);
+            } else {
+                yield_aliases.push(None);
+                named_outputs.push(ident);
+            }
             while optional_match_token!(self.lexer, Comma) {
                 let ident = self.parse_ident()?;
-                named_outputs.push(ident);
+                if optional_match_token!(self.lexer => As) {
+                    let alias = self.parse_ident()?;
+                    yield_aliases.push(Some(ident));
+                    named_outputs.push(alias);
+                } else {
+                    yield_aliases.push(None);
+                    named_outputs.push(ident);
+                }
             }
             (self.parse_where()?, true)
         } else if let FnType::Procedure(defult_outputs) = &func.fn_type {
             for output in defult_outputs {
                 named_outputs.push(Arc::new(output.clone()));
+                yield_aliases.push(None);
             }
             (None, false)
         } else {
@@ -700,6 +716,7 @@ impl<'a> Parser<'a> {
             func,
             args,
             yields: named_outputs,
+            yield_aliases,
             filter,
             explicit_yield: yielded,
         }])
@@ -950,6 +967,133 @@ impl<'a> Parser<'a> {
         loop {
             if let Ok(ident) = self.parse_ident() {
                 match_token!(self.lexer, Equal);
+
+                // Check for shortestPath/allShortestPaths in MATCH clause
+                if let Token::IdentifierOrKeyword { ident: value, .. } = self.lexer.current()? {
+                    if value.eq_ignore_ascii_case("shortestPath") {
+                        return Err(self.lexer.format_error(
+                            "FalkorDB currently only supports shortestPaths in WITH or RETURN clauses",
+                        ));
+                    }
+                    if value.eq_ignore_ascii_case("allShortestPaths") {
+                        // Parse allShortestPaths((src)-[*]->(dst))
+                        self.lexer.next(); // consume 'allShortestPaths'
+                        match_token!(self.lexer, LParen); // consume outer '('
+
+                        let mut vars = vec![];
+                        let left = self.parse_node_pattern()?;
+                        let left_alias = left.alias.clone();
+                        vars.push(left.alias.clone());
+                        if nodes_alias.insert(left.alias.clone()) {
+                            query_graph.add_node(left.clone());
+                        }
+
+                        // Parse relationship chain inside allShortestPaths.
+                        // Multiple relationships are allowed: fixed-length prefix
+                        // relationships are added as regular relationships, and the
+                        // variable-length one gets the allShortestPaths flag.
+                        if !matches!(self.lexer.current()?, Token::Dash | Token::LessThan) {
+                            return Err(self
+                                .lexer
+                                .format_error("allShortestPaths requires a relationship pattern"));
+                        }
+
+                        let mut prev_node = left;
+                        let mut asp_found = false;
+                        loop {
+                            if !matches!(self.lexer.current()?, Token::Dash | Token::LessThan) {
+                                break;
+                            }
+                            let (relationship, right) =
+                                self.parse_relationship_pattern(prev_node, clause)?;
+
+                            let is_var_len =
+                                relationship.min_hops.is_some() || relationship.max_hops.is_some();
+
+                            if is_var_len {
+                                // This is the allShortestPaths relationship
+                                if asp_found {
+                                    return Err(self.lexer.format_error(
+                                        "allShortestPaths supports at most one variable-length relationship",
+                                    ));
+                                }
+                                asp_found = true;
+
+                                // Validate min_hops
+                                if let Some(min) = relationship.min_hops
+                                    && min > 1
+                                {
+                                    return Err(self.lexer.format_error(
+                                        "allShortestPaths(...) does not support a minimal length different from 1",
+                                    ));
+                                }
+
+                                let mut new_rel = QueryRelationship::new(
+                                    relationship.alias.clone(),
+                                    relationship.types.clone(),
+                                    relationship.attrs.clone(),
+                                    relationship.from.clone(),
+                                    relationship.to.clone(),
+                                    relationship.bidirectional,
+                                    Some(1),
+                                    relationship.max_hops,
+                                );
+                                new_rel.all_shortest_paths = if !relationship.bidirectional
+                                    && relationship.from.alias != left_alias
+                                {
+                                    AllShortestPaths::Reversed
+                                } else {
+                                    AllShortestPaths::Forward
+                                };
+                                let relationship = Arc::new(new_rel);
+
+                                vars.push(relationship.alias.clone());
+                                vars.push(right.alias.clone());
+                                if !query_graph.add_relationship(relationship.clone())
+                                    && clause == &Keyword::Match
+                                {
+                                    return Err(format!(
+                                        "Cannot use the same relationship variable '{}' for multiple patterns.",
+                                        relationship.alias.as_str()
+                                    ));
+                                }
+                            } else {
+                                // Fixed-length prefix/suffix relationship
+                                vars.push(relationship.alias.clone());
+                                vars.push(right.alias.clone());
+                                if !query_graph.add_relationship(relationship.clone())
+                                    && clause == &Keyword::Match
+                                {
+                                    return Err(format!(
+                                        "Cannot use the same relationship variable '{}' for multiple patterns.",
+                                        relationship.alias.as_str()
+                                    ));
+                                }
+                            }
+                            if nodes_alias.insert(right.alias.clone()) {
+                                query_graph.add_node(right.clone());
+                            }
+                            prev_node = right;
+                        }
+
+                        if !asp_found {
+                            return Err(self.lexer.format_error(
+                                "allShortestPaths requires a variable-length relationship pattern",
+                            ));
+                        }
+
+                        match_token!(self.lexer, RParen); // consume outer ')'
+                        query_graph.add_path(Arc::new(QueryPath::new(ident, vars)));
+
+                        // Continue to next pattern or end
+                        if self.lexer.current()? != Token::Comma {
+                            break;
+                        }
+                        self.lexer.next(); // consume comma
+                        continue;
+                    }
+                }
+
                 let mut vars = vec![];
                 let mut left = self.parse_node_pattern()?;
                 vars.push(left.alias.clone());
@@ -1200,6 +1344,204 @@ impl<'a> Parser<'a> {
         ))
     }
 
+    /// Parses `shortestPath((src)-[rel:TYPE*min..max]->(dst))` or
+    /// `allShortestPaths(...)` after the opening `(`.
+    fn parse_shortest_path_expr(
+        &mut self,
+        all_paths: bool,
+    ) -> Result<DynTree<ExprIR<Arc<String>>>, String> {
+        let fn_name = if all_paths {
+            "allShortestPaths"
+        } else {
+            "shortestPath"
+        };
+
+        // Verify pattern starts with `(` — otherwise it's not a valid shortestPath call
+        if self.lexer.current()? != Token::LParen {
+            return Err(self
+                .lexer
+                .format_error(&format!("Unknown function '{fn_name}'")));
+        }
+
+        // Parse source node: (ident)
+        match_token!(self.lexer, LParen);
+        let Ok(src_var) = self.parse_ident() else {
+            return Err(self
+                .lexer
+                .format_error(&format!("A {fn_name} requires bound nodes")));
+        };
+        // Check for inline node properties (not allowed)
+        if self.lexer.current()? == Token::LBracket {
+            return Err(self
+                .lexer
+                .format_error(&format!("A {fn_name} requires bound nodes")));
+        }
+        match_token!(self.lexer, RParen);
+
+        // Parse direction and relationship: -[...]->, <-[...]-
+        let is_incoming = optional_match_token!(self.lexer, LessThan);
+        match_token!(self.lexer, Dash);
+
+        // Parse relationship details in [...]
+        let has_details = optional_match_token!(self.lexer, LBrace);
+        let (rel_types, min_hops, max_hops, has_edge_filter) = if has_details {
+            // Optional alias (ignored)
+            let _alias = self.parse_ident().ok();
+
+            // Relationship types
+            let mut types = Vec::new();
+            if optional_match_token!(self.lexer, Colon) {
+                loop {
+                    types.push(self.parse_ident()?);
+                    let pipe = optional_match_token!(self.lexer, Pipe);
+                    let colon = optional_match_token!(self.lexer, Colon);
+                    if pipe || colon {
+                        continue;
+                    }
+                    break;
+                }
+            }
+
+            // Variable length * and range
+            let (min, max) = if optional_match_token!(self.lexer, Star) {
+                let start = if let Token::Integer(i) = self.lexer.current()? {
+                    self.lexer.next();
+                    Some(i as u32)
+                } else {
+                    None
+                };
+                if optional_match_token!(self.lexer, DotDot) {
+                    let end = if let Token::Integer(i) = self.lexer.current()? {
+                        self.lexer.next();
+                        Some(i as u32)
+                    } else {
+                        None
+                    };
+                    (start.unwrap_or(1), end)
+                } else if let Some(exact) = start {
+                    (exact, Some(exact))
+                } else {
+                    (1, None) // [*] = 1..infinity
+                }
+            } else {
+                (1, Some(1)) // no *, fixed 1-hop
+            };
+
+            // Check for edge filter properties (not allowed)
+            let has_filter = if let Token::Parameter(_) = self.lexer.current()? {
+                true
+            } else {
+                self.lexer.current()? == Token::LBracket
+            };
+
+            // Skip filter content if present (consume until we reach `]`)
+            if has_filter {
+                let mut depth = 0i32;
+                loop {
+                    let tok = self.lexer.current()?;
+                    match tok {
+                        Token::LBracket => {
+                            // Nested `{`
+                            depth += 1;
+                            self.lexer.next();
+                        }
+                        Token::RBracket => {
+                            // Closing `}`
+                            depth -= 1;
+                            self.lexer.next();
+                            if depth <= 0 {
+                                break;
+                            }
+                        }
+                        Token::RBrace => {
+                            // `]` - stop before consuming it
+                            break;
+                        }
+                        _ => {
+                            self.lexer.next();
+                        }
+                    }
+                }
+            }
+
+            match_token!(self.lexer, RBrace);
+            (types, min, max, has_filter)
+        } else {
+            // -[]-  bare relationship
+            (vec![], 1, None, false)
+        };
+
+        match_token!(self.lexer, Dash);
+        let is_outgoing = optional_match_token!(self.lexer, GreaterThan);
+
+        // Determine direction
+        let directed = is_incoming || is_outgoing;
+
+        // Parse destination node: (ident)
+        match_token!(self.lexer, LParen);
+        let Ok(dst_var) = self.parse_ident() else {
+            // Could be empty `()` in a multi-relationship pattern like (a)-[]->()(b)
+            // or simply an anonymous node
+            if self.lexer.current()? == Token::RParen {
+                // Empty node: check if there's another relationship after it
+                self.lexer.next(); // consume )
+                if matches!(self.lexer.current()?, Token::Dash | Token::LessThan) {
+                    return Err(self.lexer.format_error(&format!(
+                        "{fn_name} requires a path containing a single relationship"
+                    )));
+                }
+                // It's just () as dest
+                return Err(self
+                    .lexer
+                    .format_error(&format!("A {fn_name} requires bound nodes")));
+            }
+            return Err(self
+                .lexer
+                .format_error(&format!("A {fn_name} requires bound nodes")));
+        };
+        if self.lexer.current()? == Token::LBracket {
+            return Err(self
+                .lexer
+                .format_error(&format!("A {fn_name} requires bound nodes")));
+        }
+        match_token!(self.lexer, RParen);
+
+        // Closing paren of pattern
+        match_token!(self.lexer, RParen);
+
+        // Validate constraints
+        if min_hops > 1 {
+            return Err(self.lexer.format_error(&format!(
+                "{fn_name} does not support a minimal length different from 0 or 1"
+            )));
+        }
+        if has_edge_filter {
+            return Err(self.lexer.format_error(&format!(
+                "filters on relationships in {fn_name} are not allowed"
+            )));
+        }
+
+        // Determine actual source and dest based on direction
+        let (actual_src, actual_dst) = if is_incoming && !is_outgoing {
+            // <-[]-  means dst is the pattern's left node
+            (dst_var, src_var)
+        } else {
+            (src_var, dst_var)
+        };
+
+        Ok(tree!(
+            ExprIR::ShortestPath {
+                rel_types,
+                min_hops,
+                max_hops,
+                directed,
+                all_paths,
+            },
+            tree!(ExprIR::Variable(actual_src)),
+            tree!(ExprIR::Variable(actual_dst))
+        ))
+    }
+
     #[allow(clippy::too_many_lines)]
     fn parse_primary_expr(
         &mut self,
@@ -1242,6 +1584,16 @@ impl<'a> Parser<'a> {
                     // reduce(acc = init, var IN list | expr)
                     if ident.eq_ignore_ascii_case("reduce") {
                         return Ok((self.parse_reduce_expr(allow_pattern_predicate)?, false));
+                    }
+
+                    // shortestPath((a)-[*]->(b)) or allShortestPaths((a)-[*]->(b))
+                    if ident.eq_ignore_ascii_case("shortestPath") {
+                        return Ok((self.parse_shortest_path_expr(false)?, false));
+                    }
+                    if ident.eq_ignore_ascii_case("allShortestPaths") {
+                        return Err(self.lexer.format_error(
+                            "FalkorDB support allShortestPaths only in match clauses",
+                        ));
                     }
 
                     let func = get_functions()

@@ -5,6 +5,7 @@
 //! `ExprEval::constant()` for compile-time constant folding).
 
 use std::cmp::Ordering;
+use std::collections::VecDeque;
 use std::sync::Arc;
 
 use orx_tree::{Dyn, DynNode, DynTree, NodeIdx, NodeRef};
@@ -173,6 +174,25 @@ impl<'a> ExprEval<'a> {
             }
             ExprIR::MapProjection => {
                 return self.eval_map_projection(ir, idx, env, agg_group_key);
+            }
+            ExprIR::ShortestPath {
+                rel_types,
+                min_hops,
+                max_hops,
+                directed,
+                all_paths,
+            } => {
+                return self.eval_shortest_path(
+                    ir,
+                    idx,
+                    env,
+                    agg_group_key,
+                    rel_types,
+                    *min_hops,
+                    *max_hops,
+                    *directed,
+                    *all_paths,
+                );
             }
             _ => {}
         }
@@ -666,6 +686,9 @@ impl<'a> ExprEval<'a> {
                 ExprIR::Pattern(_) => {
                     unreachable!("Pattern should be handled by the planner")
                 }
+                ExprIR::ShortestPath { .. } => {
+                    unreachable!("ShortestPath should be handled in the early-return section")
+                }
             }
         }
         debug_assert_eq!(res.len(), 1);
@@ -735,6 +758,267 @@ impl<'a> ExprEval<'a> {
                 }
             }
         }
+    }
+
+    /// Evaluate a `shortestPath()` or `allShortestPaths()` expression.
+    ///
+    /// Children: [source_var_expr, dest_var_expr]
+    /// Returns a `Path` value (alternating nodes and edges) or `Null`.
+    #[allow(clippy::too_many_arguments)]
+    fn eval_shortest_path(
+        &self,
+        ir: &DynTree<ExprIR<Variable>>,
+        idx: NodeIdx<Dyn<ExprIR<Variable>>>,
+        env: Option<&Env<'_>>,
+        agg_group_key: Option<u64>,
+        rel_types: &[Arc<String>],
+        min_hops: u32,
+        max_hops: Option<u32>,
+        directed: bool,
+        all_paths: bool,
+    ) -> Result<Value, String> {
+        let node = ir.node(idx);
+        let src_val = self.eval(ir, node.child(0).idx(), env, agg_group_key)?;
+        let dst_val = self.eval(ir, node.child(1).idx(), env, agg_group_key)?;
+
+        let src_id = match &src_val {
+            Value::Node(id) => *id,
+            Value::Null => return Ok(Value::Null),
+            _ => return Err("A shortestPath requires bound nodes".into()),
+        };
+        let dst_id = match &dst_val {
+            Value::Node(id) => *id,
+            Value::Null => return Ok(Value::Null),
+            _ => return Err("A shortestPath requires bound nodes".into()),
+        };
+
+        let rt = self.rt()?;
+        let g = rt.g.borrow();
+
+        // min_hops == 0: if src == dest, return single-node path
+        if min_hops == 0 && src_id == dst_id {
+            let path: ThinVec<Value> = thin_vec![Value::Node(src_id)];
+            return Ok(Value::Path(Arc::new(path)));
+        }
+
+        // Build adjacency matrix filtered by rel_types
+        let adj = g.build_adjacency_matrix(rel_types);
+
+        // Also build transpose if undirected
+        let adj_t = if directed {
+            None
+        } else {
+            use crate::graph::graphblas::matrix::Transpose;
+            Some(adj.transpose())
+        };
+
+        let max_level = max_hops.map_or(u64::MAX, |m| m as u64);
+        let node_cap = g.node_cap();
+
+        // Build adjacency list from the sparse matrix for efficient BFS
+        let mut adj_list: Vec<Vec<u64>> = vec![Vec::new(); node_cap as usize];
+        for (row, col) in adj.iter(0, node_cap.saturating_sub(1)) {
+            adj_list[row as usize].push(col);
+        }
+        if let Some(ref t) = adj_t {
+            for (row, col) in t.iter(0, node_cap.saturating_sub(1)) {
+                adj_list[row as usize].push(col);
+            }
+        }
+
+        if all_paths {
+            // All shortest paths: BFS to find distance, then enumerate
+            Ok(self.bfs_all_shortest_paths(
+                &g, &adj_list, src_id, dst_id, max_level, node_cap, rel_types,
+            ))
+        } else {
+            // Single shortest path via BFS with parent tracking
+            Ok(self.bfs_shortest_path(
+                &g, &adj_list, src_id, dst_id, max_level, node_cap, rel_types,
+            ))
+        }
+    }
+
+    /// BFS to find the single shortest path between two nodes.
+    #[allow(clippy::too_many_arguments)]
+    fn bfs_shortest_path(
+        &self,
+        g: &crate::graph::graph::Graph,
+        adj_list: &[Vec<u64>],
+        src_id: crate::graph::graph::NodeId,
+        dst_id: crate::graph::graph::NodeId,
+        max_level: u64,
+        node_cap: u64,
+        rel_types: &[Arc<String>],
+    ) -> Value {
+        use crate::graph::graph::{NodeId, RelationshipId};
+
+        let src = u64::from(src_id);
+        let dst = u64::from(dst_id);
+
+        // parent[i] = Some(parent_node_u64) during BFS
+        let mut parent: Vec<Option<u64>> = vec![None; node_cap as usize];
+        parent[src as usize] = Some(src); // mark source visited (self-parent)
+
+        let mut queue: VecDeque<(u64, u64)> = VecDeque::new(); // (node, depth)
+        queue.push_back((src, 0));
+
+        let mut found = false;
+
+        while let Some((cur, depth)) = queue.pop_front() {
+            if depth >= max_level {
+                continue;
+            }
+            for &col in &adj_list[cur as usize] {
+                if parent[col as usize].is_none() {
+                    parent[col as usize] = Some(cur);
+                    if col == dst {
+                        found = true;
+                        break;
+                    }
+                    queue.push_back((col, depth + 1));
+                }
+            }
+            if found {
+                break;
+            }
+        }
+
+        if !found {
+            return Value::Null;
+        }
+
+        // Reconstruct path from dst back to src
+        let mut path_nodes: Vec<u64> = vec![dst];
+        let mut cur = dst;
+        while cur != src {
+            cur = parent[cur as usize].unwrap();
+            path_nodes.push(cur);
+        }
+        path_nodes.reverse();
+
+        // Build alternating node/relationship path
+        let mut path: ThinVec<Value> = ThinVec::with_capacity(path_nodes.len() * 2 - 1);
+        path.push(Value::Node(NodeId::from(path_nodes[0])));
+        for i in 0..path_nodes.len() - 1 {
+            let from = NodeId::from(path_nodes[i]);
+            let to = NodeId::from(path_nodes[i + 1]);
+            // Find the relationship between consecutive path nodes
+            let rel_id: Option<RelationshipId> = g
+                .get_src_dest_relationships(from, to, rel_types)
+                .next()
+                .or_else(|| g.get_src_dest_relationships(to, from, rel_types).next());
+            if let Some(rid) = rel_id {
+                path.push(Value::Relationship(Box::new((rid, from, to))));
+            }
+            path.push(Value::Node(to));
+        }
+
+        Value::Path(Arc::new(path))
+    }
+
+    /// BFS to find all shortest paths between two nodes.
+    #[allow(clippy::too_many_arguments)]
+    fn bfs_all_shortest_paths(
+        &self,
+        g: &crate::graph::graph::Graph,
+        adj_list: &[Vec<u64>],
+        src_id: crate::graph::graph::NodeId,
+        dst_id: crate::graph::graph::NodeId,
+        max_level: u64,
+        node_cap: u64,
+        rel_types: &[Arc<String>],
+    ) -> Value {
+        use crate::graph::graph::{NodeId, RelationshipId};
+
+        let src = u64::from(src_id);
+        let dst = u64::from(dst_id);
+
+        // BFS to find distance and all shortest-path predecessors
+        let mut distances: Vec<Option<u64>> = vec![None; node_cap as usize];
+        distances[src as usize] = Some(0);
+
+        // predecessors[i] = list of all nodes that are parents on some shortest path
+        let mut predecessors: Vec<Vec<u64>> = vec![Vec::new(); node_cap as usize];
+
+        let mut queue: VecDeque<u64> = VecDeque::new();
+        queue.push_back(src);
+
+        let mut found_dist: Option<u64> = None;
+
+        while let Some(cur) = queue.pop_front() {
+            let cur_dist = distances[cur as usize].unwrap();
+            if let Some(fd) = found_dist
+                && cur_dist >= fd
+            {
+                continue;
+            }
+            if cur_dist >= max_level {
+                continue;
+            }
+            for &col in &adj_list[cur as usize] {
+                let new_dist = cur_dist + 1;
+                match distances[col as usize] {
+                    None => {
+                        distances[col as usize] = Some(new_dist);
+                        predecessors[col as usize].push(cur);
+                        if col == dst {
+                            found_dist = Some(new_dist);
+                        } else {
+                            queue.push_back(col);
+                        }
+                    }
+                    Some(d) if d == new_dist => {
+                        predecessors[col as usize].push(cur);
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        if found_dist.is_none() {
+            return Value::Null;
+        }
+
+        // Enumerate all shortest paths by DFS from dst back to src
+        let mut all_paths: Vec<ThinVec<Value>> = Vec::new();
+        let mut stack: Vec<(u64, Vec<u64>)> = vec![(dst, vec![dst])];
+
+        while let Some((cur, path_so_far)) = stack.pop() {
+            if cur == src {
+                // Reconstruct forward path
+                let mut fwd = path_so_far.clone();
+                fwd.reverse();
+                let mut path: ThinVec<Value> = ThinVec::with_capacity(fwd.len() * 2 - 1);
+                path.push(Value::Node(NodeId::from(fwd[0])));
+                for i in 0..fwd.len() - 1 {
+                    let from = NodeId::from(fwd[i]);
+                    let to = NodeId::from(fwd[i + 1]);
+                    let rel_id: Option<RelationshipId> = g
+                        .get_src_dest_relationships(from, to, rel_types)
+                        .next()
+                        .or_else(|| g.get_src_dest_relationships(to, from, rel_types).next());
+                    if let Some(rid) = rel_id {
+                        path.push(Value::Relationship(Box::new((rid, from, to))));
+                    }
+                    path.push(Value::Node(to));
+                }
+                all_paths.push(path);
+                continue;
+            }
+            for &pred in &predecessors[cur as usize] {
+                let mut new_path = path_so_far.clone();
+                new_path.push(pred);
+                stack.push((pred, new_path));
+            }
+        }
+
+        // Return list of paths
+        let result: ThinVec<Value> = all_paths
+            .into_iter()
+            .map(|p| Value::Path(Arc::new(p)))
+            .collect();
+        Value::List(Arc::new(result))
     }
 
     pub(crate) fn eval_map_projection(

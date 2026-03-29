@@ -178,7 +178,7 @@ pub fn register(funcs: &mut Functions) {
             for (idx, name) in g.get_labels().iter().enumerate() {
                 labels_map.insert(
                     name.clone(),
-                    Value::Int(g.label_node_count(idx) as i64),
+                    Value::Int(g.label_node_count_by_idx(idx) as i64),
                 );
             }
 

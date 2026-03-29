@@ -2,9 +2,9 @@
 //!
 //! Implements Cypher `CALL db.procedure(args) YIELD outputs`. Evaluates
 //! argument expressions, validates types, invokes the procedure function,
-//! and maps the returned list of maps to output environments. This is a
-//! *blocking* operator: the procedure is called once and all results are
-//! materialized before yielding as batches.
+//! and maps the returned list of maps to output environments. When preceded
+//! by another clause (e.g. `MATCH (a) CALL algo.BFS(a, ...)`), the operator
+//! iterates over input rows and evaluates arguments in each row's environment.
 //!
 //! Only allowed in write queries when the procedure is marked as write;
 //! returns an error for `GRAPH.RO_QUERY` on write procedures.
@@ -15,7 +15,7 @@ use crate::parser::ast::{QueryExpr, Variable};
 use crate::planner::IR;
 use crate::runtime::eval::ExprEval;
 use crate::runtime::{
-    batch::{BATCH_SIZE, Batch},
+    batch::{BATCH_SIZE, Batch, BatchOp},
     env::Env,
     functions::GraphFn,
     runtime::Runtime,
@@ -26,6 +26,7 @@ use thin_vec::ThinVec;
 
 pub struct ProcedureCallOp<'a> {
     pub(crate) runtime: &'a Runtime<'a>,
+    pub(crate) child: Box<BatchOp<'a>>,
     func: &'a Arc<GraphFn>,
     trees: &'a [QueryExpr<Variable>],
     name_outputs: &'a [Variable],
@@ -36,6 +37,7 @@ pub struct ProcedureCallOp<'a> {
 impl<'a> ProcedureCallOp<'a> {
     pub fn new(
         runtime: &'a Runtime<'a>,
+        child: Box<BatchOp<'a>>,
         func: &'a Arc<GraphFn>,
         trees: &'a [QueryExpr<Variable>],
         name_outputs: &'a [Variable],
@@ -48,6 +50,7 @@ impl<'a> ProcedureCallOp<'a> {
         }
         Ok(Self {
             runtime,
+            child,
             func,
             trees,
             name_outputs,
@@ -57,48 +60,75 @@ impl<'a> ProcedureCallOp<'a> {
     }
 
     fn init_batches(&mut self) -> Result<(), String> {
-        let args = self
-            .trees
-            .iter()
-            .map(|ir| {
-                ExprEval::from_runtime(self.runtime).eval(
-                    ir,
-                    ir.root().idx(),
-                    Some(&Env::new(self.runtime.env_pool)),
-                    None,
-                )
-            })
-            .collect::<Result<ThinVec<_>, _>>()?;
-        self.func.validate_args_type(&args)?;
-        let res = (self.func.func)(self.runtime, args)?;
-        match res {
-            Value::List(arr) => {
-                let batches: Vec<Batch<'a>> = arr
-                    .chunks(BATCH_SIZE)
-                    .map(|chunk| {
-                        let envs: Vec<Env<'a>> = chunk
+        let pool = self.runtime.env_pool;
+        let mut all_envs: Vec<Env<'a>> = Vec::new();
+
+        // Iterate over all input rows from child operator
+        loop {
+            match self.child.next() {
+                Some(Ok(batch)) => {
+                    for row_idx in batch.active_indices() {
+                        let input_env = batch.env_ref(row_idx);
+                        // Evaluate arguments in the context of this input row
+                        let args = self
+                            .trees
                             .iter()
-                            .map(|v| {
-                                let mut env = Env::new(self.runtime.env_pool);
-                                if let Value::Map(map) = v {
-                                    for output in self.name_outputs {
-                                        let field_name = output.name.as_ref().unwrap();
-                                        let value =
-                                            map.get(field_name).cloned().unwrap_or(Value::Null);
-                                        env.insert(output, value);
-                                    }
-                                }
-                                env
+                            .map(|ir| {
+                                ExprEval::from_runtime(self.runtime).eval(
+                                    ir,
+                                    ir.root().idx(),
+                                    Some(input_env),
+                                    None,
+                                )
                             })
-                            .collect();
-                        Batch::from_envs(envs)
-                    })
-                    .collect();
-                self.batches = Some(batches.into_iter());
-                Ok(())
+                            .collect::<Result<ThinVec<_>, _>>()?;
+                        self.func.validate_args_type(&args)?;
+                        let res = (self.func.func)(self.runtime, args)?;
+                        match res {
+                            Value::List(arr) => {
+                                for v in arr.iter() {
+                                    let mut env = input_env.clone_pooled(pool);
+                                    if let Value::Map(map) = v {
+                                        for output in self.name_outputs {
+                                            let field_name = output.name.as_ref().unwrap();
+                                            let value =
+                                                map.get(field_name).cloned().unwrap_or(Value::Null);
+                                            env.insert(output, value);
+                                        }
+                                    }
+                                    all_envs.push(env);
+                                }
+                            }
+                            _ => return Err("Procedure must return a list".into()),
+                        }
+                    }
+                }
+                Some(Err(e)) => return Err(e),
+                None => break,
             }
-            _ => Err("Procedure must return a list".into()),
         }
+
+        let batches: Vec<Batch<'a>> = if all_envs.is_empty() {
+            Vec::new()
+        } else {
+            let mut result = Vec::new();
+            let mut current_chunk = Vec::with_capacity(BATCH_SIZE);
+            for env in all_envs {
+                current_chunk.push(env);
+                if current_chunk.len() >= BATCH_SIZE {
+                    result.push(Batch::from_envs(std::mem::replace(
+                        &mut current_chunk,
+                        Vec::with_capacity(BATCH_SIZE),
+                    )));
+                }
+            }
+            if !current_chunk.is_empty() {
+                result.push(Batch::from_envs(current_chunk));
+            }
+            result
+        };
+        self.batches = Some(batches.into_iter());
+        Ok(())
     }
 }
 

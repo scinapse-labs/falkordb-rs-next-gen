@@ -200,6 +200,15 @@ pub enum ExprIR<TVar> {
     Paren,
     /// Pattern predicate should be rewritten in planner
     Pattern(QueryGraph<Arc<String>, Arc<String>, TVar>),
+    /// shortestPath((a)-[*]->(b)) or allShortestPaths((a)-[*]->(b))
+    /// Children: [source_var_expr, dest_var_expr]
+    ShortestPath {
+        rel_types: Vec<Arc<String>>,
+        min_hops: u32,
+        max_hops: Option<u32>,
+        directed: bool,
+        all_paths: bool,
+    },
     /// Map projection: base { .prop, .*, key: expr, var }
     /// First child is the base expression, remaining children are projection items
     MapProjection,
@@ -267,6 +276,13 @@ impl<TVar: Display + std::fmt::Debug> Display for ExprIR<TVar> {
             }
             Self::Paren => write!(f, "()"),
             Self::Pattern(_) => write!(f, "<pattern>"),
+            Self::ShortestPath { all_paths, .. } => {
+                if *all_paths {
+                    write!(f, "allShortestPaths()")
+                } else {
+                    write!(f, "shortestPath()")
+                }
+            }
             Self::MapProjection => write!(f, "map_projection"),
         }
     }
@@ -384,6 +400,19 @@ pub struct QueryRelationship<T, L, TVar> {
     pub bidirectional: bool,
     pub min_hops: Option<u32>,
     pub max_hops: Option<u32>,
+    pub all_shortest_paths: AllShortestPaths,
+}
+
+/// Whether this relationship is part of an allShortestPaths pattern,
+/// and if so, whether the result paths need to be reversed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AllShortestPaths {
+    /// Not an allShortestPaths pattern.
+    No,
+    /// allShortestPaths with edges in traversal order.
+    Forward,
+    /// allShortestPaths with edges reversed (incoming pattern like `(a)<-[*]-(b)`).
+    Reversed,
 }
 
 #[cfg_attr(tarpaulin, skip)]
@@ -394,21 +423,22 @@ impl<T: Display, L: Display, TVar: Display> Display for QueryRelationship<T, L, 
     ) -> std::fmt::Result {
         let direction = if self.bidirectional { "" } else { ">" };
         if self.types.is_empty() {
-            return write!(
+            write!(
                 f,
                 "({})-[{}]-{}({})",
                 self.from.alias, self.alias, direction, self.to.alias
-            );
+            )
+        } else {
+            write!(
+                f,
+                "({})-[{}:{}]-{}({})",
+                self.from.alias,
+                self.alias,
+                self.types.iter().join("|"),
+                direction,
+                self.to.alias
+            )
         }
-        write!(
-            f,
-            "({})-[{}:{}]-{}({})",
-            self.from.alias,
-            self.alias,
-            self.types.iter().join("|"),
-            direction,
-            self.to.alias
-        )
     }
 }
 
@@ -434,6 +464,7 @@ impl<T, L, TVar> QueryRelationship<T, L, TVar> {
             bidirectional,
             min_hops,
             max_hops,
+            all_shortest_paths: AllShortestPaths::No,
         }
     }
 }
@@ -727,10 +758,13 @@ impl<L: Display + PartialEq, TVar: Display + std::fmt::Debug> Display for SetIte
 pub enum QueryIR<TVar> {
     /// CALL procedure(args) YIELD outputs WHERE filter
     /// The bool indicates whether YIELD was explicitly written (true) or default outputs are used (false).
+    /// yield_aliases stores the original field names when AS aliasing is used;
+    /// yields then holds the alias names (scope-visible).
     Call {
         func: Arc<GraphFn>,
         args: Vec<QueryExpr<TVar>>,
         yields: Vec<TVar>,
+        yield_aliases: Vec<Option<TVar>>,
         filter: Option<QueryExpr<TVar>>,
         explicit_yield: bool,
     },

@@ -248,6 +248,7 @@ macro_rules! cypher_fn {
 }
 
 mod aggregation;
+mod algo_procedures;
 mod conversion;
 mod entity;
 mod internal;
@@ -716,6 +717,7 @@ pub fn init_functions() -> Result<(), Functions> {
     path::register(&mut funcs);
     internal::register(&mut funcs);
     procedures::register(&mut funcs);
+    algo_procedures::register(&mut funcs);
 
     FUNCTIONS.set(funcs)
 }

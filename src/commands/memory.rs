@@ -14,6 +14,7 @@ use std::sync::Arc;
 
 const MB: usize = 1 << 20;
 
+#[allow(clippy::too_many_lines)]
 pub fn graph_memory(
     ctx: &Context,
     args: Vec<RedisString>,
@@ -21,10 +22,10 @@ pub fn graph_memory(
     // GRAPH.MEMORY USAGE <key> [SAMPLES <count>]
     // args[0] = "GRAPH.MEMORY"
     let mut args = args.into_iter().skip(1);
-    let argc = args.len();
+    let arg_count = args.len();
 
     // Must have 2 or 4 remaining args: USAGE <key> [SAMPLES <n>]
-    if argc != 2 && argc != 4 {
+    if arg_count != 2 && arg_count != 4 {
         return Err(RedisError::WrongArity);
     }
 
@@ -39,7 +40,7 @@ pub fn graph_memory(
     let key_name = args.next_arg()?;
 
     // Parse optional SAMPLES <count>
-    let samples: usize = if argc == 4 {
+    let samples: usize = if arg_count == 4 {
         let samples_kw = args.next_arg()?;
         if !samples_kw.to_string_lossy().eq_ignore_ascii_case("SAMPLES") {
             return Err(RedisError::Str("ERR expected SAMPLES keyword"));

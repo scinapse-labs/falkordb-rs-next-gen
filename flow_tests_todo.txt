@@ -2,22 +2,6 @@
 tests/flow/test_null_handling.py
 tests/flow/test_relation_patterns.py
 
-## Graph Traversal & Algorithms
-tests/flow/test_all_shortest_paths.py
-tests/flow/test_bfs.py
-tests/flow/test_bidirectional_traversals.py
-tests/flow/test_shortest_path.py
-tests/flow/test_path_algorithms.py
-tests/flow/test_variable_length_traversals.py
-tests/flow/test_traversal_construction.py
-tests/flow/test_opening_node.py
-tests/flow/test_hashjoin.py
-tests/flow/test_betweenness.py
-tests/flow/test_pagerank.py
-tests/flow/test_cdlp.py
-tests/flow/test_msf.py
-tests/flow/test_wcc.py
-
 ## Indexing
 tests/flow/test_index_scans.py
 tests/flow/test_index_updates.py

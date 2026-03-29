@@ -29,6 +29,7 @@
 //! | **Transform**| `Project`, `Aggregate`, `Unwind`, `PathBuilder`, `LoadCsv`, `ProcedureCall` |
 
 pub mod aggregate;
+pub mod all_shortest_paths;
 pub mod apply;
 pub mod cartesian_product;
 pub mod commit;
@@ -60,8 +61,10 @@ pub mod skip;
 pub mod sort;
 pub mod union;
 pub mod unwind;
+pub mod value_hash_join;
 
 pub use aggregate::AggregateOp;
+pub use all_shortest_paths::AllShortestPathsOp;
 pub use apply::ApplyOp;
 pub use cartesian_product::CartesianProductOp;
 pub use commit::CommitOp;
@@ -93,8 +96,12 @@ pub use skip::SkipOp;
 pub use sort::SortOp;
 pub use union::UnionOp;
 pub use unwind::UnwindOp;
+pub use value_hash_join::ValueHashJoinOp;
 
 use std::collections::VecDeque;
+
+use crate::graph::graph::RelationshipId;
+use crate::runtime::value::Value;
 
 use super::{batch::BATCH_SIZE, env::Env};
 
@@ -114,4 +121,38 @@ pub fn drain_pending<'a>(
             break;
         }
     }
+}
+
+/// Check whether a given edge ID is already bound to another relationship
+/// variable in the environment.
+///
+/// Implements Cypher relationship uniqueness:
+/// within a single MATCH clause, each relationship pattern must bind to a
+/// distinct physical edge.
+///
+/// `own_alias_id` is the variable slot of the current relationship being
+/// expanded — it is skipped during the scan.
+///
+/// `sibling_edges` contains the alias IDs of other relationship variables
+/// in the same MATCH clause component. Only these are checked — relationship
+/// variables from other MATCH/OPTIONAL MATCH clauses are ignored per the
+/// Cypher spec.
+#[must_use]
+pub fn edge_already_used(
+    env: &Env<'_>,
+    edge_id: RelationshipId,
+    own_alias_id: u32,
+    sibling_edges: &[u32],
+) -> bool {
+    for &sibling_id in sibling_edges {
+        if sibling_id == own_alias_id {
+            continue;
+        }
+        if let Some(Value::Relationship(rel)) = env.get_by_id(sibling_id)
+            && rel.0 == edge_id
+        {
+            return true;
+        }
+    }
+    false
 }
