@@ -28,10 +28,10 @@ use redisearch::{
     RediSearch_DocumentAddFieldVector, RediSearch_DropIndex, RediSearch_FreeIndexOptions,
     RediSearch_GetResultsIterator, RediSearch_IndexAddDocument, RediSearch_IndexOptionsSetGCPolicy,
     RediSearch_IndexOptionsSetLanguage, RediSearch_IndexOptionsSetStopwords,
-    RediSearch_IterateQuery, RediSearch_QueryNodeAddChild, RediSearch_ResultsIteratorFree,
-    RediSearch_ResultsIteratorGetScore, RediSearch_ResultsIteratorNext,
-    RediSearch_TagFieldSetCaseSensitive, RediSearch_TagFieldSetSeparator,
-    RediSearch_TextFieldSetWeight,
+    RediSearch_IterateQuery, RediSearch_MemUsage, RediSearch_QueryNodeAddChild,
+    RediSearch_ResultsIteratorFree, RediSearch_ResultsIteratorGetScore,
+    RediSearch_ResultsIteratorNext, RediSearch_TagFieldSetCaseSensitive,
+    RediSearch_TagFieldSetSeparator, RediSearch_TextFieldSetWeight,
 };
 
 /// Type of index for a property.
@@ -794,6 +794,17 @@ impl Index {
         stopwords: Option<Vec<Arc<String>>>,
     ) {
         self.stopwords = stopwords;
+    }
+
+    // --- memory usage ---
+
+    /// Report memory consumed by the underlying RediSearch index.
+    #[must_use]
+    pub fn memory_usage(&self) -> usize {
+        if self.rs_idx.is_null() {
+            return 0;
+        }
+        unsafe { RediSearch_MemUsage(self.rs_idx) }
     }
 
     // --- index count ---

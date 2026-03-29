@@ -113,6 +113,11 @@ impl Indexer {
         !self.index.read().is_empty()
     }
 
+    #[must_use]
+    pub fn memory_usage(&self) -> usize {
+        self.index.read().values().map(Index::memory_usage).sum()
+    }
+
     pub fn create_index(
         &mut self,
         index_type: &IndexType,

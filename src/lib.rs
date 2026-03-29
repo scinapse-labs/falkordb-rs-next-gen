@@ -71,7 +71,7 @@ redis_module! {
         ["graph.EXPLAIN", graph_explain, "write deny-oom deny-script", 1, 1, 1, ""],
         ["graph.LIST", graph_list, "readonly deny-script allow-busy", 0, 0, 0, ""],
         ["graph.RECORD", graph_record, "write deny-oom deny-script blocking", 1, 1, 1, ""],
-        ["graph.MEMORY", graph_memory, "readonly deny-script", 1, 1, 1, ""],
+        ["graph.MEMORY", graph_memory, "readonly deny-script", 2, 2, 1, ""],
         ["graph.CONFIG", graph_config, "readonly deny-script allow-busy", 0, 0, 0, ""],
         ["graph.UDF", graph_udf, "write deny-script", 0, 0, 0, ""],
     ],

@@ -441,8 +441,7 @@ impl AttributeStore {
 
     #[must_use]
     pub fn memory_usage(&self) -> usize {
-        let disk = self.keyspace.get().map_or(0, |ks| ks.disk_space() as usize);
-        disk + self.cache.memory_usage()
+        self.cache.memory_usage()
     }
 
     pub fn commit(&mut self) -> Result<(), String> {

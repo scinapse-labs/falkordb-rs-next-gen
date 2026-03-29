@@ -160,6 +160,20 @@ impl Plan {
     }
 }
 
+/// Detailed memory usage breakdown returned by [`Graph::memory_usage_report`].
+///
+/// All sizes are in bytes; the command handler converts to megabytes.
+pub struct MemoryUsageReport {
+    pub label_matrices_sz: usize,
+    pub relation_matrices_sz: usize,
+    pub node_block_storage_sz: usize,
+    pub node_attr_by_label: Vec<(Arc<String>, usize)>,
+    pub unlabeled_node_attr_sz: usize,
+    pub edge_block_storage_sz: usize,
+    pub edge_attr_by_type: Vec<(Arc<String>, usize)>,
+    pub indices_sz: usize,
+}
+
 /// The main graph data structure.
 ///
 /// Stores nodes, relationships, labels, and properties using sparse matrices
@@ -1529,5 +1543,162 @@ impl Graph {
         // size += self.relationship_attrs.memory_usage();
         // size += self.node_indexer.memory_usage();
         size
+    }
+
+    /// Compute a detailed breakdown of memory usage for `GRAPH.MEMORY USAGE`.
+    ///
+    /// `samples` controls how many entities are sampled per label/type when
+    /// estimating attribute memory.  Clamped to \[1, 10000\].
+    #[must_use]
+    pub fn memory_usage_report(
+        &self,
+        samples: usize,
+    ) -> MemoryUsageReport {
+        let samples = samples.clamp(1, 10000);
+
+        // --- label matrices ---
+        let mut label_matrices_sz: usize = 0;
+        label_matrices_sz += self.node_labels_matrix.memory_usage();
+        for lm in &self.labels_matices {
+            label_matrices_sz += lm.memory_usage();
+        }
+
+        // --- relation matrices ---
+        let mut relation_matrices_sz: usize = 0;
+        for rm in &self.relationship_matrices {
+            relation_matrices_sz += rm.memory_usage();
+        }
+
+        // --- node block storage ---
+        let node_block_storage_sz: usize =
+            self.node_attrs.memory_usage() + self.deleted_nodes.serialized_size();
+
+        // --- edge block storage ---
+        let edge_block_storage_sz: usize =
+            self.relationship_attrs.memory_usage() + self.deleted_relationships.serialized_size();
+
+        // --- node attributes by label (sampling) ---
+        let mut node_attr_by_label: Vec<(Arc<String>, usize)> = Vec::new();
+
+        // Track all labeled node IDs (deduplicated) for unlabeled-node detection
+        // and track processed node IDs to avoid double-counting multi-label nodes.
+        let mut labeled_node_ids = roaring::RoaringTreemap::new();
+        let mut processed_node_ids = roaring::RoaringTreemap::new();
+
+        for (label_idx, label_name) in self.node_labels.iter().enumerate() {
+            let label_matrix = &self.labels_matices[label_idx];
+            let total_for_label = label_matrix.nvals();
+            if total_for_label == 0 {
+                node_attr_by_label.push((label_name.clone(), 0));
+                continue;
+            }
+
+            // Iterate the full label matrix, collecting all node IDs for the
+            // labeled-node bitmap.  For attribute estimation, only sample nodes
+            // that have NOT been processed by a previous label (avoids
+            // double-counting multi-label nodes, matching the C implementation).
+            let mut sampled_mem: usize = 0;
+            let mut sampled_count: usize = 0;
+            let mut unprocessed_count: u64 = 0;
+            for (node_id, _) in label_matrix.iter(0, u64::MAX) {
+                labeled_node_ids.insert(node_id);
+                if !processed_node_ids.contains(node_id) {
+                    unprocessed_count += 1;
+                    processed_node_ids.insert(node_id);
+                    if sampled_count < samples {
+                        sampled_mem += self.estimate_entity_attr_size(&self.node_attrs, node_id);
+                        sampled_count += 1;
+                    }
+                }
+            }
+
+            let estimated = if sampled_count > 0 {
+                (sampled_mem as u64 * unprocessed_count / sampled_count as u64) as usize
+            } else {
+                0
+            };
+            node_attr_by_label.push((label_name.clone(), estimated));
+        }
+
+        // --- unlabeled node attributes ---
+        let total_labeled = labeled_node_ids.len();
+        let total_nodes = self.node_count;
+        let unlabeled_count = total_nodes.saturating_sub(total_labeled);
+        let unlabeled_node_attr_sz = if unlabeled_count > 0 {
+            // Sample unlabeled nodes from all_nodes_matrix, skipping labeled ones.
+            let mut sampled_mem: usize = 0;
+            let mut sampled_count: usize = 0;
+            for (node_id, _) in self.all_nodes_matrix.iter(0, u64::MAX) {
+                if sampled_count >= samples {
+                    break;
+                }
+                if labeled_node_ids.contains(node_id) {
+                    continue;
+                }
+                sampled_mem += self.estimate_entity_attr_size(&self.node_attrs, node_id);
+                sampled_count += 1;
+            }
+            if sampled_count > 0 {
+                (sampled_mem as u64 * unlabeled_count / sampled_count as u64) as usize
+            } else {
+                0
+            }
+        } else {
+            0
+        };
+
+        // --- edge attributes by type (sampling) ---
+        let mut edge_attr_by_type: Vec<(Arc<String>, usize)> = Vec::new();
+        for (type_idx, type_name) in self.relationship_types.iter().enumerate() {
+            let tensor = &self.relationship_matrices[type_idx];
+            let total_for_type = tensor.edge_count();
+            if total_for_type == 0 {
+                edge_attr_by_type.push((type_name.clone(), 0));
+                continue;
+            }
+
+            let mut sampled_mem: usize = 0;
+            let mut sampled_count: usize = 0;
+            for (_, _, edge_id) in tensor.iter(0, u64::MAX, false) {
+                if sampled_count >= samples {
+                    break;
+                }
+                sampled_mem += self.estimate_entity_attr_size(&self.relationship_attrs, edge_id);
+                sampled_count += 1;
+            }
+
+            let estimated = if sampled_count > 0 {
+                (sampled_mem as u64 * total_for_type / sampled_count as u64) as usize
+            } else {
+                0
+            };
+            edge_attr_by_type.push((type_name.clone(), estimated));
+        }
+
+        // --- indices ---
+        let indices_sz = self.node_indexer.memory_usage();
+
+        MemoryUsageReport {
+            label_matrices_sz,
+            relation_matrices_sz,
+            node_block_storage_sz,
+            node_attr_by_label,
+            unlabeled_node_attr_sz,
+            edge_block_storage_sz,
+            edge_attr_by_type,
+            indices_sz,
+        }
+    }
+
+    fn estimate_entity_attr_size(
+        &self,
+        store: &AttributeStore,
+        entity_id: u64,
+    ) -> usize {
+        let mut sz: usize = 0;
+        for (_, val) in store.get_all_attrs_by_id(entity_id) {
+            sz += std::mem::size_of::<u16>() + std::mem::size_of::<Value>() + val.heap_size();
+        }
+        sz
     }
 }
