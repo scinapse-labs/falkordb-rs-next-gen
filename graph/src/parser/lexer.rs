@@ -276,45 +276,43 @@ impl<'a> Lexer<'a> {
             if next == Some('/') {
                 len += 1;
                 next = chars.next();
-                if next.is_none() {
+                let Some(c) = next else {
                     break;
-                }
-                len += 1;
-                if next == Some('/') {
+                };
+                len += c.len_utf8();
+                if c == '/' {
                     next = chars.next();
                     loop {
-                        if next.is_none() {
+                        let Some(c) = next else {
                             break;
-                        }
-                        len += 1;
-                        if next == Some('\n') {
+                        };
+                        len += c.len_utf8();
+                        if c == '\n' {
                             next = chars.next();
                             break;
                         }
                         next = chars.next();
                     }
-                } else if next == Some('*') {
+                } else if c == '*' {
                     next = chars.next();
                     loop {
-                        if next.is_none() {
+                        let Some(c) = next else {
                             break;
-                        }
-                        while next == Some('*') {
+                        };
+                        if c == '*' {
                             len += 1;
                             next = chars.next();
+                            continue;
                         }
-                        if next.is_none() {
-                            break;
-                        }
-                        len += 1;
-                        if next == Some('/') {
+                        len += c.len_utf8();
+                        if c == '/' {
                             next = chars.next();
                             break;
                         }
                         next = chars.next();
                     }
                 } else {
-                    len -= 2;
+                    len -= 1 + c.len_utf8();
                     break;
                 }
                 continue;
