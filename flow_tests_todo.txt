@@ -55,7 +55,6 @@ tests/flow/test_slowlog.py
 tests/flow/test_procedures.py
 
 ## Memory & Resource Management
-tests/flow/test_memory_usage.py
 tests/flow/test_query_mem_limit.py
 tests/flow/test_timeout.py
 tests/flow/test_expiry.py

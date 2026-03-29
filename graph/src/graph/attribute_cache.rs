@@ -335,6 +335,7 @@ impl AttributeCache {
     /// Total estimated bytes currently in the cache.
     #[must_use]
     pub fn memory_usage(&self) -> usize {
-        self.entries.weight() as usize
+        let mem = self.entries.memory_used();
+        mem.entries + mem.map
     }
 }

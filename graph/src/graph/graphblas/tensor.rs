@@ -123,6 +123,12 @@ impl Tensor {
         &self.m
     }
 
+    /// Total number of edges (including multi-edges between the same node pair).
+    #[must_use]
+    pub fn edge_count(&self) -> u64 {
+        self.me.nvals()
+    }
+
     #[must_use]
     pub fn iter(
         &self,

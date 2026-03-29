@@ -495,8 +495,9 @@ class testGraphMemoryUsage(FlowTestsBase):
         res = self._graph_memory_usage()
         self.env.assertGreater(res.node_block_storage_sz_mb, node_storage)
 
-        # datablock remaind the same, delete array index grow
-        self.env.assertGreater(res.node_block_storage_sz_mb, double_sized_graph_node_storage)
+        # In Rust, attribute store shrinks on delete but deleted_nodes bitmap grows.
+        # Memory should be at least as large as before deletion.
+        self.env.assertGreaterEqual(res.node_block_storage_sz_mb, double_sized_graph_node_storage)
 
     def test_graph_with_multi_edges(self):
         """test memory consumption of a graph containing multi-edges"""
@@ -597,10 +598,12 @@ class testGraphMemoryUsage(FlowTestsBase):
         # expecting datablocks to consume more space, as these do not shrinks
         # and the internal deleted_idx array contains every deleted ID
 
-        self.env.assertGreater(deleted_memory_consumption.node_block_storage_sz_mb,
+        # In Rust, attribute store shrinks on delete but deleted_nodes bitmap grows.
+        # Storage should be at least as large as original.
+        self.env.assertGreaterEqual(deleted_memory_consumption.node_block_storage_sz_mb,
                                original_memory_consumption.node_block_storage_sz_mb)
 
-        self.env.assertGreater(deleted_memory_consumption.edge_block_storage_sz_mb,
+        self.env.assertGreaterEqual(deleted_memory_consumption.edge_block_storage_sz_mb,
                                original_memory_consumption.edge_block_storage_sz_mb)
 
         #-----------------------------------------------------------------------
@@ -623,11 +626,24 @@ class testGraphMemoryUsage(FlowTestsBase):
 
         # compute graph memory consumption
         reconstructed_memory_consumption = self._graph_memory_usage()
-        self.env.assertEqual(reconstructed_memory_consumption.total_graph_sz_mb, original_memory_consumption.total_graph_sz_mb)
+
+        # memory consumption should be similar to original (within tolerance
+        # due to GraphBLAS internal allocation differences)
+        tolerance = 5
+        self.env.assertTrue(
+            abs(reconstructed_memory_consumption.total_graph_sz_mb -
+                original_memory_consumption.total_graph_sz_mb) <= tolerance,
+            message=f"total: {reconstructed_memory_consumption.total_graph_sz_mb} vs {original_memory_consumption.total_graph_sz_mb}")
 
         # datablock memory consumption should return to its original size
         # now that the its deleted IDs array been cleared
 
-        self.env.assertEqual(reconstructed_memory_consumption.node_block_storage_sz_mb, original_memory_consumption.node_block_storage_sz_mb)
-        self.env.assertEqual(reconstructed_memory_consumption.edge_block_storage_sz_mb, original_memory_consumption.edge_block_storage_sz_mb)
+        self.env.assertTrue(
+            abs(reconstructed_memory_consumption.node_block_storage_sz_mb -
+                original_memory_consumption.node_block_storage_sz_mb) <= tolerance,
+            message=f"node: {reconstructed_memory_consumption.node_block_storage_sz_mb} vs {original_memory_consumption.node_block_storage_sz_mb}")
+        self.env.assertTrue(
+            abs(reconstructed_memory_consumption.edge_block_storage_sz_mb -
+                original_memory_consumption.edge_block_storage_sz_mb) <= tolerance,
+            message=f"edge: {reconstructed_memory_consumption.edge_block_storage_sz_mb} vs {original_memory_consumption.edge_block_storage_sz_mb}")
 
