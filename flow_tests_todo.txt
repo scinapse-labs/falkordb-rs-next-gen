@@ -62,7 +62,6 @@ tests/flow/test_defrag.py
 tests/flow/test_undo_log.py
 
 ## Metadata & Internals
-tests/flow/test_meta_stats.py
 tests/flow/test_multi_label.py
 tests/flow/test_effects.py
 tests/flow/test_intern_string.py
