@@ -165,6 +165,45 @@ pub fn register(funcs: &mut Functions) {
         }
     );
 
+    // ── db.meta.stats ─────────────────────────────────────────────────
+    cypher_fn!(funcs, "db.meta.stats",
+        args: [],
+        ret: Type::Any,
+        procedure: ["labels", "relTypes", "relCount", "nodeCount", "labelCount", "relTypeCount", "propertyKeyCount"],
+        fn db_meta_stats(runtime, _args) {
+            let g = runtime.g.borrow();
+
+            // Build labels map: label_name -> node count for that label
+            let mut labels_map = OrderMap::default();
+            for (idx, name) in g.get_labels().iter().enumerate() {
+                labels_map.insert(
+                    name.clone(),
+                    Value::Int(g.label_node_count(idx) as i64),
+                );
+            }
+
+            // Build relTypes map: type_name -> edge count for that type
+            let mut rel_types_map = OrderMap::default();
+            for (idx, name) in g.get_types().iter().enumerate() {
+                rel_types_map.insert(
+                    name.clone(),
+                    Value::Int(g.type_edge_count(idx) as i64),
+                );
+            }
+
+            let mut row = OrderMap::default();
+            row.insert(Arc::new(String::from("labels")), Value::Map(Arc::new(labels_map)));
+            row.insert(Arc::new(String::from("relTypes")), Value::Map(Arc::new(rel_types_map)));
+            row.insert(Arc::new(String::from("relCount")), Value::Int(g.relationship_count() as i64));
+            row.insert(Arc::new(String::from("nodeCount")), Value::Int(g.node_count() as i64));
+            row.insert(Arc::new(String::from("labelCount")), Value::Int(g.get_labels().len() as i64));
+            row.insert(Arc::new(String::from("relTypeCount")), Value::Int(g.get_types().len() as i64));
+            row.insert(Arc::new(String::from("propertyKeyCount")), Value::Int(g.property_key_count() as i64));
+
+            Ok(Value::List(Arc::new(thin_vec![Value::Map(Arc::new(row))])))
+        }
+    );
+
     // ── db.idx.fulltext.createNodeIndex ────────────────────────────────
     cypher_fn!(funcs, "db.idx.fulltext.createNodeIndex",
         args: [Type::Map],

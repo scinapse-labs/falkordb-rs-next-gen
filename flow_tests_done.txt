@@ -27,6 +27,7 @@ tests/flow/test_load_csv
 tests/flow/test_maintain_record_order.py
 tests/flow/test_map
 tests/flow/test_memory_usage.py
+tests/flow/test_meta_stats.py
 tests/flow/test_mix_labels
 tests/flow/test_multi_exec.py
 tests/flow/test_multi_pattern

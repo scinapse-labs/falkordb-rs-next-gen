@@ -671,11 +671,13 @@ impl<'a> Parser<'a> {
         let function_name = self.parse_dotted_ident()?;
         let func = get_functions().get(function_name.as_str(), &FnType::Procedure(vec![]))?;
         match_token!(self.lexer, LParen);
-        let args = self
+        let args: Vec<Arc<_>> = self
             .parse_expression_list(ExpressionListType::ZeroOrMoreClosedBy(RParen), false)?
             .into_iter()
             .map(Arc::new)
             .collect();
+        func.validate(args.len())
+            .map_err(|e| e.replace("function", "procedure"))?;
         let mut named_outputs = vec![];
         let (filter, yielded) = if optional_match_token!(self.lexer => Yield) {
             let ident = self.parse_ident()?;

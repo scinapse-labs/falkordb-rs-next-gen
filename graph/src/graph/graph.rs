@@ -454,6 +454,42 @@ impl Graph {
     }
 
     #[must_use]
+    pub const fn relationship_count(&self) -> u64 {
+        self.relationship_count
+    }
+
+    /// Number of nodes with the given label (by label index).
+    #[must_use]
+    pub fn label_node_count(
+        &self,
+        label_idx: usize,
+    ) -> u64 {
+        self.labels_matices[label_idx].nvals()
+    }
+
+    /// Number of edges of the given relationship type (by type index).
+    #[must_use]
+    pub fn type_edge_count(
+        &self,
+        type_idx: usize,
+    ) -> u64 {
+        self.relationship_matrices[type_idx].edge_count()
+    }
+
+    /// Number of distinct property keys across nodes and relationships.
+    #[must_use]
+    pub fn property_key_count(&self) -> usize {
+        let mut seen = std::collections::HashSet::new();
+        for name in self.node_attrs.attrs_name.iter() {
+            seen.insert(name.as_str());
+        }
+        for name in self.relationship_attrs.attrs_name.iter() {
+            seen.insert(name.as_str());
+        }
+        seen.len()
+    }
+
+    #[must_use]
     pub const fn node_cap(&self) -> u64 {
         self.node_cap
     }
