@@ -26,6 +26,7 @@ fn main() {
     let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap();
     let lagraph_dir = std::path::Path::new(&manifest_dir).join("../lagraph_lib");
     println!("cargo:rustc-link-search=native={}", lagraph_dir.display());
+    println!("cargo:rustc-link-search=native=/data/lagraph_lib");
     println!("cargo:rustc-link-lib=static=lagraph");
     println!("cargo:rustc-link-lib=static=lagraphx");
 
