@@ -62,6 +62,4 @@ RUN cd redisearch && \
     cp -r RediSearch/bin bin  && \
     rm -rf RediSearch
 
-USER app
-
 CMD "/bin/bash"
