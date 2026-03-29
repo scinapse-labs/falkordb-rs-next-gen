@@ -3,7 +3,7 @@ FROM redis:8.6.2
 ENV PATH="/root/.cargo/bin:${PATH}"
 
 RUN apt update -y && \
-    apt install -y wget && \
+    apt install -y lsb-release wget && \
     wget https://apt.llvm.org/llvm.sh && \
     chmod +x llvm.sh && \
     ./llvm.sh 22 && \
