@@ -3,7 +3,7 @@ FROM redis:8.6.2
 ENV PATH="/root/.cargo/bin:${PATH}"
 
 RUN apt update -y && \
-    apt install -y software-properties-common wget && \
+    apt install -y wget && \
     wget https://apt.llvm.org/llvm.sh && \
     chmod +x llvm.sh && \
     ./llvm.sh 22 && \
