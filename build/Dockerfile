@@ -6,10 +6,10 @@ RUN apt update -y && \
     apt install -y software-properties-common wget && \
     wget https://apt.llvm.org/llvm.sh && \
     chmod +x llvm.sh && \
-    ./llvm.sh 21 && \
+    ./llvm.sh 22 && \
     apt update -y
 
-RUN apt install -y git make cmake curl zlib1g zlib1g-dev libpolly-21-dev libomp-21-dev libc++-21-dev libc++abi-21-dev libzstd-dev python3-venv lcov
+RUN apt install -y git make cmake curl zlib1g zlib1g-dev libpolly-22-dev libomp-22-dev libc++-22-dev libc++abi-22-dev libzstd-dev python3-venv lcov
 
 RUN python3 -m venv venv
 
@@ -18,7 +18,7 @@ RUN venv/bin/pip install behave falkordb hypothesis pytest pytest-benchmark RLTe
 RUN git clone --branch v10.3.1 --single-branch https://github.com/DrTimothyAldenDavis/GraphBLAS.git
 
 RUN cd GraphBLAS && \
-    make static CMAKE_OPTIONS='-DGRAPHBLAS_COMPACT=1 -DCMAKE_POSITION_INDEPENDENT_CODE=on' JOBS=2 CC=clang-21 CXX=clang++-21 && \
+    make static CMAKE_OPTIONS='-DGRAPHBLAS_COMPACT=1 -DCMAKE_POSITION_INDEPENDENT_CODE=on' JOBS=2 CC=clang-22 CXX=clang++-22 && \
     make install && \
     cd .. && \
     rm -rf GraphBLAS
@@ -36,8 +36,8 @@ RUN git clone --branch v1.2.1 --single-branch https://github.com/GraphBLAS/LAGra
         -DGRAPHBLAS_INCLUDE_DIR=/usr/local/include/suitesparse \
         -DGRAPHBLAS_LIBRARY=/usr/local/lib/libgraphblas.a \
         -DSUITESPARSE_USE_FORTRAN=OFF \
-        -DCMAKE_C_COMPILER=clang-21 \
-        -DCMAKE_CXX_COMPILER=clang++-21 && \
+        -DCMAKE_C_COMPILER=clang-22 \
+        -DCMAKE_CXX_COMPILER=clang++-22 && \
     make -j2 && \
     mkdir -p /data/lagraph_lib && \
     cp src/liblagraph.a /data/lagraph_lib/ && \
@@ -55,7 +55,7 @@ RUN . /data/venv/bin/activate && \
     git clone --recurse-submodules --branch vector-low-level-api --single-branch https://github.com/FalkorDB/RediSearch.git && \
     cd RediSearch && \
     sed -i 's/-Werror//g' deps/VectorSimilarity/src/VecSim/CMakeLists.txt && \
-    make build STATIC=1 CLANG=1 CC=clang-21 CXX=clang++-21
+    make build STATIC=1 CLANG=1 CC=clang-22 CXX=clang++-22
 
 RUN cd redisearch && \
     cp -r RediSearch/bin bin  && \
