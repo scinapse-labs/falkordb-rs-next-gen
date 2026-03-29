@@ -63,7 +63,7 @@ RUN cd redisearch && \
     rm -rf RediSearch
 
 RUN groupadd -r app && useradd -r -g app -m -d /home/app app && \
-    chown -R app:app /data /redisearch venv
+    chown -R app:app /data
 
 USER app
 
