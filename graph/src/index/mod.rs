@@ -527,28 +527,33 @@ impl Index {
                         );
 
                         if let Some(vopts) = field.vector_options() {
-                            RediSearch_VectorFieldSetDim(
-                                self.rs_idx,
-                                field_id,
-                                vopts.dimension as c_int,
-                            );
+                            if vopts.dimension > 0 {
+                                RediSearch_VectorFieldSetDim(
+                                    self.rs_idx,
+                                    field_id,
+                                    vopts.dimension as c_int,
+                                );
 
-                            let metric: u32 =
-                                match vopts.similarity_function.as_deref().unwrap_or("euclidean") {
+                                let metric: u32 = match vopts
+                                    .similarity_function
+                                    .as_deref()
+                                    .unwrap_or("euclidean")
+                                {
                                     "euclidean" => 0, // VecSimMetric_L2
                                     "ip" => 1,        // VecSimMetric_IP
                                     "cosine" => 2,    // VecSimMetric_Cosine
                                     _ => 0,
                                 };
 
-                            RediSearch_VectorFieldSetHNSWParams(
-                                self.rs_idx,
-                                field_id,
-                                vopts.m.unwrap_or(16),
-                                vopts.ef_construction.unwrap_or(200),
-                                vopts.ef_runtime.unwrap_or(10),
-                                metric,
-                            );
+                                RediSearch_VectorFieldSetHNSWParams(
+                                    self.rs_idx,
+                                    field_id,
+                                    vopts.m.unwrap_or(16),
+                                    vopts.ef_construction.unwrap_or(200),
+                                    vopts.ef_runtime.unwrap_or(10),
+                                    metric,
+                                );
+                            }
                         }
                     }
                 }

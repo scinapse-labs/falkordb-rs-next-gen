@@ -1232,12 +1232,12 @@ fn map_to_index_options(
         IndexType::Vector => {
             let dimension = match get("dimension") {
                 Some(Value::Int(n)) => {
-                    if *n <= 0 {
-                        return Err("dimension must be a positive integer".into());
+                    if *n < 0 {
+                        return Err("dimension must be a non-negative integer".into());
                     }
                     *n as u32
                 }
-                None => return Err("dimension is required for vector indexes".into()),
+                None => 0,
                 _ => return Err("dimension must be an integer".into()),
             };
             let similarity_function = match get("similarityFunction") {
