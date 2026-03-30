@@ -1,3 +1,43 @@
+//! `GRAPH.UDF` command handler.
+//!
+//! Manages user-defined functions (UDFs) backed by JavaScript libraries.
+//! Each library contains one or more named functions that become available
+//! in Cypher queries once loaded.
+//!
+//! ## Subcommands
+//! ```text
+//! GRAPH.UDF LOAD [REPLACE] <lib_name> <script>
+//!     Parse and compile a JS library, register its exported functions.
+//!     REPLACE allows overwriting an existing library with the same name.
+//!
+//! GRAPH.UDF DELETE <lib_name>
+//!     Remove a library and unregister all its functions.
+//!
+//! GRAPH.UDF FLUSH
+//!     Remove all loaded libraries and unregister every UDF at once.
+//!
+//! GRAPH.UDF LIST [<lib_name>] [WITHCODE]
+//!     List loaded libraries with their function names.
+//!     Optionally filter by library name and include source code.
+//! ```
+//!
+//! ## Data flow for LOAD
+//! ```text
+//! GRAPH.UDF LOAD mylib "function myFunc(x) { return x+1; }"
+//!        |
+//!        +--> parse REPLACE flag and arguments
+//!        +--> UdfRepo.load(lib_name, script, replace)
+//!        |       +--> compile JS, extract exported function names
+//!        |       +--> store library in the global UDF repository
+//!        |
+//!        +--> for each exported function name:
+//!        |       register_udf(name, GraphFn) in the function registry
+//!        |
+//!        +--> replicate command to replicas
+//! ```
+//!
+//! All mutating subcommands (LOAD, DELETE, FLUSH) call `replicate_verbatim()`
+//! so that UDF state is consistent across Redis primary and replica nodes.
 use graph::runtime::functions::{GraphFn, flush_udfs, register_udf, unregister_udf};
 use graph::udf::get_udf_repo;
 use redis_module::{Context, NextArg, RedisError, RedisResult, RedisString, RedisValue};

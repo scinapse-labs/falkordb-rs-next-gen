@@ -1,35 +1,45 @@
-//! Index management for property-based lookups.
+//! Index lifecycle management for property-based graph lookups.
 //!
-//! This module provides indexing capabilities for graph properties using RediSearch
-//! as the underlying index engine. Supports:
+//! The [`Indexer`] is the top-level coordinator for all indexes in a graph.
+//! It owns one [`Index`](super::Index) per label and exposes methods for
+//! creating, dropping, querying, and populating indexes.
 //!
-//! ## Index Types
+//! # Responsibilities
 //!
-//! - **Range**: B-tree index for numeric comparisons (=, <, >, range queries)
-//! - **Fulltext**: Text search with tokenization and stemming
-//! - **Vector**: Vector similarity search for embeddings
+//! - **Create / drop** indexes for (label, attribute, type) triples.
+//! - **Route queries** -- delegates [`IndexQuery`] execution to the correct
+//!   per-label [`Index`](super::Index).
+//! - **Commit mutations** -- batches of added/removed documents are flushed
+//!   to RediSearch during transaction commit.
+//! - **Background population** -- tracks progress, serializes background
+//!   batches with writes via a shared `write_lock`, and supports
+//!   cancellation.
 //!
-//! ## Architecture
+//! # Internal layout
 //!
 //! ```text
 //! Indexer
-//!    │
-//!    ├── label_fields: Map<Label, Map<Attr, Field>>
-//!    │      (Defines which properties are indexed)
-//!    │
-//!    └── rs_index: Map<Label, RSIndex>
-//!           (RediSearch index handles)
+//!    |
+//!    +-- index: RwLock<HashMap<Label, Index>>
+//!    |      One Index per label; each Index wraps a single
+//!    |      RSIndex handle and its field definitions.
+//!    |
+//!    +-- write_lock: Mutex<()>
+//!    |      Serializes background population with commit_index
+//!    |      so they never run concurrently.
+//!    |
+//!    +-- graph: Mutex<Option<Arc<Graph>>>
+//!           Latest committed graph snapshot shared with
+//!           background index population threads.
 //! ```
 //!
-//! ## Index Queries
+//! # Concurrency
 //!
-//! The [`IndexQuery`] enum represents different query types:
-//! - `Equal(attr, value)`: Exact match
-//! - `Range(attr, min, max)`: Range query
-//! - `Prefix(attr, prefix)`: Prefix search
-//! - `Contains(attr, substring)`: Substring search
-//! - `Fulltext(query)`: Full-text search
-//! - `VectorRange`: Vector similarity search
+//! Read-side queries (`query`, `fulltext_query`, `is_label_indexed`, ...)
+//! acquire a `read()` lock.  Write-side mutations (`create_index`,
+//! `drop_index`, `commit`, ...) acquire a `write()` lock.  Background
+//! population uses `write_lock` to avoid racing with per-transaction
+//! commit calls.
 
 use std::{
     collections::HashMap,
@@ -47,12 +57,13 @@ use roaring::RoaringTreemap;
 use super::Index;
 pub use super::{
     Document, Field, IdIter, IndexInfo, IndexQuery, IndexResultsIter, IndexType, ScoredIdIter,
-    TextIndexOptions,
+    TextIndexOptions, VectorIndexOptions,
 };
 use crate::{graph::graph::Graph, runtime::value::Value};
 
 pub enum IndexOptions {
     Text(TextIndexOptions),
+    Vector(VectorIndexOptions),
 }
 
 impl IndexOptions {
@@ -61,6 +72,7 @@ impl IndexOptions {
     pub const fn language(&self) -> &Option<Arc<String>> {
         match self {
             Self::Text(opts) => &opts.language,
+            Self::Vector(_) => &None,
         }
     }
 
@@ -69,6 +81,7 @@ impl IndexOptions {
     pub const fn stopwords(&self) -> &Option<Vec<Arc<String>>> {
         match self {
             Self::Text(opts) => &opts.stopwords,
+            Self::Vector(_) => &None,
         }
     }
 
@@ -88,6 +101,16 @@ impl IndexOptions {
                     None
                 }
             }
+            Self::Vector(_) => None,
+        }
+    }
+
+    /// Extract vector index options (only applicable for Vector index options).
+    #[must_use]
+    pub const fn vector_options(&self) -> Option<&VectorIndexOptions> {
+        match self {
+            Self::Vector(opts) => Some(opts),
+            Self::Text(_) => None,
         }
     }
 }
@@ -129,13 +152,14 @@ impl Indexer {
         let mut index = self.index.write();
         let label_indexes = index.entry(label.clone()).or_default();
 
-        let (language, stopwords, field_options) = match options {
+        let (language, stopwords, field_options, vector_options) = match options {
             Some(IndexOptions::Text(text_opts)) => {
                 let language = text_opts.language.clone();
                 let stopwords = text_opts.stopwords.clone();
-                (language, stopwords, Some(text_opts))
+                (language, stopwords, Some(text_opts), None)
             }
-            None => (None, None, None),
+            Some(IndexOptions::Vector(vec_opts)) => (None, None, None, Some(vec_opts)),
+            None => (None, None, None, None),
         };
 
         // Validate language/stopwords are not already set for existing fulltext indexes
@@ -160,6 +184,8 @@ impl Indexer {
             return Err("Text index options are only valid for fulltext indexes".into());
         }
 
+        let mut new_fields: HashMap<Arc<String>, Vec<Arc<Field>>> = HashMap::new();
+
         for attr in attrs {
             let field_name = match index_type {
                 IndexType::Range => Arc::new(format!("range:{attr}")),
@@ -171,11 +197,24 @@ impl Indexer {
                 return Err(format!("Attribute '{attr}' is already indexed"));
             }
 
-            let field = Arc::new(Field::new(
-                CString::new(field_name.as_str()).map_err(|e| e.to_string())?,
-                index_type.clone(),
-                field_options.clone(),
-            ));
+            let field = if let Some(ref vopts) = vector_options {
+                Arc::new(Field::new_with_vector_options(
+                    CString::new(field_name.as_str()).map_err(|e| e.to_string())?,
+                    index_type.clone(),
+                    vopts.clone(),
+                ))
+            } else {
+                Arc::new(Field::new(
+                    CString::new(field_name.as_str()).map_err(|e| e.to_string())?,
+                    index_type.clone(),
+                    field_options.clone(),
+                ))
+            };
+
+            new_fields
+                .entry(attr.clone())
+                .or_default()
+                .push(field.clone());
 
             if label_indexes.contains_field(attr) {
                 label_indexes.add_field_to_existing(attr, field);
@@ -197,7 +236,7 @@ impl Indexer {
             )?;
         }
 
-        label_indexes.register_fields(label_indexes.fields(), field_options.as_ref());
+        label_indexes.register_fields(&new_fields, field_options.as_ref())?;
 
         // Update the label indexes with global settings
         // Default to "english" for fulltext indexes when no language is specified,

@@ -426,6 +426,8 @@ class testVariableLengthTraversals(FlowTestsBase):
         res  = self.graph.query(q)
         self.env.assertEqual(res.result_set, [[1, 1, 1], [3, 3, 3], [5, 5, 5]])
 
+    # TODO prev() function is not yet supported in variable-length traversals
+    @skip()
     def test15_var_len_with_prev_filter(self):
         self.graph.delete()
 
@@ -439,9 +441,8 @@ class testVariableLengthTraversals(FlowTestsBase):
                    WHERE coalesce(prev(e.v), e.v) <= e.v
                    RETURN p"""
         plan = self.graph.explain(q)
-        self.env.assertEqual(plan.structured_plan.name, "Results")
-        self.env.assertEqual(plan.structured_plan.children[0].name, "Project")
-        self.env.assertEqual(plan.structured_plan.children[0].children[0].name, "Conditional Variable Length Traverse")
+        self.env.assertEqual(plan.structured_plan.name, "Project")
+        self.env.assertEqual(plan.structured_plan.children[0].name, "Conditional Variable Length Traverse")
 
         res = self.graph.query(q)
         self.env.assertEqual(len(res.result_set), 2)

@@ -1,8 +1,26 @@
 //! Batch-mode delete operator — marks nodes and relationships for deletion.
 //!
 //! For each active row in each input batch, evaluates the delete expressions
-//! and records deletions in the pending batch. Node deletions cascade: all
-//! connected relationships are also marked for deletion.
+//! and records deletions in the pending batch.
+//!
+//! ```text
+//!  Input batch
+//!       │
+//!  ┌────▼──────────────────────────────────────┐
+//!  │ For each delete expr:                      │
+//!  │   fast path: simple Variable ──► read_columns (bulk)
+//!  │   slow path: complex expr   ──► eval per row       │
+//!  │                                                     │
+//!  │ Node deletion cascades:                             │
+//!  │   mark all connected relationships for deletion     │
+//!  │   mark the node itself for deletion                 │
+//!  │                                                     │
+//!  │ Relationship deletion:                              │
+//!  │   mark the single relationship for deletion         │
+//!  └────┬──────────────────────────────────────┘
+//!       │
+//!  output batch (unchanged, mutations in Pending)
+//! ```
 
 use crate::parser::ast::{ExprIR, QueryExpr, Variable};
 use crate::planner::IR;

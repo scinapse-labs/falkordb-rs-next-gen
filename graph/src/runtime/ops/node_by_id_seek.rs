@@ -1,7 +1,9 @@
 //! Batch-mode node-by-ID-seek operator — retrieves nodes by internal ID.
 //!
-//! For each active row in the input batch, evaluates the ID filter expression
-//! to produce candidate node IDs and yields non-deleted nodes.
+//! Implements optimizer-generated plans for `WHERE id(n) = expr` or
+//! `WHERE id(n) IN [...]`. For each active row in the input batch, evaluates
+//! the ID filter expression to produce a candidate `RoaringTreemap` of node IDs,
+//! removes deleted nodes, and yields non-deleted nodes matching the range.
 
 use std::collections::VecDeque;
 use std::sync::Arc;

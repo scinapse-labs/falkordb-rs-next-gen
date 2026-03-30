@@ -1,8 +1,25 @@
 //! Batch-mode path builder operator — assembles named path values.
 //!
-//! Implements Cypher named paths like `p = (a)-[r]->(b)`. For each path,
-//! reads the component variable columns via `read_columns`, maps each row
-//! into a `Value::Path`, and writes the result column back via `write_column`.
+//! Implements Cypher named paths like `p = (a)-[r]->(b)`. For each path
+//! definition, reads the component variable columns via `read_columns`,
+//! maps each row into a `Value::Path` in alternating format
+//! `[Node, Rel, Node, Rel, ..., Node]`, and writes the result column
+//! back via `write_column`.
+//!
+//! ```text
+//!  Path definition: p = (a)-[r]->(b)
+//!  Variables: [a, r, b]
+//!
+//!  Row: a=Node(5), r=Rel(1,5,7), b=Node(7)
+//!                    │
+//!                    ▼
+//!  p = Path([Node(5), Rel(1,5,7), Node(7)])
+//! ```
+//!
+//! Handles variable-length relationships (stored as `Value::Path` or
+//! `Value::List` of edges) by inlining path elements and deduplicating
+//! shared endpoint nodes. Supports reversed VLT paths by detecting
+//! direction mismatches and walking edges in reverse order.
 
 use std::sync::Arc;
 
@@ -69,9 +86,66 @@ impl<'a> Iterator for PathBuilderOp<'a> {
                         if !env.is_bound(&path.vars[i]) {
                             return Err(format!("Variable {} not found", path.vars[i].as_str()));
                         }
-                        // Variable-length relationship: expand the list of
-                        // relationships into alternating [rel, intermediate_node, rel, ...].
-                        if let Value::List(edges) = val {
+                        // Variable-length relationship: the VLT operator stores
+                        // the result as a Path in alternating [Node, Rel, Node, ...]
+                        // format. Incorporate it directly, skipping the leading
+                        // node (which duplicates the preceding node already in elems)
+                        // and the following endpoint variable.
+                        if let Value::Path(path_elems) = val {
+                            if path_elems.len() > 1 {
+                                // Check if VLT path direction matches the pattern
+                                // direction. For incoming patterns (m)<-[*]-(n), the
+                                // VLT traverses from n to m but the pattern starts
+                                // at m. Detect this by checking if the VLT path's
+                                // first node matches the preceding node in elems.
+                                let prev_id = elems.iter().rev().find_map(|v| {
+                                    if let Value::Node(id) = v {
+                                        Some(*id)
+                                    } else {
+                                        None
+                                    }
+                                });
+                                let vlt_first_matches = match path_elems.first() {
+                                    Some(Value::Node(id)) => prev_id == Some(*id),
+                                    _ => true,
+                                };
+                                if vlt_first_matches {
+                                    // Normal case: skip first node, append rest
+                                    for elem in path_elems.iter().skip(1) {
+                                        elems.push(elem.clone());
+                                    }
+                                } else {
+                                    // Reversed case: VLT path goes n->...->m but
+                                    // pattern needs m->...->n. Walk the relationships
+                                    // in reverse, using "other endpoint" to resolve nodes.
+                                    for elem in path_elems.iter().rev().skip(1) {
+                                        match elem {
+                                            Value::Relationship(rel) => {
+                                                elems.push(elem.clone());
+                                                let cur =
+                                                    elems.iter().rev().skip(1).find_map(|v| {
+                                                        if let Value::Node(id) = v {
+                                                            Some(*id)
+                                                        } else {
+                                                            None
+                                                        }
+                                                    });
+                                                let next =
+                                                    if cur == Some(rel.1) { rel.2 } else { rel.1 };
+                                                elems.push(Value::Node(next));
+                                            }
+                                            Value::Node(_) => {
+                                                // Skip intermediate nodes — we compute them from edges
+                                            }
+                                            other => elems.push(other.clone()),
+                                        }
+                                    }
+                                }
+                            }
+                            // Skip the following endpoint node variable (it
+                            // duplicates the last node in the path).
+                            skip_next = true;
+                        } else if let Value::List(edges) = val {
                             if !edges.is_empty() {
                                 for edge in edges.iter() {
                                     // Determine the next node: whichever endpoint

@@ -2,6 +2,28 @@
 //!
 //! Materializes the right sub-plan(s) once on first use, then cross-joins
 //! blocks of left rows with the materialized right rows.
+//!
+//! ```text
+//!  Left child (streaming)          Right child(ren) (materialized once)
+//!  ┌──────────────────┐            ┌──────────────────┐
+//!  │ batch 1: [L1,L2] │            │ [R1, R2, R3]     │  <-- cached in memory
+//!  │ batch 2: [L3]    │            └──────────────────┘
+//!  │ ...               │
+//!  └──────────────────┘
+//!                 \                       /
+//!                  \─── cross-join ──────/
+//!                          │
+//!                  ┌───────┴───────┐
+//!                  │ L1+R1, L1+R2, │
+//!                  │ L1+R3, L2+R1, │
+//!                  │ L2+R2, L2+R3, │
+//!                  │ L3+R1, ...    │
+//!                  └───────────────┘
+//! ```
+//!
+//! With multiple right children, each branch is materialized independently
+//! and their cross-product is computed into a single flat vector before
+//! joining with left rows.
 
 use crate::planner::IR;
 use crate::runtime::{

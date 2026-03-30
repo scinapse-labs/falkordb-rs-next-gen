@@ -26,10 +26,10 @@
 //! ```
 
 use crate::parser::ast::{
-    BoundQueryIR, ExprIR, QueryExpr, QueryGraph, QueryIR, QueryNode, QueryPath, QueryRelationship,
-    RawQueryIR, SetItem, SupportAggregation, Variable,
+    AllShortestPaths, BoundQueryIR, ExprIR, QueryExpr, QueryGraph, QueryIR, QueryNode, QueryPath,
+    QueryRelationship, RawQueryIR, SetItem, SupportAggregation, Variable,
 };
-use crate::runtime::functions::Type;
+use crate::runtime::functions::{FnType, Type};
 use crate::runtime::orderset::OrderSet;
 use crate::tree;
 use orx_tree::{Dfs, Dyn, DynNode, DynTree, NodeRef};
@@ -179,7 +179,7 @@ impl Binder {
                 } else {
                     rel.to.clone()
                 };
-                *rel = Arc::new(QueryRelationship::new(
+                let mut new_rel = QueryRelationship::new(
                     rel.alias.clone(),
                     rel.types.clone(),
                     rel.attrs.clone(),
@@ -188,7 +188,9 @@ impl Binder {
                     rel.bidirectional,
                     rel.min_hops,
                     rel.max_hops,
-                ));
+                );
+                new_rel.all_shortest_paths = rel.all_shortest_paths;
+                *rel = Arc::new(new_rel);
             }
         }
     }
@@ -261,6 +263,33 @@ impl Binder {
                 filter,
                 optional,
             } => {
+                // Validate allShortestPaths: both source and destination of the overall
+                // allShortestPaths pattern must already be resolved. Intermediate nodes
+                // (endpoints shared with other relationships in the same pattern) are OK
+                // since they'll be bound by preceding CondTraverse ops.
+                for rel in pattern.relationships() {
+                    if rel.all_shortest_paths != AllShortestPaths::No {
+                        let from_name = &rel.from.alias;
+                        let to_name = &rel.to.alias;
+                        // Collect aliases of nodes that appear as endpoints of other
+                        // relationships in the same pattern (i.e., intermediate nodes).
+                        let pattern_bound: std::collections::HashSet<_> = pattern
+                            .relationships()
+                            .iter()
+                            .filter(|r| r.all_shortest_paths == AllShortestPaths::No)
+                            .flat_map(|r| [r.from.alias.clone(), r.to.alias.clone()])
+                            .collect();
+                        let from_ok = self.current_env().contains_key(from_name)
+                            || pattern_bound.contains(from_name);
+                        let to_ok = self.current_env().contains_key(to_name)
+                            || pattern_bound.contains(to_name);
+                        if !from_ok || !to_ok {
+                            return Err(String::from(
+                                "Source and destination must already be resolved to call allShortestPaths",
+                            ));
+                        }
+                    }
+                }
                 let pattern = self.bind_graph(&pattern, false)?;
                 let filter = filter.map(|expr| self.bind_expr(&expr)).transpose()?;
                 if let Some(ref f) = filter
@@ -432,6 +461,7 @@ impl Binder {
                 func,
                 args,
                 yields: vars,
+                yield_aliases: aliases,
                 filter,
                 explicit_yield: yielded,
             } => {
@@ -439,10 +469,47 @@ impl Binder {
                     .iter()
                     .map(|expr| self.bind_expr(expr))
                     .collect::<Result<Vec<_>, _>>()?;
+
+                // Validate yield field names against procedure outputs
+                if yielded && let FnType::Procedure(ref fields) = func.fn_type {
+                    for (i, name) in vars.iter().enumerate() {
+                        // The actual field name is the alias (original field) if present,
+                        // otherwise the yield name itself
+                        let field_name = aliases.get(i).and_then(|a| a.as_ref()).unwrap_or(name);
+                        if !fields.iter().any(|f| f.as_str() == field_name.as_str()) {
+                            return Err(format!(
+                                "Unknown yield field '{}' for procedure '{}'",
+                                field_name, func.name
+                            ));
+                        }
+                    }
+                }
+
                 let mut bound_vars = Vec::with_capacity(vars.len());
-                for name in vars {
+                let mut bound_aliases: Vec<Option<Variable>> = Vec::with_capacity(vars.len());
+                for (i, name) in vars.into_iter().enumerate() {
+                    let alias = aliases.get(i).and_then(std::clone::Clone::clone);
                     if yielded {
-                        bound_vars.push(self.define_name_in_scope(name, Type::Any, true)?);
+                        if let Some(ref original_field) = alias {
+                            // YIELD field AS alias: register in scope under the alias name,
+                            // but set Variable.name to the original field for procedure map lookup.
+                            let var = self.define_name_in_scope(name.clone(), Type::Any, true)?;
+                            let var = Variable {
+                                name: Some(original_field.clone()),
+                                ..var
+                            };
+                            // Re-insert under alias name with the updated variable
+                            self.current_env_mut().insert(name.clone(), var.clone());
+                            bound_vars.push(var.clone());
+                            // Record alias: a Variable whose name is the alias
+                            bound_aliases.push(Some(Variable {
+                                name: Some(name),
+                                ..var
+                            }));
+                        } else {
+                            bound_vars.push(self.define_name_in_scope(name, Type::Any, true)?);
+                            bound_aliases.push(None);
+                        }
                     } else {
                         // Create a variable with the original name (for procedure map lookup)
                         // but store it in scope under a `_`-prefixed key so RETURN * doesn't see it.
@@ -454,6 +521,7 @@ impl Binder {
                         let hidden_name = Arc::new(format!("_hidden_{}_{name}", var.id));
                         self.current_env_mut().insert(hidden_name, var.clone());
                         bound_vars.push(var);
+                        bound_aliases.push(None);
                     }
                 }
                 let filter = filter.map(|expr| self.bind_expr(&expr)).transpose()?;
@@ -466,6 +534,7 @@ impl Binder {
                     func,
                     args,
                     yields: bound_vars,
+                    yield_aliases: bound_aliases,
                     filter,
                     explicit_yield: yielded,
                 })
@@ -1207,7 +1276,7 @@ impl Binder {
             // Add to bound graph if not already there
             // Nodes already added via alias_to_bound; no duplicate insert needed
 
-            let rel = Arc::new(QueryRelationship::new(
+            let mut new_rel = QueryRelationship::new(
                 alias.clone(),
                 relationship.types.clone(),
                 attrs,
@@ -1216,7 +1285,9 @@ impl Binder {
                 relationship.bidirectional,
                 relationship.min_hops,
                 relationship.max_hops,
-            ));
+            );
+            new_rel.all_shortest_paths = relationship.all_shortest_paths;
+            let rel = Arc::new(new_rel);
             bound.add_relationship(rel);
         }
 
@@ -1617,6 +1688,42 @@ impl Binder {
                 Ok(new_tree)
             }
             _ => {
+                // For ShortestPath, wrap child binding errors as "requires bound nodes"
+                if let ExprIR::ShortestPath { all_paths, .. } = node_ref.data() {
+                    let fn_name = if *all_paths {
+                        "allShortestPaths"
+                    } else {
+                        "shortestPath"
+                    };
+                    let children = node_ref
+                        .children()
+                        .map(|child| self.bind_expr_node(expr, &child, locals))
+                        .collect::<Result<Vec<_>, _>>()
+                        .map_err(|_| format!("A {fn_name} requires bound nodes"))?;
+                    let ExprIR::ShortestPath {
+                        rel_types,
+                        min_hops,
+                        max_hops,
+                        directed,
+                        all_paths,
+                    } = node_ref.data().clone()
+                    else {
+                        unreachable!();
+                    };
+                    let mut new_tree = DynTree::new(ExprIR::ShortestPath {
+                        rel_types,
+                        min_hops,
+                        max_hops,
+                        directed,
+                        all_paths,
+                    });
+                    let mut root = new_tree.root_mut();
+                    for child in children {
+                        root.push_child_tree(child);
+                    }
+                    return Ok(new_tree);
+                }
+
                 let children = node_ref
                     .children()
                     .map(|child| self.bind_expr_node(expr, &child, locals))
@@ -1677,6 +1784,34 @@ impl Binder {
                     }
                     ExprIR::FuncInvocation(func) => ExprIR::FuncInvocation(func),
                     ExprIR::Paren => ExprIR::Paren,
+                    ExprIR::ShortestPath {
+                        rel_types,
+                        min_hops,
+                        max_hops,
+                        directed,
+                        all_paths,
+                    } => {
+                        // Verify children (source/dest vars) are bound
+                        for child in &children {
+                            if let ExprIR::Variable(var) = child.root().data()
+                                && var.name.is_none()
+                            {
+                                let fn_name = if all_paths {
+                                    "allShortestPaths"
+                                } else {
+                                    "shortestPath"
+                                };
+                                return Err(format!("A {fn_name} requires bound nodes"));
+                            }
+                        }
+                        ExprIR::ShortestPath {
+                            rel_types,
+                            min_hops,
+                            max_hops,
+                            directed,
+                            all_paths,
+                        }
+                    }
                     ExprIR::Variable(_)
                     | ExprIR::Quantifier { .. }
                     | ExprIR::ListComprehension(_)
@@ -1933,6 +2068,7 @@ impl Binder {
             | ExprIR::Variable(_)
             | ExprIR::Parameter(_)
             | ExprIR::Property(_)
+            | ExprIR::ShortestPath { .. }
             | ExprIR::Pattern(_) => true,
         }
     }
@@ -1991,6 +2127,7 @@ impl Binder {
             | ExprIR::IsNode
             | ExprIR::IsRelationship
             | ExprIR::Quantifier { .. }
+            | ExprIR::ShortestPath { .. }
             | ExprIR::Pattern(_) => false,
         }
     }

@@ -1,14 +1,44 @@
 //! Cypher parser helper macros.
 //!
-//! This module defines internal parser macros used by
-//! [`crate::parser::cypher::Parser`] to reduce repetitive token-matching and
-//! expression-stack handling logic.
+//! This module defines internal macros used by [`crate::parser::cypher::Parser`]
+//! to reduce repetitive token-matching and expression-tree construction logic.
 //!
-//! Macros in this module:
-//! - `match_token!`: mandatory token/keyword match with contextual error message
-//! - `optional_match_token!`: optional token/keyword match
-//! - `parse_expr_return!`: expression-stack return helper
-//! - `parse_operators!`: precedence-aware binary operator folding helper
+//! ## Macros
+//!
+//! ### `match_token!`
+//! Mandatory token or keyword match. Consumes the token and advances the
+//! lexer on success; returns a formatted parse error on mismatch.
+//!
+//! ```text
+//! match_token!(lexer, LParen)       // expect Token::LParen
+//! match_token!(lexer => Match)      // expect Keyword::Match
+//! ```
+//!
+//! ### `optional_match_token!`
+//! Optional token or keyword match. Returns `true` and advances if the
+//! current token matches; returns `false` without advancing otherwise.
+//!
+//! ```text
+//! if optional_match_token!(lexer, Comma) { ... }
+//! if optional_match_token!(lexer => Where) { ... }
+//! ```
+//!
+//! ### `parse_expr_return!`
+//! Expression-stack return helper. After a sub-expression has been fully
+//! parsed into `$res`, this macro either pushes it as a child of the
+//! parent expression on the stack, stores it as the pending result, or
+//! returns it if the stack is empty (i.e., we are at the top level).
+//!
+//! ### `parse_operators!`
+//! Precedence-aware binary operator folding. Checks whether the current
+//! token is one of the given operator tokens; if so, wraps the
+//! left-hand operand in the corresponding `ExprIR` node and pushes a
+//! new stack frame for the right-hand operand at the next higher
+//! precedence level. If no operator matches, the result is folded back
+//! into the parent stack frame.
+//!
+//! This stack-based approach avoids deep call-stack recursion for
+//! heavily nested or chained binary expressions (e.g., `a+b+c+...`).
 
 macro_rules! match_token {
     ($lexer:expr, $token:ident) => {

@@ -1,7 +1,24 @@
 //! Batch-mode index scan operator — retrieves nodes using a secondary index.
 //!
 //! For each active row in the input batch, evaluates the index query
-//! parameters and collects matching nodes.
+//! parameters and collects matching nodes. Supports equality, range,
+//! point-radius, and conjunctive (AND) index queries.
+//!
+//! ```text
+//!  Input row ──► evaluate index query params
+//!                      │
+//!             ┌────────▼────────┐
+//!             │ IndexQuery::    │
+//!             │  Equal          │  key = value
+//!             │  Range          │  min <= key <= max
+//!             │  Point          │  within radius of point
+//!             │  And([...])     │  conjunction of the above
+//!             └────────┬────────┘
+//!                      │
+//!            graph.get_indexed_nodes()
+//!                      │
+//!             output rows with node IDs
+//! ```
 
 use std::collections::VecDeque;
 use std::sync::Arc;

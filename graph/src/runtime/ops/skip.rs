@@ -5,6 +5,14 @@
 //! window. A partial batch is trimmed by rebuilding the selection vector to
 //! exclude the leading entries. Once the skip count is exhausted, subsequent
 //! batches pass through unchanged.
+//!
+//! ```text
+//!  SKIP 5:
+//!
+//!  batch 1 (3 rows) ──► drop entirely (remaining: 5 -> 2)
+//!  batch 2 (4 rows) ──► skip first 2, pass last 2 (remaining: 2 -> 0)
+//!  batch 3           ──► pass through unchanged
+//! ```
 
 use crate::planner::IR;
 use crate::runtime::{

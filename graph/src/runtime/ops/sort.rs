@@ -4,6 +4,27 @@
 //! the first `next()` call, evaluates sort-key expressions for each
 //! row, sorts in-memory using a stable sort with per-key ascending/descending
 //! control, and then yields rows in sorted batches.
+//!
+//! ```text
+//!  Child batches (all consumed on first call)
+//!       │
+//!       ▼
+//!  ┌──────────────────────────────────┐
+//!  │ Evaluate sort keys per row       │
+//!  │ [(env, [(val, desc), ...])]      │
+//!  └──────────────┬───────────────────┘
+//!                 │
+//!       stable sort (multi-key)
+//!                 │
+//!       ┌────────▼────────┐
+//!       │ reversed Vec    │  stored reversed so pop() is O(1)
+//!       │ yield BATCH_SIZE│
+//!       │ at a time       │
+//!       └─────────────────┘
+//! ```
+//!
+//! When primary sort keys are equal, a deterministic tiebreaker compares
+//! env values slot-by-slot.
 
 use crate::parser::ast::{QueryExpr, Variable};
 use crate::planner::IR;

@@ -4,6 +4,9 @@
 //! active row in each input batch, evaluates the label and query expressions,
 //! delegates to the graph's fulltext index, and expands matching nodes into
 //! output rows accumulated into batches of up to `BATCH_SIZE`.
+//!
+//! Each result row includes the matched node ID and optionally a relevance
+//! score (float) when a score yield variable is specified.
 
 use std::collections::VecDeque;
 

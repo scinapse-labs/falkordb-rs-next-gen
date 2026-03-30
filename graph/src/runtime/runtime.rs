@@ -40,7 +40,7 @@
 #![allow(clippy::cast_precision_loss)]
 use crate::{
     graph::graph::{Graph, NodeId, RelationshipId},
-    index::indexer::{IndexOptions, IndexType, TextIndexOptions},
+    index::indexer::{IndexOptions, IndexType, TextIndexOptions, VectorIndexOptions},
     parser::ast::{ExprIR, QueryExpr, Variable},
     planner::IR,
     runtime::{
@@ -48,12 +48,12 @@ use crate::{
         bitset::BitSet,
         env::Env,
         ops::{
-            AggregateOp, ApplyOp, CartesianProductOp, CommitOp, CondTraverseOp,
+            AggregateOp, AllShortestPathsOp, ApplyOp, CartesianProductOp, CommitOp, CondTraverseOp,
             CondVarLenTraverseOp, CreateOp, DeleteOp, DistinctOp, ExpandIntoOp, FilterOp,
             ForEachOp, LimitOp, LoadCsvOp, MergeOp, NodeByFulltextScanOp, NodeByIdSeekOp,
             NodeByIndexScanOp, NodeByLabelAndIdScanOp, NodeByLabelScanOp, OptionalOp,
             OrApplyMultiplexerOp, PathBuilderOp, ProcedureCallOp, ProjectOp, RemoveOp, SemiApplyOp,
-            SetOp, SkipOp, SortOp, UnionOp, UnwindOp,
+            SetOp, SkipOp, SortOp, UnionOp, UnwindOp, ValueHashJoinOp,
         },
         ordermap::OrderMap,
         orderset::OrderSet,
@@ -187,6 +187,7 @@ impl<T: MemoryPolicy> GetVariables for DynNode<'_, IR, T> {
                 | IR::Remove(_)
                 | IR::Filter(_)
                 | IR::CartesianProduct
+                | IR::ValueHashJoin { .. }
                 | IR::Union
                 | IR::Apply
                 | IR::SemiApply
@@ -216,12 +217,18 @@ impl<T: MemoryPolicy> GetVariables for DynNode<'_, IR, T> {
                     relationship: query_relationship,
                     ..
                 }
-                | IR::CondVarLenTraverse(query_relationship)
+                | IR::CondVarLenTraverse {
+                    relationship: query_relationship,
+                    ..
+                }
+                | IR::AllShortestPaths(query_relationship)
                 | IR::ExpandInto {
                     relationship: query_relationship,
                     ..
                 } => {
                     vars.push(query_relationship.alias.clone());
+                    vars.push(query_relationship.from.alias.clone());
+                    vars.push(query_relationship.to.alias.clone());
                 }
                 IR::PathBuilder(query_paths) => {
                     for path in query_paths {
@@ -539,6 +546,8 @@ impl<'a> Runtime<'a> {
             IR::CondTraverse {
                 relationship: relationship_pattern,
                 emit_relationship,
+                sibling_edges,
+                transposed,
             } => {
                 let child = self.child_batch_op(idx)?;
                 Ok(BatchOp::CondTraverse(CondTraverseOp::new(
@@ -546,12 +555,15 @@ impl<'a> Runtime<'a> {
                     Box::new(child),
                     relationship_pattern,
                     *emit_relationship,
+                    sibling_edges,
+                    *transposed,
                     idx,
                 )))
             }
             IR::ExpandInto {
                 relationship: relationship_pattern,
                 emit_relationship,
+                sibling_edges,
             } => {
                 let child = self.child_batch_op(idx)?;
                 Ok(BatchOp::ExpandInto(ExpandIntoOp::new(
@@ -559,6 +571,7 @@ impl<'a> Runtime<'a> {
                     Box::new(child),
                     relationship_pattern,
                     *emit_relationship,
+                    sibling_edges,
                     idx,
                 )))
             }
@@ -596,6 +609,18 @@ impl<'a> Runtime<'a> {
                     self,
                     Box::new(child),
                     right_children,
+                    idx,
+                )))
+            }
+            IR::ValueHashJoin { lhs_exp, rhs_exp } => {
+                let child = self.child_batch_op(idx)?;
+                let right = self.run_batch(self.plan.node(idx).child(1).idx())?;
+                Ok(BatchOp::ValueHashJoin(ValueHashJoinOp::new(
+                    self,
+                    Box::new(child),
+                    Box::new(right),
+                    lhs_exp,
+                    rhs_exp,
                     idx,
                 )))
             }
@@ -730,13 +755,17 @@ impl<'a> Runtime<'a> {
                 func,
                 args: trees,
                 yields: name_outputs,
-            } => Ok(BatchOp::ProcedureCall(ProcedureCallOp::new(
-                self,
-                func,
-                trees,
-                name_outputs,
-                idx,
-            )?)),
+            } => {
+                let child = self.child_batch_op(idx)?;
+                Ok(BatchOp::ProcedureCall(ProcedureCallOp::new(
+                    self,
+                    Box::new(child),
+                    func,
+                    trees,
+                    name_outputs,
+                    idx,
+                )?))
+            }
             IR::NodeByFulltextScan {
                 node,
                 label,
@@ -764,9 +793,22 @@ impl<'a> Runtime<'a> {
                     idx,
                 )))
             }
-            IR::CondVarLenTraverse(relationship_pattern) => {
+            IR::CondVarLenTraverse {
+                relationship: relationship_pattern,
+                edge_filter,
+            } => {
                 let child = self.child_batch_op(idx)?;
                 Ok(BatchOp::CondVarLenTraverse(CondVarLenTraverseOp::new(
+                    self,
+                    Box::new(child),
+                    relationship_pattern,
+                    edge_filter.as_ref(),
+                    idx,
+                )))
+            }
+            IR::AllShortestPaths(relationship_pattern) => {
+                let child = self.child_batch_op(idx)?;
+                Ok(BatchOp::AllShortestPaths(AllShortestPathsOp::new(
                     self,
                     Box::new(child),
                     relationship_pattern,
@@ -1186,6 +1228,54 @@ fn map_to_index_options(
             });
             Ok(Some(options))
         }
-        _ => Ok(None),
+        IndexType::Range => Ok(None),
+        IndexType::Vector => {
+            let dimension = match get("dimension") {
+                Some(Value::Int(n)) => {
+                    if *n < 0 {
+                        return Err("dimension must be a non-negative integer".into());
+                    }
+                    *n as u32
+                }
+                None => 0,
+                _ => return Err("dimension must be an integer".into()),
+            };
+            let similarity_function = match get("similarityFunction") {
+                Some(Value::String(s)) => Some(s.to_string()),
+                None => None,
+                _ => return Err("similarityFunction must be a string".into()),
+            };
+            let m = match get("M") {
+                Some(Value::Int(n)) if *n < 0 => {
+                    return Err("M must be a non-negative integer".into());
+                }
+                Some(Value::Int(n)) => Some(*n as usize),
+                None => None,
+                _ => return Err("M must be an integer".into()),
+            };
+            let ef_construction = match get("efConstruction") {
+                Some(Value::Int(n)) if *n < 0 => {
+                    return Err("efConstruction must be a non-negative integer".into());
+                }
+                Some(Value::Int(n)) => Some(*n as usize),
+                None => None,
+                _ => return Err("efConstruction must be an integer".into()),
+            };
+            let ef_runtime = match get("efRuntime") {
+                Some(Value::Int(n)) if *n < 0 => {
+                    return Err("efRuntime must be a non-negative integer".into());
+                }
+                Some(Value::Int(n)) => Some(*n as usize),
+                None => None,
+                _ => return Err("efRuntime must be an integer".into()),
+            };
+            Ok(Some(IndexOptions::Vector(VectorIndexOptions {
+                dimension,
+                similarity_function,
+                m,
+                ef_construction,
+                ef_runtime,
+            })))
+        }
     }
 }

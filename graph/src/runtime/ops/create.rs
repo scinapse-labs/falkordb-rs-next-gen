@@ -2,9 +2,30 @@
 //!
 //! For each active row in each input batch, resolves the create pattern
 //! (lazily on first row) and calls `Runtime::create` to reserve IDs and
-//! record mutations in the pending batch. When the direct parent is a
-//! `Commit` node at the plan root, result rows are suppressed (write-only
-//! optimization).
+//! record mutations in the pending batch.
+//!
+//! ```text
+//!  Input batch ──► resolve pattern (once)
+//!                       │
+//!           ┌───────────┴───────────┐
+//!           │  for each node:       │
+//!           │    reserve IDs        │
+//!           │    record labels      │
+//!           │    eval + set attrs   │
+//!           │    write ID column    │
+//!           ├───────────────────────┤
+//!           │  for each rel:        │
+//!           │    validate endpoints │
+//!           │    reserve IDs        │
+//!           │    record type + attrs│
+//!           │    write ID column    │
+//!           └───────────┬───────────┘
+//!                       │
+//!              output batch (with new IDs bound)
+//! ```
+//!
+//! When the direct parent is a `Commit` node at the plan root, result rows
+//! are suppressed (write-only optimization).
 
 use std::cell::OnceCell;
 use std::sync::Arc;

@@ -1,3 +1,39 @@
+//! # UDF Library Repository
+//!
+//! This module provides thread-safe, versioned storage for user-defined
+//! function libraries. Each library is a named JavaScript source file that
+//! registers one or more functions via `falkor.register()`.
+//!
+//! ## Data Model
+//!
+//! ```text
+//! UdfRepo (process-wide singleton)
+//!   |-- version: AtomicU64          // bumped on every mutation
+//!   '-- inner: RwLock<Vec<UdfLibrary>>
+//!              |
+//!              |-- UdfLibrary { name: "mylib", code: "...", function_names: ["mylib.fn1", ...] }
+//!              '-- UdfLibrary { name: "utils", code: "...", function_names: ["utils.add", ...] }
+//! ```
+//!
+//! ## Versioning
+//!
+//! Every mutation (`load`, `delete`, `flush`) increments `version`. Thread-local
+//! QuickJS contexts in [`js_context`](super::js_context) compare their cached
+//! version against the repo version; on mismatch the context is rebuilt with
+//! the latest set of libraries.
+//!
+//! ## Library Lifecycle
+//!
+//! 1. **Load** -- Validate the script in a temporary JS context
+//!    ([`js_context::validate_script`](super::js_context::validate_script)),
+//!    then store the library. Optionally replaces an existing library of the
+//!    same name.
+//! 2. **Delete** -- Remove a library by name and unregister its functions from
+//!    the Cypher function registry.
+//! 3. **Flush** -- Remove all libraries at once.
+//! 4. **Serialize / Deserialize** -- Support RDB persistence so libraries
+//!    survive Redis restarts.
+
 use parking_lot::RwLock;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -182,13 +218,48 @@ impl UdfRepo {
     }
 
     /// Bulk load from deserialized data (for RDB load).
+    ///
+    /// Validates **all** libraries in a staging area first. Only on full
+    /// success are the live repo contents atomically replaced and the
+    /// version bumped. On any validation failure the live repo and
+    /// runtime function table remain unchanged.
     pub fn deserialize(
         &self,
-        libs: Vec<(String, String)>,
-    ) -> Result<(), String> {
+        libs: &[(String, String)],
+    ) -> Result<Vec<UdfLibrary>, String> {
+        // Phase 1 – validate every library and build the staging list.
+        let mut staged: Vec<UdfLibrary> = Vec::with_capacity(libs.len());
         for (name, code) in libs {
-            self.load(&name, &code, true)?;
+            let raw_names = js_context::validate_script(code).map_err(|e| {
+                format!("UDF library '{name}' failed validation during RDB load: {e}")
+            })?;
+            let qualified_names: Vec<String> = raw_names
+                .iter()
+                .map(|fn_name| format!("{name}.{fn_name}"))
+                .collect();
+            staged.push(UdfLibrary {
+                name: name.clone(),
+                code: code.clone(),
+                function_names: qualified_names,
+            });
         }
-        Ok(())
+
+        // Phase 2 – all validated; atomically swap the live repo.
+        let result = staged.clone();
+        {
+            let mut inner = self.inner.write();
+
+            // Unregister old functions.
+            for lib in &inner.libraries {
+                for qname in &lib.function_names {
+                    crate::runtime::functions::unregister_udf(qname);
+                }
+            }
+
+            inner.libraries = staged;
+        }
+        self.version.fetch_add(1, Ordering::Release);
+
+        Ok(result)
     }
 }

@@ -1,35 +1,64 @@
-//! Sparse matrix operations using GraphBLAS.
+//! Safe Rust wrapper around GraphBLAS boolean sparse matrices.
 //!
-//! This module provides a safe Rust wrapper around GraphBLAS sparse matrices,
-//! which are used to represent graph adjacency. Each relationship type in the
-//! graph is stored as a separate sparse matrix.
+//! This module provides [`Matrix`], which wraps `GrB_Matrix` from the
+//! SuiteSparse:GraphBLAS C library. Matrices represent graph adjacency:
+//! each relationship type in the graph gets its own sparse boolean matrix.
 //!
-//! ## GraphBLAS Integration
+//! ## Sparse Storage
 //!
-//! GraphBLAS is a C library for sparse linear algebra operations. This module:
-//! - Initializes the library with custom memory allocators (to respect Redis limits)
-//! - Wraps `GrB_Matrix` with safe Rust semantics
-//! - Provides iterator access for traversing matrix entries
+//! Only non-zero entries consume memory. For a graph with N nodes but
+//! sparse connectivity, this is far more efficient than a dense N x N array.
 //!
-//! ## Matrix Layout
+//! ```text
+//!   GrB_Matrix (boolean, sparse)
 //!
-//! - Rows and columns represent node IDs
-//! - A `true` entry at (i, j) means there's an edge from node i to node j
-//! - Boolean matrices are used (we only care about edge existence)
+//!   Logical view:               Stored entries only:
+//!     0 1 2 3 4                   (0,1) = true
+//!   +----------+                  (1,2) = true
+//! 0 | . T . . . |                 (3,0) = true
+//! 1 | . . T . . |                 (3,4) = true
+//! 2 | . . . . . |
+//! 3 | T . . . T |               nvals = 4
+//! 4 | . . . . . |               nrows = 5, ncols = 5
+//!   +----------+
+//! ```
+//!
+//! ## Thread Safety
+//!
+//! [`Matrix`] uses `Arc<GrB_Matrix>` for shared ownership and reference-counted
+//! cleanup. A `Mutex` guards operations that require serialization (e.g., `wait`).
+//! `Clone` is shallow (Arc clone); use [`Dup`] for a deep copy.
+//!
+//! ## Initialization
+//!
+//! Call [`init`] once before creating any matrices. It initializes GraphBLAS
+//! and LAGraph with optional custom allocators for Redis memory integration.
 //!
 //! ## Key Operations
 //!
-//! - `set(row, col)`: Create an edge
-//! - `remove(row, col)`: Delete an edge  
-//! - `mxm`: Matrix multiplication for multi-hop traversals
-//! - `eWiseAdd`: Union of edges (OR)
-//! - `eWiseMult`: Intersection of edges (AND)
+//! | Operation      | Method                         | Description                        |
+//! |----------------|--------------------------------|------------------------------------|
+//! | Create edge    | `Set::set(i, j, true)`         | Set entry at (row, col)            |
+//! | Remove edge    | `Remove::remove(i, j)`         | Delete entry at (row, col)         |
+//! | Check edge     | `Get::get(i, j)`               | Returns `Some(true)` or `None`     |
+//! | Multi-hop      | `MxM::lmxm(b)` / `rmxm(b)`    | Matrix multiply (path traversal)   |
+//! | Union          | `MaskedElementWiseAdd`          | OR of two matrices                 |
+//! | Intersection   | `MaskedElementWiseMultiply`     | AND of two matrices                |
+//! | Transpose      | `Transpose::transpose()`       | Reverse all edge directions        |
+//!
+//! ## Row Iterator
+//!
+//! [`Iter`] traverses non-zero entries row by row within a `[min_row, max_row]`
+//! range, yielding `(row, col)` pairs. It attaches a `GxB_Iterator` to a
+//! snapshot (Arc-cloned) of the underlying `GrB_Matrix`.
 
 #![allow(clippy::doc_markdown)]
 
 use std::{mem::MaybeUninit, os::raw::c_void, ptr::null_mut, sync::Arc};
 
 use parking_lot::Mutex;
+
+use crate::graph::graphblas::lagraph_bindings::{LAGraph_Finalize, LAGraph_Init};
 
 use super::{
     GrB_BOOL, GrB_DESC_C, GrB_DESC_CT0, GrB_DESC_CT0T1, GrB_DESC_CT1, GrB_DESC_R, GrB_DESC_RC,
@@ -70,6 +99,10 @@ pub fn init(
             user_realloc_function,
             user_free_function,
         );
+
+        // Initialize LAGraph after GraphBLAS
+        let mut msg = [0i8; 256];
+        LAGraph_Init(msg.as_mut_ptr());
     }
 }
 
@@ -84,10 +117,11 @@ pub fn burble(burble: bool) {
     }
 }
 
-/// Finalizes the GraphBLAS library, releasing all resources.
+/// Finalizes LAGraph and GraphBLAS, releasing all resources.
 pub fn shutdown() {
     unsafe {
-        GrB_finalize();
+        let mut msg = [0i8; 256];
+        LAGraph_Finalize(msg.as_mut_ptr());
     }
 }
 
@@ -386,6 +420,13 @@ impl Drop for Matrix {
 }
 
 impl Matrix {
+    /// Returns the raw GrB_Matrix handle for FFI calls (e.g. LAGraph).
+    /// The caller must NOT free the returned handle.
+    #[must_use]
+    pub fn inner(&self) -> GrB_Matrix {
+        *self.m
+    }
+
     #[must_use]
     pub fn pending(&self) -> bool {
         unsafe {

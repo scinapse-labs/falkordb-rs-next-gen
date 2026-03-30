@@ -1,26 +1,33 @@
-//! RediSearch FFI bindings and integration.
+//! RediSearch C API bindings (auto-generated via `rust-bindgen`).
 //!
-//! This module provides Rust bindings to the RediSearch C API, used for
-//! full-text search, numeric range indexes, and vector similarity search.
+//! This module exposes the RediSearch library functions used by
+//! [`Index`](super::Index) to create indexes, manage documents, build
+//! query trees, and iterate over results.  **Do not edit by hand** -- the
+//! bindings are regenerated from the RediSearch C headers.
 //!
-//! ## Structure
+//! # Module layout
 //!
-//! - This file: Auto-generated bindgen constants and types
-//! - `redis.rs`: Redis module context types
+//! ```text
+//! redisearch/
+//!   mod.rs   -- RediSearch constants, opaque types, and extern "C" functions
+//!   redis.rs -- Redis module context types (RedisModuleCtx, RedisModuleString, ...)
+//! ```
 //!
-//! ## Key Types
+//! # Key opaque types
 //!
-//! - `RSIndex`: Handle to a RediSearch index
-//! - `RSDoc`: A document to be indexed
-//! - `RSQueryNode`: Query tree node for search
+//! - `RSIndex`            -- handle to a RediSearch index
+//! - `RSDoc`              -- a document to be indexed
+//! - `RSQNode`            -- a node in a query tree (numeric, tag, geo, intersect, ...)
+//! - `RSResultsIterator`  -- iterator over query results
+//! - `RSIndexOptions`     -- index creation options (GC policy, stopwords, language)
 //!
-//! ## Field Types
+//! # Field type bitmask constants
 //!
-//! - `RSFLDTYPE_FULLTEXT`: Full-text searchable field
-//! - `RSFLDTYPE_NUMERIC`: Numeric range queryable field  
-//! - `RSFLDTYPE_TAG`: Exact match tag field
-//! - `RSFLDTYPE_GEO`: Geographic point field
-//! - `RSFLDTYPE_VECTOR`: Vector embedding field
+//! - `RSFLDTYPE_FULLTEXT` (1)  -- tokenized text field
+//! - `RSFLDTYPE_NUMERIC`  (2)  -- numeric range field
+//! - `RSFLDTYPE_GEO`      (4)  -- geographic point field
+//! - `RSFLDTYPE_TAG`      (8)  -- exact-match tag field
+//! - `RSFLDTYPE_VECTOR`   (16) -- vector embedding field
 
 #![allow(non_snake_case)]
 #![allow(non_upper_case_globals)]
@@ -323,6 +330,23 @@ unsafe extern "C" {
         sp: *mut RSIndex,
         fs: RSFieldID,
         enable: ::std::os::raw::c_int,
+    );
+}
+unsafe extern "C" {
+    pub fn RediSearch_VectorFieldSetDim(
+        sp: *mut RSIndex,
+        fs: RSFieldID,
+        dim: ::std::os::raw::c_int,
+    );
+}
+unsafe extern "C" {
+    pub fn RediSearch_VectorFieldSetHNSWParams(
+        sp: *mut RSIndex,
+        fs: RSFieldID,
+        m: usize,
+        ef_construction: usize,
+        ef_runtime: usize,
+        metric: ::std::os::raw::c_uint,
     );
 }
 unsafe extern "C" {

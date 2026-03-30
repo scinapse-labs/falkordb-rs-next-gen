@@ -5,11 +5,60 @@
 //! cache first (marked dirty); fjall is updated asynchronously when the
 //! memory threshold is exceeded.
 //!
-//! The cache is shared across MVCC versions via `Arc` so that
-//! `AttributeStore::new_version()` costs only a pointer increment.
+//! ## Cache Entry Structure
 //!
-//! Uses [`quick_cache`] internally — a sharded, lock-free concurrent cache
+//! ```text
+//!  CachedEntity
+//!  ┌─────────────────────────────────────────────┐
+//!  │ attrs: [(0, "Alice"), (1, 30), (2, "NYC")]  │  sorted by attr_idx
+//!  │ version: 5                                  │  MVCC version stamp
+//!  │ dirty: true                                 │  not yet flushed to fjall
+//!  └─────────────────────────────────────────────┘
+//! ```
+//!
+//! ## Lookup Flow
+//!
+//! ```text
+//!  get_attr(entity_id=42, attr_idx=1, reader_version=4)
+//!       │
+//!       ▼
+//!  quick_cache lookup by entity_id
+//!       │
+//!       ├── miss ──▶ return None (caller falls back to fjall)
+//!       │
+//!       ▼
+//!  entry.version > reader_version?
+//!       │
+//!       ├── yes ──▶ return None (uncommitted write, invisible to reader)
+//!       │
+//!       ▼
+//!  binary search attrs for attr_idx
+//!       │
+//!       ├── found ──▶ return Some(Some(value))
+//!       └── not found ──▶ return Some(None)  (entity cached, attr absent)
+//! ```
+//!
+//! ## Dirty Pinning
+//!
+//! Dirty entries (writes not yet flushed to fjall) are pinned by the
+//! `DirtyPinLifecycle` so that `quick_cache` will not evict them during
+//! normal LRU eviction. This prevents data loss -- dirty entries can only
+//! be removed explicitly via `collect_dirty_lru` (which hands them to the
+//! caller for flushing) or `invalidate` (used during rollback).
+//!
+//! ## Sharing Across MVCC Versions
+//!
+//! The cache is shared across MVCC versions via `Arc<AttributeCache>` so
+//! that `AttributeStore::new_version()` costs only a pointer increment.
+//! Version stamps on each entry ensure that readers with older MVCC
+//! versions do not see uncommitted writes from a newer transaction.
+//!
+//! ## Implementation
+//!
+//! Uses [`quick_cache`] internally -- a sharded, lock-free concurrent cache
 //! with CLOCK-based approximate LRU eviction and byte-weighted capacity.
+//! The default budget is 2 GiB per attribute store (nodes and relationships
+//! each get their own cache).
 
 use quick_cache::sync::Cache;
 use quick_cache::{DefaultHashBuilder, Lifecycle, Weighter};

@@ -52,12 +52,12 @@ fi
    TCK_DONE=tck_done.txt pytest tests/tck/test_tck.py -s
 
    # Merge and export coverage data
-   llvm-profdata-21 merge --sparse $(find . -name "*.profraw") -o cov.profdata
-   llvm-cov-21 export --format=lcov --instr-profile cov.profdata target/debug/libfalkordb.so > codecov.txt.all
+   llvm-profdata-22 merge --sparse $(find . -name "*.profraw") -o cov.profdata
+   llvm-cov-22 export --format=lcov --instr-profile cov.profdata target/debug/libfalkordb.so > codecov.txt.all
    lcov --ignore-errors unused -r codecov.txt.all -o codecov.txt
 
    # Display summary
-   llvm-cov-21 report --instr-profile cov.profdata target/debug/libfalkordb.so
+   llvm-cov-22 report --instr-profile cov.profdata target/debug/libfalkordb.so
    ```
 
    **If outside devcontainer:**
@@ -74,10 +74,10 @@ fi
      pytest tests/test_e2e.py tests/test_functions.py tests/test_mvcc.py tests/test_concurrency.py -vv
      ./flow.sh
      TCK_DONE=tck_done.txt pytest tests/tck/test_tck.py -s
-     llvm-profdata-21 merge --sparse \$(find . -name '*.profraw') -o cov.profdata
-     llvm-cov-21 export --format=lcov --instr-profile cov.profdata target/debug/libfalkordb.so > codecov.txt.all
+     llvm-profdata-22 merge --sparse \$(find . -name '*.profraw') -o cov.profdata
+     llvm-cov-22 export --format=lcov --instr-profile cov.profdata target/debug/libfalkordb.so > codecov.txt.all
      lcov --ignore-errors unused -r codecov.txt.all -o codecov.txt
-     llvm-cov-21 report --instr-profile cov.profdata target/debug/libfalkordb.so
+     llvm-cov-22 report --instr-profile cov.profdata target/debug/libfalkordb.so
    "
    ```
 
@@ -89,10 +89,10 @@ fi
    rm -f cov.profdata codecov.txt codecov.txt.all
    RUSTFLAGS="-C instrument-coverage" cargo build
    RUSTFLAGS="-C instrument-coverage" cargo test -p graph
-   llvm-profdata-21 merge --sparse $(find . -name "*.profraw") -o cov.profdata
-   llvm-cov-21 export --format=lcov --instr-profile cov.profdata target/debug/libfalkordb.so > codecov.txt.all
+   llvm-profdata-22 merge --sparse $(find . -name "*.profraw") -o cov.profdata
+   llvm-cov-22 export --format=lcov --instr-profile cov.profdata target/debug/libfalkordb.so > codecov.txt.all
    lcov --ignore-errors unused -r codecov.txt.all -o codecov.txt
-   llvm-cov-21 report --instr-profile cov.profdata target/debug/libfalkordb.so
+   llvm-cov-22 report --instr-profile cov.profdata target/debug/libfalkordb.so
    ```
 
    **If outside devcontainer:**
@@ -103,10 +103,10 @@ fi
      rm -f cov.profdata codecov.txt codecov.txt.all
      RUSTFLAGS='-C instrument-coverage' cargo build
      RUSTFLAGS='-C instrument-coverage' cargo test -p graph
-     llvm-profdata-21 merge --sparse \$(find . -name '*.profraw') -o cov.profdata
-     llvm-cov-21 export --format=lcov --instr-profile cov.profdata target/debug/libfalkordb.so > codecov.txt.all
+     llvm-profdata-22 merge --sparse \$(find . -name '*.profraw') -o cov.profdata
+     llvm-cov-22 export --format=lcov --instr-profile cov.profdata target/debug/libfalkordb.so > codecov.txt.all
      lcov --ignore-errors unused -r codecov.txt.all -o codecov.txt
-     llvm-cov-21 report --instr-profile cov.profdata target/debug/libfalkordb.so
+     llvm-cov-22 report --instr-profile cov.profdata target/debug/libfalkordb.so
    "
    ```
 
@@ -120,10 +120,10 @@ fi
    RUSTFLAGS="-C instrument-coverage" cargo test -p graph
    source /data/venv/bin/activate
    pytest tests/test_e2e.py tests/test_functions.py tests/test_mvcc.py tests/test_concurrency.py -vv
-   llvm-profdata-21 merge --sparse $(find . -name "*.profraw") -o cov.profdata
-   llvm-cov-21 export --format=lcov --instr-profile cov.profdata target/debug/libfalkordb.so > codecov.txt.all
+   llvm-profdata-22 merge --sparse $(find . -name "*.profraw") -o cov.profdata
+   llvm-cov-22 export --format=lcov --instr-profile cov.profdata target/debug/libfalkordb.so > codecov.txt.all
    lcov --ignore-errors unused -r codecov.txt.all -o codecov.txt
-   llvm-cov-21 report --instr-profile cov.profdata target/debug/libfalkordb.so
+   llvm-cov-22 report --instr-profile cov.profdata target/debug/libfalkordb.so
    ```
 
    **If outside devcontainer:**
@@ -137,10 +137,10 @@ fi
      RUSTFLAGS='-C instrument-coverage' cargo test -p graph
      source /data/venv/bin/activate
      pytest tests/test_e2e.py tests/test_functions.py tests/test_mvcc.py tests/test_concurrency.py -vv
-     llvm-profdata-21 merge --sparse \$(find . -name '*.profraw') -o cov.profdata
-     llvm-cov-21 export --format=lcov --instr-profile cov.profdata target/debug/libfalkordb.so > codecov.txt.all
+     llvm-profdata-22 merge --sparse \$(find . -name '*.profraw') -o cov.profdata
+     llvm-cov-22 export --format=lcov --instr-profile cov.profdata target/debug/libfalkordb.so > codecov.txt.all
      lcov --ignore-errors unused -r codecov.txt.all -o codecov.txt
-     llvm-cov-21 report --instr-profile cov.profdata target/debug/libfalkordb.so
+     llvm-cov-22 report --instr-profile cov.profdata target/debug/libfalkordb.so
    "
    ```
 
@@ -156,7 +156,7 @@ After running coverage, the following files will be generated:
 ## Notes
 
 - Code coverage uses LLVM's source-based code coverage instrumentation
-- `llvm-profdata-21` and `llvm-cov-21` are required (provided in devcontainer)
+- `llvm-profdata-22` and `llvm-cov-22` are required (provided in devcontainer)
 - Flow tests require the debug build to be completed first
 - Coverage data includes both Rust and integration test coverage
 - When running outside devcontainer, the first run may take longer as it builds the container image

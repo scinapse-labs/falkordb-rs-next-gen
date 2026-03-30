@@ -2,9 +2,27 @@
 //!
 //! For each input batch, runs the match sub-plan once with all active rows as a
 //! multi-row argument batch. Uses `origin_row` on output envs to group matches
-//! by input row. For input rows with matches, applies `ON MATCH SET`; for rows
-//! without matches, creates the pattern and applies `ON CREATE SET`. A pattern
-//! hash cache prevents duplicate creates within the same query.
+//! by input row.
+//!
+//! ```text
+//!  Input row ──► run match sub-plan
+//!                      │
+//!              ┌───────┴───────┐
+//!              │               │
+//!          has matches?    no matches?
+//!              │               │
+//!        ON MATCH SET     CREATE pattern
+//!              │           + ON CREATE SET
+//!              ▼               ▼
+//!         output row       output row
+//! ```
+//!
+//! For input rows with matches, applies `ON MATCH SET`; for rows without
+//! matches, creates the pattern and applies `ON CREATE SET`. A pattern
+//! hash cache prevents duplicate creates within the same query — if the
+//! same pattern (same labels, attributes, endpoints) was already created
+//! by an earlier row, the cached entity IDs are reused and `ON MATCH SET`
+//! is applied instead.
 
 use std::cell::OnceCell;
 use std::collections::VecDeque;

@@ -1,11 +1,35 @@
 //! `GRAPH.MEMORY USAGE` command handler.
 //!
-//! Reports detailed per-component memory usage for a graph key.
+//! Reports detailed per-component memory usage for a graph key, returned in
+//! megabytes (integer division, matching the FalkorDB C implementation).
 //!
-//! Syntax: `GRAPH.MEMORY USAGE <key> [SAMPLES <count>]`
+//! ## Syntax
+//! ```text
+//! GRAPH.MEMORY USAGE <key> [SAMPLES <count>]
+//! ```
 //!
-//! Returns a flat array of key-value pairs (9 pairs = 18 elements) compatible
-//! with the FalkorDB C implementation's `RedisModule_ReplyWithMap(9)`.
+//! `SAMPLES` controls how many attribute entries are sampled to estimate
+//! storage size (default: 100). Higher values give more accurate estimates
+//! at the cost of longer computation.
+//!
+//! ## Response structure
+//! A flat array of 9 key-value pairs (18 elements total):
+//!
+//! ```text
+//! [ "total_graph_sz_mb",                          <int>,
+//!   "label_matrices_sz_mb",                       <int>,
+//!   "relation_matrices_sz_mb",                    <int>,
+//!   "amortized_node_block_sz_mb",                 <int>,
+//!   "amortized_node_attributes_by_label_sz_mb",   [label, mb, ...],
+//!   "amortized_unlabeled_nodes_attributes_sz_mb", <int>,
+//!   "amortized_edge_block_sz_mb",                 <int>,
+//!   "amortized_edge_attributes_by_type_sz_mb",    [type, mb, ...],
+//!   "indices_sz_mb",                              <int> ]
+//! ```
+//!
+//! The `total_graph_sz_mb` value is the sum of all other MB-rounded
+//! components, which avoids truncation discrepancies when clients verify
+//! the total against the individual parts.
 
 use crate::{graph_core::ThreadedGraph, redis_type::GRAPH_TYPE};
 use parking_lot::RwLock;
@@ -14,6 +38,7 @@ use std::sync::Arc;
 
 const MB: usize = 1 << 20;
 
+#[allow(clippy::too_many_lines)]
 pub fn graph_memory(
     ctx: &Context,
     args: Vec<RedisString>,
@@ -21,10 +46,10 @@ pub fn graph_memory(
     // GRAPH.MEMORY USAGE <key> [SAMPLES <count>]
     // args[0] = "GRAPH.MEMORY"
     let mut args = args.into_iter().skip(1);
-    let argc = args.len();
+    let arg_count = args.len();
 
     // Must have 2 or 4 remaining args: USAGE <key> [SAMPLES <n>]
-    if argc != 2 && argc != 4 {
+    if arg_count != 2 && arg_count != 4 {
         return Err(RedisError::WrongArity);
     }
 
@@ -39,7 +64,7 @@ pub fn graph_memory(
     let key_name = args.next_arg()?;
 
     // Parse optional SAMPLES <count>
-    let samples: usize = if argc == 4 {
+    let samples: usize = if arg_count == 4 {
         let samples_kw = args.next_arg()?;
         if !samples_kw.to_string_lossy().eq_ignore_ascii_case("SAMPLES") {
             return Err(RedisError::Str("ERR expected SAMPLES keyword"));
@@ -52,9 +77,15 @@ pub fn graph_memory(
                 "ERR SAMPLES count must be a positive integer",
             ));
         }
-        count_s
+        let count = count_s
             .parse::<usize>()
-            .map_err(|_| RedisError::Str("ERR SAMPLES count must be a positive integer"))?
+            .map_err(|_| RedisError::Str("ERR SAMPLES count must be a positive integer"))?;
+        if count == 0 {
+            return Err(RedisError::Str(
+                "ERR SAMPLES count must be a positive integer",
+            ));
+        }
+        count
     } else {
         100
     };

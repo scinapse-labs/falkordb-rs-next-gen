@@ -5,6 +5,20 @@
 //! the first `next()` call, groups rows by key expressions, runs
 //! aggregation functions, and then yields one result row per group in batches.
 //!
+//! ```text
+//!  Input rows (streamed from child)
+//!       │
+//!       ▼
+//!  ┌─────────────────────────────────────┐
+//!  │  Group by key exprs (hash map)      │
+//!  │  key -> (key_env, accumulator_env)  │
+//!  └──────────────────┬──────────────────┘
+//!                     │  for each group:
+//!                     │    finalize accumulators
+//!                     ▼
+//!            output one row per group
+//! ```
+//!
 //! When all key and aggregation-input expressions are simple (variable
 //! passthrough or `entity.property`), the operator uses a vectorized path
 //! that extracts values in bulk via [`Runtime::materialize_node_property`]

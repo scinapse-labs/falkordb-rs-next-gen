@@ -5,6 +5,14 @@
 //! the limit window. A partial batch is trimmed by rebuilding the selection
 //! vector to include only the first `remaining` active entries. Once the
 //! limit count is exhausted, subsequent calls return `None`.
+//!
+//! ```text
+//!  LIMIT 5:
+//!
+//!  batch 1 (3 rows) ──► pass through (remaining: 5 -> 2)
+//!  batch 2 (4 rows) ──► trim to 2 rows (remaining: 2 -> 0)
+//!  batch 3           ──► None (exhausted)
+//! ```
 
 use crate::planner::IR;
 use crate::runtime::{

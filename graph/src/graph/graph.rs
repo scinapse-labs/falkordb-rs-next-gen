@@ -7,31 +7,62 @@
 //!
 //! The graph supports:
 //! - **Nodes**: Identified by 64-bit IDs, can have multiple labels and properties
-//! - **Relationships**: Directed edges with a type and properties
-//! - **Properties**: Key-value pairs stored in attribute stores
+//! - **Relationships**: Directed edges with a type, source/destination, and properties
+//! - **Properties**: Key-value pairs stored in columnar [`AttributeStore`]s
 //! - **Indexes**: Range and full-text indexes on node properties
 //!
 //! ## Storage Layout
 //!
 //! ```text
-//! ┌─────────────────────────────────────────────────────────────┐
-//! │                      Graph Structure                        │
-//! ├─────────────────────────────────────────────────────────────┤
-//! │ adjacency_matrix     │ Sparse matrix: all relationships    │
-//! │ labels_matrices[i]   │ Sparse vector: nodes with label i   │
-//! │ relationship_matrices│ Tensor: edges by type (src,dst,id)  │
-//! │ node_attrs           │ Properties for each node            │
-//! │ relationship_attrs   │ Properties for each relationship    │
-//! │ node_indexer         │ Secondary indexes on properties     │
-//! │ cache                │ LRU cache for parsed query plans    │
-//! └─────────────────────────────────────────────────────────────┘
+//! ┌──────────────────────────────────────────────────────────────────────┐
+//! │                         Graph Structure                             │
+//! ├──────────────────────────┬───────────────────────────────────────────┤
+//! │ all_nodes_matrix         │ Diagonal matrix: node_id -> bool         │
+//! │                          │ (set for every live node)                │
+//! ├──────────────────────────┼───────────────────────────────────────────┤
+//! │ adjacancy_matrix         │ Boolean matrix: src x dst -> bool        │
+//! │                          │ (union of all relationship types)        │
+//! ├──────────────────────────┼───────────────────────────────────────────┤
+//! │ labels_matices[i]        │ Diagonal matrix per label:               │
+//! │                          │ node_id x node_id -> bool                │
+//! ├──────────────────────────┼───────────────────────────────────────────┤
+//! │ node_labels_matrix       │ Matrix: node_id x label_id -> bool       │
+//! │                          │ (maps each node to all its labels)       │
+//! ├──────────────────────────┼───────────────────────────────────────────┤
+//! │ relationship_matrices[i] │ Tensor per type: src x dst x edge_id     │
+//! │                          │ (supports multiple edges between same    │
+//! │                          │  src/dst pair via 3rd dimension)         │
+//! ├──────────────────────────┼───────────────────────────────────────────┤
+//! │ relationship_type_matrix │ Matrix: edge_id x type_id -> bool        │
+//! │                          │ (maps each edge to its type)             │
+//! ├──────────────────────────┼───────────────────────────────────────────┤
+//! │ node_attrs               │ AttributeStore: node properties          │
+//! │ relationship_attrs       │ AttributeStore: edge properties          │
+//! ├──────────────────────────┼───────────────────────────────────────────┤
+//! │ node_indexer             │ Secondary indexes on node properties     │
+//! │ cache                    │ LRU cache for parsed query plans         │
+//! └──────────────────────────┴───────────────────────────────────────────┘
 //! ```
+//!
+//! ## ID Allocation and Recycling
+//!
+//! Deleted node/edge IDs are tracked in `RoaringTreemap` bitmaps and reused
+//! before allocating fresh IDs. The `reserve_node` / `reserve_relationship`
+//! methods first reclaim from deleted IDs, then extend the ID space. This
+//! keeps matrices compact and avoids unbounded ID growth.
+//!
+//! ## Versioning
+//!
+//! `Graph::new_version()` creates a shallow copy suitable for a write
+//! transaction. Matrices use Copy-on-Write (see [`super::cow::Cow`]) so
+//! they are only duplicated when the writer actually mutates them. The
+//! `version` counter is incremented on each write transaction.
 //!
 //! ## Query Plan Caching
 //!
 //! The graph caches parsed and planned queries in an LRU cache. On cache hit,
 //! the plan is returned directly without reparsing. The cache key is the
-//! raw query string.
+//! raw query string. Plans are invalidated when the UDF version changes.
 
 use std::{
     collections::HashMap,
@@ -57,7 +88,7 @@ use crate::{
         graphblas::{
             matrix::{
                 Dup, MaskedElementWiseAdd, MaskedElementWiseMultiply, Matrix, MxM, New, Remove,
-                Set, Size,
+                Set, Size, Transpose,
             },
             tensor::Tensor,
             versioned_matrix::VersionedMatrix,
@@ -453,6 +484,15 @@ impl Graph {
         self.node_count
     }
 
+    /// Returns the number of nodes with the given label.
+    #[must_use]
+    pub fn label_node_count(
+        &self,
+        label: &str,
+    ) -> u64 {
+        self.get_label_matrix(label).map_or(0, Size::nvals)
+    }
+
     #[must_use]
     pub const fn relationship_count(&self) -> u64 {
         self.relationship_count
@@ -460,7 +500,7 @@ impl Graph {
 
     /// Number of nodes with the given label (by label index).
     #[must_use]
-    pub fn label_node_count(
+    pub fn label_node_count_by_idx(
         &self,
         label_idx: usize,
     ) -> u64 {
@@ -1182,6 +1222,11 @@ impl Graph {
         self.deleted_relationships
             .extend(rels.keys().map(|id| id.0));
         self.relationship_count -= rels.len() as u64;
+
+        // Collect unique (src, dst) pairs to check adjacancy_matrix after deletion
+        let pairs: std::collections::HashSet<(u64, u64)> =
+            rels.values().map(|(src, dst)| (src.0, dst.0)).collect();
+
         for (type_id, rels) in &rels
             .into_iter()
             .map(|(id, (src, dst))| (id.0, src.0, dst.0))
@@ -1194,6 +1239,18 @@ impl Graph {
             let typ = self.relationship_types[type_id.0].clone();
             self.get_relationship_matrix_mut(&typ).remove_all(rels);
         }
+
+        // Update adjacancy_matrix: remove entries where no typed edges remain
+        for (src, dst) in pairs {
+            let has_edges = self
+                .relationship_matrices
+                .iter()
+                .any(|tensor| tensor.get(src, dst).next().is_some());
+            if !has_edges {
+                self.adjacancy_matrix.remove(src, dst);
+            }
+        }
+
         Ok(())
     }
 
@@ -1218,17 +1275,20 @@ impl Graph {
             .flat_map(|iter| iter.map(|(_, id)| RelationshipId(id)))
     }
 
-    pub fn get_relationships(
+    /// Build a relationship matrix combining the given types and filtering by
+    /// source/destination labels.  The returned matrix can be cached and reused
+    /// across multiple calls to [`iter_relationship_matrix`].
+    pub fn build_relationship_matrix(
         &self,
         types: &[Arc<String>],
-        src_lables: &OrderSet<Arc<String>>,
+        src_labels: &OrderSet<Arc<String>>,
         dest_labels: &OrderSet<Arc<String>>,
-    ) -> impl Iterator<Item = (NodeId, NodeId)> + use<> {
+    ) -> Matrix {
         let matrices = types
             .iter()
             .filter_map(|relationship_type| self.get_relationship_matrix(relationship_type))
             .collect::<Vec<_>>();
-        let src_labels_matrices = src_lables
+        let src_labels_matrices = src_labels
             .iter()
             .map(|label| self.get_label_matrix(label))
             .collect::<Option<Vec<_>>>();
@@ -1236,8 +1296,6 @@ impl Graph {
             .iter()
             .map(|label| self.get_label_matrix(label))
             .collect::<Option<Vec<_>>>();
-        // If labels/types were requested but none exist in the graph,
-        // no results can match.
         let no_match = (!types.is_empty() && matrices.is_empty())
             || src_labels_matrices.is_none()
             || dest_labels_matrices.is_none();
@@ -1245,9 +1303,7 @@ impl Graph {
         let src_labels_matrices = src_labels_matrices.unwrap_or_default();
         let dest_labels_matrices = dest_labels_matrices.unwrap_or_default();
 
-        let m = if no_match {
-            // If labels/types were requested but none exist in the graph,
-            // no results can match - clear the matrix to return empty.
+        if no_match {
             self.zero_matrix.to_matrix()
         } else {
             let mut iter = matrices.into_iter();
@@ -1291,8 +1347,36 @@ impl Graph {
                 m.lmxm(&dest_matrix);
             }
             m
-        };
-        m.iter(0, u64::MAX)
+        }
+    }
+
+    /// Iterate a prebuilt relationship matrix, optionally restricting to a
+    /// single source row (`from_id`) and/or a single destination column
+    /// (`to_id`).
+    pub fn iter_relationship_matrix(
+        m: &Matrix,
+        from_id: Option<NodeId>,
+        to_id: Option<NodeId>,
+    ) -> impl Iterator<Item = (NodeId, NodeId)> + use<> {
+        let (min_row, max_row) = from_id.map_or((0, u64::MAX), |id| (id.0, id.0));
+        m.iter(min_row, max_row)
+            .filter(move |(_, dest)| to_id.is_none() || to_id.unwrap().0 == *dest)
+            .map(|(src, dest)| (NodeId(src), NodeId(dest)))
+    }
+
+    /// Convenience wrapper: build the matrix and iterate it in one call.
+    pub fn get_relationships(
+        &self,
+        types: &[Arc<String>],
+        src_labels: &OrderSet<Arc<String>>,
+        dest_labels: &OrderSet<Arc<String>>,
+        from_id: Option<NodeId>,
+        to_id: Option<NodeId>,
+    ) -> impl Iterator<Item = (NodeId, NodeId)> + use<> {
+        let m = self.build_relationship_matrix(types, src_labels, dest_labels);
+        let (min_row, max_row) = from_id.map_or((0, u64::MAX), |id| (id.0, id.0));
+        m.iter(min_row, max_row)
+            .filter(move |(_, dest)| to_id.is_none() || to_id.unwrap().0 == *dest)
             .map(|(src, dest)| (NodeId(src), NodeId(dest)))
     }
 
@@ -1560,6 +1644,62 @@ impl Graph {
         graph: Arc<AtomicRefCell<Self>>,
     ) {
         self.node_indexer.set_graph(graph);
+    }
+
+    /// Build a materialized boolean adjacency matrix filtered by relationship types.
+    /// If `rel_types` is empty, returns the full adjacency matrix.
+    /// The caller owns the returned `Matrix`.
+    pub fn build_adjacency_matrix(
+        &self,
+        rel_types: &[Arc<String>],
+    ) -> Matrix {
+        if rel_types.is_empty() {
+            self.adjacancy_matrix.to_matrix()
+        } else {
+            let mut result = Matrix::new(self.node_cap, self.node_cap);
+            for rel_type in rel_types {
+                if let Some(type_id) = self.get_type_id(rel_type) {
+                    let m = self.relationship_matrices[usize::from(type_id)]
+                        .matrix()
+                        .to_matrix();
+                    result.element_wise_add(None, None, Some(&m), None);
+                }
+            }
+            result
+        }
+    }
+
+    /// Build a materialized boolean adjacency matrix that is symmetric (A + A^T).
+    /// Used for undirected graph algorithms (WCC, CDLP, MSF).
+    pub fn build_symmetric_adjacency_matrix(
+        &self,
+        rel_types: &[Arc<String>],
+    ) -> Matrix {
+        let a = self.build_adjacency_matrix(rel_types);
+        let at = a.transpose();
+        let mut result = Matrix::new(self.node_cap, self.node_cap);
+        result.element_wise_add(None, Some(&a), Some(&at), None);
+        result
+    }
+
+    /// Build a diagonal boolean matrix of nodes matching any of the given labels.
+    /// If `labels` is empty, returns the all_nodes matrix.
+    pub fn build_node_mask_matrix(
+        &self,
+        labels: &[Arc<String>],
+    ) -> Matrix {
+        if labels.is_empty() {
+            self.all_nodes_matrix.to_matrix()
+        } else {
+            let mut result = Matrix::new(self.node_cap, self.node_cap);
+            for label in labels {
+                if let Some(label_id) = self.get_label_id(label) {
+                    let m = self.labels_matices[usize::from(label_id)].to_matrix();
+                    result.element_wise_add(None, None, Some(&m), None);
+                }
+            }
+            result
+        }
     }
 
     #[must_use]

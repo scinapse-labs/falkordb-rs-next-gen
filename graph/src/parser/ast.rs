@@ -1,27 +1,67 @@
 //! Abstract Syntax Tree (AST) definitions for Cypher queries.
 //!
-//! This module defines the intermediate representation (IR) for parsed Cypher queries.
-//! The AST is produced by the parser ([`crate::parser::cypher`]) and consumed by the binder
-//! ([`crate::planner::binder`]) and planner ([`crate::planner`]).
+//! This module defines the intermediate representation (IR) for parsed Cypher
+//! queries. The AST is produced by the parser ([`crate::parser::cypher`]) and
+//! consumed by the binder ([`crate::planner::binder`]) and planner
+//! ([`crate::planner`]).
+//!
+//! ## Overall Structure
+//!
+//! A parsed Cypher query is a tree of `QueryIR` clause nodes, each of which
+//! may contain expression trees (`DynTree<ExprIR<TVar>>`) and graph pattern
+//! structures (`QueryGraph`):
+//!
+//! ```text
+//! QueryIR::Query
+//!  |-- QueryIR::Match
+//!  |     |-- QueryGraph
+//!  |     |     |-- QueryNode  ("n", labels: [Person])
+//!  |     |     |-- QueryNode  ("m", labels: [])
+//!  |     |     '-- QueryRelationship  ("r", types: [KNOWS], from: n, to: m)
+//!  |     '-- filter: DynTree<ExprIR>   (expression tree for WHERE clause)
+//!  |
+//!  '-- QueryIR::Return
+//!        '-- exprs: [("name", DynTree<ExprIR>)]
+//!                                |
+//!                           Property("name")
+//!                                |
+//!                           Variable("m")
+//! ```
 //!
 //! ## Key Types
 //!
-//! - [`Variable`]: A named or anonymous variable in a query
-//! - [`ExprIR`]: Expression nodes (literals, operators, function calls)
-//! - [`QueryIR`]: Query clause nodes (MATCH, CREATE, RETURN, etc.)
-//! - [`QueryGraph`]: Pattern graph structure with nodes, relationships, and paths
+//! - [`Variable`]: A named or anonymous variable with a unique binding ID
+//! - [`ExprIR`]: Expression nodes (literals, operators, function calls, etc.)
+//! - [`QueryIR`]: Query clause nodes (MATCH, CREATE, RETURN, WITH, etc.)
+//! - [`QueryGraph`]: Pattern graph structure containing nodes, relationships,
+//!   and named paths
+//! - [`QueryExpr`]: Type alias for `Arc<DynTree<ExprIR<TVar>>>` -- a
+//!   reference-counted expression tree
 //!
 //! ## Type Parameters
 //!
-//! AST types are generic over `TVar` (variable type) to support different stages:
-//! - `Arc<String>`: Raw AST before binding (variables are just names)
-//! - [`Variable`]: Bound AST with resolved variable IDs and types
+//! AST types are generic over `TVar` (variable type) to support two stages:
+//! - `Arc<String>`: Raw AST before binding -- variables are just names
+//!   (type alias: [`RawQueryIR`])
+//! - [`Variable`]: Bound AST with resolved variable IDs, scopes, and types
+//!   (type alias: [`BoundQueryIR`])
 //!
 //! ## Expression Trees
 //!
-//! Expressions are stored as trees using `DynTree<ExprIR<TVar>>` from `orx-tree`.
-//! Operators are internal nodes with operands as children, supporting arbitrary
-//! expression nesting.
+//! Expressions are stored as trees using `DynTree<ExprIR<TVar>>` from
+//! `orx-tree`. Operators are internal nodes with operands as children,
+//! supporting arbitrary expression nesting. For example, `a.age + b.age * 2`:
+//!
+//! ```text
+//!          Add
+//!         /   \
+//!   Property   Mul
+//!   ("age")   /   \
+//!     |    Property  Integer(2)
+//!  Var("a") ("age")
+//!              |
+//!           Var("b")
+//! ```
 
 use std::{collections::HashSet, fmt::Display, hash::Hash, sync::Arc};
 
@@ -200,6 +240,15 @@ pub enum ExprIR<TVar> {
     Paren,
     /// Pattern predicate should be rewritten in planner
     Pattern(QueryGraph<Arc<String>, Arc<String>, TVar>),
+    /// shortestPath((a)-[*]->(b)) or allShortestPaths((a)-[*]->(b))
+    /// Children: [source_var_expr, dest_var_expr]
+    ShortestPath {
+        rel_types: Vec<Arc<String>>,
+        min_hops: u32,
+        max_hops: Option<u32>,
+        directed: bool,
+        all_paths: bool,
+    },
     /// Map projection: base { .prop, .*, key: expr, var }
     /// First child is the base expression, remaining children are projection items
     MapProjection,
@@ -267,6 +316,13 @@ impl<TVar: Display + std::fmt::Debug> Display for ExprIR<TVar> {
             }
             Self::Paren => write!(f, "()"),
             Self::Pattern(_) => write!(f, "<pattern>"),
+            Self::ShortestPath { all_paths, .. } => {
+                if *all_paths {
+                    write!(f, "allShortestPaths()")
+                } else {
+                    write!(f, "shortestPath()")
+                }
+            }
             Self::MapProjection => write!(f, "map_projection"),
         }
     }
@@ -384,6 +440,19 @@ pub struct QueryRelationship<T, L, TVar> {
     pub bidirectional: bool,
     pub min_hops: Option<u32>,
     pub max_hops: Option<u32>,
+    pub all_shortest_paths: AllShortestPaths,
+}
+
+/// Whether this relationship is part of an allShortestPaths pattern,
+/// and if so, whether the result paths need to be reversed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AllShortestPaths {
+    /// Not an allShortestPaths pattern.
+    No,
+    /// allShortestPaths with edges in traversal order.
+    Forward,
+    /// allShortestPaths with edges reversed (incoming pattern like `(a)<-[*]-(b)`).
+    Reversed,
 }
 
 #[cfg_attr(tarpaulin, skip)]
@@ -394,21 +463,22 @@ impl<T: Display, L: Display, TVar: Display> Display for QueryRelationship<T, L, 
     ) -> std::fmt::Result {
         let direction = if self.bidirectional { "" } else { ">" };
         if self.types.is_empty() {
-            return write!(
+            write!(
                 f,
                 "({})-[{}]-{}({})",
                 self.from.alias, self.alias, direction, self.to.alias
-            );
+            )
+        } else {
+            write!(
+                f,
+                "({})-[{}:{}]-{}({})",
+                self.from.alias,
+                self.alias,
+                self.types.iter().join("|"),
+                direction,
+                self.to.alias
+            )
         }
-        write!(
-            f,
-            "({})-[{}:{}]-{}({})",
-            self.from.alias,
-            self.alias,
-            self.types.iter().join("|"),
-            direction,
-            self.to.alias
-        )
     }
 }
 
@@ -434,6 +504,7 @@ impl<T, L, TVar> QueryRelationship<T, L, TVar> {
             bidirectional,
             min_hops,
             max_hops,
+            all_shortest_paths: AllShortestPaths::No,
         }
     }
 }
@@ -727,10 +798,13 @@ impl<L: Display + PartialEq, TVar: Display + std::fmt::Debug> Display for SetIte
 pub enum QueryIR<TVar> {
     /// CALL procedure(args) YIELD outputs WHERE filter
     /// The bool indicates whether YIELD was explicitly written (true) or default outputs are used (false).
+    /// yield_aliases stores the original field names when AS aliasing is used;
+    /// yields then holds the alias names (scope-visible).
     Call {
         func: Arc<GraphFn>,
         args: Vec<QueryExpr<TVar>>,
         yields: Vec<TVar>,
+        yield_aliases: Vec<Option<TVar>>,
         filter: Option<QueryExpr<TVar>>,
         explicit_yield: bool,
     },

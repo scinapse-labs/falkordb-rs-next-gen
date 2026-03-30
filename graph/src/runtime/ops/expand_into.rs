@@ -39,6 +39,8 @@ pub struct ExpandIntoOp<'a> {
     /// Whether to emit one row per edge (true) or collapse multi-edges into
     /// one row per (src, dst) pair (false). Set by the planner.
     emit_relationship: bool,
+    /// Alias IDs of sibling relationship variables in the same MATCH clause.
+    sibling_edges: &'a [u32],
     pub(crate) idx: NodeIdx<Dyn<IR>>,
 }
 
@@ -48,6 +50,7 @@ impl<'a> ExpandIntoOp<'a> {
         child: Box<BatchOp<'a>>,
         relationship_pattern: &'a QueryRelationship<Arc<String>, Arc<String>, Variable>,
         emit_relationship: bool,
+        sibling_edges: &'a [u32],
         idx: NodeIdx<Dyn<IR>>,
     ) -> Self {
         Self {
@@ -58,6 +61,7 @@ impl<'a> ExpandIntoOp<'a> {
             current_batch: None,
             current_pos: 0,
             emit_relationship,
+            sibling_edges,
             idx,
         }
     }
@@ -136,7 +140,10 @@ impl<'a> ExpandIntoOp<'a> {
             if !self.emit_relationship && !has_edge_filter {
                 if let Some(id) = g
                     .get_src_dest_relationships(*edge_src, *edge_dst, &rp.types)
-                    .find(|id| !pending.is_relationship_deleted(*id, *edge_src, *edge_dst))
+                    .find(|id| {
+                        !pending.is_relationship_deleted(*id, *edge_src, *edge_dst)
+                            && !super::edge_already_used(env, *id, rp.alias.id, self.sibling_edges)
+                    })
                 {
                     let mut row = env.clone_pooled(runtime.env_pool);
                     row.insert(
@@ -151,6 +158,11 @@ impl<'a> ExpandIntoOp<'a> {
             }
             for id in g.get_src_dest_relationships(*edge_src, *edge_dst, &rp.types) {
                 if pending.is_relationship_deleted(id, *edge_src, *edge_dst) {
+                    continue;
+                }
+                // Relationship uniqueness: skip edges already bound to other
+                // relationship variables in this MATCH clause.
+                if super::edge_already_used(env, id, rp.alias.id, self.sibling_edges) {
                     continue;
                 }
                 if let Value::Map(ref filter_map) = filter_attrs

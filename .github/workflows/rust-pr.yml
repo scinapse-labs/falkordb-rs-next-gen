@@ -70,7 +70,7 @@ jobs:
         run: cargo fmt --all --check
       - name: Lint
         run: |
-          CXX=clang++-21 cargo clippy --all-targets
+          CXX=clang++-22 cargo clippy --all-targets
       - name: Build
         run: |
           cargo build --release
@@ -109,8 +109,8 @@ jobs:
           pytest tests/test_e2e.py tests/test_functions.py tests/test_mvcc.py tests/test_concurrency.py -vv
           ./flow.sh
           TCK_DONE=tck_done.txt pytest tests/tck/test_tck.py -s
-          llvm-profdata-21 merge --sparse `find . -name "*.profraw"` -o cov.profdata
-          llvm-cov-21 export --format=lcov --instr-profile cov.profdata target/debug/libfalkordb.so > codecov.txt.all
+          llvm-profdata-22 merge --sparse `find . -name "*.profraw"` -o cov.profdata
+          llvm-cov-22 export --format=lcov --instr-profile cov.profdata target/debug/libfalkordb.so > codecov.txt.all
           lcov --ignore-errors unused -r codecov.txt.all -o codecov.txt
       - name: Upload coverage reports to Codecov
         uses: codecov/codecov-action@1af58845a975a7985b0beb0cbe6fbbb71a41dbad
@@ -144,10 +144,10 @@ jobs:
           . /data/venv/bin/activate
           mkdir -p fuzz/corpus/fuzz_target_runtime/
           TCK_DONE=tck_done.txt pytest tests/tck/test_tck.py -s
-          CXX=clang++-21 CARGO_PROFILE_RELEASE_LTO=false cargo fuzz build fuzz_target_runtime
-          CXX=clang++-21 CARGO_PROFILE_RELEASE_LTO=false cargo fuzz run fuzz_target_runtime -- -max_total_time=300
-          CXX=clang++-21 CARGO_PROFILE_RELEASE_LTO=false cargo fuzz cmin fuzz_target_runtime
-          CXX=clang++-21 CARGO_PROFILE_RELEASE_LTO=false cargo fuzz coverage fuzz_target_runtime
+          CXX=clang++-22 CARGO_PROFILE_RELEASE_LTO=false cargo fuzz build fuzz_target_runtime
+          CXX=clang++-22 CARGO_PROFILE_RELEASE_LTO=false cargo fuzz run fuzz_target_runtime -- -max_total_time=300
+          CXX=clang++-22 CARGO_PROFILE_RELEASE_LTO=false cargo fuzz cmin fuzz_target_runtime
+          CXX=clang++-22 CARGO_PROFILE_RELEASE_LTO=false cargo fuzz coverage fuzz_target_runtime
           TOOLCHAIN_LLVM_COV=$(find $(rustc --print sysroot) -name "llvm-cov" -type f | head -1)
           echo "Using llvm-cov from: $TOOLCHAIN_LLVM_COV"
           "$TOOLCHAIN_LLVM_COV" --version

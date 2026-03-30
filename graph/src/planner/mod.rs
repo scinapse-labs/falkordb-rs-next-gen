@@ -48,8 +48,8 @@ use crate::{
     entity_type::EntityType,
     index::indexer::{IndexQuery, IndexType},
     parser::ast::{
-        BoundQueryIR, ExprIR, QueryExpr, QueryGraph, QueryIR, QueryNode, QueryPath,
-        QueryRelationship, SetItem, SupportAggregation, Variable,
+        AllShortestPaths, BoundQueryIR, ExprIR, QueryExpr, QueryGraph, QueryIR, QueryNode,
+        QueryPath, QueryRelationship, SetItem, SupportAggregation, Variable,
     },
     runtime::functions::GraphFn,
     runtime::orderset::OrderSet,
@@ -126,14 +126,30 @@ pub enum IR {
     CondTraverse {
         relationship: Arc<QueryRelationship<Arc<String>, Arc<String>, Variable>>,
         emit_relationship: bool,
+        /// Alias IDs of other relationship variables in the same MATCH clause
+        /// component. Only these are checked for relationship uniqueness.
+        sibling_edges: Vec<u32>,
+        /// When true, the optimizer has swapped from/to relative to the edge
+        /// direction in the graph. The runtime transposes the relationship
+        /// scan accordingly.
+        transposed: bool,
     },
     /// Variable-length traversal (BFS) from known nodes
-    CondVarLenTraverse(Arc<QueryRelationship<Arc<String>, Arc<String>, Variable>>),
+    CondVarLenTraverse {
+        relationship: Arc<QueryRelationship<Arc<String>, Arc<String>, Variable>>,
+        /// Optional per-hop edge filter absorbed from a WHERE clause by the optimizer.
+        edge_filter: Option<QueryExpr<Variable>>,
+    },
+    /// All shortest paths between two known nodes
+    AllShortestPaths(Arc<QueryRelationship<Arc<String>, Arc<String>, Variable>>),
     /// Check relationship between two known nodes.
     /// `emit_relationship`: when false, anonymous edge optimization applies.
     ExpandInto {
         relationship: Arc<QueryRelationship<Arc<String>, Arc<String>, Variable>>,
         emit_relationship: bool,
+        /// Alias IDs of other relationship variables in the same MATCH clause
+        /// component. Only these are checked for relationship uniqueness.
+        sibling_edges: Vec<u32>,
     },
     /// Build path objects from matched patterns
     PathBuilder(Vec<Arc<QueryPath<Variable>>>),
@@ -141,6 +157,14 @@ pub enum IR {
     Filter(QueryExpr<Variable>),
     /// Cartesian product of child results
     CartesianProduct,
+    /// Value Hash Join: replaces CartesianProduct + equality Filter.
+    /// Children: child(0) = left sub-plan, child(1) = right sub-plan.
+    /// The join expressions (lhs_exp evaluated on left rows, rhs_exp on right rows)
+    /// are stored here so the runtime can build a hash table.
+    ValueHashJoin {
+        lhs_exp: QueryExpr<Variable>,
+        rhs_exp: QueryExpr<Variable>,
+    },
     /// Apply = correlated join: for each row from child 0, run child 1
     Apply,
     /// Semi-join: passes through left row when right produces at least one result
@@ -220,6 +244,38 @@ pub fn subtree_contains(
         .any(|n| predicate(n.data()))
 }
 
+/// Formats a relationship for CondTraverse/ExpandInto display.
+/// Shows node labels and hides anonymous edge aliases.
+fn fmt_rel_with_labels(rel: &QueryRelationship<Arc<String>, Arc<String>, Variable>) -> String {
+    use itertools::Itertools;
+
+    let direction = if rel.bidirectional { "" } else { ">" };
+
+    let fmt_node = |node: &QueryNode<Arc<String>, Variable>| -> String {
+        if node.labels.is_empty() {
+            node.alias.to_string()
+        } else {
+            format!("{}:{}", node.alias, node.labels.iter().join(":"))
+        }
+    };
+    let from_str = rel.from.alias.to_string();
+    let to_str = fmt_node(&rel.to);
+
+    let alias_str = rel.alias.to_string();
+    let is_anon = alias_str.starts_with("_anon");
+
+    if is_anon {
+        format!("({from_str})-{direction}({to_str})")
+    } else if rel.types.is_empty() {
+        let alias = &rel.alias;
+        format!("({from_str})-[{alias}]-{direction}({to_str})")
+    } else {
+        let alias = &rel.alias;
+        let types = rel.types.iter().join("|");
+        format!("({from_str})-[{alias}:{types}]-{direction}({to_str})")
+    }
+}
+
 #[cfg_attr(tarpaulin, skip)]
 impl Display for IR {
     fn fmt(
@@ -255,14 +311,22 @@ impl Display for IR {
             Self::NodeByIdSeek { .. } => write!(f, "NodeByIdSeek"),
             Self::CondTraverse {
                 relationship: rel, ..
-            } => write!(f, "Conditional Traverse | {rel}"),
-            Self::CondVarLenTraverse(rel) => write!(f, "Variable Length Traverse | {rel}"),
+            } => {
+                write!(f, "Conditional Traverse | {}", fmt_rel_with_labels(rel))
+            }
+            Self::CondVarLenTraverse {
+                relationship: rel, ..
+            } => write!(f, "Conditional Variable Length Traverse | {rel}"),
+            Self::AllShortestPaths(rel) => write!(f, "All Shortest Paths | {rel}"),
             Self::ExpandInto {
                 relationship: rel, ..
-            } => write!(f, "Expand Into | {rel}"),
+            } => {
+                write!(f, "Expand Into | {}", fmt_rel_with_labels(rel))
+            }
             Self::PathBuilder(_) => write!(f, "PathBuilder"),
             Self::Filter(_) => write!(f, "Filter"),
             Self::CartesianProduct => write!(f, "Cartesian Product"),
+            Self::ValueHashJoin { .. } => write!(f, "Value Hash Join"),
             Self::Apply => write!(f, "Apply"),
             Self::SemiApply => write!(f, "Semi Apply"),
             Self::AntiSemiApply => write!(f, "Anti Semi Apply"),
@@ -292,7 +356,7 @@ impl Display for IR {
 /// Given a node like `(n:Person {name: 'Alice', age: 30})`, returns a new node
 /// with empty attrs and an equivalent filter expression `n.name = 'Alice' AND n.age = 30`.
 /// Returns `None` for the filter if the node has no inline attributes.
-fn inline_node_attrs_to_filter(
+pub(super) fn inline_node_attrs_to_filter(
     node: &Arc<QueryNode<Arc<String>, Variable>>
 ) -> (
     Arc<QueryNode<Arc<String>, Variable>>,
@@ -914,7 +978,29 @@ impl Planner {
         let mut bound_filters: Vec<DynTree<ExprIR<Variable>>> = vec![];
         for component in pattern.connected_components() {
             let relationships = component.relationships();
-            let mut iter = relationships.iter();
+            // Reorder relationships: put variable-length and AllShortestPaths
+            // relationships after fixed-length ones so that fixed-length
+            // traversals (especially self-loops / ExpandInto) are planned as
+            // leaves and variable-length traversals sit above them.
+            let mut sorted_rels: Vec<_> = relationships.to_vec();
+            sorted_rels.sort_by_key(|r| {
+                let base = if r.all_shortest_paths == AllShortestPaths::No {
+                    i32::from(r.min_hops.is_some())
+                } else {
+                    2
+                };
+                // Within the same hop-type tier, prefer relationships that
+                // touch an already-bound variable so that traversals start
+                // from the known node (matches FalkorDB C behaviour).
+                let has_bound = i32::from(
+                    !(self
+                        .visited
+                        .contains(&(r.from.alias.id, r.from.alias.scope_id))
+                        || self.visited.contains(&(r.to.alias.id, r.to.alias.scope_id))),
+                );
+                (base, has_bound)
+            });
+            let mut iter = sorted_rels.iter();
             let Some(relationship) = iter.next() else {
                 // Node-only component (no relationships).
                 let nodes = component.nodes();
@@ -961,7 +1047,8 @@ impl Planner {
                         vec.push(tree!(
                             IR::ExpandInto {
                                 relationship: rel,
-                                emit_relationship: false
+                                emit_relationship: false,
+                                sibling_edges: vec![]
                             },
                             tree!(IR::Argument)
                         ));
@@ -1010,7 +1097,63 @@ impl Planner {
                         .iter()
                         .any(|p| p.vars.iter().any(|v| v.id == rel.alias.id))
             };
-            let mut res = if relationship.from.alias.id == relationship.to.alias.id {
+            // Collect edge alias IDs for relationship uniqueness checking.
+            // Only named (non-anonymous) edges participate in uniqueness constraints;
+            // anonymous edges (`_anon*`) are excluded so the same physical edge
+            // can be traversed by different anonymous bindings (matches FalkorDB C).
+            let sibling_edges: Vec<u32> = relationships
+                .iter()
+                .filter(|r| {
+                    !r.alias
+                        .name
+                        .as_ref()
+                        .is_some_and(|n| n.starts_with("_anon"))
+                })
+                .map(|r| r.alias.id)
+                .collect();
+            let mut res = if relationship.all_shortest_paths != AllShortestPaths::No {
+                tree!(IR::AllShortestPaths(relationship.clone()))
+            } else if relationship.min_hops.is_some() {
+                // Variable-length path — must use CVLT even for self-loops (a)-[*0]->(a).
+                // Build scan child for the from-node when it's not yet visited
+                // (i.e. this CVLT is the leaf of a component).
+                let scan_child = if self
+                    .visited
+                    .contains(&(relationship.from.alias.id, relationship.from.alias.scope_id))
+                {
+                    None
+                } else {
+                    let (clean_node, from_attr_filter) =
+                        inline_node_attrs_to_filter(&relationship.from);
+                    let mut scan = if clean_node.labels.is_empty() {
+                        tree!(IR::AllNodeScan(clean_node))
+                    } else {
+                        tree!(IR::NodeByLabelScan(clean_node))
+                    };
+                    if let Some(filter_expr) = from_attr_filter {
+                        scan = tree!(IR::Filter(Arc::new(filter_expr)), scan);
+                    }
+                    Some(scan)
+                };
+                scan_child.map_or_else(
+                    || {
+                        tree!(IR::CondVarLenTraverse {
+                            relationship: relationship.clone(),
+                            edge_filter: None
+                        })
+                    },
+                    |scan| {
+                        tree!(
+                            IR::CondVarLenTraverse {
+                                relationship: relationship.clone(),
+                                edge_filter: None
+                            },
+                            scan
+                        )
+                    },
+                )
+            } else if relationship.from.alias.id == relationship.to.alias.id {
+                // Self-loop with fixed-length edge: scan + ExpandInto.
                 let (clean_node, attr_filter) = inline_node_attrs_to_filter(&relationship.from);
                 let mut scan = if clean_node.labels.is_empty() {
                     tree!(IR::AllNodeScan(clean_node))
@@ -1023,24 +1166,11 @@ impl Planner {
                 tree!(
                     IR::ExpandInto {
                         relationship: relationship.clone(),
-                        emit_relationship: emit_rel(relationship)
+                        emit_relationship: emit_rel(relationship),
+                        sibling_edges: sibling_edges.clone()
                     },
                     scan
                 )
-            } else if relationship.min_hops.is_some() {
-                let mut cvlt = tree!(IR::CondVarLenTraverse(relationship.clone()));
-                // Add from-node inline attr filter (e.g. {name:'Roi Lipman'})
-                // since CondVarLenTraverse does not check from-node attrs internally.
-                if !self
-                    .visited
-                    .contains(&(relationship.from.alias.id, relationship.from.alias.scope_id))
-                {
-                    let (_, from_attr_filter) = inline_node_attrs_to_filter(&relationship.from);
-                    if let Some(filter_expr) = from_attr_filter {
-                        cvlt = tree!(IR::Filter(Arc::new(filter_expr)), cvlt);
-                    }
-                }
-                cvlt
             } else if self
                 .visited
                 .contains(&(relationship.from.alias.id, relationship.from.alias.scope_id))
@@ -1050,7 +1180,8 @@ impl Planner {
             {
                 let mut ei = tree!(IR::ExpandInto {
                     relationship: relationship.clone(),
-                    emit_relationship: emit_rel(relationship)
+                    emit_relationship: emit_rel(relationship),
+                    sibling_edges: sibling_edges.clone()
                 });
                 // Both endpoints already bound — check for inline attrs
                 // that need filtering (e.g. reversed patterns where attrs
@@ -1067,7 +1198,9 @@ impl Planner {
             } else {
                 tree!(IR::CondTraverse {
                     relationship: relationship.clone(),
-                    emit_relationship: emit_rel(relationship)
+                    emit_relationship: emit_rel(relationship),
+                    sibling_edges: sibling_edges.clone(),
+                    transposed: false
                 })
             };
             // Check destination node for inline attributes (e.g., (b {val: 'v2'}))
@@ -1081,6 +1214,18 @@ impl Planner {
                     res = tree!(IR::Filter(Arc::new(filter_expr)), res);
                 }
             }
+            // Check source node for inline attributes and add a Filter above
+            // the CT. This is needed so the optimizer's chain reversal can
+            // see and reposition these filters properly.
+            if !self
+                .visited
+                .contains(&(relationship.from.alias.id, relationship.from.alias.scope_id))
+            {
+                let (_, from_attr_filter) = inline_node_attrs_to_filter(&relationship.from);
+                if let Some(filter_expr) = from_attr_filter {
+                    res = tree!(IR::Filter(Arc::new(filter_expr)), res);
+                }
+            }
             self.visited
                 .insert((relationship.from.alias.id, relationship.from.alias.scope_id));
             self.visited
@@ -1090,7 +1235,27 @@ impl Planner {
             // Chain remaining relationships in the component, each one
             // stacking on top of the previous result using the same logic.
             for relationship in iter {
-                res = if relationship.from.alias.id == relationship.to.alias.id {
+                res = if relationship.all_shortest_paths != AllShortestPaths::No {
+                    tree!(IR::AllShortestPaths(relationship.clone()), res)
+                } else if relationship.min_hops.is_some() {
+                    let mut cvlt = tree!(
+                        IR::CondVarLenTraverse {
+                            relationship: relationship.clone(),
+                            edge_filter: None
+                        },
+                        res
+                    );
+                    if !self
+                        .visited
+                        .contains(&(relationship.from.alias.id, relationship.from.alias.scope_id))
+                    {
+                        let (_, from_attr_filter) = inline_node_attrs_to_filter(&relationship.from);
+                        if let Some(filter_expr) = from_attr_filter {
+                            cvlt = tree!(IR::Filter(Arc::new(filter_expr)), cvlt);
+                        }
+                    }
+                    cvlt
+                } else if relationship.from.alias.id == relationship.to.alias.id {
                     let (clean_node, attr_filter) = inline_node_attrs_to_filter(&relationship.from);
                     let mut scan = if clean_node.labels.is_empty() {
                         tree!(IR::AllNodeScan(clean_node))
@@ -1103,23 +1268,12 @@ impl Planner {
                     tree!(
                         IR::ExpandInto {
                             relationship: relationship.clone(),
-                            emit_relationship: emit_rel(relationship)
+                            emit_relationship: emit_rel(relationship),
+                            sibling_edges: sibling_edges.clone()
                         },
                         scan,
                         res
                     )
-                } else if relationship.min_hops.is_some() {
-                    let mut cvlt = tree!(IR::CondVarLenTraverse(relationship.clone()), res);
-                    if !self
-                        .visited
-                        .contains(&(relationship.from.alias.id, relationship.from.alias.scope_id))
-                    {
-                        let (_, from_attr_filter) = inline_node_attrs_to_filter(&relationship.from);
-                        if let Some(filter_expr) = from_attr_filter {
-                            cvlt = tree!(IR::Filter(Arc::new(filter_expr)), cvlt);
-                        }
-                    }
-                    cvlt
                 } else if self
                     .visited
                     .contains(&(relationship.from.alias.id, relationship.from.alias.scope_id))
@@ -1130,7 +1284,8 @@ impl Planner {
                     let mut ei = tree!(
                         IR::ExpandInto {
                             relationship: relationship.clone(),
-                            emit_relationship: emit_rel(relationship)
+                            emit_relationship: emit_rel(relationship),
+                            sibling_edges: sibling_edges.clone()
                         },
                         res
                     );
@@ -1147,7 +1302,9 @@ impl Planner {
                     tree!(
                         IR::CondTraverse {
                             relationship: relationship.clone(),
-                            emit_relationship: emit_rel(relationship)
+                            emit_relationship: emit_rel(relationship),
+                            sibling_edges: sibling_edges.clone(),
+                            transposed: false
                         },
                         res
                     )
@@ -1502,8 +1659,10 @@ impl Planner {
         // current insertion point, then walk down again to find the next
         // insertion point for the clause before it.
         for n in iter {
-            if matches!(res.node(idx).data(), IR::CartesianProduct)
-                && Self::needs_apply_wrapping(&n)
+            if matches!(
+                res.node(idx).data(),
+                IR::CartesianProduct | IR::ValueHashJoin { .. }
+            ) && Self::needs_apply_wrapping(&n)
             {
                 // When stitching a data-producing clause (LOAD CSV, UNWIND,
                 // WITH, etc.) into a CartesianProduct, wrap the CartesianProduct
@@ -1551,8 +1710,10 @@ impl Planner {
                     | IR::AntiSemiApply
                     | IR::OrApplyMultiplexer(_)
                     | IR::CondTraverse { .. }
-                    | IR::CondVarLenTraverse(_)
-                    | IR::ExpandInto { .. })
+                    | IR::CondVarLenTraverse { .. }
+                    | IR::AllShortestPaths(_)
+                    | IR::ExpandInto { .. }
+                    | IR::PathBuilder(_))
             {
                 idx = res.node(idx).child(0).idx();
             }
@@ -1607,9 +1768,11 @@ impl Planner {
                 | IR::NodeByIdSeek { .. }
                 | IR::NodeByLabelAndIdScan { .. }
                 | IR::CondTraverse { .. }
-                | IR::CondVarLenTraverse(_)
+                | IR::CondVarLenTraverse { .. }
+                | IR::AllShortestPaths(_)
                 | IR::ExpandInto { .. }
                 | IR::CartesianProduct
+                | IR::ValueHashJoin { .. }
                 | IR::Argument
                 | IR::PathBuilder(_) => return false,
                 // Filter, SemiApply, etc. wrap scans — walk through
@@ -1662,6 +1825,7 @@ impl Planner {
                 func: proc,
                 args: exprs,
                 yields: named_outputs,
+                yield_aliases: _,
                 filter,
                 explicit_yield: _yielded,
             } => {
@@ -1750,7 +1914,10 @@ impl Planner {
                     }
                 }
             }
-            QueryIR::Unwind { expr, var: alias } => tree!(IR::Unwind { expr, var: alias }),
+            QueryIR::Unwind { expr, var: alias } => {
+                self.visited.insert((alias.id, alias.scope_id));
+                tree!(IR::Unwind { expr, var: alias })
+            }
             // MERGE: try to match the full pattern first; the Merge IR node
             // decides at runtime whether to create the missing parts.
             // filter_visited strips already-bound entities from the create pattern.
@@ -1797,6 +1964,7 @@ impl Planner {
                 delimiter,
                 var,
             } => {
+                self.visited.insert((var.id, var.scope_id));
                 tree!(IR::LoadCsv {
                     file_path,
                     headers,

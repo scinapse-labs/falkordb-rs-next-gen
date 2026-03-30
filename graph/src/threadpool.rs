@@ -8,18 +8,26 @@
 //!
 //! ```text
 //! Redis Main Thread                Thread Pool
-//!       │                              │
-//!   GRAPH.QUERY ───spawn()───→  [Worker 1] → execute query
-//!       │                       [Worker 2]
+//!       |                              |
+//!   GRAPH.QUERY ───spawn()───>  [Worker 1] -> execute query
+//!       |                       [Worker 2]
 //!   (continues)                 [Worker N]
-//!       │                              │
-//!   BlockedClient ←────────────── result
+//!       |                              |
+//!   BlockedClient <────────────── result
 //! ```
 //!
-//! ## Thread Affinity
+//! ## Scheduling
 //!
-//! Jobs can optionally specify a worker index for affinity (useful when
-//! a query needs to run on the same thread as related work).
+//! Each worker has its own bounded SPSC (single-producer, single-consumer)
+//! channel. When a job is dispatched without a specific worker index, the
+//! pool picks the worker with the shortest queue (or the first empty one),
+//! spreading load across threads. When an explicit index is provided, the
+//! job is pinned to that worker (modulo worker count) for thread affinity.
+//!
+//! ## Initialization
+//!
+//! The pool is stored in a global `OnceCell` and must be initialized once
+//! via [`init_thread_pool`] before any calls to [`spawn`].
 
 use std::thread::{self, JoinHandle};
 
