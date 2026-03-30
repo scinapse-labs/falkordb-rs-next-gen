@@ -79,8 +79,8 @@ use redisearch::{
     RediSearch_IterateQuery, RediSearch_MemUsage, RediSearch_QueryNodeAddChild,
     RediSearch_ResultsIteratorFree, RediSearch_ResultsIteratorGetScore,
     RediSearch_ResultsIteratorNext, RediSearch_TagFieldSetCaseSensitive,
-    RediSearch_TagFieldSetSeparator, RediSearch_TextFieldSetWeight,
-    RediSearch_VectorFieldSetDim, RediSearch_VectorFieldSetHNSWParams,
+    RediSearch_TagFieldSetSeparator, RediSearch_TextFieldSetWeight, RediSearch_VectorFieldSetDim,
+    RediSearch_VectorFieldSetHNSWParams,
 };
 
 /// Type of index for a property.
@@ -533,16 +533,13 @@ impl Index {
                                 vopts.dimension as c_int,
                             );
 
-                            let metric: u32 = match vopts
-                                .similarity_function
-                                .as_deref()
-                                .unwrap_or("euclidean")
-                            {
-                                "euclidean" => 0, // VecSimMetric_L2
-                                "ip" => 1,        // VecSimMetric_IP
-                                "cosine" => 2,    // VecSimMetric_Cosine
-                                _ => 0,
-                            };
+                            let metric: u32 =
+                                match vopts.similarity_function.as_deref().unwrap_or("euclidean") {
+                                    "euclidean" => 0, // VecSimMetric_L2
+                                    "ip" => 1,        // VecSimMetric_IP
+                                    "cosine" => 2,    // VecSimMetric_Cosine
+                                    _ => 0,
+                                };
 
                             RediSearch_VectorFieldSetHNSWParams(
                                 self.rs_idx,
