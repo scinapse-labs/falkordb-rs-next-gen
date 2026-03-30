@@ -479,7 +479,7 @@ impl Index {
         &self,
         fields: &HashMap<Arc<String>, Vec<Arc<Field>>>,
         field_options: Option<&TextIndexOptions>,
-    ) {
+    ) -> Result<(), String> {
         unsafe {
             for field in fields.values().flat_map(|f| f.iter()) {
                 match field.ty {
@@ -526,39 +526,44 @@ impl Index {
                             RSFLDOPT_NONE,
                         );
 
-                        if let Some(vopts) = field.vector_options() {
-                            if vopts.dimension > 0 {
-                                RediSearch_VectorFieldSetDim(
-                                    self.rs_idx,
-                                    field_id,
-                                    vopts.dimension as c_int,
-                                );
+                        if let Some(vopts) = field.vector_options()
+                            && vopts.dimension > 0
+                        {
+                            let metric: u32 = match vopts
+                                .similarity_function
+                                .as_deref()
+                                .unwrap_or("euclidean")
+                            {
+                                "euclidean" => 0, // VecSimMetric_L2
+                                "ip" => 1,        // VecSimMetric_IP
+                                "cosine" => 2,    // VecSimMetric_Cosine
+                                other => {
+                                    return Err(format!(
+                                        "Unknown similarity function '{other}', expected 'euclidean', 'ip', or 'cosine'"
+                                    ));
+                                }
+                            };
 
-                                let metric: u32 = match vopts
-                                    .similarity_function
-                                    .as_deref()
-                                    .unwrap_or("euclidean")
-                                {
-                                    "euclidean" => 0, // VecSimMetric_L2
-                                    "ip" => 1,        // VecSimMetric_IP
-                                    "cosine" => 2,    // VecSimMetric_Cosine
-                                    _ => 0,
-                                };
+                            RediSearch_VectorFieldSetDim(
+                                self.rs_idx,
+                                field_id,
+                                vopts.dimension as c_int,
+                            );
 
-                                RediSearch_VectorFieldSetHNSWParams(
-                                    self.rs_idx,
-                                    field_id,
-                                    vopts.m.unwrap_or(16),
-                                    vopts.ef_construction.unwrap_or(200),
-                                    vopts.ef_runtime.unwrap_or(10),
-                                    metric,
-                                );
-                            }
+                            RediSearch_VectorFieldSetHNSWParams(
+                                self.rs_idx,
+                                field_id,
+                                vopts.m.unwrap_or(16),
+                                vopts.ef_construction.unwrap_or(200),
+                                vopts.ef_runtime.unwrap_or(10),
+                                metric,
+                            );
                         }
                     }
                 }
             }
         }
+        Ok(())
     }
 
     /// Build a RediSearch query node from an `IndexQuery`.
@@ -946,7 +951,7 @@ impl Index {
         let stopwords = self.stopwords.clone();
         let language = self.language.clone();
         self.create_rs_index(label, stopwords.as_ref(), language.as_ref())?;
-        self.register_fields(self.fields(), None);
+        self.register_fields(self.fields(), None)?;
         Ok(())
     }
 }

@@ -154,6 +154,8 @@ impl<'a> Iterator for ProcedureCallOp<'a> {
         if self.batches.is_none()
             && let Err(e) = self.init_batches()
         {
+            // Mark initialization as done so we don't retry on subsequent calls.
+            self.batches = Some(Vec::new().into_iter());
             return Some(Err(e));
         }
 

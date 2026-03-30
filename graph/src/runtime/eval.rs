@@ -872,12 +872,12 @@ impl<'a> ExprEval<'a> {
         if all_paths {
             // All shortest paths: BFS to find distance, then enumerate
             Ok(self.bfs_all_shortest_paths(
-                &g, &adj_list, src_id, dst_id, max_level, node_cap, rel_types,
+                &g, &adj_list, src_id, dst_id, max_level, node_cap, rel_types, min_hops,
             ))
         } else {
             // Single shortest path via BFS with parent tracking
             Ok(self.bfs_shortest_path(
-                &g, &adj_list, src_id, dst_id, max_level, node_cap, rel_types,
+                &g, &adj_list, src_id, dst_id, max_level, node_cap, rel_types, min_hops,
             ))
         }
     }
@@ -893,6 +893,7 @@ impl<'a> ExprEval<'a> {
         max_level: u64,
         node_cap: u64,
         rel_types: &[Arc<String>],
+        min_hops: u32,
     ) -> Value {
         use crate::graph::graph::{NodeId, RelationshipId};
 
@@ -940,6 +941,11 @@ impl<'a> ExprEval<'a> {
         }
         path_nodes.reverse();
 
+        // Enforce min_hops: path must have at least min_hops edges
+        if (path_nodes.len() - 1) < min_hops as usize {
+            return Value::Null;
+        }
+
         // Build alternating node/relationship path
         let mut path: ThinVec<Value> = ThinVec::with_capacity(path_nodes.len() * 2 - 1);
         path.push(Value::Node(NodeId::from(path_nodes[0])));
@@ -976,6 +982,7 @@ impl<'a> ExprEval<'a> {
         max_level: u64,
         node_cap: u64,
         rel_types: &[Arc<String>],
+        min_hops: u32,
     ) -> Value {
         use crate::graph::graph::{NodeId, RelationshipId};
 
@@ -1066,9 +1073,14 @@ impl<'a> ExprEval<'a> {
             }
         }
 
-        // Return list of paths
+        // Filter paths by min_hops and return list of paths
         let result: ThinVec<Value> = all_paths
             .into_iter()
+            .filter(|p| {
+                // Number of hops = number of nodes - 1; nodes are at even indices
+                let node_count = p.iter().filter(|v| matches!(v, Value::Node(_))).count();
+                node_count > 0 && (node_count - 1) >= min_hops as usize
+            })
             .map(|p| Value::Path(Arc::new(p)))
             .collect();
         Value::List(Arc::new(result))

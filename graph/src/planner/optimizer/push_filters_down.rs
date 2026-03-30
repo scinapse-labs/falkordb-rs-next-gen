@@ -144,6 +144,7 @@ pub(super) fn push_filters_down(optimized_plan: &mut DynTree<IR>) {
                                 | IR::SemiApply
                                 | IR::AntiSemiApply
                                 | IR::OrApplyMultiplexer(_)
+                                | IR::Optional(_)
                         )
                 })
                 .flat_map(|c| c.children().collect::<Vec<_>>())
@@ -226,15 +227,22 @@ pub(super) fn push_filters_down(optimized_plan: &mut DynTree<IR>) {
 
             for conjunct in conjuncts {
                 let conj_vars = collect_expr_variables(&conjunct);
-                let matched_child = children
+                let matched_indices: Vec<usize> = children
                     .iter()
                     .enumerate()
-                    .find(|(_, (_, child_vars))| conj_vars.iter().all(|v| child_vars.contains(v)))
-                    .map(|(i, _)| i);
-                if let Some(i) = matched_child {
-                    child_conjuncts[i].push(conjunct);
-                } else {
+                    .filter_map(|(i, (_, child_vars))| {
+                        conj_vars
+                            .iter()
+                            .all(|v| child_vars.contains(v))
+                            .then_some(i)
+                    })
+                    .collect();
+                if matched_indices.is_empty() {
                     remaining.push(conjunct);
+                } else {
+                    for &i in &matched_indices {
+                        child_conjuncts[i].push(conjunct.clone());
+                    }
                 }
             }
 

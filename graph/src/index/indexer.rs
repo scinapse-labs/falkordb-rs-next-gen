@@ -236,7 +236,7 @@ impl Indexer {
             )?;
         }
 
-        label_indexes.register_fields(&new_fields, field_options.as_ref());
+        label_indexes.register_fields(&new_fields, field_options.as_ref())?;
 
         // Update the label indexes with global settings
         // Default to "english" for fulltext indexes when no language is specified,

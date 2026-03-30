@@ -179,7 +179,7 @@ impl Binder {
                 } else {
                     rel.to.clone()
                 };
-                *rel = Arc::new(QueryRelationship::new(
+                let mut new_rel = QueryRelationship::new(
                     rel.alias.clone(),
                     rel.types.clone(),
                     rel.attrs.clone(),
@@ -188,7 +188,9 @@ impl Binder {
                     rel.bidirectional,
                     rel.min_hops,
                     rel.max_hops,
-                ));
+                );
+                new_rel.all_shortest_paths = rel.all_shortest_paths;
+                *rel = Arc::new(new_rel);
             }
         }
     }
@@ -484,23 +486,29 @@ impl Binder {
                 }
 
                 let mut bound_vars = Vec::with_capacity(vars.len());
+                let mut bound_aliases: Vec<Option<Variable>> = Vec::with_capacity(vars.len());
                 for (i, name) in vars.into_iter().enumerate() {
                     let alias = aliases.get(i).and_then(std::clone::Clone::clone);
                     if yielded {
                         if let Some(ref original_field) = alias {
-                            // YIELD field AS alias: Variable.name = original field,
-                            // registered in scope under alias name via normal resolution
+                            // YIELD field AS alias: register in scope under the alias name,
+                            // but set Variable.name to the original field for procedure map lookup.
                             let var = self.define_name_in_scope(name.clone(), Type::Any, true)?;
-                            // Override the variable name to the original field for procedure map lookup
                             let var = Variable {
                                 name: Some(original_field.clone()),
                                 ..var
                             };
                             // Re-insert under alias name with the updated variable
                             self.current_env_mut().insert(name.clone(), var.clone());
-                            bound_vars.push(var);
+                            bound_vars.push(var.clone());
+                            // Record alias: a Variable whose name is the alias
+                            bound_aliases.push(Some(Variable {
+                                name: Some(name),
+                                ..var
+                            }));
                         } else {
                             bound_vars.push(self.define_name_in_scope(name, Type::Any, true)?);
+                            bound_aliases.push(None);
                         }
                     } else {
                         // Create a variable with the original name (for procedure map lookup)
@@ -513,6 +521,7 @@ impl Binder {
                         let hidden_name = Arc::new(format!("_hidden_{}_{name}", var.id));
                         self.current_env_mut().insert(hidden_name, var.clone());
                         bound_vars.push(var);
+                        bound_aliases.push(None);
                     }
                 }
                 let filter = filter.map(|expr| self.bind_expr(&expr)).transpose()?;
@@ -521,12 +530,11 @@ impl Binder {
                 {
                     return Err(String::from("Expected boolean predicate"));
                 }
-                let n_yields = bound_vars.len();
                 Ok(QueryIR::Call {
                     func,
                     args,
                     yields: bound_vars,
-                    yield_aliases: vec![None; n_yields],
+                    yield_aliases: bound_aliases,
                     filter,
                     explicit_yield: yielded,
                 })

@@ -218,13 +218,47 @@ impl UdfRepo {
     }
 
     /// Bulk load from deserialized data (for RDB load).
+    ///
+    /// Validates **all** libraries in a staging area first. Only on full
+    /// success are the live repo contents atomically replaced and the
+    /// version bumped. On any validation failure the live repo and
+    /// runtime function table remain unchanged.
     pub fn deserialize(
         &self,
-        libs: Vec<(String, String)>,
-    ) -> Result<(), String> {
+        libs: &[(String, String)],
+    ) -> Result<Vec<UdfLibrary>, String> {
+        // Phase 1 – validate every library and build the staging list.
+        let mut staged: Vec<UdfLibrary> = Vec::with_capacity(libs.len());
         for (name, code) in libs {
-            self.load(&name, &code, true)?;
+            let raw_names = js_context::validate_script(code).map_err(|e| {
+                format!("UDF library '{name}' failed validation during RDB load: {e}")
+            })?;
+            let qualified_names: Vec<String> = raw_names
+                .iter()
+                .map(|fn_name| format!("{name}.{fn_name}"))
+                .collect();
+            staged.push(UdfLibrary {
+                name: name.clone(),
+                code: code.clone(),
+                function_names: qualified_names,
+            });
         }
-        Ok(())
+
+        // Phase 2 – all validated; atomically swap the live repo.
+        {
+            let mut inner = self.inner.write();
+
+            // Unregister old functions.
+            for lib in &inner.libraries {
+                for qname in &lib.function_names {
+                    crate::runtime::functions::unregister_udf(qname);
+                }
+            }
+
+            inner.libraries = staged.clone();
+        }
+        self.version.fetch_add(1, Ordering::Release);
+
+        Ok(staged)
     }
 }

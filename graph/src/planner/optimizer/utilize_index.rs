@@ -245,13 +245,13 @@ fn merge_range_queries(
                 include_max: inc_max_a,
             },
             IndexQuery::Range {
+                key: key_b,
                 min: min_b,
                 max: max_b,
                 include_min: inc_min_b,
                 include_max: inc_max_b,
-                ..
             },
-        ) => {
+        ) if key == key_b => {
             // If both specify the same bound, we can't compare expression
             // values at plan time to pick the stricter one — fall back to And.
             if min_a.is_some() && min_b.is_some() || max_a.is_some() && max_b.is_some() {
@@ -351,6 +351,7 @@ fn get_index(
 ) -> Option<(
     Arc<QueryNode<Arc<String>, Variable>>,
     Arc<String>,
+    Arc<String>,
     DynTree<ExprIR<Variable>>,
 )> {
     for label in node.labels.iter() {
@@ -360,6 +361,7 @@ fn get_index(
             {
                 return Some((
                     node.clone(),
+                    label.clone(),
                     attr_str.clone(),
                     tree!(
                         ExprIR::Eq,
@@ -453,13 +455,13 @@ pub(super) fn utilize_index(
             } else {
                 None
             };
-            if let Some((node, attr, filter)) = node
+            if let Some((node, label, attr, filter)) = node
                 && !node.labels.is_empty()
             {
                 let mut op = optimized_plan.node_mut(idx);
                 *op.data_mut() = IR::NodeByIndexScan {
                     node: node.clone(),
-                    index: node.labels[0].clone(),
+                    index: label,
                     query: Arc::new(IndexQuery::Equal {
                         key: attr.clone(),
                         value: Arc::new(filter.root().child(1).clone_as_tree()),

@@ -100,25 +100,19 @@ unsafe extern "C" fn graph_aux_load(
         libs.push((name, code));
     }
 
-    // Load all libraries, registering their functions.
-    // Clear existing UDFs first so stale functions from a previous snapshot
-    // don't remain callable after loading the new payload.
-    repo.flush();
-    graph::runtime::functions::flush_udfs();
-    match repo.deserialize(libs) {
-        Ok(()) => {
-            // Register bridge functions for each library's functions
-            let all_libs = repo.get_all_libraries();
-            for lib in &all_libs {
-                for qname in &lib.function_names {
-                    let graph_fn = Arc::new(GraphFn::new_udf(qname));
-                    register_udf(qname, graph_fn);
-                }
+    // Validate all libraries, then atomically swap the repo contents.
+    // On failure the live repo and function table remain unchanged.
+    repo.deserialize(&libs).map_or(1, |loaded_libs| {
+        // Re-register bridge functions for the new set of libraries.
+        graph::runtime::functions::flush_udfs();
+        for lib in &loaded_libs {
+            for qname in &lib.function_names {
+                let graph_fn = Arc::new(GraphFn::new_udf(qname));
+                register_udf(qname, graph_fn);
             }
-            0 // REDISMODULE_OK
         }
-        Err(_) => 1, // REDISMODULE_ERR
-    }
+        0 // REDISMODULE_OK
+    })
 }
 
 pub static GRAPH_TYPE: RedisType = RedisType::new(

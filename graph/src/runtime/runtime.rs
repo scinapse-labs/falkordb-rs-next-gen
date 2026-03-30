@@ -1246,16 +1246,25 @@ fn map_to_index_options(
                 _ => return Err("similarityFunction must be a string".into()),
             };
             let m = match get("M") {
+                Some(Value::Int(n)) if *n < 0 => {
+                    return Err("M must be a non-negative integer".into());
+                }
                 Some(Value::Int(n)) => Some(*n as usize),
                 None => None,
                 _ => return Err("M must be an integer".into()),
             };
             let ef_construction = match get("efConstruction") {
+                Some(Value::Int(n)) if *n < 0 => {
+                    return Err("efConstruction must be a non-negative integer".into());
+                }
                 Some(Value::Int(n)) => Some(*n as usize),
                 None => None,
                 _ => return Err("efConstruction must be an integer".into()),
             };
             let ef_runtime = match get("efRuntime") {
+                Some(Value::Int(n)) if *n < 0 => {
+                    return Err("efRuntime must be a non-negative integer".into());
+                }
                 Some(Value::Int(n)) => Some(*n as usize),
                 None => None,
                 _ => return Err("efRuntime must be an integer".into()),

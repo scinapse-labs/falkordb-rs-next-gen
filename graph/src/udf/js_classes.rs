@@ -52,7 +52,7 @@
 //!   enforcement via the UDF deadline.
 
 use std::cell::RefCell;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
@@ -564,6 +564,13 @@ fn js_traverse_impl<'js>(
             let mut visited: HashSet<u64> = HashSet::new();
             visited.insert(start_id);
 
+            // Track seen relationship IDs per source node to avoid emitting
+            // the same edge twice when direction == "both" and returnType == "edges".
+            // An edge A->B discovered from A at depth N would otherwise be
+            // rediscovered from B at depth N+1.
+            let dedup_edges = return_type == "edges" && direction == "both";
+            let mut seen_edges: HashMap<u64, HashSet<u64>> = HashMap::new();
+
             let mut frontier = vec![start_id];
 
             for _ in 0..max_depth {
@@ -605,10 +612,24 @@ fn js_traverse_impl<'js>(
                                 }
                             }
 
-                            // Collect edges unconditionally (parallel/back-edges to
-                            // already-visited nodes are still valid edges).
                             if return_type == "edges" {
-                                edges_to_create.push((rel_id, src_id, dst_id));
+                                // When direction is "both", de-dup edges so that
+                                // an edge A->B found from A isn't re-emitted when
+                                // discovered from B at the next depth.
+                                if dedup_edges {
+                                    let source_seen = seen_edges.entry(nid).or_default();
+                                    if source_seen.insert(rel_id) {
+                                        // Also mark in the neighbor's set so it
+                                        // won't be emitted again from the other side.
+                                        seen_edges.entry(neighbor_id).or_default().insert(rel_id);
+                                        edges_to_create.push((rel_id, src_id, dst_id));
+                                    } else {
+                                        // Already emitted from this source — but
+                                        // it was from the other endpoint; skip.
+                                    }
+                                } else {
+                                    edges_to_create.push((rel_id, src_id, dst_id));
+                                }
                             }
 
                             if visited.insert(neighbor_id) {

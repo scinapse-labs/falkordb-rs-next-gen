@@ -727,14 +727,15 @@ fn register_bfs(funcs: &mut Functions) {
             let adj = g.build_adjacency_matrix(&rel_types);
 
             unsafe {
-                use crate::graph::graphblas::{lagraph_bindings, GrB_Vector, lagraphx_bindings, GrB_Vector_free};
+                use crate::graph::graphblas::{lagraph_bindings, GrB_Vector, lagraphx_bindings, GrB_Vector_free, GrB_Matrix_free};
 
                 let active = active_node_set(&g);
-                let (compact_adj, id_to_compact, compact_to_id, _n) =
+                let (mut compact_adj, id_to_compact, compact_to_id, _n) =
                     build_compact_adj(&adj, &active);
 
                 // Map source_id to compact index
                 let Some(&compact_source) = id_to_compact.get(&u64::from(source_id)) else {
+                    GrB_Matrix_free(&raw mut compact_adj);
                     return Err(String::from("Source node not found in graph"));
                 };
 

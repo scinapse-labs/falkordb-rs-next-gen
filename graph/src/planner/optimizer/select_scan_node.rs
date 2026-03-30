@@ -181,8 +181,16 @@ fn collect_output_aliases(ir: &IR) -> HashSet<u32> {
         IR::AllNodeScan(n) | IR::NodeByLabelScan(n) => {
             aliases.insert(n.alias.id);
         }
-        IR::NodeByIndexScan { node, .. } | IR::NodeByLabelAndIdScan { node, .. } => {
+        IR::NodeByIndexScan { node, .. }
+        | IR::NodeByLabelAndIdScan { node, .. }
+        | IR::NodeByIdSeek { node, .. } => {
             aliases.insert(node.alias.id);
+        }
+        IR::NodeByFulltextScan { node, score, .. } => {
+            aliases.insert(node.id);
+            if let Some(s) = score {
+                aliases.insert(s.id);
+            }
         }
         IR::Project { exprs, copies } => {
             for (var, _) in exprs {
@@ -425,7 +433,7 @@ pub(super) fn select_scan_node(
             )> = Vec::new();
             // Also collect Filter nodes between CTs (keyed by destination alias).
             // These are inline attribute filters on destination nodes.
-            let mut inter_ct_filters: Vec<DynTree<IR>> = Vec::new();
+            let mut inter_ct_filters: Vec<(usize, DynTree<IR>)> = Vec::new();
             for (i, &ct_idx) in chain.iter().enumerate() {
                 if let IR::CondTraverse {
                     relationship,
@@ -453,7 +461,7 @@ pub(super) fn select_scan_node(
                                 IR::Filter(expr) => expr.clone(),
                                 _ => unreachable!(),
                             };
-                            inter_ct_filters.push(tree!(IR::Filter(filter_expr)));
+                            inter_ct_filters.push((i, tree!(IR::Filter(filter_expr))));
                         }
                         if optimized_plan.node(walk).num_children() > 0 {
                             walk = optimized_plan.node(walk).child(0).idx();
@@ -497,9 +505,14 @@ pub(super) fn select_scan_node(
                 new_rels.push((new_rel, *emit, edges.clone(), true));
             }
 
-            // Build the new subtree bottom-up.
+            // Build the new subtree bottom-up, inserting inter-CT filters at
+            // the correct hop.  `new_rels.into_iter().rev()` yields hops
+            // corresponding to original chain positions 0, 1, …, n-1.
+            // A filter collected at original position `i` should be inserted
+            // right after the hop for original chain[i] is wrapped around the
+            // subtree (and before the next hop wraps it).
             let mut subtree = existing_child.unwrap_or_else(|| make_scan_subtree(&best_node));
-            for (rel, emit, edges, transposed) in new_rels.into_iter().rev() {
+            for (step, (rel, emit, edges, transposed)) in new_rels.into_iter().rev().enumerate() {
                 subtree = tree!(
                     IR::CondTraverse {
                         relationship: rel,
@@ -509,13 +522,15 @@ pub(super) fn select_scan_node(
                     },
                     subtree
                 );
-            }
-            // Re-insert collected inter-CT filters above the bottom of the
-            // new chain.  They filtered on intermediate dest nodes which are
-            // still produced by the reversed CTs.
-            for filter_tree in inter_ct_filters {
-                let filter_data = filter_tree.root().data().clone();
-                subtree = tree!(filter_data, subtree);
+                // The original chain position for this step is `step`.
+                // Apply any inter-CT filters that were between chain[step]
+                // and chain[step+1] in the original (pre-reversal) chain.
+                for (orig_pos, filter_tree) in &inter_ct_filters {
+                    if *orig_pos == step {
+                        let filter_data = filter_tree.root().data().clone();
+                        subtree = tree!(filter_data, subtree);
+                    }
+                }
             }
 
             // Replace the chain in the plan.
