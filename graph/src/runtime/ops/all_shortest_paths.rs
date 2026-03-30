@@ -87,7 +87,6 @@ impl<'a> AllShortestPathsOp<'a> {
         let max_hops = rp.max_hops.unwrap_or(u32::MAX);
         let min_hops = rp.min_hops.unwrap_or(1);
         let bidirectional = rp.bidirectional;
-        let reversed = rp.all_shortest_paths == AllShortestPaths::Reversed;
         let g = self.runtime.g.borrow();
 
         // BFS phase: find shortest distance and collect predecessors
@@ -131,15 +130,11 @@ impl<'a> AllShortestPathsOp<'a> {
                     } else {
                         None
                     }
-                } else if reversed {
-                    // Reversed directed: follow incoming edges
-                    if edge_dst == current_node {
-                        Some(u64::from(edge_src))
-                    } else {
-                        None
-                    }
                 } else {
-                    // Forward directed: follow outgoing edges
+                    // Both forward and reversed directed follow outgoing edges.
+                    // In the reversed case the pattern is written right-to-left
+                    // (e.g. `(v4)<-[*]-(v1)`) but `from` is still the arrow
+                    // source (v1), so BFS from v1 along outgoing edges is correct.
                     if edge_src == current_node {
                         Some(u64::from(edge_dst))
                     } else {

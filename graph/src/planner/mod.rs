@@ -992,15 +992,12 @@ impl Planner {
                 // Within the same hop-type tier, prefer relationships that
                 // touch an already-bound variable so that traversals start
                 // from the known node (matches FalkorDB C behaviour).
-                let has_bound = if self
-                    .visited
-                    .contains(&(r.from.alias.id, r.from.alias.scope_id))
-                    || self.visited.contains(&(r.to.alias.id, r.to.alias.scope_id))
-                {
-                    0
-                } else {
-                    1
-                };
+                let has_bound = i32::from(
+                    !(self
+                        .visited
+                        .contains(&(r.from.alias.id, r.from.alias.scope_id))
+                        || self.visited.contains(&(r.to.alias.id, r.to.alias.scope_id))),
+                );
                 (base, has_bound)
             });
             let mut iter = sorted_rels.iter();

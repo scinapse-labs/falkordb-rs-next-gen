@@ -282,10 +282,7 @@ impl<'a> Lexer<'a> {
                 len += c.len_utf8();
                 if c == '/' {
                     next = chars.next();
-                    loop {
-                        let Some(c) = next else {
-                            break;
-                        };
+                    while let Some(c) = next {
                         len += c.len_utf8();
                         if c == '\n' {
                             next = chars.next();
@@ -294,22 +291,15 @@ impl<'a> Lexer<'a> {
                         next = chars.next();
                     }
                 } else if c == '*' {
-                    next = chars.next();
-                    loop {
-                        let Some(c) = next else {
-                            break;
-                        };
+                    for c in chars.by_ref() {
                         if c == '*' {
                             len += 1;
-                            next = chars.next();
                             continue;
                         }
                         len += c.len_utf8();
                         if c == '/' {
-                            next = chars.next();
                             break;
                         }
-                        next = chars.next();
                     }
                 } else {
                     len -= 1 + c.len_utf8();
