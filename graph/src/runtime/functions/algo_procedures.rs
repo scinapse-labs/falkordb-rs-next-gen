@@ -121,6 +121,9 @@ unsafe fn create_lagraph_graph(
     if info != 0 {
         return Err(format!("LAGraph_New failed: {info}"));
     }
+    if g.is_null() {
+        return Err(String::from("LAGraph_New returned null graph"));
+    }
     Ok(g)
 }
 
