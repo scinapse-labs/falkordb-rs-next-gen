@@ -1,3 +1,45 @@
+//! Node-by-ID optimization pass.
+//!
+//! Replaces a label scan (or all-node scan) paired with an `id()` filter by a
+//! direct ID lookup operator, avoiding a full scan of the label matrix.
+//!
+//! ## Transformations
+//!
+//! **Labeled node with ID filter:**
+//!
+//! ```text
+//! Before:                          After:
+//!
+//! Filter(id(n) = 42)               NodeByLabelAndIdScan(:Person, id=42)
+//!   |
+//!   v
+//! NodeByLabelScan(:Person)
+//! ```
+//!
+//! **Unlabeled node with ID filter:**
+//!
+//! ```text
+//! Before:                          After:
+//!
+//! Filter(id(n) = 42)               NodeByIdSeek(id=42)
+//!   |
+//!   v
+//! AllNodeScan
+//! ```
+//!
+//! **AND filter with multiple ID predicates:**
+//!
+//! When the filter is an AND of several `id()` comparisons (e.g.
+//! `id(n) >= 10 AND id(n) < 20`), all conjuncts are collected into the
+//! lookup operator's filter list. If any AND conjunct is not an `id()`
+//! comparison the optimization is skipped entirely.
+//!
+//! ## Supported operators
+//!
+//! The `id()` comparison may use `=`, `<`, `<=`, `>`, or `>=`. When the
+//! `id()` call appears on the right-hand side, the comparison is flipped
+//! so the operator always describes "id <op> value".
+
 use std::sync::Arc;
 
 use orx_tree::{Bfs, DynNode, DynTree, NodeRef};

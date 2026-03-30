@@ -1,4 +1,25 @@
-//! CALL procedures – `db.labels`, `db.indexes`, full-text helpers, etc.
+//! Database introspection and management procedures.
+//!
+//! These are invoked via Cypher `CALL` statements and return result
+//! sets (lists of maps).  Each procedure is registered with
+//! `FnType::Procedure(yields)` so the binder knows which columns the
+//! `YIELD` clause can reference.
+//!
+//! ```text
+//!  Cypher procedure                         Yields                          Notes
+//! ──────────────────────────────────────────────────────────────────────────────────
+//!  db.labels()                              {label}                         all node labels
+//!  db.relationshiptypes()                   {relationshipType}              all rel types
+//!  db.propertykeys()                        {propertyKey}                   all property keys
+//!  db.indexes()                             {label, properties, types, ..}  index catalog
+//!  db.meta.stats()                          {labels, relTypes, nodeCount,.. } graph statistics
+//!  db.idx.fulltext.createNodeIndex(map)     (none)                          write procedure
+//!  db.idx.fulltext.queryNodes(label, query) {node, score}                   not yet supported
+//! ```
+//!
+//! Read-only procedures are registered with `write = false`; the
+//! full-text index creation procedure uses the `write procedure:`
+//! macro arm so it can be used inside write queries.
 
 #![allow(clippy::unnecessary_wraps)]
 

@@ -5,6 +5,33 @@
 //! to correlate results back to input rows. Handles Optional fallback (NULL-fill)
 //! when the right child is an Optional node.
 //!
+//! ```text
+//!  Batched mode (default):
+//!
+//!     Left child ──► input batch [row0, row1, row2]
+//!                          │
+//!                     stamp origin_row
+//!                          │
+//!                     ┌────▼────┐
+//!                     │ Right   │  single sub-plan instance
+//!                     │ sub-plan│  processes all rows at once
+//!                     └────┬────┘
+//!                          │
+//!                  correlate by origin_row
+//!                          │
+//!                  ┌───────┴───────┐
+//!                  │ merge(input,  │
+//!                  │       output) │
+//!                  └───────────────┘
+//!
+//!  Per-row mode (fallback for blocking sub-plans like Aggregate):
+//!
+//!     Left child ──► for each row:
+//!                       create fresh sub-plan instance
+//!                       pass single-row argument batch
+//!                       drain results and merge
+//! ```
+//!
 //! Falls back to per-row sub-plan execution when the sub-plan contains blocking
 //! operators (Aggregate) that accumulate state across all rows.
 

@@ -6,6 +6,19 @@
 //! underlying graph. After the commit succeeds, the collected
 //! environments are yielded as batches.
 //!
+//! ```text
+//!  Child (Create/Delete/Set/Merge ops accumulate into Pending)
+//!       │
+//!       ▼  drain ALL batches
+//!  ┌────────────────────┐
+//!  │ collected batches   │
+//!  └─────────┬──────────┘
+//!            │
+//!   pending.commit() ──► apply to graph
+//!            │
+//!       yield collected batches
+//! ```
+//!
 //! Only allowed in write queries; returns an error for `GRAPH.RO_QUERY`.
 
 use crate::planner::IR;

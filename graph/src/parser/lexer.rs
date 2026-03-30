@@ -1,15 +1,61 @@
 //! Cypher lexer and token definitions.
 //!
-//! This module contains the lexical analysis layer used by the Cypher parser.
-//! It converts an input query string into a token stream and provides:
-//! - [`Keyword`]: recognized Cypher keywords
-//! - [`Token`]: lexical token variants
-//! - [`Lexer`]: cursor-based tokenizer with lookahead via `current()`
+//! This module implements the lexical analysis (tokenization) layer for the
+//! Cypher query parser. It converts a raw query string into a stream of
+//! [`Token`] values that the recursive descent parser in
+//! [`crate::parser::cypher`] consumes.
 //!
-//! The lexer also handles:
-//! - comments and whitespace skipping
-//! - string unescaping
-//! - numeric literal parsing and validation
+//! ## Architecture
+//!
+//! The [`Lexer`] is cursor-based with single-token lookahead:
+//!
+//! ```text
+//!  Input string: "MATCH (n:Person) WHERE n.age > 30"
+//!                  ^pos
+//!                  |
+//!            cached_current = Token::IdentifierOrKeyword { ident: "MATCH", keyword: Some(Match) }
+//!
+//!  After lexer.next():
+//!                       ^pos
+//!                       |
+//!            cached_current = Token::LParen
+//! ```
+//!
+//! - `current()` returns the lookahead token without advancing.
+//! - `next()` advances past the current token and caches the next one.
+//! - Whitespace and comments (`// ...` and `/* ... */`) are skipped
+//!   automatically between tokens.
+//!
+//! ## Token Categories
+//!
+//! ```text
+//!  Token
+//!   |-- Literals:          Integer(i64), Float(f64), String(Arc<String>)
+//!   |-- Identifiers:       IdentifierOrKeyword { ident, keyword }
+//!   |-- Parameters:        Parameter(String)          -- $param or $`param`
+//!   |-- Delimiters:        LParen, RParen, LBrace, RBrace, LBracket, RBracket
+//!   |-- Operators:         Plus, Dash, Star, Slash, Modulo, Power, Equal,
+//!   |                      NotEqual, LessThan, LessThanOrEqual, GreaterThan,
+//!   |                      GreaterThanOrEqual, PlusEqual, RegexMatches
+//!   |-- Punctuation:       Comma, Colon, Dot, DotDot, Pipe, Semicolon
+//!   '-- Sentinel:          EndOfFile
+//! ```
+//!
+//! Identifiers and keywords share the `IdentifierOrKeyword` variant. A
+//! compile-time perfect-hash map (`phf`) resolves keywords in O(1); if the
+//! identifier does not match a keyword, `keyword` is `None`.
+//!
+//! ## Numeric Literals
+//!
+//! The lexer supports decimal, hexadecimal (`0x`), octal (`0o` or leading `0`),
+//! binary (`0b`), and floating-point literals with optional scientific notation
+//! (`1.5e10`, `3E-4`). Overflow is detected and reported as an error.
+//!
+//! ## String Literals
+//!
+//! Single-quoted (`'...'`) and double-quoted (`"..."`) strings are supported.
+//! Escape sequences within strings are handled by
+//! [`crate::parser::string_escape::cypher_unescape`].
 
 use crate::parser::string_escape::cypher_unescape;
 use std::sync::Arc;

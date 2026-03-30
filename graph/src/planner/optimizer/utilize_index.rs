@@ -1,3 +1,52 @@
+//! Index utilization optimizer pass.
+//!
+//! Scans the execution plan for `NodeByLabelScan` operators that sit below a
+//! `Filter` on an indexed property, and replaces the pair with a single
+//! `NodeByIndexScan` that pushes the predicate into the index engine.
+//!
+//! ## Supported Patterns
+//!
+//! **Single comparison filter:**
+//!
+//! ```text
+//! Before:                       After:
+//!
+//! Filter(n.age = 30)            NodeByIndexScan(:Person, age, Equal(30))
+//!   |
+//!   v
+//! NodeByLabelScan(:Person)
+//! ```
+//!
+//! **AND filter with multiple indexed conjuncts:**
+//!
+//! When a Filter contains `AND(n.year >= 1980, n.year < 1990)`, the pass
+//! merges both conjuncts into a single `Range` index query:
+//!
+//! ```text
+//! Before:                         After:
+//!
+//! Filter(AND(year>=1980,          NodeByIndexScan(:Movie, year,
+//!            year<1990))            Range{min:1980, max:1990})
+//!   |
+//!   v
+//! NodeByLabelScan(:Movie)
+//! ```
+//!
+//! If only some AND conjuncts are indexable, the indexable ones are merged
+//! into the scan and the remaining conjuncts stay as a reduced Filter.
+//!
+//! **Inline node attributes:**
+//!
+//! Also converts `NodeByLabelScan` nodes that carry inline property attributes
+//! (e.g. `(n:Person {name: 'Alice'})`) into `NodeByIndexScan` when the
+//! attribute is indexed.
+//!
+//! ## Supported operators and index types
+//!
+//! - Equality (`=`), less-than (`<`, `<=`), greater-than (`>`, `>=`)
+//! - `distance()` function for point indexes
+//! - Range indexes only (fulltext indexes are handled separately)
+
 use std::sync::Arc;
 
 use orx_tree::{Bfs, Dyn, DynTree, NodeIdx, NodeRef};

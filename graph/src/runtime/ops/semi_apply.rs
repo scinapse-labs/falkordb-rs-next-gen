@@ -1,5 +1,25 @@
 //! Batch-mode semi-apply operator — existence-based filtering via a sub-plan.
 //!
+//! Implements Cypher `WHERE EXISTS { ... }` (semi) and
+//! `WHERE NOT EXISTS { ... }` (anti-semi) patterns.
+//!
+//! ```text
+//!  Input batch [row0, row1, row2]
+//!       │
+//!  stamp origin_row
+//!       │
+//!  ┌────▼─────────────┐
+//!  │ Right sub-plan    │  single instance, all rows at once
+//!  └────┬─────────────┘
+//!       │
+//!  collect matched origin_rows
+//!       │
+//!  ┌────▼──────────────────────────────────┐
+//!  │ Semi mode:  keep rows WITH matches    │
+//!  │ Anti mode:  keep rows WITHOUT matches │
+//!  └──────────────────────────────────────┘
+//! ```
+//!
 //! For each input batch, runs the right sub-plan once with all active rows as
 //! the argument batch. Uses `origin_row` on each output env to determine which
 //! input rows had matches, then builds a selection vector accordingly.

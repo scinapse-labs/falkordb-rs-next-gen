@@ -1,8 +1,27 @@
-//! Value Hash Join operator.
+//! Batch-mode value hash join operator — equi-join via build/probe hash table.
 //!
-//! Replaces CartesianProduct + equality Filter with a hash join.
-//! Materializes the right sub-plan into a hash table keyed by the
-//! right-hand join expression, then probes it for each left row.
+//! Replaces CartesianProduct + equality Filter with a hash join when the
+//! optimizer detects an equality predicate between a left and right expression.
+//!
+//! ```text
+//!  Phase 1: BUILD (materialize right sub-plan into hash table)
+//!
+//!     Right child ──► for each row: hash(rhs_expr) ──► HashMap<hash, Vec<(key, envs)>>
+//!
+//!  Phase 2: PROBE (stream left rows, look up matches)
+//!
+//!     Left child ──► for each row: hash(lhs_expr) ──► probe table
+//!                                                        │
+//!                          ┌──────────────────────────────┘
+//!                          │  for each matching right env:
+//!                          │    merged = left_env + right_env
+//!                          ▼
+//!                     output batches
+//! ```
+//!
+//! The hash table uses chaining for collision resolution: each bucket stores
+//! a `Vec<(Value, Vec<Env>)>` where exact key equality is checked during
+//! probe. NULL keys are skipped on both sides (Cypher NULL != NULL semantics).
 
 use std::collections::HashMap;
 use std::hash::{DefaultHasher, Hash, Hasher};

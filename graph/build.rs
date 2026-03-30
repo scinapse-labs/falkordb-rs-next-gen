@@ -13,6 +13,7 @@ fn main() {
     #[cfg(target_os = "linux")]
     {
         // Common libomp install locations when building RediSearch/VecSim with LLVM.
+        println!("cargo:rustc-link-search=/usr/lib/llvm-22/lib");
         println!("cargo:rustc-link-search=/usr/lib/llvm-21/lib");
         println!("cargo:rustc-link-search=/usr/lib/llvm-20/lib");
     }

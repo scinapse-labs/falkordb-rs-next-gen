@@ -1,11 +1,35 @@
 //! `GRAPH.MEMORY USAGE` command handler.
 //!
-//! Reports detailed per-component memory usage for a graph key.
+//! Reports detailed per-component memory usage for a graph key, returned in
+//! megabytes (integer division, matching the FalkorDB C implementation).
 //!
-//! Syntax: `GRAPH.MEMORY USAGE <key> [SAMPLES <count>]`
+//! ## Syntax
+//! ```text
+//! GRAPH.MEMORY USAGE <key> [SAMPLES <count>]
+//! ```
 //!
-//! Returns a flat array of key-value pairs (9 pairs = 18 elements) compatible
-//! with the FalkorDB C implementation's `RedisModule_ReplyWithMap(9)`.
+//! `SAMPLES` controls how many attribute entries are sampled to estimate
+//! storage size (default: 100). Higher values give more accurate estimates
+//! at the cost of longer computation.
+//!
+//! ## Response structure
+//! A flat array of 9 key-value pairs (18 elements total):
+//!
+//! ```text
+//! [ "total_graph_sz_mb",                          <int>,
+//!   "label_matrices_sz_mb",                       <int>,
+//!   "relation_matrices_sz_mb",                    <int>,
+//!   "amortized_node_block_sz_mb",                 <int>,
+//!   "amortized_node_attributes_by_label_sz_mb",   [label, mb, ...],
+//!   "amortized_unlabeled_nodes_attributes_sz_mb", <int>,
+//!   "amortized_edge_block_sz_mb",                 <int>,
+//!   "amortized_edge_attributes_by_type_sz_mb",    [type, mb, ...],
+//!   "indices_sz_mb",                              <int> ]
+//! ```
+//!
+//! The `total_graph_sz_mb` value is the sum of all other MB-rounded
+//! components, which avoids truncation discrepancies when clients verify
+//! the total against the individual parts.
 
 use crate::{graph_core::ThreadedGraph, redis_type::GRAPH_TYPE};
 use parking_lot::RwLock;

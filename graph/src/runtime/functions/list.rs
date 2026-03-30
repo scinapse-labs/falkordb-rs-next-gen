@@ -4,14 +4,24 @@
 //! propagate as `Null` outputs.
 //!
 //! ```text
-//!  Cypher         Function    Returns            Notes
-//! ──────────────────────────────────────────────────────────
-//!  size(x)        size()      Int                works on List, String, Arc<List>
-//!  head(list)     head()      first element      Null on empty
-//!  last(list)     last()      last element       Null on empty
-//!  tail(list)     tail()      list[1..]          empty on empty
-//!  reverse(x)     reverse()   reversed list/str  works on both List and String
+//!  Cypher                              Function                  Returns
+//! ──────────────────────────────────────────────────────────────────────────
+//!  size(x)                             size()                    Int
+//!  head(list)                          head()                    first elem or Null
+//!  last(list)                          last()                    last elem or Null
+//!  tail(list)                          tail()                    list[1..]
+//!  reverse(x)                          reverse()                 reversed list/str
+//!  list.remove(list, idx [,count])     list_remove()             list without elements
+//!  list.sort(list [,ascending?])       list_sort()               sorted list
+//!  list.insert(list, idx, val [,dup?]) list_insert()             list with val inserted
+//!  list.insertListElements(l1,l2,i,..) list_insert_list_elements() merged list
+//!  list.dedup(list)                    list_dedup()              deduplicated list
 //! ```
+//!
+//! The `list.*` functions follow the FalkorDB extension namespace.
+//! `list.insert` and `list.insertListElements` accept an optional
+//! `allowDuplicate` boolean (default `true`).  Negative indices are
+//! normalised relative to the list length.
 
 #![allow(clippy::unnecessary_wraps)]
 #![allow(clippy::cast_possible_wrap)]

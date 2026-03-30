@@ -1,3 +1,39 @@
+//! Filter push-down optimizer pass.
+//!
+//! Moves filter conjuncts as close as possible to the operators that produce
+//! their referenced variables. This reduces the number of intermediate rows
+//! flowing through the plan by filtering early.
+//!
+//! ## Main Transformation
+//!
+//! Given a Filter with an AND predicate sitting above a multi-child operator
+//! (e.g. CartesianProduct), each conjunct is routed to the deepest child
+//! whose output variables fully cover the conjunct's referenced variables.
+//!
+//! ```text
+//! Before:                              After:
+//!
+//! Filter(AND(cond_a, cond_b))          CartesianProduct
+//!   |                                    |           |
+//!   v                                    v           v
+//! CartesianProduct                     Filter(a)   Filter(b)
+//!   |           |                        |           |
+//!   v           v                        v           v
+//! ChildA      ChildB                   ChildA      ChildB
+//! ```
+//!
+//! Conjuncts that reference variables from multiple children (cross-product
+//! predicates) remain at the original Filter level.
+//!
+//! ## Additional behaviors
+//!
+//! - **Filter merging**: Two stacked Filter nodes are merged into a single
+//!   AND filter before push-down is attempted.
+//! - **Apply awareness**: When a Filter is inside an Apply's right branch,
+//!   variables from the left branch (propagated via Argument) are included
+//!   in the available variable set so that filters can be pushed down into
+//!   sub-plans that receive those variables through Argument leaves.
+
 use std::collections::HashSet;
 use std::sync::Arc;
 

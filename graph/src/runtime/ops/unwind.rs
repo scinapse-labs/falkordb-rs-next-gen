@@ -1,12 +1,26 @@
 //! Batch-mode unwind operator — expands a list expression into individual rows.
 //!
-//! For each active row in each input batch, evaluates the list expression and
-//! expands it into individual rows. Output rows are accumulated into batches
-//! of up to `BATCH_SIZE`.
+//! Implements Cypher `UNWIND expr AS var`. For each active row in each input
+//! batch, evaluates the list expression and expands it into individual rows.
+//! Output rows are accumulated into batches of up to `BATCH_SIZE`.
+//!
+//! ```text
+//!  Input row {a: 1}
+//!       │
+//!  eval list expr ──► [10, 20, 30]
+//!       │
+//!  ┌────▼───────────┐
+//!  │ {a:1, x:10}    │
+//!  │ {a:1, x:20}    │
+//!  │ {a:1, x:30}    │
+//!  └────────────────┘
+//! ```
 //!
 //! Large lists are expanded lazily: the operator stores a cursor into the
 //! current list and only materializes `Env` rows in `BATCH_SIZE` chunks,
 //! preventing memory blow-up for queries like `UNWIND range(1, 20000000)`.
+//! Non-list values are treated as single-element results; NULL values
+//! produce no output rows.
 
 use std::collections::VecDeque;
 use std::sync::Arc;

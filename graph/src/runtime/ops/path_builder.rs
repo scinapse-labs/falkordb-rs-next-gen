@@ -1,8 +1,25 @@
 //! Batch-mode path builder operator — assembles named path values.
 //!
-//! Implements Cypher named paths like `p = (a)-[r]->(b)`. For each path,
-//! reads the component variable columns via `read_columns`, maps each row
-//! into a `Value::Path`, and writes the result column back via `write_column`.
+//! Implements Cypher named paths like `p = (a)-[r]->(b)`. For each path
+//! definition, reads the component variable columns via `read_columns`,
+//! maps each row into a `Value::Path` in alternating format
+//! `[Node, Rel, Node, Rel, ..., Node]`, and writes the result column
+//! back via `write_column`.
+//!
+//! ```text
+//!  Path definition: p = (a)-[r]->(b)
+//!  Variables: [a, r, b]
+//!
+//!  Row: a=Node(5), r=Rel(1,5,7), b=Node(7)
+//!                    │
+//!                    ▼
+//!  p = Path([Node(5), Rel(1,5,7), Node(7)])
+//! ```
+//!
+//! Handles variable-length relationships (stored as `Value::Path` or
+//! `Value::List` of edges) by inlining path elements and deduplicating
+//! shared endpoint nodes. Supports reversed VLT paths by detecting
+//! direction mismatches and walking edges in reverse order.
 
 use std::sync::Arc;
 

@@ -1,3 +1,55 @@
+//! # JS Execution Context Management
+//!
+//! This module manages thread-local QuickJS runtimes and provides the bridge
+//! between the Rust query evaluator and JavaScript UDF execution.
+//!
+//! ## Thread-Local Context Lifecycle
+//!
+//! Each thread maintains its own `(Runtime, Context, cached functions)` tuple
+//! in a thread-local `JS_STATE`. The context is lazily built and automatically
+//! rebuilt whenever the global [`UdfRepo`](super::repository::UdfRepo) version
+//! changes (e.g., after a library is loaded or deleted).
+//!
+//! ```text
+//!   call_udf_bridge("mylib.myfunc", runtime, args)
+//!       |
+//!       v
+//!   ensure_context_current()
+//!       |-- repo.version() != cached version?
+//!       |       yes --> rebuild_context()
+//!       |                  |-- create new QuickJS Runtime + Context
+//!       |                  |-- setup_runtime_globals()  (js_globals)
+//!       |                  |-- evaluate all library scripts
+//!       |                  '-- cache Persistent<Function> refs
+//!       v
+//!   look up function by qualified name ("mylib.myfunc")
+//!       |
+//!       v
+//!   convert Rust args --> JS values  (type_convert::value_to_js)
+//!       |
+//!       v
+//!   call JS function with timeout interrupt handler
+//!       |
+//!       v
+//!   convert JS result --> Rust Value (type_convert::js_to_value)
+//! ```
+//!
+//! ## Script Validation
+//!
+//! [`validate_script`] runs user code in a disposable QuickJS context to
+//! check for syntax/runtime errors and collect the list of function names
+//! registered via `falkor.register()`, without affecting the main context.
+//!
+//! ## Configuration
+//!
+//! Three atomic statics control QuickJS resource limits:
+//! - `JS_HEAP_SIZE`  -- maximum heap memory (default 256 MiB)
+//! - `JS_STACK_SIZE` -- maximum native stack (default 1 MiB)
+//! - `JS_TIMEOUT_MS` -- per-call execution timeout (0 = unlimited)
+//!
+//! These can be changed at runtime; the next UDF call will pick up the new
+//! values (a version bump forces context rebuild with updated limits).
+
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;

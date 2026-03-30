@@ -4,6 +4,22 @@
 //! batch, resolves the file path and delimiter, opens a CSV reader, and
 //! expands each CSV record into output rows. Output rows are accumulated
 //! into batches of up to `BATCH_SIZE`.
+//!
+//! ```text
+//!  Input row ──► eval file path + delimiter
+//!                      │
+//!             ┌────────▼────────┐
+//!             │ file:// path    │ ──► local filesystem (sandboxed to import folder)
+//!             │ https:// URL    │ ──► HTTP GET
+//!             └────────┬────────┘
+//!                      │
+//!             ┌────────▼────────┐
+//!             │ WITH HEADERS:   │ ──► Map {col_name: value, ...}
+//!             │ WITHOUT HEADERS:│ ──► List [field1, field2, ...]
+//!             └────────┬────────┘
+//!                      │
+//!             output rows (one per CSV record)
+//! ```
 
 use std::collections::VecDeque;
 use std::path::Path;

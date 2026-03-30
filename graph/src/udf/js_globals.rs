@@ -1,3 +1,40 @@
+//! # JS Global Object Setup
+//!
+//! This module configures the global JavaScript objects and functions that are
+//! available to UDF scripts. There are two modes of operation, each with its
+//! own setup function:
+//!
+//! ## Validation Mode ([`setup_validate_globals`])
+//!
+//! Used by [`js_context::validate_script`](super::js_context::validate_script)
+//! to check user code in a throwaway context. In this mode:
+//! - `falkor.register(name, func)` -- records the function name (for metadata)
+//!   but does not persist anything.
+//! - `falkor.log(...)` -- no-op (output is suppressed during validation).
+//!
+//! ## Runtime Mode ([`setup_runtime_globals`])
+//!
+//! Used when building the real per-thread execution context. In this mode:
+//! - `falkor.register(name, func)` -- stores the function under a qualified
+//!   key (`<library>.<name>`) in a JS-side registry object, so it can later be
+//!   retrieved as a `Persistent<Function>`.
+//! - `falkor.log(...)` -- prints the value to stderr via `eprintln!`.
+//! - `graph.traverse(nodes, config?)` -- exposes the multi-source BFS
+//!   traversal implemented in [`js_classes`](super::js_classes).
+//!
+//! ## JS Global Layout (Runtime)
+//!
+//! ```text
+//! globalThis
+//!   |-- falkor
+//!   |     |-- register(name, func)   // stores to __falkor_registered_funcs
+//!   |     '-- log(value)             // prints to stderr
+//!   |-- graph
+//!   |     '-- traverse(nodes, config?)
+//!   |-- __falkor_registered_funcs    // { "lib.fn": Function, ... }
+//!   '-- __falkor_current_lib         // set during library loading
+//! ```
+
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;

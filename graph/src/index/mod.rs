@@ -1,3 +1,49 @@
+//! Core index types for property-based graph lookups.
+//!
+//! This module defines the data structures and logic that sit between the
+//! query engine and the RediSearch C library.  Instead of scanning every
+//! node or relationship, the optimizer can use an [`Index`] to jump
+//! straight to entities that match a given property predicate.
+//!
+//! # Supported index types
+//!
+//! | [`IndexType`] | RediSearch fields used       | Typical Cypher predicate         |
+//! |---------------|-----------------------------|---------------------------------|
+//! | `Range`       | NUMERIC + TAG + GEO         | `n.age > 30`, `n.name = "Bob"` |
+//! | `Fulltext`    | FULLTEXT                    | Full-text search queries         |
+//! | `Vector`      | VECTOR                      | Vector similarity search         |
+//!
+//! # Data flow
+//!
+//! ```text
+//!  Cypher query
+//!       |
+//!       v
+//!  Optimizer  -- picks index -->  Indexer (indexer.rs)
+//!                                    |
+//!                        +-----------+-----------+
+//!                        |                       |
+//!                   IndexQuery              Document
+//!                   (read path)            (write path)
+//!                        |                       |
+//!                        v                       v
+//!                  Index::query()       Index::add_document()
+//!                        |                       |
+//!                        +----------+------------+
+//!                                   |
+//!                                   v
+//!                         RediSearch C API
+//!                       (redisearch/mod.rs)
+//! ```
+//!
+//! # Key types
+//!
+//! - [`Index`] -- owns a RediSearch index handle and its field definitions.
+//! - [`Field`] -- a single indexed property (name + type + optional text options).
+//! - [`IndexQuery`] -- describes the predicate to evaluate against the index.
+//! - [`Document`] -- wraps a RediSearch document for inserting/updating entities.
+//! - [`IndexResultsIter`] -- lazy pull-based iterator over C query results.
+
 pub mod indexer;
 pub mod redisearch;
 pub mod text_index_options;

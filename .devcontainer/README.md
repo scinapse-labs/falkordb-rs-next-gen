@@ -60,7 +60,7 @@ All skills automatically detect whether they're running inside or outside the de
 
 The container sets the following environment variables:
 
-- `CXX=clang++-21` - Required for building with GraphBLAS FFI
+- `CXX=clang++-22` - Required for building with GraphBLAS FFI
 - `PATH` includes Rust cargo bin directory
 
 ## Cargo Cache
@@ -89,9 +89,9 @@ source /data/venv/bin/activate
 
 ### Clippy Fails with FFI Errors
 
-Ensure that `CXX` is set to `clang++-21`:
+Ensure that `CXX` is set to `clang++-22`:
 ```bash
-export CXX=clang++-21
+export CXX=clang++-22
 ```
 
 This is automatically set in the container, but may need to be set manually if you encounter issues.

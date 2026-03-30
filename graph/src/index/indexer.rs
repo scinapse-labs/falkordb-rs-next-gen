@@ -1,35 +1,45 @@
-//! Index management for property-based lookups.
+//! Index lifecycle management for property-based graph lookups.
 //!
-//! This module provides indexing capabilities for graph properties using RediSearch
-//! as the underlying index engine. Supports:
+//! The [`Indexer`] is the top-level coordinator for all indexes in a graph.
+//! It owns one [`Index`](super::Index) per label and exposes methods for
+//! creating, dropping, querying, and populating indexes.
 //!
-//! ## Index Types
+//! # Responsibilities
 //!
-//! - **Range**: B-tree index for numeric comparisons (=, <, >, range queries)
-//! - **Fulltext**: Text search with tokenization and stemming
-//! - **Vector**: Vector similarity search for embeddings
+//! - **Create / drop** indexes for (label, attribute, type) triples.
+//! - **Route queries** -- delegates [`IndexQuery`] execution to the correct
+//!   per-label [`Index`](super::Index).
+//! - **Commit mutations** -- batches of added/removed documents are flushed
+//!   to RediSearch during transaction commit.
+//! - **Background population** -- tracks progress, serializes background
+//!   batches with writes via a shared `write_lock`, and supports
+//!   cancellation.
 //!
-//! ## Architecture
+//! # Internal layout
 //!
 //! ```text
 //! Indexer
-//!    │
-//!    ├── label_fields: Map<Label, Map<Attr, Field>>
-//!    │      (Defines which properties are indexed)
-//!    │
-//!    └── rs_index: Map<Label, RSIndex>
-//!           (RediSearch index handles)
+//!    |
+//!    +-- index: RwLock<HashMap<Label, Index>>
+//!    |      One Index per label; each Index wraps a single
+//!    |      RSIndex handle and its field definitions.
+//!    |
+//!    +-- write_lock: Mutex<()>
+//!    |      Serializes background population with commit_index
+//!    |      so they never run concurrently.
+//!    |
+//!    +-- graph: Mutex<Option<Arc<Graph>>>
+//!           Latest committed graph snapshot shared with
+//!           background index population threads.
 //! ```
 //!
-//! ## Index Queries
+//! # Concurrency
 //!
-//! The [`IndexQuery`] enum represents different query types:
-//! - `Equal(attr, value)`: Exact match
-//! - `Range(attr, min, max)`: Range query
-//! - `Prefix(attr, prefix)`: Prefix search
-//! - `Contains(attr, substring)`: Substring search
-//! - `Fulltext(query)`: Full-text search
-//! - `VectorRange`: Vector similarity search
+//! Read-side queries (`query`, `fulltext_query`, `is_label_indexed`, ...)
+//! acquire a `read()` lock.  Write-side mutations (`create_index`,
+//! `drop_index`, `commit`, ...) acquire a `write()` lock.  Background
+//! population uses `write_lock` to avoid racing with per-transaction
+//! commit calls.
 
 use std::{
     collections::HashMap,

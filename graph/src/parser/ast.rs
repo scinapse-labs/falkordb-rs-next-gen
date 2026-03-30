@@ -1,27 +1,67 @@
 //! Abstract Syntax Tree (AST) definitions for Cypher queries.
 //!
-//! This module defines the intermediate representation (IR) for parsed Cypher queries.
-//! The AST is produced by the parser ([`crate::parser::cypher`]) and consumed by the binder
-//! ([`crate::planner::binder`]) and planner ([`crate::planner`]).
+//! This module defines the intermediate representation (IR) for parsed Cypher
+//! queries. The AST is produced by the parser ([`crate::parser::cypher`]) and
+//! consumed by the binder ([`crate::planner::binder`]) and planner
+//! ([`crate::planner`]).
+//!
+//! ## Overall Structure
+//!
+//! A parsed Cypher query is a tree of `QueryIR` clause nodes, each of which
+//! may contain expression trees (`DynTree<ExprIR<TVar>>`) and graph pattern
+//! structures (`QueryGraph`):
+//!
+//! ```text
+//! QueryIR::Query
+//!  |-- QueryIR::Match
+//!  |     |-- QueryGraph
+//!  |     |     |-- QueryNode  ("n", labels: [Person])
+//!  |     |     |-- QueryNode  ("m", labels: [])
+//!  |     |     '-- QueryRelationship  ("r", types: [KNOWS], from: n, to: m)
+//!  |     '-- filter: DynTree<ExprIR>   (expression tree for WHERE clause)
+//!  |
+//!  '-- QueryIR::Return
+//!        '-- exprs: [("name", DynTree<ExprIR>)]
+//!                                |
+//!                           Property("name")
+//!                                |
+//!                           Variable("m")
+//! ```
 //!
 //! ## Key Types
 //!
-//! - [`Variable`]: A named or anonymous variable in a query
-//! - [`ExprIR`]: Expression nodes (literals, operators, function calls)
-//! - [`QueryIR`]: Query clause nodes (MATCH, CREATE, RETURN, etc.)
-//! - [`QueryGraph`]: Pattern graph structure with nodes, relationships, and paths
+//! - [`Variable`]: A named or anonymous variable with a unique binding ID
+//! - [`ExprIR`]: Expression nodes (literals, operators, function calls, etc.)
+//! - [`QueryIR`]: Query clause nodes (MATCH, CREATE, RETURN, WITH, etc.)
+//! - [`QueryGraph`]: Pattern graph structure containing nodes, relationships,
+//!   and named paths
+//! - [`QueryExpr`]: Type alias for `Arc<DynTree<ExprIR<TVar>>>` -- a
+//!   reference-counted expression tree
 //!
 //! ## Type Parameters
 //!
-//! AST types are generic over `TVar` (variable type) to support different stages:
-//! - `Arc<String>`: Raw AST before binding (variables are just names)
-//! - [`Variable`]: Bound AST with resolved variable IDs and types
+//! AST types are generic over `TVar` (variable type) to support two stages:
+//! - `Arc<String>`: Raw AST before binding -- variables are just names
+//!   (type alias: [`RawQueryIR`])
+//! - [`Variable`]: Bound AST with resolved variable IDs, scopes, and types
+//!   (type alias: [`BoundQueryIR`])
 //!
 //! ## Expression Trees
 //!
-//! Expressions are stored as trees using `DynTree<ExprIR<TVar>>` from `orx-tree`.
-//! Operators are internal nodes with operands as children, supporting arbitrary
-//! expression nesting.
+//! Expressions are stored as trees using `DynTree<ExprIR<TVar>>` from
+//! `orx-tree`. Operators are internal nodes with operands as children,
+//! supporting arbitrary expression nesting. For example, `a.age + b.age * 2`:
+//!
+//! ```text
+//!          Add
+//!         /   \
+//!   Property   Mul
+//!   ("age")   /   \
+//!     |    Property  Integer(2)
+//!  Var("a") ("age")
+//!              |
+//!           Var("b")
+//! ```
 
 use std::{collections::HashSet, fmt::Display, hash::Hash, sync::Arc};
 

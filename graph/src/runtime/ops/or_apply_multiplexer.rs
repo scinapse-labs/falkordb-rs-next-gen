@@ -1,6 +1,25 @@
 //! Batch-mode OR-apply multiplexer operator — evaluates multiple existence-check branches.
 //!
 //! Implements disjunctive patterns like `WHERE EXISTS {...} OR EXISTS {...}`.
+//!
+//! ```text
+//!  Input batch [row0, row1, row2]
+//!       │
+//!  stamp origin_row
+//!       │
+//!  ┌────▼────┐  ┌────▼────┐  ┌────▼────┐
+//!  │ Branch 1│  │ Branch 2│  │ Branch 3│    each gets a copy of all rows
+//!  └────┬────┘  └────┬────┘  └────┬────┘
+//!       │            │            │
+//!  matched: {0,2}  matched: {1}  matched: {}
+//!       │            │            │
+//!       └────── OR (union) ──────┘
+//!                    │
+//!            overall: {0, 1, 2}
+//!                    │
+//!            selection vector
+//! ```
+//!
 //! For each input batch, runs each branch sub-plan once with all active rows.
 //! Uses `origin_row` on output envs to determine which input rows matched
 //! each branch. A row is emitted when any branch produces a result (or, for

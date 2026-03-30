@@ -2,6 +2,10 @@
 //!
 //! For each active row in each input batch, evaluates the remove items and
 //! records property nullifications or label removals in the pending batch.
+//!
+//! Supports two REMOVE forms:
+//! - `REMOVE n.prop` — set the property to NULL (effectively deleting it)
+//! - `REMOVE n:Label` — remove a label from a node
 
 use crate::parser::ast::{ExprIR, QueryExpr, Variable};
 use crate::planner::IR;

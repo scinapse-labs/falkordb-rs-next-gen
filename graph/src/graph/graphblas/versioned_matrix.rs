@@ -1,25 +1,62 @@
-//! MVCC-aware sparse matrix with delta tracking.
+//! Copy-on-write sparse matrix with MVCC delta tracking.
 //!
-//! This module provides [`VersionedMatrix`], which wraps a base matrix with
-//! delta matrices to track pending additions and deletions. This enables
-//! snapshot isolation for concurrent readers.
+//! This module provides [`VersionedMatrix`], which wraps a base [`Matrix`] with
+//! two delta matrices to track pending additions and deletions. This is the
+//! building block for snapshot isolation: readers see the committed base state
+//! while writers accumulate changes in separate delta matrices.
 //!
-//! ## Structure
+//! ## Internal Structure
 //!
 //! ```text
-//! VersionedMatrix
-//!    ├── m: Base matrix (committed state)
-//!    ├── dp: Delta-plus (pending additions)
-//!    └── dm: Delta-minus (pending deletions)
+//!   VersionedMatrix
+//!     |
+//!     |-- m   Cow<Matrix>   Base matrix (committed / shared with readers)
+//!     |-- dp  Cow<Matrix>   Delta-plus  (pending additions)
+//!     |-- dm  Cow<Matrix>   Delta-minus (pending deletions)
 //!
-//! Effective state = (m ∪ dp) - dm
+//!   Effective state = (m UNION dp) MINUS dm
 //! ```
 //!
-//! ## MVCC Semantics
+//! Each inner matrix is wrapped in [`Cow`] (copy-on-write). When a new version
+//! is created via [`Dup`], the `Cow` clones share the underlying `Arc<Matrix>`
+//! until a mutation triggers a deep copy.
 //!
-//! - Readers see the committed base matrix `m`
-//! - Writers accumulate changes in `dp` and `dm`
-//! - On commit, deltas merge into base; on rollback, deltas are discarded
+//! ## Read Path
+//!
+//! ```text
+//!   get(i, j):
+//!     m has (i,j)?
+//!       yes --> dm has (i,j)?  -->  yes: None (deleted)
+//!                                   no:  Some(true)
+//!       no  --> dp has (i,j)?  -->  yes: Some(true)
+//!                                   no:  None
+//! ```
+//!
+//! ## Write Path
+//!
+//! ```text
+//!   set(i, j):
+//!     m has (i,j)?
+//!       yes --> remove (i,j) from dm   (un-delete)
+//!       no  --> add (i,j) to dp        (new addition)
+//!
+//!   remove(i, j):
+//!     m has (i,j)?
+//!       yes --> add (i,j) to dm        (mark deleted)
+//!       no  --> remove (i,j) from dp   (undo pending add)
+//! ```
+//!
+//! ## Flush
+//!
+//! When delta matrices exceed 10,000 entries, [`flush`](VersionedMatrix::flush)
+//! merges them into the base matrix (`dp` via element-wise add, `dm` via
+//! masked removal) and clears the deltas.
+//!
+//! ## Iterator
+//!
+//! [`Iter`] chains the base matrix iterator (skipping entries present in `dm`)
+//! with the delta-plus iterator, producing the effective state without
+//! materializing a merged matrix.
 
 use super::{
     GxB_Print_Level,

@@ -1,33 +1,49 @@
 //! Query plan optimization passes.
 //!
-//! The optimizer transforms the logical execution plan to improve performance.
-//! Current optimizations include:
+//! The optimizer transforms the logical execution plan produced by the planner
+//! to improve performance. It applies a fixed sequence of rewrite passes, each
+//! making local transformations to the IR tree.
 //!
-//! ## Index Utilization
+//! ## Pass Ordering
 //!
-//! Replaces `NodeByLabelScan` + `Filter` with `NodeByIndexScan` when:
-//! - A range index exists on the filtered property
-//! - The filter uses equality (=), less than (<), or greater than (>)
+//! Passes run in the following order:
 //!
-//! Example transformation:
 //! ```text
-//! Before: NodeByLabelScan(:Person) → Filter(n.age = 30)
-//! After:  NodeByIndexScan(:Person, age, Equal(30))
+//! Input plan (from Planner)
+//!       |
+//!       v
+//! 1. eliminate_true_filters   -- Remove trivial Filter(true) nodes
+//!       |
+//!       v
+//! 2. select_scan_node         -- Pick the best starting node for traversal
+//!       |                        chains, possibly reversing chain direction
+//!       v
+//! 3. push_filters_down        -- Move Filter conjuncts closer to the
+//!       |                        operators that produce their variables
+//!       v
+//! 4. replace_cartesian_       -- Convert CartesianProduct + equality
+//!    with_hash_join               Filter into ValueHashJoin
+//!       |
+//!       v
+//! 5. absorb_edge_filters_     -- Fold edge-only filters into
+//!    into_vlt                     CondVarLenTraverse's per-hop filter
+//!       |
+//!       v
+//! 6. utilize_index            -- Replace NodeByLabelScan + Filter with
+//!       |                        NodeByIndexScan when an index exists
+//!       v
+//! 7. utilize_node_by_id       -- Replace label scan + id() filter with
+//!       |                        NodeByLabelAndIdScan or NodeByIdSeek
+//!       v
+//! Optimized plan
 //! ```
 //!
-//! ## Node By Label And ID Optimization
+//! ## Implementation Pattern
 //!
-//! Replaces label scan + ID filter with direct ID lookup:
-//! ```text
-//! Before: NodeByLabelScan(:Person) → Filter(id(n) = 42)
-//! After:  NodeByLabelAndIdScan(:Person, 42)
-//! ```
-//!
-//! ## Good Practice
-//!
-//! The optimizer uses a collect-then-iterate pattern when modifying the tree
-//! to avoid issues with mutable iteration. This is a common pattern when
-//! working with tree structures that need in-place modification.
+//! Each pass uses a collect-then-iterate loop: collect candidate node indices
+//! via a BFS traversal, attempt one transformation, then restart the traversal
+//! if the tree structure changed. This avoids issues with invalidated indices
+//! after in-place tree mutations.
 
 mod absorb_edge_filters_into_vlt;
 mod eliminate_true_filters;

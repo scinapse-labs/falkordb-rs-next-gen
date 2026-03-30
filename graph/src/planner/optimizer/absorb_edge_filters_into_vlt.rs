@@ -1,3 +1,46 @@
+//! Edge filter absorption into variable-length traversals.
+//!
+//! When a `Filter` sits above a `CondVarLenTraverse` (VLT) and the filter
+//! predicate references only the VLT's edge alias variable, the predicate
+//! can be evaluated per-hop during the BFS traversal instead of after it.
+//! This prunes invalid paths early, dramatically reducing intermediate
+//! results for selective edge predicates.
+//!
+//! ## Transformation
+//!
+//! ```text
+//! Before:                                 After:
+//!
+//! Filter(r.weight > 0.5)                  CondVarLenTraverse(
+//!   |                                       edge_filter: r.weight > 0.5)
+//!   v                                       |
+//! CondVarLenTraverse(r, *1..5)              v
+//!   |                                     ChildA
+//!   v
+//! ChildA
+//! ```
+//!
+//! **AND filter with mixed conjuncts:**
+//!
+//! When the filter is an AND and only some conjuncts reference the edge alias,
+//! those conjuncts are absorbed into the VLT and the rest remain as a Filter.
+//!
+//! ```text
+//! Before:                                 After:
+//!
+//! Filter(AND(r.weight > 0.5,              Filter(n.age > 18)
+//!            n.age > 18))                   |
+//!   |                                       v
+//!   v                                     CondVarLenTraverse(
+//! CondVarLenTraverse(r, *1..5)              edge_filter: r.weight > 0.5)
+//!   |                                       |
+//!   v                                       v
+//! ChildA                                  ChildA
+//! ```
+//!
+//! The pass also walks through transparent intermediate operators (PathBuilder,
+//! nested Filters) between the Filter and the VLT.
+
 use std::sync::Arc;
 
 use orx_tree::{Bfs, Dyn, DynTree, NodeIdx, NodeRef};

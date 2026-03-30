@@ -1,3 +1,59 @@
+//! Scan node selection optimizer pass.
+//!
+//! Selects the optimal starting endpoint for chains of `CondTraverse`
+//! operators and inserts (or replaces) the leaf scan accordingly. If the
+//! best endpoint is on the opposite side of the chain from the current leaf,
+//! the entire chain is reversed and each `CondTraverse` is marked
+//! `transposed = true` so the runtime knows to transpose the relationship
+//! matrix scan.
+//!
+//! ## Endpoint Scoring
+//!
+//! Each candidate endpoint is scored by (highest priority first):
+//!
+//! 1. **Bound** (score 3) -- already provided by a child operator (e.g.
+//!    Project, Aggregate, Argument from an outer Apply)
+//! 2. **Filtered** (score 2) -- referenced by a Filter ancestor above the
+//!    chain, or has inline property attributes ({name: 'Alice'})
+//! 3. **Labeled** (score 1) -- has at least one label
+//! 4. **Cardinality** (tiebreaker) -- label with fewer nodes wins
+//!
+//! ## Single CondTraverse
+//!
+//! ```text
+//! Before (to is better):          After (swap + transposed):
+//!
+//! CondTraverse (a)->(b:Person)    CondTraverse (b:Person)->(a)
+//!                                   transposed = true
+//!                                   |
+//!                                   v
+//!                                 NodeByLabelScan(:Person)
+//! ```
+//!
+//! ## Chain Reversal
+//!
+//! For chains of CondTraverse operators (CT_0 -> CT_1 -> ... -> CT_n), if
+//! the best endpoint is at the top of the chain, the entire chain order is
+//! reversed and each relationship's from/to is swapped:
+//!
+//! ```text
+//! Before:                          After:
+//!
+//! CT_2: (c)->(d)                   CT_0': (d)->(c)  [transposed]
+//!   |                                |
+//!   v                                v
+//! CT_1: (b)->(c)                   CT_1': (c)->(b)  [transposed]
+//!   |                                |
+//!   v                                v
+//! CT_0: (a)->(b)                   CT_2': (b)->(a)  [transposed]
+//!                                    |
+//!                                    v
+//!                                  NodeByLabelScan(:D)
+//! ```
+//!
+//! Inter-chain Filter nodes (inline attribute filters on intermediate
+//! destination nodes) are preserved and reattached after reversal.
+
 use std::collections::HashSet;
 use std::sync::Arc;
 

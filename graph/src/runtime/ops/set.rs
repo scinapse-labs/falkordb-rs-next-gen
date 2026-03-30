@@ -3,6 +3,14 @@
 //! For each active row in each input batch, resolves set items (lazily on
 //! first row) and calls `Runtime::set` to record property/label changes
 //! in the pending batch.
+//!
+//! Supports three SET forms:
+//! - `SET n.prop = expr` — set a single property
+//! - `SET n = expr` / `SET n += expr` — replace or merge all properties
+//! - `SET n:Label` — add a label to a node
+//!
+//! Property changes are skipped when the new value equals the existing
+//! value (change-detection optimization).
 
 use std::sync::Arc;
 

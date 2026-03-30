@@ -1,20 +1,47 @@
 //! Query execution runtime.
 //!
 //! This module contains the query execution engine that evaluates execution
-//! plans against the graph. It includes:
+//! plans against the graph.
+//!
+//! ```text
+//!  Cypher query pipeline (final stages)
+//!
+//!    IR Plan Tree (from planner/optimizer)
+//!          |
+//!          v
+//!    +-----------+     +-----------+     +----------+
+//!    | runtime   |---->| eval      |---->| value    |
+//!    | (execute) |     | (exprs)   |     | (types)  |
+//!    +-----------+     +-----------+     +----------+
+//!          |
+//!    +-----+------+----------+
+//!    |     |      |          |
+//!    v     v      v          v
+//!  batch  env  pending   pool
+//! ```
 //!
 //! ## Key Components
 //!
 //! - [`runtime::Runtime`]: The main execution engine that processes plan operators
-//! - [`value::Value`]: Runtime representation of Cypher values
+//! - [`value::Value`]: Runtime representation of all Cypher values
+//! - [`eval::ExprEval`]: Expression evaluator (used by runtime and optimizer)
 //! - [`functions`]: Built-in Cypher function implementations
-//! - [`pending`]: Deferred operations for write batching
+//! - [`pending`]: Deferred write operations for transactional semantics
 //!
 //! ## Execution Model
 //!
-//! The runtime uses a pull-based execution model where each operator pulls
-//! tuples from its children. This enables lazy evaluation and early termination
-//! for LIMIT clauses.
+//! The runtime uses a pull-based iterator model where each operator pulls
+//! batches of rows from its children. This enables lazy evaluation and early
+//! termination for LIMIT clauses. Rows flow through the operator tree in
+//! [`batch::Batch`] units of up to 1024 rows.
+//!
+//! ## Supporting Infrastructure
+//!
+//! - [`batch::Batch`]: Columnar row batches with selection-vector filtering
+//! - [`env::Env`]: Variable-binding tuple flowing through the pipeline
+//! - [`pool::Pool`]: Per-query object pool to amortize allocation cost
+//! - [`bitset::BitSet`]: Compact bit set for tracking bound variables
+//! - [`vectorized`]: SIMD-friendly comparison kernels for typed columns
 //!
 //! ## Data Structures
 //!

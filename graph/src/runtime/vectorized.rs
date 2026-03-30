@@ -1,10 +1,33 @@
 //! Vectorized operations on typed columns.
 //!
-//! This module provides:
-//! - [`CmpOp`] — comparison operator enum
-//! - Comparison kernels for `[i64]`, `[f64]`, and string columns
-//! - [`SimplePredicate`] / [`VectorizablePredicate`] — detected filter patterns
-//! - [`try_extract_vectorizable_predicate`] — predicate analysis
+//! This module provides bulk comparison kernels that operate on entire columns
+//! of homogeneous values at once, enabling LLVM auto-vectorization for filter
+//! predicates like `n.age > 30`.
+//!
+//! ```text
+//!  Scalar (per-row) filter          Vectorized filter
+//!  =========================        ==================
+//!
+//!  for each row:                    1. Materialize property column
+//!    eval(n.age > 30)                  ages = [25, 42, 18, 55, ...]
+//!    if true -> keep row            2. compare_i64_column(ages, Gt, 30)
+//!                                      mask = [F, T, F, T, ...]
+//!  O(rows * expr_depth)            3. mask_to_selection(mask)
+//!                                      sel  = [1, 3, ...]
+//!                                   O(rows) with SIMD lanes
+//! ```
+//!
+//! ## Components
+//!
+//! - [`CmpOp`] -- comparison operator enum (Eq, Neq, Lt, Le, Gt, Ge)
+//! - Comparison kernels: [`compare_i64_column`], [`compare_f64_column`],
+//!   [`compare_string_column`] -- tight indexed loops for auto-vectorization
+//! - [`SimplePredicate`] / [`VectorizablePredicate`] -- detected filter patterns
+//!   that can use the bulk path instead of per-row expression evaluation
+//! - [`try_extract_vectorizable_predicate`] -- analyzes a filter expression tree
+//!   to detect `entity.property <cmp> constant` patterns
+//! - [`mask_to_selection`] / [`mask_intersect_selection`] -- convert boolean
+//!   masks to/from the selection vector used by [`Batch`](super::batch::Batch)
 //!
 //! The comparison kernels are written as tight indexed loops to enable
 //! LLVM auto-vectorization on all target platforms (x86_64 SSE/AVX, ARM NEON).

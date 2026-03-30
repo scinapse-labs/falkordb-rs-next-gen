@@ -1,24 +1,87 @@
-//! Attribute storage for graph entities.
+//! Attribute storage for graph entities (nodes and relationships).
 //!
-//! This module provides [`AttributeStore`], a columnar key-value store that
-//! uses an in-memory LRU cache as its primary hot-path store and falls back
-//! to [`fjall`] for cold data.
+//! This module provides [`AttributeStore`], a two-tier key-value store for
+//! entity properties. It uses an in-memory LRU cache as its primary hot-path
+//! store and falls back to [`fjall`] (an LSM-tree disk store) for cold data.
 //!
-//! ## Design
+//! ## Two-Tier Storage Architecture
 //!
 //! ```text
-//! AttributeStore
-//!    ├── cache (shared Arc<AttributeCache>) — hot data, write-back
-//!    ├── fjall keyspace / snapshot         — cold / durable data
-//!    └── attrs_name: ["name", "age", …]   (property name → index)
+//!  ┌─────────────────────────────────────────────────────────┐
+//!  │                   AttributeStore                        │
+//!  │                                                         │
+//!  │  attrs_name: ["name", "age", "city"]                    │
+//!  │              idx:  0      1      2                      │
+//!  │                                                         │
+//!  │  ┌───────────────────────────────────────────────────┐  │
+//!  │  │         AttributeCache (shared via Arc)           │  │
+//!  │  │  entity_id -> [(attr_idx, Value), ...]            │  │
+//!  │  │  Each entry: version + dirty flag                 │  │
+//!  │  │  Dirty entries pinned (cannot be evicted)         │  │
+//!  │  └───────────────────────┬───────────────────────────┘  │
+//!  │                          │                              │
+//!  │            flush (when over budget)                     │
+//!  │                          │                              │
+//!  │  ┌───────────────────────▼───────────────────────────┐  │
+//!  │  │              fjall Keyspace                       │  │
+//!  │  │  Key: entity_id (8B BE) + attr_idx (2B BE)       │  │
+//!  │  │  Value: serialized Value bytes                    │  │
+//!  │  │  Snapshot isolation via fjall::Snapshot           │  │
+//!  │  └───────────────────────────────────────────────────┘  │
+//!  └─────────────────────────────────────────────────────────┘
 //! ```
 //!
-//! * **Writes** go to the cache only (`dirty = true`).
-//!   fjall is updated asynchronously when the memory budget is exceeded.
-//! * **Reads** check the cache first; on miss they fetch from the fjall
-//!   snapshot and populate the cache (`dirty = false`).
+//! ## Read Path
 //!
-//! **Key format (fjall):** `entity_id (8 bytes BE) + attr_idx (2 bytes BE)`
+//! ```text
+//!  get_attr(entity_id, "name")
+//!       │
+//!       ▼
+//!  [1] Check cache ──hit──▶ return value (or None if absent)
+//!       │
+//!      miss
+//!       │
+//!       ▼
+//!  [2] Scan fjall snapshot (prefix = entity_id)
+//!       │
+//!       ▼
+//!  [3] Populate cache (dirty=false, version-guarded insert)
+//!       │
+//!       ▼
+//!  [4] Return value from fetched attributes
+//! ```
+//!
+//! ## Write Path
+//!
+//! ```text
+//!  insert_attrs(entity_id, {name: "Alice", age: 30})
+//!       │
+//!       ▼
+//!  [1] Resolve attr names to column indices (create if new)
+//!       │
+//!       ▼
+//!  [2] Merge with current state (cache or fjall)
+//!       │
+//!       ▼
+//!  [3] Write merged result to cache (dirty=true)
+//!       │
+//!       ▼
+//!  [4] On commit: take new fjall snapshot, clear dirty tracking
+//!      On rollback: invalidate dirty cache entries
+//! ```
+//!
+//! ## MVCC Integration
+//!
+//! The cache is shared across MVCC versions via `Arc<AttributeCache>`.
+//! Each `AttributeStore` carries its own MVCC `version` number. Cache
+//! entries with a version newer than the reader's are ignored (invisible
+//! uncommitted writes). On `new_version()`, the store is cloned cheaply
+//! (Arc bump + bitmap clear) with a fresh `dirty_entities` tracker.
+//!
+//! ## Key Format (fjall)
+//!
+//! Each attribute is stored as a separate fjall entry:
+//! `entity_id (8 bytes big-endian) + attr_idx (2 bytes big-endian)`
 
 use std::{collections::HashMap, sync::Arc};
 

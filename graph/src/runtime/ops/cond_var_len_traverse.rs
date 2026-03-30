@@ -1,10 +1,31 @@
 //! Batch-mode variable-length traverse operator — multi-hop relationship expansion.
 //!
 //! Implements Cypher patterns like `(a)-[*2..5]->(b)`. For each active row
-//! in each input batch, enumerates all simple paths (no repeated nodes within
+//! in each input batch, enumerates all simple paths (no repeated edges within
 //! a single path) from the source node up to `max_hops` away, yielding result
 //! rows for destinations reached at or beyond `min_hops`. Output rows are
 //! accumulated into batches of up to `BATCH_SIZE`.
+//!
+//! ```text
+//!  DFS traversal from source node (min_hops=1, max_hops=3):
+//!
+//!       A ──e1──► B ──e2──► C ──e3──► D
+//!       │                   │
+//!       └──e4──► E ──e5────►┘
+//!
+//!  Stack frames:  (A, [A], {})
+//!                  ├── (B, [A,e1,B], {e1})        emit at hop 1
+//!                  │    ├── (C, [A,e1,B,e2,C], {e1,e2})  emit at hop 2
+//!                  │    │    └── (D, [...,e3,D], {e1,e2,e3})  emit at hop 3
+//!                  │    └── ...
+//!                  └── (E, [A,e4,E], {e4})        emit at hop 1
+//!                       └── (C, [A,e4,E,e5,C], {e4,e5})  emit at hop 2
+//! ```
+//!
+//! Path elements use alternating format: `[Node, Rel, Node, Rel, ..., Node]`.
+//! Edge uniqueness within each path is tracked with a `RoaringTreemap` of
+//! used edge IDs. Adjacency lists are lazily cached per node to avoid
+//! creating GraphBLAS iterators at every DFS step.
 
 use std::collections::VecDeque;
 use std::sync::Arc;

@@ -1,4 +1,42 @@
-//! Temporal constructor functions: `date()`, `localtime()`, `localdatetime()`, `duration()`.
+//! Temporal constructor functions.
+//!
+//! Constructs Cypher temporal values from maps or ISO 8601 strings.
+//! All temporal types are stored internally as `i64` Unix timestamps
+//! (seconds from epoch).
+//!
+//! ```text
+//!  Cypher                 Function          Input formats
+//! ────────────────────────────────────────────────────────────────────
+//!  timestamp()            timestamp_fn()    (none) -> current millis
+//!  date(x)                date_fn()         Map{year,month,day,week,quarter,...}
+//!                                           String "YYYY-MM-DD", "YYYYMMDD",
+//!                                                  "YYYY-Www-D", "YYYYDDD", ...
+//!  localtime(x)           localtime_fn()    Map{hour,minute,second}
+//!                                           String "HH:MM:SS", "HHMMSS", ...
+//!  localdatetime(x)       localdatetime_fn() Map (date + time fields combined)
+//!                                           String "YYYY-MM-DDThh:mm:ss"
+//!  duration(x)            duration_fn()     Map{years,months,weeks,days,hours,...}
+//!                                           String "P[nY][nM][nD]T[nH][nM][nS]"
+//! ```
+//!
+//! ## Internal representation
+//!
+//! ```text
+//!  Value::Date(ts)      -- seconds at midnight UTC of that date
+//!  Value::Time(ts)      -- seconds since epoch for 1970-01-01 + time
+//!  Value::Datetime(ts)  -- full UTC timestamp in seconds
+//!  Value::Duration(ts)  -- encoded as epoch + year/month offset + day/time
+//! ```
+//!
+//! Duration encoding uses `construct_duration_secs` to anchor the
+//! year/month components to a concrete date, then adds days and
+//! sub-day offsets.  `decompose_duration` reverses this for display.
+//!
+//! ## Date parsing modes
+//!
+//! The `date()` constructor supports calendar dates (YYYY-MM-DD),
+//! ordinal dates (YYYYDDD), ISO week dates (YYYY-Www-D), and
+//! quarter dates (via `quarter` + `dayOfQuarter` map fields).
 
 #![allow(clippy::unnecessary_wraps)]
 #![allow(clippy::cast_precision_loss)]

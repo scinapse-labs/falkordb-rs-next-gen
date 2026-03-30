@@ -1,13 +1,27 @@
 //! Batch-mode procedure call operator — invokes built-in graph procedures.
 //!
-//! Implements Cypher `CALL db.procedure(args) YIELD outputs`. Evaluates
-//! argument expressions, validates types, invokes the procedure function,
-//! and maps the returned list of maps to output environments. When preceded
-//! by another clause (e.g. `MATCH (a) CALL algo.BFS(a, ...)`), the operator
-//! iterates over input rows and evaluates arguments in each row's environment.
+//! Implements Cypher `CALL db.procedure(args) YIELD outputs`.
 //!
-//! Only allowed in write queries when the procedure is marked as write;
-//! returns an error for `GRAPH.RO_QUERY` on write procedures.
+//! ```text
+//!  Input rows (from child)
+//!       │
+//!  ┌────▼─────────────────────────┐
+//!  │ for each row:                │
+//!  │   eval argument expressions  │
+//!  │   validate argument types    │
+//!  │   invoke procedure function  │
+//!  │   map returned List<Map>     │
+//!  │     to output Env rows       │
+//!  └────┬─────────────────────────┘
+//!       │
+//!  output batches (up to BATCH_SIZE)
+//! ```
+//!
+//! This is a *blocking* operator: it consumes all input rows first, evaluates
+//! argument expressions in each row's environment, invokes the procedure, and
+//! maps the returned list of maps to output environments. Only allowed in
+//! write queries when the procedure is marked as write; returns an error for
+//! `GRAPH.RO_QUERY` on write procedures.
 
 use std::sync::Arc;
 

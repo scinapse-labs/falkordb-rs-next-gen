@@ -1,3 +1,36 @@
+//! Constant-true filter elimination pass.
+//!
+//! Removes `Filter` nodes whose predicate evaluates to a constant `true` at
+//! plan time. These trivial filters are introduced by the planner when
+//! pattern predicates are extracted from WHERE clauses (the planner replaces
+//! extracted patterns with `Bool(true)` as an AND identity element).
+//!
+//! ## Transformations
+//!
+//! **Entire filter is constant true:**
+//!
+//! ```text
+//! Before:           After:
+//!
+//! Filter(true)      ChildA
+//!   |
+//!   v
+//! ChildA
+//! ```
+//!
+//! **AND filter with some constant-true conjuncts:**
+//!
+//! ```text
+//! Before:                          After:
+//!
+//! Filter(AND(true, n.age > 18))    Filter(n.age > 18)
+//!   |                                |
+//!   v                                v
+//! ChildA                           ChildA
+//! ```
+//!
+//! If all AND conjuncts are constant true, the entire Filter is removed.
+
 use std::sync::Arc;
 
 use orx_tree::{Bfs, DynTree, NodeRef};

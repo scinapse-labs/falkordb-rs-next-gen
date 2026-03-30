@@ -1,5 +1,68 @@
-//! Algorithm procedures – `algo.pageRank`, `algo.WCC`, `algo.betweenness`,
-//! `algo.BFS`, `algo.labelPropagation`, `algo.MSF`.
+//! Graph algorithm procedures backed by LAGraph / GraphBLAS.
+//!
+//! Each procedure is exposed as a Cypher `CALL` statement and returns
+//! a result set of `Map` rows.  The general execution flow is:
+//!
+//! ```text
+//!  Cypher query                  Rust runtime
+//!  CALL algo.pageRank(...)  -->  algo_pagerank()
+//!                                   |
+//!                                   v
+//!                            +-----------------+
+//!                            | Build adjacency |  graph.build_adjacency_matrix()
+//!                            | matrix (GrB)    |  or build_symmetric_adjacency_matrix()
+//!                            +-----------------+
+//!                                   |
+//!                                   v
+//!                            +-----------------+
+//!                            | Compact & re-   |  build_compact_adj()
+//!                            | index to 0..n-1 |  maps active node IDs to dense indices
+//!                            +-----------------+
+//!                                   |
+//!                                   v
+//!                            +-----------------+
+//!                            | LAGraph / ext   |  FFI call into C library
+//!                            | algorithm       |  (PageRank, WCC, BFS, ...)
+//!                            +-----------------+
+//!                                   |
+//!                                   v
+//!                            +-----------------+
+//!                            | Map compact IDs |  compact_to_id[] lookup
+//!                            | back to originals|
+//!                            +-----------------+
+//!                                   |
+//!                                   v
+//!                            Return List<Map>
+//! ```
+//!
+//! ## Available algorithms
+//!
+//! ```text
+//!  Cypher procedure          Algorithm           Yields
+//! ───────────────────────────────────────────────────────────────────
+//!  algo.pageRank(l, t)       LAGr_PageRank       {node, score}
+//!  algo.WCC(config?)         LAGr_ConnectedComp  {node, componentId}
+//!  algo.betweenness(config?) LAGr_Betweenness    {node, score}
+//!  algo.BFS(src, depth, t)   LAGr_BFS_Extended   {nodes, edges}
+//!  algo.labelPropagation(..) LAGraph_cdlp        {node, communityId}
+//!  algo.MSF(config?)         LAGraph_msf         {nodes, edges}
+//!  algo.SPpaths(config)      Dijkstra (Rust)     {path, pathWeight, pathCost}
+//!  algo.SSpaths(config)      Dijkstra (Rust)     {path, pathWeight, pathCost}
+//! ```
+//!
+//! ## Compact adjacency matrix
+//!
+//! LAGraph operates on dense 0..n-1 indexed matrices, but the graph
+//! may have gaps in its node ID space (deleted nodes).  `build_compact_adj`
+//! creates a compacted boolean `GrB_Matrix` and two-way mappings
+//! (`id_to_compact` / `compact_to_id`) so results can be translated
+//! back to the original node IDs.
+//!
+//! ## Configuration
+//!
+//! Most algorithms accept an optional config `Map` with keys like
+//! `nodeLabels`, `relationshipTypes`, `samplingSize`, `maxIterations`,
+//! etc.  Invalid keys are rejected via `validate_config_map`.
 
 #![allow(clippy::unnecessary_wraps)]
 #![allow(unsafe_op_in_unsafe_fn)]

@@ -1,3 +1,39 @@
+//! # UDF Library Repository
+//!
+//! This module provides thread-safe, versioned storage for user-defined
+//! function libraries. Each library is a named JavaScript source file that
+//! registers one or more functions via `falkor.register()`.
+//!
+//! ## Data Model
+//!
+//! ```text
+//! UdfRepo (process-wide singleton)
+//!   |-- version: AtomicU64          // bumped on every mutation
+//!   '-- inner: RwLock<Vec<UdfLibrary>>
+//!              |
+//!              |-- UdfLibrary { name: "mylib", code: "...", function_names: ["mylib.fn1", ...] }
+//!              '-- UdfLibrary { name: "utils", code: "...", function_names: ["utils.add", ...] }
+//! ```
+//!
+//! ## Versioning
+//!
+//! Every mutation (`load`, `delete`, `flush`) increments `version`. Thread-local
+//! QuickJS contexts in [`js_context`](super::js_context) compare their cached
+//! version against the repo version; on mismatch the context is rebuilt with
+//! the latest set of libraries.
+//!
+//! ## Library Lifecycle
+//!
+//! 1. **Load** -- Validate the script in a temporary JS context
+//!    ([`js_context::validate_script`](super::js_context::validate_script)),
+//!    then store the library. Optionally replaces an existing library of the
+//!    same name.
+//! 2. **Delete** -- Remove a library by name and unregister its functions from
+//!    the Cypher function registry.
+//! 3. **Flush** -- Remove all libraries at once.
+//! 4. **Serialize / Deserialize** -- Support RDB persistence so libraries
+//!    survive Redis restarts.
+
 use parking_lot::RwLock;
 use std::sync::atomic::{AtomicU64, Ordering};
 

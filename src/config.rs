@@ -1,9 +1,38 @@
 //! Global FalkorDB configuration values.
 //!
-//! Integer configs use atomics for thread-safe access.
-//! String configs use `RedisGILGuard` for Redis module compatibility.
-//! Load-time configs (CACHE_SIZE, THREAD_COUNT, NODE_CREATION_BUFFER, etc.)
-//! are set via Redis module args and exposed read-only at runtime.
+//! Configuration is split into two tiers based on mutability and access
+//! requirements:
+//!
+//! ```text
+//! +-------------------------------+    +----------------------------+
+//! | RedisGILGuard configs         |    | Atomic configs             |
+//! | (set at module load)          |    | (changeable at runtime)    |
+//! |-------------------------------|    |----------------------------|
+//! | CACHE_SIZE                    |    | TIMEOUT / TIMEOUT_DEFAULT  |
+//! | THREAD_COUNT                  |    | TIMEOUT_MAX                |
+//! | NODE_CREATION_BUFFER          |    | MAX_QUEUED_QUERIES         |
+//! | VKEY_MAX_ENTITY_COUNT         |    | RESULTSET_SIZE             |
+//! | IMPORT_FOLDER / TEMP_FOLDER   |    | QUERY_MEM_CAPACITY         |
+//! | JS_HEAP_SIZE / JS_STACK_SIZE  |    | DELTA_MAX_PENDING_CHANGES  |
+//! | CMD_INFO / DELAY_INDEXING     |    | OMP_THREAD_COUNT ...       |
+//! +-------------------------------+    +----------------------------+
+//!       |                                      |
+//!       | requires Redis GIL to read           | lock-free atomic reads
+//!       v                                      v
+//!   module arg parsing                    GRAPH.CONFIG SET / GET
+//! ```
+//!
+//! - **GIL-guarded configs** are declared via `lazy_static` and wrapped in
+//!   `RedisGILGuard`, ensuring safe access from the Redis main thread.
+//!   These are immutable after module load (flagged `IMMUTABLE` in the
+//!   `redis_module!` macro).
+//!
+//! - **Atomic configs** use `AtomicI64` / `AtomicU64` for lock-free
+//!   concurrent reads from worker threads. Some are runtime-configurable
+//!   through `GRAPH.CONFIG SET`; others are read-only after init.
+//!
+//! `CONFIG_NAMES` provides the ordered list of all configuration keys,
+//! used by `GRAPH.CONFIG GET *` to enumerate settings.
 
 use lazy_static::lazy_static;
 use redis_module::RedisGILGuard;

@@ -60,7 +60,9 @@
 //! - [`graph::graphblas`]: GraphBLAS FFI bindings (auto-generated)
 //! - [`index`]: Index types, management, and RediSearch FFI bindings
 //! - [`runtime`]: Query execution engine and built-in functions
+//! - [`entity_type`]: Node and relationship entity type discriminator
 //! - [`threadpool`]: Thread pool for parallel query execution
+//! - [`udf`]: User-defined function registration and dispatch
 
 pub mod entity_type;
 pub mod graph;

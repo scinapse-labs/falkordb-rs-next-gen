@@ -5,6 +5,24 @@
 //! input rows had results. For input rows with no results, emits a fallback
 //! row with the specified variables set to NULL.
 //!
+//! ```text
+//!  Input batch [row0, row1, row2]
+//!       │
+//!  stamp origin_row
+//!       │
+//!  ┌────▼─────────────┐
+//!  │ Sub-plan          │  single instance, all rows at once
+//!  └────┬─────────────┘
+//!       │
+//!  results with origin_row tags
+//!       │
+//!  ┌────▼──────────────────────────────────────────┐
+//!  │ row0 matched? ──► yes: emit sub-plan results  │
+//!  │ row1 matched? ──► no:  emit row1 + NULLs      │
+//!  │ row2 matched? ──► yes: emit sub-plan results  │
+//!  └───────────────────────────────────────────────┘
+//! ```
+//!
 //! Falls back to per-row sub-plan execution when the sub-plan contains blocking
 //! operators (Aggregate) that accumulate state across all rows.
 

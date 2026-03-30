@@ -7,31 +7,62 @@
 //!
 //! The graph supports:
 //! - **Nodes**: Identified by 64-bit IDs, can have multiple labels and properties
-//! - **Relationships**: Directed edges with a type and properties
-//! - **Properties**: Key-value pairs stored in attribute stores
+//! - **Relationships**: Directed edges with a type, source/destination, and properties
+//! - **Properties**: Key-value pairs stored in columnar [`AttributeStore`]s
 //! - **Indexes**: Range and full-text indexes on node properties
 //!
 //! ## Storage Layout
 //!
 //! ```text
-//! ┌─────────────────────────────────────────────────────────────┐
-//! │                      Graph Structure                        │
-//! ├─────────────────────────────────────────────────────────────┤
-//! │ adjacency_matrix     │ Sparse matrix: all relationships    │
-//! │ labels_matrices[i]   │ Sparse vector: nodes with label i   │
-//! │ relationship_matrices│ Tensor: edges by type (src,dst,id)  │
-//! │ node_attrs           │ Properties for each node            │
-//! │ relationship_attrs   │ Properties for each relationship    │
-//! │ node_indexer         │ Secondary indexes on properties     │
-//! │ cache                │ LRU cache for parsed query plans    │
-//! └─────────────────────────────────────────────────────────────┘
+//! ┌──────────────────────────────────────────────────────────────────────┐
+//! │                         Graph Structure                             │
+//! ├──────────────────────────┬───────────────────────────────────────────┤
+//! │ all_nodes_matrix         │ Diagonal matrix: node_id -> bool         │
+//! │                          │ (set for every live node)                │
+//! ├──────────────────────────┼───────────────────────────────────────────┤
+//! │ adjacancy_matrix         │ Boolean matrix: src x dst -> bool        │
+//! │                          │ (union of all relationship types)        │
+//! ├──────────────────────────┼───────────────────────────────────────────┤
+//! │ labels_matices[i]        │ Diagonal matrix per label:               │
+//! │                          │ node_id x node_id -> bool                │
+//! ├──────────────────────────┼───────────────────────────────────────────┤
+//! │ node_labels_matrix       │ Matrix: node_id x label_id -> bool       │
+//! │                          │ (maps each node to all its labels)       │
+//! ├──────────────────────────┼───────────────────────────────────────────┤
+//! │ relationship_matrices[i] │ Tensor per type: src x dst x edge_id     │
+//! │                          │ (supports multiple edges between same    │
+//! │                          │  src/dst pair via 3rd dimension)         │
+//! ├──────────────────────────┼───────────────────────────────────────────┤
+//! │ relationship_type_matrix │ Matrix: edge_id x type_id -> bool        │
+//! │                          │ (maps each edge to its type)             │
+//! ├──────────────────────────┼───────────────────────────────────────────┤
+//! │ node_attrs               │ AttributeStore: node properties          │
+//! │ relationship_attrs       │ AttributeStore: edge properties          │
+//! ├──────────────────────────┼───────────────────────────────────────────┤
+//! │ node_indexer             │ Secondary indexes on node properties     │
+//! │ cache                    │ LRU cache for parsed query plans         │
+//! └──────────────────────────┴───────────────────────────────────────────┘
 //! ```
+//!
+//! ## ID Allocation and Recycling
+//!
+//! Deleted node/edge IDs are tracked in `RoaringTreemap` bitmaps and reused
+//! before allocating fresh IDs. The `reserve_node` / `reserve_relationship`
+//! methods first reclaim from deleted IDs, then extend the ID space. This
+//! keeps matrices compact and avoids unbounded ID growth.
+//!
+//! ## Versioning
+//!
+//! `Graph::new_version()` creates a shallow copy suitable for a write
+//! transaction. Matrices use Copy-on-Write (see [`super::cow::Cow`]) so
+//! they are only duplicated when the writer actually mutates them. The
+//! `version` counter is incremented on each write transaction.
 //!
 //! ## Query Plan Caching
 //!
 //! The graph caches parsed and planned queries in an LRU cache. On cache hit,
 //! the plan is returned directly without reparsing. The cache key is the
-//! raw query string.
+//! raw query string. Plans are invalidated when the UDF version changes.
 
 use std::{
     collections::HashMap,

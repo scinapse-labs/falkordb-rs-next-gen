@@ -1,7 +1,33 @@
 //! `GRAPH.CONFIG` command handler.
 //!
-//! Implements graph-specific runtime configuration get/set semantics.
-//! Supports GET <name>, GET *, SET <name> <value>, and multi-SET.
+//! Implements graph-specific runtime configuration via GET and SET subcommands.
+//!
+//! ## Syntax
+//! ```text
+//! GRAPH.CONFIG GET <name>       -- retrieve a single config value
+//! GRAPH.CONFIG GET *            -- retrieve all config values
+//! GRAPH.CONFIG SET <name> <val> [<name> <val> ...]  -- set one or more values
+//! ```
+//!
+//! ## Configuration categories
+//!
+//! Runtime-settable (via SET):
+//!   TIMEOUT, TIMEOUT_DEFAULT, TIMEOUT_MAX, RESULTSET_SIZE,
+//!   MAX_QUEUED_QUERIES, QUERY_MEM_CAPACITY, DELTA_MAX_PENDING_CHANGES,
+//!   VKEY_MAX_ENTITY_COUNT, JS_HEAP_SIZE, JS_STACK_SIZE
+//!
+//! Read-only (SET returns an error):
+//!   THREAD_COUNT, OMP_THREAD_COUNT, CACHE_SIZE, ASYNC_DELETE,
+//!   NODE_CREATION_BUFFER, CMD_INFO, MAX_INFO_QUERIES,
+//!   EFFECTS_THRESHOLD, BOLT_PORT, DELAY_INDEXING,
+//!   IMPORT_FOLDER, TEMP_FOLDER
+//!
+//! ## Multi-SET semantics
+//! When multiple name-value pairs are provided in a single SET, all pairs are
+//! validated first. If any validation fails, no values are applied (atomic
+//! all-or-nothing). If JS_HEAP_SIZE or JS_STACK_SIZE are changed, the UDF
+//! repository version is bumped once after all values are applied so
+//! concurrent queries do not see a partial configuration update.
 
 use crate::config::{
     ASYNC_DELETE, BOLT_PORT, CONFIG_NAMES, CONFIGURATION_CACHE_SIZE, CONFIGURATION_CMD_INFO,

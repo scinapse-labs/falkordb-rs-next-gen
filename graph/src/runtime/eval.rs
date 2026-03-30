@@ -1,8 +1,46 @@
 //! Standalone expression evaluator.
 //!
-//! [`ExprEval`] encapsulates all expression evaluation logic.  It is used by
-//! both the runtime (via `Runtime::run_expr`) and the optimizer (via
+//! [`ExprEval`] encapsulates all expression evaluation logic. It is used by
+//! both the runtime (via `ExprEval::from_runtime`) and the optimizer (via
 //! `ExprEval::constant()` for compile-time constant folding).
+//!
+//! ```text
+//!  Expression tree (ExprIR)          Evaluation
+//!  ========================          ==========
+//!
+//!        Add                     eval(Add)
+//!       /   \                       |
+//!    Mul     Int(1)              eval(Mul) + eval(Int(1))
+//!   /   \                          |
+//! Var(a) Var(b)               env[a] * env[b]  +  1
+//! ```
+//!
+//! ## Two Evaluation Modes
+//!
+//! - **Runtime mode** (`ExprEval::from_runtime`): Full evaluation with access
+//!   to the graph, environment bindings, parameters, and function calls.
+//!   Used during query execution.
+//!
+//! - **Constant mode** (`ExprEval::constant`): No graph, no env, no functions.
+//!   Used by the optimizer to fold constant sub-expressions at plan time.
+//!   Returns `Err` if the expression references variables or functions.
+//!
+//! ## Evaluation Strategy
+//!
+//! The evaluator uses a hybrid approach:
+//! - **Leaf nodes** (Null, Bool, Int, Float, String, Variable, Parameter, Map)
+//!   are handled via fast-path early returns at the top of `eval()`.
+//! - **Compound nodes** (Add, Sub, Mul, And, Or, List, etc.) use a stack-based
+//!   iterative loop to avoid deep recursion. Children are pushed onto a stack
+//!   and results accumulate in a `Vec<Value>`.
+//! - **Complex nodes** (Quantifier, ListComprehension, Reduce, ShortestPath)
+//!   fall back to recursive `eval()` calls since they need scoped env mutations.
+//!
+//! ## ValueIter
+//!
+//! [`ValueIter`] is a lazy iterator over values, used by `UNWIND` and list
+//! comprehensions. It optimizes `range()` calls by producing integers on the
+//! fly without materializing the entire list.
 
 use std::cmp::Ordering;
 use std::collections::VecDeque;

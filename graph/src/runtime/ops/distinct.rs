@@ -4,6 +4,22 @@
 //! projected return columns have been seen before (by hash). Uses
 //! `batch.get()` to read return-name variables and `set_selection`
 //! for zero-copy filtering.
+//!
+//! ```text
+//!  Input batch
+//!       │
+//!  ┌────▼──────────────────────────────────┐
+//!  │ for each active row:                  │
+//!  │   hash(return_col1, return_col2, ...) │
+//!  │   seen before? ──► skip               │
+//!  │   new?         ──► add to selection   │
+//!  └────┬──────────────────────────────────┘
+//!       │
+//!  output batch with selection vector (zero-copy)
+//! ```
+//!
+//! The deduplication state persists across batches so that duplicates
+//! appearing in later batches are still filtered.
 
 use crate::planner::IR;
 use crate::runtime::{

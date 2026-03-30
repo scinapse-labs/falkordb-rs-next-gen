@@ -1,3 +1,55 @@
+//! Hash join replacement optimizer pass.
+//!
+//! Replaces a `CartesianProduct` paired with an equality `Filter` by a
+//! `ValueHashJoin`, turning an O(N*M) nested-loop cross product into an
+//! O(N+M) hash-based equi-join.
+//!
+//! ## Transformation
+//!
+//! The pass looks for this pattern:
+//!
+//! ```text
+//! Before:                               After:
+//!
+//! Filter(a.name = b.name)               ValueHashJoin(a.name, b.name)
+//!   |                                     |           |
+//!   v                                     v           v
+//! CartesianProduct                      ChildA      ChildB
+//!   |           |
+//!   v           v
+//! ChildA      ChildB
+//! ```
+//!
+//! The equality conjunct's left-hand side must reference variables produced
+//! exclusively by one CartesianProduct child, and the right-hand side must
+//! reference variables produced exclusively by a different child.
+//!
+//! **AND filter with extra conjuncts:**
+//!
+//! When the filter is an AND, exactly one equality conjunct is consumed for
+//! the hash join; the remaining conjuncts stay as a reduced Filter above the
+//! new ValueHashJoin.
+//!
+//! **Multi-child CartesianProduct:**
+//!
+//! If the CartesianProduct has more than two children, the two children
+//! involved in the join are pulled out into a ValueHashJoin and the rest
+//! remain as CartesianProduct children:
+//!
+//! ```text
+//! Before:                     After:
+//!
+//! Filter(a.x = b.x)          CartesianProduct
+//!   |                           |           |
+//!   v                           v           v
+//! CartesianProduct            ChildC      ValueHashJoin(a.x, b.x)
+//!   |     |     |                           |           |
+//!   v     v     v                           v           v
+//! ChildA ChildB ChildC                    ChildA      ChildB
+//! ```
+//!
+//! The pass is applied recursively so nested join opportunities are found.
+
 use std::collections::HashSet;
 use std::sync::Arc;
 

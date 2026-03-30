@@ -1,58 +1,100 @@
 //! Cypher query parser for FalkorDB.
 //!
-//! This module implements a hand-written recursive descent parser for the Cypher
-//! query language. It converts Cypher query strings into an Abstract Syntax Tree
-//! (AST) defined in [`crate::parser::ast`].
-//! Lexical analysis is provided by [`crate::parser::lexer`], and parser helper
-//! macros are defined in [`crate::parser::r#macro`].
+//! This module implements a hand-written recursive descent parser for the
+//! Cypher query language. It converts Cypher query strings into an Abstract
+//! Syntax Tree (AST) defined in [`crate::parser::ast`].
+//! Lexical analysis is provided by [`crate::parser::lexer`], and parser
+//! helper macros are defined in [`crate::parser::r#macro`].
 //!
 //! ## Architecture
 //!
-//! This module contains the **parser** component:
-//!
-//! 1. **Parser** (`Parser`): Consumes tokens and builds the AST using recursive
-//!    descent with operator precedence parsing for expressions.
-//!
-//! Related modules:
-//! - [`crate::parser::lexer`]: token stream production
-//! - [`crate::parser::r#macro`]: parser helper macros
+//! The [`Parser`] struct wraps a [`crate::parser::lexer::Lexer`] and maintains
+//! a counter for generating anonymous variable names. Parsing proceeds by
+//! recursive descent: each grammar rule maps to a `parse_*` method.
 //!
 //! ## Entry Point
 //!
 //! The main entry point is [`parse`], which takes a query string and returns
-//! a [`RawQueryIR`] (unbound AST).
+//! a [`RawQueryIR`] (unbound AST with `Arc<String>` variable names).
 //!
 //! ```text
 //! "MATCH (n) RETURN n"
-//!         │
-//!         ▼
-//!     Lexer → [MATCH, LPAREN, IDENT("n"), RPAREN, RETURN, IDENT("n")]
-//!         │
-//!         ▼
-//!     Parser → QueryIR::Query([
-//!                  QueryIR::Match { pattern: ..., filter: None, optional: false },
-//!                  QueryIR::Return { exprs: [("n", var("n"))], ... }
-//!              ])
+//!         |
+//!         v
+//!     Lexer --> [MATCH, LPAREN, IDENT("n"), RPAREN, RETURN, IDENT("n"), EOF]
+//!         |
+//!         v
+//!     Parser --> QueryIR::Query {
+//!                  clauses: [
+//!                    QueryIR::Match { pattern: ..., filter: None, optional: false },
+//!                    QueryIR::Return { exprs: [("n", var("n"))], ... }
+//!                  ],
+//!                  write: false
+//!                }
+//! ```
+//!
+//! ## Grammar Structure
+//!
+//! The parser handles the following Cypher grammar (simplified):
+//!
+//! ```text
+//! query           ::= single_query ( UNION [ALL] single_query )*
+//! single_query    ::= reading_clause* writing_clause*
+//!
+//! reading_clause  ::= MATCH | OPTIONAL MATCH | UNWIND | CALL (procedure)
+//!                    | CALL { subquery } | LOAD CSV
+//! writing_clause  ::= CREATE | MERGE | DELETE | DETACH DELETE
+//!                    | SET | REMOVE | FOREACH | WITH | RETURN
+//!
+//! pattern         ::= node_pattern ( rel_pattern node_pattern )*
+//! node_pattern    ::= '(' [alias] [':' label]* [properties] ')'
+//! rel_pattern     ::= '-[' [alias] [':' type ['|' type]*] [*min..max] ']->'
+//!                    | '<-[' ... ']-'   | '-[' ... ']-'
+//!
+//! expression      ::= or_expr
+//! or_expr         ::= xor_expr ( OR xor_expr )*
+//! xor_expr        ::= and_expr ( XOR and_expr )*
+//! and_expr        ::= not_expr ( AND not_expr )*
+//! not_expr        ::= [NOT] comparison
+//! comparison      ::= add_sub ( comp_op add_sub )*
+//! add_sub         ::= mul_div ( ('+' | '-') mul_div )*
+//! mul_div         ::= power ( ('*' | '/' | '%') power )*
+//! power           ::= unary ( '^' unary )*
+//! unary           ::= ['-'] postfix
+//! postfix         ::= primary ( '.' prop | '[' index ']' )*
+//! primary         ::= literal | variable | '(' expr ')' | function_call
+//!                    | CASE | list_comprehension | pattern_comprehension
 //! ```
 //!
 //! ## Expression Precedence
 //!
 //! Expressions are parsed with the following precedence (lowest to highest):
-//! 1. OR
-//! 2. XOR
-//! 3. AND
-//! 4. NOT
-//! 5. Comparison (=, <>, <, >, <=, >=, IN, STARTS WITH, etc.)
-//! 6. Addition/Subtraction (+, -)
-//! 7. Multiplication/Division (*, /, %)
-//! 8. Power (^)
-//! 9. Unary minus (-)
-//! 10. Property access, indexing, function calls
+//!
+//! ```text
+//!  Precedence   Operators
+//!  ----------   ---------
+//!  1 (lowest)   OR
+//!  2            XOR
+//!  3            AND
+//!  4            NOT
+//!  5            = <> < > <= >= IN, IS NULL, IS NOT NULL,
+//!               STARTS WITH, ENDS WITH, CONTAINS, =~
+//!  6            + -
+//!  7            * / %
+//!  8            ^
+//!  9            unary -
+//!  10 (highest) property access (.), indexing ([]), function calls
+//! ```
+//!
+//! Expression parsing uses an explicit stack (`Vec<(precedence, Option<tree>)>`)
+//! rather than deep call-stack recursion, making it resilient to deeply nested
+//! expressions.
 //!
 //! ## Error Handling
 //!
 //! Parse errors return `Err(String)` with a descriptive message including
-//! the position in the query where the error occurred.
+//! the position in the query where the error occurred, the offending token,
+//! and context from the original query string.
 
 use crate::entity_type::EntityType;
 use crate::index::indexer::IndexType;

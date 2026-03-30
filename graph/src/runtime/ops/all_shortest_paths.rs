@@ -1,8 +1,28 @@
-//! Batch-mode all-shortest-paths operator — finds all shortest paths between two bound nodes.
+//! Batch-mode all-shortest-paths operator — finds all shortest paths between
+//! two bound nodes.
 //!
 //! Implements Cypher `MATCH p = allShortestPaths((a)-[*]->(b))`.
 //! Requires both endpoints to be already bound in the environment.
-//! Uses BFS to find the shortest distance, then enumerates all paths of that length.
+//!
+//! ```text
+//!  Phase 1: BFS (find shortest distance + collect predecessors)
+//!
+//!       src ──► A ──► B ──► dst        distances:  src=0, A=1, B=2, dst=3
+//!        \          /                   predecessors[dst] = [(B, edge5)]
+//!         \──► C ──/                    predecessors[B]   = [(A, edge2), (C, edge4)]
+//!                                       predecessors[A]   = [(src, edge1)]
+//!                                       predecessors[C]   = [(src, edge3)]
+//!
+//!  Phase 2: DFS (backtrack from dst to src using predecessors)
+//!
+//!       dst ──► B ──► A ──► src         path 1: src->A->B->dst
+//!       dst ──► B ──► C ──► src         path 2: src->C->B->dst
+//! ```
+//!
+//! For each input row, runs a BFS from `src` to find the shortest distance to
+//! `dst` and records all predecessor edges at each level. Then backtracks via
+//! DFS from `dst` to `src` to enumerate every shortest path. Supports edge
+//! attribute filters, hop-length constraints, and bidirectional patterns.
 
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;

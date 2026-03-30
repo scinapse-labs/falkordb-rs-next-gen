@@ -3,6 +3,25 @@
 //! Implements Cypher `UNION` / `UNION ALL`. Iterates through each child
 //! sub-plan in order and yields all batches from the first child before
 //! moving to the second, and so on.
+//!
+//! ```text
+//!  ┌───────────┐  ┌───────────┐  ┌───────────┐
+//!  │ Branch 0  │  │ Branch 1  │  │ Branch 2  │
+//!  │ (created  │  │ (created  │  │ (created  │
+//!  │  lazily)  │  │  lazily)  │  │  lazily)  │
+//!  └─────┬─────┘  └─────┬─────┘  └─────┬─────┘
+//!        │              │              │
+//!   drain all      drain all      drain all
+//!   batches        batches        batches
+//!        │              │              │
+//!        └──── sequential order ───────┘
+//!                       │
+//!                  output stream
+//! ```
+//!
+//! Each branch is lazily constructed via `run_batch` when the previous branch
+//! is exhausted. An optional stored argument batch is propagated to each
+//! branch for correlated sub-queries.
 
 use crate::planner::IR;
 use crate::runtime::{

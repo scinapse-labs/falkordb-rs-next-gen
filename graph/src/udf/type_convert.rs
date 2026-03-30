@@ -1,3 +1,44 @@
+//! # Rust <-> JavaScript Type Conversion
+//!
+//! This module provides bidirectional conversion between FalkorDB's Rust
+//! [`Value`](crate::runtime::value::Value) type and QuickJS JavaScript values.
+//! It is used whenever arguments are passed into a UDF and when the UDF result
+//! is returned back to the Cypher runtime.
+//!
+//! ## Conversion Table
+//!
+//! ```text
+//! Rust Value               JS Value                   Notes
+//! ----------               --------                   -----
+//! Null                 <-> null / undefined
+//! Bool(b)              <-> boolean
+//! Int(i)               <-> number (f64)               i64 within +/-(2^53-1)
+//! Int(i)               <-> BigInt                     i64 outside safe range
+//! Float(f)             <-> number (f64)
+//! String(s)            <-> string
+//! List([...])          <-> Array [...]
+//! Map({k: v})          <-> Object {k: v}              __falkor_* keys escaped
+//! Node(id)             <-> Node object                see js_classes
+//! Relationship(r,s,d)  <-> Edge object                see js_classes
+//! Path([...])          <-> Path object                see js_classes
+//! Point(lat, lon)      <-> {latitude, longitude}      __falkor_type = "point"
+//! Datetime(ts)         <-> Date                       __falkor_temporal_type = "datetime"
+//! Date(ts)             <-> Date                       __falkor_temporal_type = "date"
+//! VecF32([...])        <-> Array (f64)                __falkor_type = "vecf32"
+//! Time / Duration       -> (unsupported, returns Err)
+//! ```
+//!
+//! ## Round-Trip Safety
+//!
+//! Graph entities (Node, Edge, Path, Point) carry hidden `__falkor_type` and
+//! `__falkor_*_id` properties on their JS objects. These markers allow
+//! [`js_to_value`] to reconstruct the correct Rust variant without ambiguity.
+//! User-supplied map keys that start with `__falkor_` are escaped during
+//! `value_to_js` and unescaped during `js_to_value` to prevent collisions.
+//!
+//! Integer round-tripping: JS numbers that equal their floor and fit within
+//! the safe integer range are converted back to `Value::Int`, not `Value::Float`.
+
 use std::sync::Arc;
 
 use atomic_refcell::AtomicRefCell;

@@ -1,3 +1,56 @@
+//! # JS Class Bindings for Graph Types
+//!
+//! This module creates JavaScript object representations of FalkorDB graph
+//! entities (Node, Edge, Path) so that UDF functions can inspect and traverse
+//! the graph from within JavaScript code.
+//!
+//! ## JS Object Shapes
+//!
+//! Each graph entity is represented as a plain JS object with hidden
+//! `__falkor_type` / `__falkor_*_id` markers used for round-trip conversion
+//! back to Rust values (see [`type_convert`](super::type_convert)).
+//!
+//! ```text
+//! Node {
+//!   id:         u64,
+//!   labels:     [String, ...],
+//!   attributes: { key: value, ... },
+//!   getNeighbors(config?):  -> [Node] | [Edge]
+//!   // hidden: __falkor_type = "node", __falkor_node_id
+//! }
+//!
+//! Edge {
+//!   id:         u64,
+//!   type:       String,            // relationship type name
+//!   source:     Node,
+//!   target:     Node,
+//!   attributes: { key: value, ... },
+//!   // hidden: __falkor_type = "edge", __falkor_edge_id/src/dst
+//! }
+//!
+//! Path {
+//!   nodes:         [Node, ...],
+//!   relationships: [Edge, ...],
+//!   length:        usize,
+//!   // hidden: __falkor_type = "path"
+//! }
+//! ```
+//!
+//! ## Graph Context
+//!
+//! JS closures cannot directly capture Rust references with non-static
+//! lifetimes. To work around this, the current [`Graph`](crate::graph::graph::Graph)
+//! is stored in a thread-local (`CURRENT_GRAPH`) and set/cleared around each
+//! UDF invocation by [`set_current_graph`] / [`clear_current_graph`].
+//!
+//! ## Traversal
+//!
+//! - `node.getNeighbors(config?)` -- single-hop neighbor lookup with optional
+//!   direction, type/label filters, and return type (nodes or edges).
+//! - `graph.traverse(nodes, config?)` -- multi-source BFS traversal with
+//!   configurable `maxDepth`, direction, type/label filters, and timeout
+//!   enforcement via the UDF deadline.
+
 use std::cell::RefCell;
 use std::collections::HashSet;
 use std::sync::Arc;

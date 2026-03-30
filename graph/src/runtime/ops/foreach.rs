@@ -1,11 +1,30 @@
 //! Batch-mode FOREACH operator — iterates over a list and executes a body sub-plan
 //! for each element as a side effect.
 //!
+//! ```text
+//!  Input row
+//!       │
+//!  eval list expression ──► [item1, item2, item3]
+//!       │
+//!  ┌────▼──────────────────────────────┐
+//!  │ Build batch of loop envs:         │
+//!  │   row + var=item1                 │
+//!  │   row + var=item2                 │
+//!  │   row + var=item3                 │
+//!  │                                   │
+//!  │ Execute body sub-plan (eager)     │
+//!  │   side effects: Create/Set/Delete │
+//!  │   results discarded               │
+//!  └────┬──────────────────────────────┘
+//!       │
+//!  pass through original input row unchanged
+//! ```
+//!
 //! For each active row in each input batch, evaluates the list expression and
 //! collects all loop items, then executes the body sub-plan once with all items
 //! as a batch (eager execution). This matches the C implementation where MERGE
 //! inside FOREACH sees a consistent graph state for all iterations.
-//! The original input row is passed through unchanged — FOREACH is purely
+//! The original input row is passed through unchanged -- FOREACH is purely
 //! a side-effect clause.
 
 use std::collections::VecDeque;
