@@ -245,6 +245,7 @@ impl UdfRepo {
         }
 
         // Phase 2 – all validated; atomically swap the live repo.
+        let result = staged.clone();
         {
             let mut inner = self.inner.write();
 
@@ -255,10 +256,10 @@ impl UdfRepo {
                 }
             }
 
-            inner.libraries = staged.clone();
+            inner.libraries = staged;
         }
         self.version.fetch_add(1, Ordering::Release);
 
-        Ok(staged)
+        Ok(result)
     }
 }
