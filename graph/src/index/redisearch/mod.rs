@@ -333,6 +333,23 @@ unsafe extern "C" {
     );
 }
 unsafe extern "C" {
+    pub fn RediSearch_VectorFieldSetDim(
+        sp: *mut RSIndex,
+        fs: RSFieldID,
+        dim: ::std::os::raw::c_int,
+    );
+}
+unsafe extern "C" {
+    pub fn RediSearch_VectorFieldSetHNSWParams(
+        sp: *mut RSIndex,
+        fs: RSFieldID,
+        m: usize,
+        ef_construction: usize,
+        ef_runtime: usize,
+        metric: ::std::os::raw::c_uint,
+    );
+}
+unsafe extern "C" {
     pub fn RediSearch_CreateDocument(
         docKey: *const ::std::os::raw::c_void,
         len: usize,

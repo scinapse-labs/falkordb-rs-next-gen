@@ -523,7 +523,8 @@ fn register_wcc(funcs: &mut Functions) {
 
                 // Cache symmetric structure
                 let mut msg = new_msg();
-                (*lag_g).is_symmetric_structure = LAGraph_Boolean::LAGraph_TRUE;
+                let lag_g_ref = lag_g.as_mut().ok_or_else(|| String::from("LAGraph graph pointer is null"))?;
+                lag_g_ref.is_symmetric_structure = LAGraph_Boolean::LAGraph_TRUE;
                 lagraph_bindings::LAGraph_Cached_OutDegree(lag_g, msg.as_mut_ptr());
                 lagraph_bindings::LAGraph_Cached_NSelfEdges(lag_g, msg.as_mut_ptr());
                 lagraph_bindings::LAGraph_DeleteSelfEdges(lag_g, msg.as_mut_ptr());
@@ -857,7 +858,8 @@ fn register_cdlp(funcs: &mut Functions) {
                 let mut lag_g = create_lagraph_graph(compact_adj, LAGraph_Kind::LAGraph_ADJACENCY_UNDIRECTED)?;
 
                 let mut msg = new_msg();
-                (*lag_g).is_symmetric_structure = LAGraph_Boolean::LAGraph_TRUE;
+                let lag_g_ref = lag_g.as_mut().ok_or_else(|| String::from("LAGraph graph pointer is null"))?;
+                lag_g_ref.is_symmetric_structure = LAGraph_Boolean::LAGraph_TRUE;
 
                 let mut cdlp: GrB_Vector = null_mut();
                 let info = lagraphx_bindings::LAGraph_cdlp(

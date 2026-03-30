@@ -40,7 +40,7 @@
 #![allow(clippy::cast_precision_loss)]
 use crate::{
     graph::graph::{Graph, NodeId, RelationshipId},
-    index::indexer::{IndexOptions, IndexType, TextIndexOptions},
+    index::indexer::{IndexOptions, IndexType, TextIndexOptions, VectorIndexOptions},
     parser::ast::{ExprIR, QueryExpr, Variable},
     planner::IR,
     runtime::{
@@ -1228,6 +1228,45 @@ fn map_to_index_options(
             });
             Ok(Some(options))
         }
-        _ => Ok(None),
+        IndexType::Range => Ok(None),
+        IndexType::Vector => {
+            let dimension = match get("dimension") {
+                Some(Value::Int(n)) => {
+                    if *n <= 0 {
+                        return Err("dimension must be a positive integer".into());
+                    }
+                    *n as u32
+                }
+                None => return Err("dimension is required for vector indexes".into()),
+                _ => return Err("dimension must be an integer".into()),
+            };
+            let similarity_function = match get("similarityFunction") {
+                Some(Value::String(s)) => Some(s.to_string()),
+                None => None,
+                _ => return Err("similarityFunction must be a string".into()),
+            };
+            let m = match get("M") {
+                Some(Value::Int(n)) => Some(*n as usize),
+                None => None,
+                _ => return Err("M must be an integer".into()),
+            };
+            let ef_construction = match get("efConstruction") {
+                Some(Value::Int(n)) => Some(*n as usize),
+                None => None,
+                _ => return Err("efConstruction must be an integer".into()),
+            };
+            let ef_runtime = match get("efRuntime") {
+                Some(Value::Int(n)) => Some(*n as usize),
+                None => None,
+                _ => return Err("efRuntime must be an integer".into()),
+            };
+            Ok(Some(IndexOptions::Vector(VectorIndexOptions {
+                dimension,
+                similarity_function,
+                m,
+                ef_construction,
+                ef_runtime,
+            })))
+        }
     }
 }
