@@ -301,6 +301,7 @@ impl<'a> Lexer<'a> {
                             break;
                         }
                     }
+                    next = chars.next();
                 } else {
                     len -= 1 + c.len_utf8();
                     break;
