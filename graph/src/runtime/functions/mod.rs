@@ -378,6 +378,26 @@ impl Type {
             _ => false,
         }
     }
+
+    /// Check if a statically known type is compatible with an expected type.
+    #[must_use]
+    pub fn is_compatible_with(
+        &self,
+        expected: &Self,
+    ) -> bool {
+        match (self, expected) {
+            // Unknown types are always compatible at compile time.
+            // Null is always compatible (functions accept nullable args).
+            (Self::Any | Self::Null, _) | (_, Self::Any) => true,
+            // Same concrete type.
+            _ if self == expected => true,
+            // Union: compatible if any variant matches.
+            (_, Self::Union(types)) => types.iter().any(|t| self.is_compatible_with(t)),
+            // Optional: compatible with inner type.
+            (_, Self::Optional(inner)) => self.is_compatible_with(inner),
+            _ => false,
+        }
+    }
 }
 
 #[cfg_attr(tarpaulin, skip)]

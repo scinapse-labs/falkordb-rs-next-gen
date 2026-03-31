@@ -51,7 +51,7 @@ pub fn reply_compact_value(
         }
         Value::Float(x) => {
             raw::reply_with_long_long(ctx.ctx, 5);
-            let str = format!("{x:.14e}");
+            let str = format!("{x:.16e}");
             raw::reply_with_string_buffer(ctx.ctx, str.as_ptr().cast::<c_char>(), str.len());
         }
         Value::String(x) => {
@@ -276,7 +276,7 @@ pub fn reply_verbose_value(
             raw::reply_with_long_long(ctx.ctx, *x as _);
         }
         Value::Float(x) => {
-            let str = format!("{x:.14e}");
+            let str = format!("{x:.16e}");
             raw::reply_with_string_buffer(ctx.ctx, str.as_ptr().cast::<c_char>(), str.len());
         }
         Value::String(x) => {

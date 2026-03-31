@@ -117,7 +117,11 @@ pub fn register(funcs: &mut Functions) {
             match args.into_iter().next() {
                 Some(Value::String(s)) => Ok(Value::String(s)),
                 Some(Value::Int(i)) => Ok(Value::String(Arc::new(i.to_string()))),
-                Some(Value::Float(f)) => Ok(Value::String(Arc::new(format!("{f:.6}")))),
+                Some(Value::Float(f)) => {
+                    // Format without trailing zeros; ensure at least one decimal
+                    let s = format!("{f}");
+                    Ok(Value::String(Arc::new(s)))
+                }
                 Some(Value::Bool(b)) => Ok(Value::String(Arc::new(b.to_string()))),
                 Some(Value::Point(p)) => Ok(Value::String(Arc::new(format!(
                     "point({{latitude: {:.6}, longitude: {:.6}}})",

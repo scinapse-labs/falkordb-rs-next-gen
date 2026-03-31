@@ -29,7 +29,7 @@ use crate::parser::ast::{
     AllShortestPaths, BoundQueryIR, ExprIR, QueryExpr, QueryGraph, QueryIR, QueryNode, QueryPath,
     QueryRelationship, RawQueryIR, SetItem, SupportAggregation, Variable,
 };
-use crate::runtime::functions::{FnType, Type};
+use crate::runtime::functions::{FnArguments, FnType, Type};
 use crate::runtime::orderset::OrderSet;
 use crate::tree;
 use orx_tree::{Dfs, Dyn, DynNode, DynTree, NodeRef};
@@ -1728,6 +1728,7 @@ impl Binder {
                     .children()
                     .map(|child| self.bind_expr_node(expr, &child, locals))
                     .collect::<Result<Vec<_>, _>>()?;
+
                 let new_data = match node_ref.data().clone() {
                     ExprIR::Null => ExprIR::Null,
                     ExprIR::Bool(b) => ExprIR::Bool(b),
@@ -1782,7 +1783,24 @@ impl Binder {
                         }
                         ExprIR::Property(prop)
                     }
-                    ExprIR::FuncInvocation(func) => ExprIR::FuncInvocation(func),
+                    ExprIR::FuncInvocation(func) => {
+                        // Compile-time type check: validate argument types
+                        // against the function's declared parameter types.
+                        if let FnArguments::Fixed(arg_types) = &func.args_type {
+                            for (i, expected_ty) in arg_types.iter().enumerate() {
+                                if let Some(child) = children.get(i)
+                                    && let ExprIR::Variable(var) = child.root().data()
+                                    && !var.ty.is_compatible_with(expected_ty)
+                                {
+                                    return Err(format!(
+                                        "Type mismatch: expected {expected_ty} but was {}",
+                                        var.ty
+                                    ));
+                                }
+                            }
+                        }
+                        ExprIR::FuncInvocation(func)
+                    }
                     ExprIR::Paren => ExprIR::Paren,
                     ExprIR::ShortestPath {
                         rel_types,

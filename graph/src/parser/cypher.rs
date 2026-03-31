@@ -1681,7 +1681,7 @@ impl<'a> Parser<'a> {
 
                         let mut args = self.parse_expression_list(
                             ExpressionListType::ZeroOrMoreClosedBy(RParen),
-                            allow_pattern_predicate,
+                            false,
                         )?;
                         func.validate(args.len())?;
 
@@ -1705,7 +1705,7 @@ impl<'a> Parser<'a> {
 
                     let args = self.parse_expression_list(
                         ExpressionListType::ZeroOrMoreClosedBy(RParen),
-                        allow_pattern_predicate,
+                        false,
                     )?;
                     func.validate(args.len())?;
                     if distinct && args.is_empty() {
@@ -1868,8 +1868,76 @@ impl<'a> Parser<'a> {
                     parse_expr_return!(stack, res);
                 }
                 4 => {
-                    // Comparison
-                    parse_operators!(self, stack, res, current, Token::Equal => Eq, Token::NotEqual => Neq, Token::LessThan => Lt, Token::LessThanOrEqual => Le, Token::GreaterThan => Gt, Token::GreaterThanOrEqual => Ge);
+                    // Comparison with chained-range desugaring.
+                    // Cypher `a < b <= c` means `a < b AND b <= c`.
+                    let mut res = res;
+                    let cmp_op = match self.lexer.current()? {
+                        Token::Equal => Some(ExprIR::Eq),
+                        Token::NotEqual => Some(ExprIR::Neq),
+                        Token::LessThan => Some(ExprIR::Lt),
+                        Token::LessThanOrEqual => Some(ExprIR::Le),
+                        Token::GreaterThan => Some(ExprIR::Gt),
+                        Token::GreaterThanOrEqual => Some(ExprIR::Ge),
+                        _ => None,
+                    };
+                    if let Some(op) = cmp_op {
+                        self.lexer.next();
+                        // Detect chained comparison: res is a comparison node,
+                        // or an And wrapping previous chain steps.
+                        let last_cmp_is_ordering = match res.root().data() {
+                            ExprIR::Lt
+                            | ExprIR::Le
+                            | ExprIR::Gt
+                            | ExprIR::Ge
+                            | ExprIR::Eq
+                            | ExprIR::Neq => true,
+                            ExprIR::And => res.root().children().last().is_some_and(|c| {
+                                matches!(
+                                    c.data(),
+                                    ExprIR::Lt
+                                        | ExprIR::Le
+                                        | ExprIR::Gt
+                                        | ExprIR::Ge
+                                        | ExprIR::Eq
+                                        | ExprIR::Neq
+                                )
+                            }),
+                            _ => false,
+                        };
+                        if last_cmp_is_ordering {
+                            // Clone the shared middle operand (last child of
+                            // the latest comparison node in the chain).
+                            let last_cmp_node = if matches!(res.root().data(), ExprIR::And) {
+                                res.root().children().last().unwrap()
+                            } else {
+                                res.root()
+                            };
+                            let middle_clone: DynTree<ExprIR<Arc<String>>> =
+                                last_cmp_node.children().last().unwrap().clone_as_tree();
+                            // Wrap in And if not already from a prior step.
+                            if !matches!(res.root().data(), ExprIR::And) {
+                                res = tree!(ExprIR::And, res);
+                            }
+                            let new_cmp = tree!(op, middle_clone);
+                            stack.push((current, Some(res)));
+                            stack.push((current, Some(new_cmp)));
+                        } else {
+                            res = tree!(op, res);
+                            stack.push((current, Some(res)));
+                        }
+                        stack.push((current + 1, None));
+                        continue;
+                    }
+
+                    match &mut stack.last_mut() {
+                        Some((_, Some(expr))) => {
+                            expr.root_mut().push_child_tree(res);
+                        }
+                        Some((_, expr)) => {
+                            *expr = Some(res);
+                        }
+                        _ => return Ok(res),
+                    }
                 }
                 5 => {
                     // String, List, Null predicates
@@ -2300,7 +2368,14 @@ impl<'a> Parser<'a> {
         };
 
         let expression = if optional_match_token!(self.lexer, Pipe) {
-            Some(self.parse_expr(allow_pattern_predicate)?)
+            let expr = self.parse_expr(allow_pattern_predicate)?;
+            // Aggregation functions are not allowed inside list comprehensions.
+            if let Some(func) = Self::find_aggregate_name(&expr) {
+                return Err(self
+                    .lexer
+                    .format_error(&format!("Invalid use of aggregating function '{func}'")));
+            }
+            Some(expr)
         } else {
             None
         };
