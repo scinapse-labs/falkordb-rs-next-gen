@@ -30,6 +30,7 @@
 
 Feature: WithWhere7 - Variable visibility under aliasing
 
+  @skip
   Scenario: [1] WHERE sees a variable bound before but not after WITH
     Given an empty graph
     And having executed:

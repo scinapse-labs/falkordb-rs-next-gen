@@ -1008,27 +1008,21 @@ impl Binder {
             })
             .collect();
 
-        // When an ORDER BY expression is an aggregation that matches a
-        // projected aggregation, rewrite it to reference the projected alias
-        // before binding, so the binder resolves it as a simple variable in
-        // the child scope.  E.g. RETURN count(x) AS cnt ORDER BY count(x)
-        // becomes ORDER BY cnt.
+        // When an ORDER BY expression (or a sub-expression within it) is an
+        // aggregation that matches a projected aggregation, rewrite it to
+        // reference the projected alias before binding.
+        // E.g. RETURN count(x) AS cnt ORDER BY count(x)  →  ORDER BY cnt
+        // E.g. RETURN avg(x.age) AS a ORDER BY $p + avg(x.age) - 1000
+        //   →  ORDER BY $p + a - 1000
         let orderby: Vec<_> = orderby
             .iter()
             .map(|(expr, desc)| {
                 if expr.is_aggregation() {
-                    for (name, proj_expr) in exprs {
-                        if proj_expr.is_aggregation()
-                            && raw_exprs_structurally_equal(expr, proj_expr)
-                        {
-                            // Replace with a reference to the projected alias
-                            let replacement =
-                                Arc::new(DynTree::new(ExprIR::Variable(name.clone())));
-                            return (replacement, *desc);
-                        }
-                    }
+                    let replaced = replace_agg_subtrees(&expr.root(), exprs);
+                    (Arc::new(replaced), *desc)
+                } else {
+                    (expr.clone(), *desc)
                 }
-                (expr.clone(), *desc)
             })
             .collect();
 
@@ -2149,6 +2143,36 @@ impl Binder {
             | ExprIR::Pattern(_) => false,
         }
     }
+}
+
+/// Recursively walk an ORDER BY expression tree and replace any aggregation
+/// sub-tree that structurally matches a projected aggregation with a variable
+/// reference to the projection alias.
+fn replace_agg_subtrees(
+    node: &DynNode<ExprIR<Arc<String>>>,
+    exprs: &[(Arc<String>, QueryExpr<Arc<String>>)],
+) -> DynTree<ExprIR<Arc<String>>> {
+    // If this node is an aggregate function, check if the subtree rooted here
+    // matches any projected aggregation.
+    if let ExprIR::FuncInvocation(func) = node.data()
+        && func.is_aggregate()
+    {
+        let subtree = node.clone_as_tree();
+        for (name, proj_expr) in exprs {
+            if proj_expr.is_aggregation() && raw_exprs_structurally_equal(&subtree, proj_expr) {
+                return DynTree::new(ExprIR::Variable(name.clone()));
+            }
+        }
+    }
+
+    // Not a matching aggregation — reconstruct this node with recursively
+    // processed children.
+    let mut new_tree = DynTree::new(node.data().clone());
+    for child in node.children() {
+        let child_tree = replace_agg_subtrees(&child, exprs);
+        new_tree.root_mut().push_child_tree(child_tree);
+    }
+    new_tree
 }
 
 /// Compare two raw (pre-bind) expression trees structurally, ignoring
