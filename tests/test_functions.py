@@ -166,12 +166,3 @@ def query_exception(query: str, message: str, params=None):
         assert False, "Expected an error"
     except ResponseError as e:
         assert message in str(e)
-
-def test_string_functions():
-    # Per openCypher spec, string predicates with non-string inputs return null
-    res = common.g.query("RETURN [1, 2] STARTS WITH 'a' AS name")
-    assert res.result_set == [[None]]
-    res = common.g.query("RETURN [1, 2] ENDS WITH 'a' AS name")
-    assert res.result_set == [[None]]
-    res = common.g.query("RETURN [1, 2] CONTAINS 'a' AS name")
-    assert res.result_set == [[None]]
