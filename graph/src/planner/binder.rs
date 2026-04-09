@@ -1057,6 +1057,11 @@ impl Binder {
             }
         }
 
+        // Save env keys before binding filter/orderby/skip/limit so we can
+        // remove variables that were only added by those clauses.
+        let env_keys_before_filter: HashSet<Arc<String>> =
+            self.current_env().keys().cloned().collect();
+
         let skip = skip.map(|expr| self.bind_expr(&expr)).transpose()?;
         let limit = limit.map(|expr| self.bind_expr(&expr)).transpose()?;
         let filter = filter.map(|expr| self.bind_expr(&expr)).transpose()?;
@@ -1064,6 +1069,19 @@ impl Binder {
             && !Self::expr_may_return_boolean(f.root())
         {
             return Err(String::from("Expected boolean predicate"));
+        }
+
+        // Remove from current env any variables added only by filter/orderby/skip/limit.
+        // These should be available for the WHERE evaluation at runtime (kept in
+        // copy_from_parent) but not visible to subsequent clauses (RETURN *).
+        let filter_only_keys: Vec<Arc<String>> = self
+            .copy_from_parent
+            .keys()
+            .filter(|name| !env_keys_before_filter.contains(*name))
+            .cloned()
+            .collect();
+        for key in &filter_only_keys {
+            self.current_env_mut().remove(key);
         }
 
         let copy_from_parent = self

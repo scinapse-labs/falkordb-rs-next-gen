@@ -50,7 +50,6 @@ Feature: WithWhere1 - Filter single variable
       | ({name: 'B'}) |
     And no side effects
 
-  @skip
   Scenario: [2] Filter node with property predicate on a single variable with multiple distinct bindings
     Given an empty graph
     And having executed:

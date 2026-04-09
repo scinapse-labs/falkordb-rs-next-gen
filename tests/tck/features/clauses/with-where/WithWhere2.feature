@@ -30,7 +30,6 @@
 
 Feature: WithWhere2 - Filter multiple variables
 
-  @skip
   Scenario: [1] Filter nodes with conjunctive two-part property predicate on multi variables with multiple bindings
     Given an empty graph
     And having executed:
