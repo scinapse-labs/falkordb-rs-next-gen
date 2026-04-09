@@ -95,6 +95,14 @@ def step_impl(context):
     assertions.assert_resultset_length(resultset, expected_length)
     assertions.assert_resultsets_equals(resultset, context.table)
 
+@then(u'the result should be (ignoring element order for lists):')
+def step_impl(context):
+    if exception:
+        raise exception
+    expected_length = len(context.table.rows)
+    assertions.assert_resultset_length(resultset, expected_length)
+    assertions.assert_resultsets_equals_ignore_list_order(resultset, context.table)
+
 @then(u'the result should be')
 @then(u'the result should be, in order:')
 def step_impl(context):
@@ -312,3 +320,9 @@ def step_imp(context):
     global exception
     assert exception != None
     assert "Multiple result columns with the same name are not supported." in str(exception)
+
+@then(u'a SyntaxError should be raised at compile time: InvalidUnicodeLiteral')
+def step_impl(context):
+    global exception
+    assert exception != None
+    assert "Invalid unicode escape" in str(exception) or "Invalid input" in str(exception)

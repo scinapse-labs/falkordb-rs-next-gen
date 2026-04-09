@@ -29,7 +29,7 @@ use crate::parser::ast::{
     AllShortestPaths, BoundQueryIR, ExprIR, QueryExpr, QueryGraph, QueryIR, QueryNode, QueryPath,
     QueryRelationship, RawQueryIR, SetItem, SupportAggregation, Variable,
 };
-use crate::runtime::functions::{FnType, Type};
+use crate::runtime::functions::{FnArguments, FnType, Type};
 use crate::runtime::orderset::OrderSet;
 use crate::tree;
 use orx_tree::{Dfs, Dyn, DynNode, DynTree, NodeRef};
@@ -1008,27 +1008,21 @@ impl Binder {
             })
             .collect();
 
-        // When an ORDER BY expression is an aggregation that matches a
-        // projected aggregation, rewrite it to reference the projected alias
-        // before binding, so the binder resolves it as a simple variable in
-        // the child scope.  E.g. RETURN count(x) AS cnt ORDER BY count(x)
-        // becomes ORDER BY cnt.
+        // When an ORDER BY expression (or a sub-expression within it) is an
+        // aggregation that matches a projected aggregation, rewrite it to
+        // reference the projected alias before binding.
+        // E.g. RETURN count(x) AS cnt ORDER BY count(x)  →  ORDER BY cnt
+        // E.g. RETURN avg(x.age) AS a ORDER BY $p + avg(x.age) - 1000
+        //   →  ORDER BY $p + a - 1000
         let orderby: Vec<_> = orderby
             .iter()
             .map(|(expr, desc)| {
                 if expr.is_aggregation() {
-                    for (name, proj_expr) in exprs {
-                        if proj_expr.is_aggregation()
-                            && raw_exprs_structurally_equal(expr, proj_expr)
-                        {
-                            // Replace with a reference to the projected alias
-                            let replacement =
-                                Arc::new(DynTree::new(ExprIR::Variable(name.clone())));
-                            return (replacement, *desc);
-                        }
-                    }
+                    let replaced = replace_agg_subtrees(&expr.root(), exprs);
+                    (Arc::new(replaced), *desc)
+                } else {
+                    (expr.clone(), *desc)
                 }
-                (expr.clone(), *desc)
             })
             .collect();
 
@@ -1063,6 +1057,11 @@ impl Binder {
             }
         }
 
+        // Save env keys before binding filter/orderby/skip/limit so we can
+        // remove variables that were only added by those clauses.
+        let env_keys_before_filter: HashSet<Arc<String>> =
+            self.current_env().keys().cloned().collect();
+
         let skip = skip.map(|expr| self.bind_expr(&expr)).transpose()?;
         let limit = limit.map(|expr| self.bind_expr(&expr)).transpose()?;
         let filter = filter.map(|expr| self.bind_expr(&expr)).transpose()?;
@@ -1070,6 +1069,19 @@ impl Binder {
             && !Self::expr_may_return_boolean(f.root())
         {
             return Err(String::from("Expected boolean predicate"));
+        }
+
+        // Remove from current env any variables added only by filter/orderby/skip/limit.
+        // These should be available for the WHERE evaluation at runtime (kept in
+        // copy_from_parent) but not visible to subsequent clauses (RETURN *).
+        let filter_only_keys: Vec<Arc<String>> = self
+            .copy_from_parent
+            .keys()
+            .filter(|name| !env_keys_before_filter.contains(*name))
+            .cloned()
+            .collect();
+        for key in &filter_only_keys {
+            self.current_env_mut().remove(key);
         }
 
         let copy_from_parent = self
@@ -1728,6 +1740,7 @@ impl Binder {
                     .children()
                     .map(|child| self.bind_expr_node(expr, &child, locals))
                     .collect::<Result<Vec<_>, _>>()?;
+
                 let new_data = match node_ref.data().clone() {
                     ExprIR::Null => ExprIR::Null,
                     ExprIR::Bool(b) => ExprIR::Bool(b),
@@ -1782,7 +1795,29 @@ impl Binder {
                         }
                         ExprIR::Property(prop)
                     }
-                    ExprIR::FuncInvocation(func) => ExprIR::FuncInvocation(func),
+                    ExprIR::FuncInvocation(func) => {
+                        // Compile-time type check: validate argument types
+                        // against the function's declared parameter types.
+                        // Skip hasLabels — it is generated internally by the parser
+                        // for SET/REMOVE label operations, whose runtime operators
+                        // handle type checking with more precise error messages.
+                        if func.name != "hasLabels"
+                            && let FnArguments::Fixed(arg_types) = &func.args_type
+                        {
+                            for (i, expected_ty) in arg_types.iter().enumerate() {
+                                if let Some(child) = children.get(i)
+                                    && let ExprIR::Variable(var) = child.root().data()
+                                    && !var.ty.is_compatible_with(expected_ty)
+                                {
+                                    return Err(format!(
+                                        "Type mismatch: expected {expected_ty} but was {}",
+                                        var.ty
+                                    ));
+                                }
+                            }
+                        }
+                        ExprIR::FuncInvocation(func)
+                    }
                     ExprIR::Paren => ExprIR::Paren,
                     ExprIR::ShortestPath {
                         rel_types,
@@ -1830,7 +1865,13 @@ impl Binder {
                                 self.current_env_mut().insert(name.clone(), var.clone());
                             }
                         }
+
+                        // Save node_labels so labels from pattern predicates
+                        // (e.g. in WHERE clause OR branches) don't leak into
+                        // the outer MATCH pattern's label accumulation.
+                        let saved_labels = self.node_labels.clone();
                         let result = self.bind_graph(&pattern, false);
+                        self.node_labels = saved_labels;
 
                         // Remove pattern-local aliases so they don't leak into
                         // the outer scope.  Keep anonymous variables (_anon_*)
@@ -2131,6 +2172,36 @@ impl Binder {
             | ExprIR::Pattern(_) => false,
         }
     }
+}
+
+/// Recursively walk an ORDER BY expression tree and replace any aggregation
+/// sub-tree that structurally matches a projected aggregation with a variable
+/// reference to the projection alias.
+fn replace_agg_subtrees(
+    node: &DynNode<ExprIR<Arc<String>>>,
+    exprs: &[(Arc<String>, QueryExpr<Arc<String>>)],
+) -> DynTree<ExprIR<Arc<String>>> {
+    // If this node is an aggregate function, check if the subtree rooted here
+    // matches any projected aggregation.
+    if let ExprIR::FuncInvocation(func) = node.data()
+        && func.is_aggregate()
+    {
+        let subtree = node.clone_as_tree();
+        for (name, proj_expr) in exprs {
+            if proj_expr.is_aggregation() && raw_exprs_structurally_equal(&subtree, proj_expr) {
+                return DynTree::new(ExprIR::Variable(name.clone()));
+            }
+        }
+    }
+
+    // Not a matching aggregation — reconstruct this node with recursively
+    // processed children.
+    let mut new_tree = DynTree::new(node.data().clone());
+    for child in node.children() {
+        let child_tree = replace_agg_subtrees(&child, exprs);
+        new_tree.root_mut().push_child_tree(child_tree);
+    }
+    new_tree
 }
 
 /// Compare two raw (pre-bind) expression trees structurally, ignoring

@@ -32,8 +32,8 @@ use thin_vec::ThinVec;
 pub fn register(funcs: &mut Functions) {
     cypher_fn!(funcs, "starts_with",
         args: [
-            Type::Union(vec![Type::String, Type::Null]),
-            Type::Union(vec![Type::String, Type::Null]),
+            Type::Any,
+            Type::Any,
         ],
         ret: Type::Union(vec![Type::Bool, Type::Null]),
         internal,
@@ -43,16 +43,15 @@ pub fn register(funcs: &mut Functions) {
                 (Some(Value::String(s)), Some(Value::String(prefix))) => {
                     Ok(Value::Bool(s.starts_with(prefix.as_str())))
                 }
-                (_, Some(Value::Null)) | (Some(Value::Null), _) => Ok(Value::Null),
-                _ => unreachable!(),
+                _ => Ok(Value::Null),
             }
         }
     );
 
     cypher_fn!(funcs, "ends_with",
         args: [
-            Type::Union(vec![Type::String, Type::Null]),
-            Type::Union(vec![Type::String, Type::Null]),
+            Type::Any,
+            Type::Any,
         ],
         ret: Type::Union(vec![Type::Bool, Type::Null]),
         internal,
@@ -62,16 +61,15 @@ pub fn register(funcs: &mut Functions) {
                 (Some(Value::String(s)), Some(Value::String(suffix))) => {
                     Ok(Value::Bool(s.ends_with(suffix.as_str())))
                 }
-                (_, Some(Value::Null)) | (Some(Value::Null), _) => Ok(Value::Null),
-                _ => unreachable!(),
+                _ => Ok(Value::Null),
             }
         }
     );
 
     cypher_fn!(funcs, "contains",
         args: [
-            Type::Union(vec![Type::String, Type::Null]),
-            Type::Union(vec![Type::String, Type::Null]),
+            Type::Any,
+            Type::Any,
         ],
         ret: Type::Union(vec![Type::Bool, Type::Null]),
         internal,
@@ -81,8 +79,7 @@ pub fn register(funcs: &mut Functions) {
                 (Some(Value::String(s)), Some(Value::String(substring))) => {
                     Ok(Value::Bool(s.contains(substring.as_str())))
                 }
-                (_, Some(Value::Null)) | (Some(Value::Null), _) => Ok(Value::Null),
-                _ => unreachable!(),
+                _ => Ok(Value::Null),
             }
         }
     );

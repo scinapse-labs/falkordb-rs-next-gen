@@ -262,31 +262,34 @@ class testList(FlowTestsBase):
         actual_result = self.graph.query(query)
         self.env.assertEqual(actual_result.result_set[0], expected_result)
 
-        # Tests with empty array result
-        query = """MATCH (n:X) RETURN toBooleanList(n)"""
-        expected_result = []
-        actual_result = self.graph.query(query)
-        self.env.assertEqual(actual_result.result_set, expected_result)
+        # Tests with type mismatch for node/edge/path inputs
+        try:
+            self.graph.query("""MATCH (n:X) RETURN toBooleanList(n)""")
+            self.env.assertTrue(False)
+        except ResponseError as e:
+            self.env.assertContains("Type mismatch: expected List or Null but was Node", str(e))
 
         query = """MATCH (n:X) RETURN toBooleanList([n])"""
         expected_result = []
         actual_result = self.graph.query(query)
         self.env.assertEqual(actual_result.result_set, expected_result)
 
-        query = """MATCH ()-[e]->() RETURN toBooleanList(e)"""
-        expected_result = []
-        actual_result = self.graph.query(query)
-        self.env.assertEqual(actual_result.result_set, expected_result)
+        try:
+            self.graph.query("""MATCH ()-[e]->() RETURN toBooleanList(e)""")
+            self.env.assertTrue(False)
+        except ResponseError as e:
+            self.env.assertContains("Type mismatch: expected List or Null but was Edge", str(e))
 
         query = """MATCH ()-[e]->() RETURN toBooleanList([e])"""
         expected_result = []
         actual_result = self.graph.query(query)
         self.env.assertEqual(actual_result.result_set, expected_result)
 
-        query = """MATCH p=()-[]->() RETURN toBooleanList(p)"""
-        expected_result = []
-        actual_result = self.graph.query(query)
-        self.env.assertEqual(actual_result.result_set, expected_result)
+        try:
+            self.graph.query("""MATCH p=()-[]->() RETURN toBooleanList(p)""")
+            self.env.assertTrue(False)
+        except ResponseError as e:
+            self.env.assertContains("Type mismatch: expected List or Null but was Path", str(e))
 
         query = """MATCH p=()-[]->() RETURN toBooleanList([p])"""
         expected_result = []
@@ -406,31 +409,34 @@ class testList(FlowTestsBase):
         actual_result = self.graph.query(query)
         self.env.assertAlmostEqual(float(actual_result.result_set[0][0][0]), expected_result, 1e-5)
 
-        # Tests with empty array result
-        query = """MATCH (n:X) RETURN toFloatList(n)"""
-        expected_result = []
-        actual_result = self.graph.query(query)
-        self.env.assertEqual(actual_result.result_set, expected_result)
+        # Tests with type mismatch for node/edge/path inputs
+        try:
+            self.graph.query("""MATCH (n:X) RETURN toFloatList(n)""")
+            self.env.assertTrue(False)
+        except ResponseError as e:
+            self.env.assertContains("Type mismatch: expected List or Null but was Node", str(e))
 
         query = """MATCH (n:X) RETURN toFloatList([n])"""
         expected_result = []
         actual_result = self.graph.query(query)
         self.env.assertEqual(actual_result.result_set, expected_result)
 
-        query = """MATCH ()-[e]->() RETURN toFloatList(e)"""
-        expected_result = []
-        actual_result = self.graph.query(query)
-        self.env.assertEqual(actual_result.result_set, expected_result)
+        try:
+            self.graph.query("""MATCH ()-[e]->() RETURN toFloatList(e)""")
+            self.env.assertTrue(False)
+        except ResponseError as e:
+            self.env.assertContains("Type mismatch: expected List or Null but was Edge", str(e))
 
         query = """MATCH ()-[e]->() RETURN toFloatList([e])"""
         expected_result = []
         actual_result = self.graph.query(query)
         self.env.assertEqual(actual_result.result_set, expected_result)
 
-        query = """MATCH p=()-[]->() RETURN toFloatList(p)"""
-        expected_result = []
-        actual_result = self.graph.query(query)
-        self.env.assertEqual(actual_result.result_set, expected_result)
+        try:
+            self.graph.query("""MATCH p=()-[]->() RETURN toFloatList(p)""")
+            self.env.assertTrue(False)
+        except ResponseError as e:
+            self.env.assertContains("Type mismatch: expected List or Null but was Path", str(e))
 
         query = """MATCH p=()-[]->() RETURN toFloatList([p])"""
         expected_result = []
@@ -547,31 +553,34 @@ class testList(FlowTestsBase):
         actual_result = self.graph.query(query)
         self.env.assertEqual(actual_result.result_set[0], expected_result)
 
-        # Tests with empty array result
-        query = """MATCH (n:X) RETURN toIntegerList(n)"""
-        expected_result = []
-        actual_result = self.graph.query(query)
-        self.env.assertEqual(actual_result.result_set, expected_result)
+        # Tests with type mismatch for node/edge/path inputs
+        try:
+            self.graph.query("""MATCH (n:X) RETURN toIntegerList(n)""")
+            self.env.assertTrue(False)
+        except ResponseError as e:
+            self.env.assertContains("Type mismatch: expected List or Null but was Node", str(e))
 
         query = """MATCH (n:X) RETURN toIntegerList([n])"""
         expected_result = []
         actual_result = self.graph.query(query)
         self.env.assertEqual(actual_result.result_set, expected_result)
 
-        query = """MATCH ()-[e]->() RETURN toIntegerList(e)"""
-        expected_result = []
-        actual_result = self.graph.query(query)
-        self.env.assertEqual(actual_result.result_set, expected_result)
+        try:
+            self.graph.query("""MATCH ()-[e]->() RETURN toIntegerList(e)""")
+            self.env.assertTrue(False)
+        except ResponseError as e:
+            self.env.assertContains("Type mismatch: expected List or Null but was Edge", str(e))
 
         query = """MATCH ()-[e]->() RETURN toIntegerList([e])"""
         expected_result = []
         actual_result = self.graph.query(query)
         self.env.assertEqual(actual_result.result_set, expected_result)
 
-        query = """MATCH p=()-[]->() RETURN toIntegerList(p)"""
-        expected_result = []
-        actual_result = self.graph.query(query)
-        self.env.assertEqual(actual_result.result_set, expected_result)
+        try:
+            self.graph.query("""MATCH p=()-[]->() RETURN toIntegerList(p)""")
+            self.env.assertTrue(False)
+        except ResponseError as e:
+            self.env.assertContains("Type mismatch: expected List or Null but was Path", str(e))
 
         query = """MATCH p=()-[]->() RETURN toIntegerList([p])"""
         expected_result = []
@@ -690,7 +699,7 @@ class testList(FlowTestsBase):
 
         # Test list with float values
         query = """RETURN toStringList([0.32425, 5.32, 7.1])"""
-        expected_result = [['0.324250', '5.320000', '7.100000']]
+        expected_result = [['0.32425', '5.32', '7.1']]
         actual_result = self.graph.query(query)
         self.env.assertEqual(actual_result.result_set[0], expected_result)
 
@@ -700,31 +709,34 @@ class testList(FlowTestsBase):
         actual_result = self.graph.query(query)
         self.env.assertEqual(actual_result.result_set[0], expected_result)
 
-        # Tests with empty array result
-        query = """MATCH (n:X) RETURN toStringList(n)"""
-        expected_result = []
-        actual_result = self.graph.query(query)
-        self.env.assertEqual(actual_result.result_set, expected_result)
+        # Tests with type mismatch for node/edge/path inputs
+        try:
+            self.graph.query("""MATCH (n:X) RETURN toStringList(n)""")
+            self.env.assertTrue(False)
+        except ResponseError as e:
+            self.env.assertContains("Type mismatch: expected List or Null but was Node", str(e))
 
         query = """MATCH (n:X) RETURN toStringList([n])"""
         expected_result = []
         actual_result = self.graph.query(query)
         self.env.assertEqual(actual_result.result_set, expected_result)
 
-        query = """MATCH ()-[e]->() RETURN toStringList(e)"""
-        expected_result = []
-        actual_result = self.graph.query(query)
-        self.env.assertEqual(actual_result.result_set, expected_result)
+        try:
+            self.graph.query("""MATCH ()-[e]->() RETURN toStringList(e)""")
+            self.env.assertTrue(False)
+        except ResponseError as e:
+            self.env.assertContains("Type mismatch: expected List or Null but was Edge", str(e))
 
         query = """MATCH ()-[e]->() RETURN toStringList([e])"""
         expected_result = []
         actual_result = self.graph.query(query)
         self.env.assertEqual(actual_result.result_set, expected_result)
 
-        query = """MATCH p=()-[]->() RETURN toStringList(p)"""
-        expected_result = []
-        actual_result = self.graph.query(query)
-        self.env.assertEqual(actual_result.result_set, expected_result)
+        try:
+            self.graph.query("""MATCH p=()-[]->() RETURN toStringList(p)""")
+            self.env.assertTrue(False)
+        except ResponseError as e:
+            self.env.assertContains("Type mismatch: expected List or Null but was Path", str(e))
 
         query = """MATCH p=()-[]->() RETURN toStringList([p])"""
         expected_result = []

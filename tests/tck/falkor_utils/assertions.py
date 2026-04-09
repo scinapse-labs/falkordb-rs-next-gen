@@ -90,7 +90,12 @@ def prepareActualValue(actualValue):
                 num_str += '0.' + zeroes * '0' + actualValue[:e_index].replace("-", "").replace(".", "")
                 actualValue = num_str
     elif isinstance(actualValue, str):
-        actualValue = f"'{actualValue}'"
+        escaped = actualValue.replace("\\", "\\\\")
+        escaped = escaped.replace("\n", "\\n")
+        escaped = escaped.replace("\t", "\\t")
+        escaped = escaped.replace("\r", "\\r")
+        escaped = escaped.replace("'", "\\'")
+        actualValue = f"'{escaped}'"
     elif isinstance(actualValue, Node):
         actualValue = nodeToString(actualValue)
     elif isinstance(actualValue, Edge):
@@ -113,7 +118,7 @@ def prepare_actual_row(row):
 
 
 def prepare_expected_row(row):
-    return tuple(cell for cell in row)
+    return tuple(cell.replace("\\\\", "\\") for cell in row)
 
 
 def assert_empty_resultset(resultset):
@@ -169,4 +174,36 @@ def assert_resultsets_equals(actual, expected):
     actualCtr = Counter(prepare_actual_row(row) for row in actual.result_set)
     expectedCtr = Counter(prepare_expected_row(row) for row in expected)
     # Validate that the constructed Counters are equal
+    assert actualCtr == expectedCtr
+
+
+def sort_list_value(value):
+    """Sort list values for order-insensitive comparison."""
+    if isinstance(value, list):
+        sorted_items = sorted(value, key=lambda x: prepareActualValue(x))
+        return listToString(sorted_items)
+    return prepareActualValue(value)
+
+
+def prepare_actual_row_ignore_list_order(row):
+    return tuple(sort_list_value(cell) for cell in row)
+
+
+def prepare_expected_row_sorted_lists(row):
+    """Parse expected cell values, sorting any list literals."""
+    result = []
+    for cell in row:
+        s = cell.strip()
+        if s.startswith('[') and s.endswith(']'):
+            # Sort the list elements for comparison
+            items = sorted(s[1:-1].split(', '))
+            result.append('[' + ', '.join(items) + ']')
+        else:
+            result.append(cell)
+    return tuple(result)
+
+
+def assert_resultsets_equals_ignore_list_order(actual, expected):
+    actualCtr = Counter(prepare_actual_row_ignore_list_order(row) for row in actual.result_set)
+    expectedCtr = Counter(prepare_expected_row_sorted_lists(row) for row in expected)
     assert actualCtr == expectedCtr

@@ -86,6 +86,30 @@ pub fn cypher_unescape(input: &str) -> Result<String, String> {
                 Some('\'') => result.push('\''),      // Single quote
                 Some('"') => result.push('"'),        // Double quote
                 Some('?') => result.push('?'),        // Question mark
+                Some('u') => {
+                    // \uXXXX - 4-digit hex Unicode escape
+                    let hex: String = chars.by_ref().take(4).collect();
+                    if hex.len() != 4 {
+                        return Err(format!("Invalid unicode escape: \\u{hex}"));
+                    }
+                    let code = u32::from_str_radix(&hex, 16)
+                        .map_err(|_| format!("Invalid unicode escape: \\u{hex}"))?;
+                    let c = char::from_u32(code)
+                        .ok_or_else(|| format!("Invalid unicode code point: \\u{hex}"))?;
+                    result.push(c);
+                }
+                Some('U') => {
+                    // \UXXXXXXXX - 8-digit hex Unicode escape
+                    let hex: String = chars.by_ref().take(8).collect();
+                    if hex.len() != 8 {
+                        return Err(format!("Invalid unicode escape: \\U{hex}"));
+                    }
+                    let code = u32::from_str_radix(&hex, 16)
+                        .map_err(|_| format!("Invalid unicode escape: \\U{hex}"))?;
+                    let c = char::from_u32(code)
+                        .ok_or_else(|| format!("Invalid unicode code point: \\U{hex}"))?;
+                    result.push(c);
+                }
                 Some(other) => {
                     // Unrecognized escape sequence - keep as-is
                     result.push('\\');
