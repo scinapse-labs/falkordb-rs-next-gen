@@ -1,13 +1,10 @@
 expressions
 clauses/call
 clauses/create
-clauses/delete/Delete1.feature
-clauses/delete/Delete2.feature
-clauses/delete/Delete3.feature
-clauses/delete/Delete5.feature
-clauses/delete/Delete6.feature
+clauses/delete
 clauses/match/Match1.feature
 clauses/match/Match2.feature
+clauses/match-where
 clauses/remove
 clauses/return/
 clauses/return-orderby

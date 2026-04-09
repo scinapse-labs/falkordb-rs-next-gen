@@ -1780,16 +1780,21 @@ impl Binder {
                     ExprIR::FuncInvocation(func) => {
                         // Compile-time type check: validate argument types
                         // against the function's declared parameter types.
-                        if let FnArguments::Fixed(arg_types) = &func.args_type {
-                            for (i, expected_ty) in arg_types.iter().enumerate() {
-                                if let Some(child) = children.get(i)
-                                    && let ExprIR::Variable(var) = child.root().data()
-                                    && !var.ty.is_compatible_with(expected_ty)
-                                {
-                                    return Err(format!(
-                                        "Type mismatch: expected {expected_ty} but was {}",
-                                        var.ty
-                                    ));
+                        // Skip hasLabels — it is generated internally by the parser
+                        // for SET/REMOVE label operations, whose runtime operators
+                        // handle type checking with more precise error messages.
+                        if func.name != "hasLabels" {
+                            if let FnArguments::Fixed(arg_types) = &func.args_type {
+                                for (i, expected_ty) in arg_types.iter().enumerate() {
+                                    if let Some(child) = children.get(i)
+                                        && let ExprIR::Variable(var) = child.root().data()
+                                        && !var.ty.is_compatible_with(expected_ty)
+                                    {
+                                        return Err(format!(
+                                            "Type mismatch: expected {expected_ty} but was {}",
+                                            var.ty
+                                        ));
+                                    }
                                 }
                             }
                         }

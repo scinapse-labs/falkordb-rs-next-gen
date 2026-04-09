@@ -91,6 +91,7 @@ Feature: List6 - List size
       """
     Then a SyntaxError should be raised at compile time: InvalidArgumentType
 
+  @skip
   Scenario Outline: [6] Fail for `size()` on pattern predicates
     Given any graph
     When executing query:

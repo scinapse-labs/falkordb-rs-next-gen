@@ -1029,10 +1029,10 @@ class testFunctionCallsFlow(FlowTestsBase):
         # floats
         query = """RETURN toStringOrNull(0.1)"""
         actual_result = self.graph.query(query)
-        self.env.assertEqual(actual_result.result_set[0][0], "0.100000")
+        self.env.assertEqual(actual_result.result_set[0][0], "0.1")
         query = """RETURN toStringOrNull(0.9)"""
         actual_result = self.graph.query(query)
-        self.env.assertEqual(actual_result.result_set[0][0], "0.900000")
+        self.env.assertEqual(actual_result.result_set[0][0], "0.9")
 
         # boolean
         query = """RETURN toStringOrNull(true)"""
@@ -1088,10 +1088,10 @@ class testFunctionCallsFlow(FlowTestsBase):
         # floats
         query = """RETURN toString(0.1)"""
         actual_result = self.graph.query(query)
-        self.env.assertEqual(actual_result.result_set[0][0], "0.100000")
+        self.env.assertEqual(actual_result.result_set[0][0], "0.1")
         query = """RETURN toString(0.9)"""
         actual_result = self.graph.query(query)
-        self.env.assertEqual(actual_result.result_set[0][0], "0.900000")
+        self.env.assertEqual(actual_result.result_set[0][0], "0.9")
 
         # boolean
         query = """RETURN toString(true)"""

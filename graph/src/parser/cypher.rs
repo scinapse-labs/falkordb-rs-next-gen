@@ -876,7 +876,13 @@ impl<'a> Parser<'a> {
         } = self.lexer.current()?
         {
             self.lexer.next();
-            return Ok(Some(Arc::new(self.parse_expr(true)?)));
+            let expr = self.parse_expr(true)?;
+            if let Some(func) = Self::find_aggregate_name(&expr) {
+                return Err(self
+                    .lexer
+                    .format_error(&format!("Invalid use of aggregating function '{func}'")));
+            }
+            return Ok(Some(Arc::new(expr)));
         }
         Ok(None)
     }
@@ -1681,7 +1687,7 @@ impl<'a> Parser<'a> {
 
                         let mut args = self.parse_expression_list(
                             ExpressionListType::ZeroOrMoreClosedBy(RParen),
-                            false,
+                            allow_pattern_predicate,
                         )?;
                         func.validate(args.len())?;
 
@@ -1705,7 +1711,7 @@ impl<'a> Parser<'a> {
 
                     let args = self.parse_expression_list(
                         ExpressionListType::ZeroOrMoreClosedBy(RParen),
-                        false,
+                        allow_pattern_predicate,
                     )?;
                     func.validate(args.len())?;
                     if distinct && args.is_empty() {
