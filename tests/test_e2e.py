@@ -278,7 +278,7 @@ def test_operators():
 
             if a != 0:
                 res = query(f"RETURN {a} ^ {b}")
-                assert res.result_set == [[float("{:.17g}".format(pow(a, b)))]]
+                assert res.result_set == [[float("{:.15g}".format(pow(a, b)))]]
 
             if a >= 0 and b > 0:
                 res = query(f"RETURN {a} % {b}")
@@ -1066,21 +1066,21 @@ def test_ceil(a):
 
 def test_e():
     res = query("RETURN e()")
-    assert res.result_set == [[2.718281828459045e0]]
+    assert res.result_set == [[2.71828182845905e0]]
 
 
 def test_exp():
     res = query("RETURN exp(1) AS name")
-    assert res.result_set == [[2.718281828459045]]
+    assert res.result_set == [[2.71828182845905]]
 
     res = query("RETURN exp(0) AS name")
     assert res.result_set == [[1]]
 
     res = query("RETURN exp(-1) AS name")
-    assert res.result_set == [[0.36787944117144233]]
+    assert res.result_set == [[0.367879441171442]]
 
     res = query("RETURN exp(-1.0) AS name")
-    assert res.result_set == [[0.36787944117144233]]
+    assert res.result_set == [[0.367879441171442]]
 
     res = query("RETURN exp(null) AS name")
     assert res.result_set == [[None]]

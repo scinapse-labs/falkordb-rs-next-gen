@@ -1783,18 +1783,18 @@ impl Binder {
                         // Skip hasLabels — it is generated internally by the parser
                         // for SET/REMOVE label operations, whose runtime operators
                         // handle type checking with more precise error messages.
-                        if func.name != "hasLabels" {
-                            if let FnArguments::Fixed(arg_types) = &func.args_type {
-                                for (i, expected_ty) in arg_types.iter().enumerate() {
-                                    if let Some(child) = children.get(i)
-                                        && let ExprIR::Variable(var) = child.root().data()
-                                        && !var.ty.is_compatible_with(expected_ty)
-                                    {
-                                        return Err(format!(
-                                            "Type mismatch: expected {expected_ty} but was {}",
-                                            var.ty
-                                        ));
-                                    }
+                        if func.name != "hasLabels"
+                            && let FnArguments::Fixed(arg_types) = &func.args_type
+                        {
+                            for (i, expected_ty) in arg_types.iter().enumerate() {
+                                if let Some(child) = children.get(i)
+                                    && let ExprIR::Variable(var) = child.root().data()
+                                    && !var.ty.is_compatible_with(expected_ty)
+                                {
+                                    return Err(format!(
+                                        "Type mismatch: expected {expected_ty} but was {}",
+                                        var.ty
+                                    ));
                                 }
                             }
                         }
@@ -1847,7 +1847,13 @@ impl Binder {
                                 self.current_env_mut().insert(name.clone(), var.clone());
                             }
                         }
+
+                        // Save node_labels so labels from pattern predicates
+                        // (e.g. in WHERE clause OR branches) don't leak into
+                        // the outer MATCH pattern's label accumulation.
+                        let saved_labels = self.node_labels.clone();
                         let result = self.bind_graph(&pattern, false);
+                        self.node_labels = saved_labels;
 
                         // Remove pattern-local aliases so they don't leak into
                         // the outer scope.  Keep anonymous variables (_anon_*)

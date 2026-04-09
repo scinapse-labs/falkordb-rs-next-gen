@@ -114,25 +114,39 @@ impl<'a> CondTraverseOp<'a> {
         // C FalkorDB's matrix-multiply semantics.  Use the child's
         // from-alias as the dedup source so we deduplicate by
         // (original_scan_source, final_destination).
-        let (bidir_dedup, dedup_source_alias) = if !emit_relationship && rp.bidirectional {
-            if let BatchOp::CondTraverse(ref child_ct) = *child {
-                if !child_ct.emit_relationship && child_ct.rev_matrix.is_some() {
-                    (
-                        Some(std::cell::RefCell::new(std::collections::HashSet::<(
-                            u64,
-                            u64,
-                        )>::new())),
-                        Some(child_ct.relationship_pattern.from.alias.clone()),
-                    )
+        //
+        // Only enable when the intermediate node (this CT's from-alias,
+        // which is the child CT's to-alias) is anonymous.  If the
+        // intermediate is a user-named variable it may be referenced by
+        // downstream operators (e.g. ExpandInto), so collapsing rows
+        // with different intermediate values would lose valid results.
+        let intermediate_is_anon = rp
+            .from
+            .alias
+            .name
+            .as_ref()
+            .is_some_and(|n| n.starts_with("_anon"));
+        let (bidir_dedup, dedup_source_alias) =
+            if !emit_relationship && rp.bidirectional && intermediate_is_anon {
+                if let BatchOp::CondTraverse(ref child_ct) = *child {
+                    if !child_ct.emit_relationship && child_ct.rev_matrix.is_some() {
+                        (
+                            Some(std::cell::RefCell::new(std::collections::HashSet::<(
+                                u64,
+                                u64,
+                            )>::new(
+                            ))),
+                            Some(child_ct.relationship_pattern.from.alias.clone()),
+                        )
+                    } else {
+                        (None, None)
+                    }
                 } else {
                     (None, None)
                 }
             } else {
                 (None, None)
-            }
-        } else {
-            (None, None)
-        };
+            };
 
         Self {
             runtime,
