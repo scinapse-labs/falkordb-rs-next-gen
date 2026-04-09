@@ -39,8 +39,8 @@ use std::{
 use thin_vec::{ThinVec, thin_vec};
 
 use crate::{
-    graph::graph::{LabelId, NodeId, RelationshipId, TypeId},
-    runtime::{functions::Type, ordermap::OrderMap},
+    graph::graph::{LabelId, NodeId, RelationshipId},
+    runtime::{functions::Type, ordermap::OrderMap, runtime::Runtime},
 };
 
 /// A trait for formatting values as JSON, similar to Display but for JSON output
@@ -48,7 +48,7 @@ pub trait DisplayJson {
     fn fmt_json(
         &self,
         f: &mut fmt::Formatter<'_>,
-        runtime: &crate::runtime::runtime::Runtime,
+        runtime: &Runtime<'_>,
     ) -> fmt::Result;
 }
 
@@ -74,17 +74,17 @@ impl DeletedNode {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct DeletedRelationship {
-    pub type_id: TypeId,
+    pub type_name: Arc<String>,
     pub attrs: OrderMap<Arc<String>, Value>,
 }
 
 impl DeletedRelationship {
     #[must_use]
     pub const fn new(
-        type_id: TypeId,
+        type_name: Arc<String>,
         attrs: OrderMap<Arc<String>, Value>,
     ) -> Self {
-        Self { type_id, attrs }
+        Self { type_name, attrs }
     }
 }
 
@@ -165,7 +165,7 @@ impl Point {
 ///
 /// Values are cloneable and use Arc for large data (strings, shared values)
 /// to minimize copying during query execution.
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default)]
 pub enum Value {
     /// Cypher NULL value - represents missing or unknown data
     #[default]
@@ -192,13 +192,13 @@ pub enum Value {
     VecF32(Arc<ThinVec<f32>>),
     /// Geographic point (latitude, longitude)
     Point(Point),
-    /// DateTime as Unix timestamp in milliseconds
+    /// DateTime as Unix timestamp in seconds
     Datetime(i64),
-    /// Date as Unix timestamp in milliseconds (midnight UTC)
+    /// Date as Unix timestamp in seconds (midnight UTC)
     Date(i64),
-    /// Time as nanoseconds from midnight
+    /// Time as seconds from epoch (base date 1970-01-01)
     Time(i64),
-    /// Duration in milliseconds
+    /// Duration as seconds from epoch (offset encoding)
     Duration(i64),
 }
 
@@ -215,38 +215,74 @@ impl Value {
     }
 
     #[must_use]
-    pub fn format_datetime(timestamp_ms: i64) -> String {
+    pub fn format_datetime(timestamp_secs: i64) -> String {
         use chrono::{TimeZone, Utc};
-        match Utc.timestamp_millis_opt(timestamp_ms) {
+        match Utc.timestamp_opt(timestamp_secs, 0) {
             chrono::LocalResult::Single(dt) => dt.format("%Y-%m-%dT%H:%M:%S").to_string(),
-            _ => format!("<invalid timestamp: {timestamp_ms}>"),
+            _ => format!("<invalid timestamp: {timestamp_secs}>"),
         }
     }
 
     // Format date as ISO-8601: "2025-04-14"
     #[must_use]
-    pub fn format_date(timestamp_ms: i64) -> String {
+    pub fn format_date(timestamp_secs: i64) -> String {
         use chrono::{TimeZone, Utc};
-        match Utc.timestamp_millis_opt(timestamp_ms) {
+        match Utc.timestamp_opt(timestamp_secs, 0) {
             chrono::LocalResult::Single(dt) => dt.format("%Y-%m-%d").to_string(),
-            _ => format!("<invalid timestamp: {timestamp_ms}>"),
+            _ => format!("<invalid timestamp: {timestamp_secs}>"),
         }
     }
 
     // Format time as ISO-8601: "06:08:21"
     #[must_use]
-    pub fn format_time(timestamp_ms: i64) -> String {
+    pub fn format_time(timestamp_secs: i64) -> String {
         use chrono::{TimeZone, Utc};
-        match Utc.timestamp_millis_opt(timestamp_ms) {
+        match Utc.timestamp_opt(timestamp_secs, 0) {
             chrono::LocalResult::Single(dt) => dt.format("%H:%M:%S").to_string(),
-            _ => format!("<invalid timestamp: {timestamp_ms}>"),
+            _ => format!("<invalid timestamp: {timestamp_secs}>"),
         }
     }
 
     #[must_use]
-    pub fn format_duration(duration_ms: i64) -> String {
-        let seconds = duration_ms / 1000;
-        format!("PT{seconds}S")
+    pub fn format_duration(duration_secs: i64) -> String {
+        format!("PT{duration_secs}S")
+    }
+
+    /// Estimate the heap-allocated bytes owned by this value.
+    ///
+    /// Used by the in-memory attribute cache to track memory consumption.
+    /// Returns only the *extra* heap allocation beyond the `Value` enum itself.
+    #[must_use]
+    pub fn heap_size(&self) -> usize {
+        match self {
+            Self::Null
+            | Self::Bool(_)
+            | Self::Int(_)
+            | Self::Float(_)
+            | Self::Point(_)
+            | Self::Datetime(_)
+            | Self::Date(_)
+            | Self::Time(_)
+            | Self::Duration(_)
+            | Self::Node(_) => 0,
+            Self::String(s) => std::mem::size_of::<String>() + s.len(),
+            Self::List(l) | Self::Path(l) => {
+                let header = l.len() * std::mem::size_of::<Self>();
+                header + l.iter().map(Self::heap_size).sum::<usize>()
+            }
+            Self::Map(m) => m
+                .iter()
+                .map(|(k, v)| {
+                    std::mem::size_of::<Arc<String>>()
+                        + std::mem::size_of::<String>()
+                        + k.len()
+                        + std::mem::size_of::<Self>()
+                        + v.heap_size()
+                })
+                .sum(),
+            Self::Relationship(_) => std::mem::size_of::<(RelationshipId, NodeId, NodeId)>(),
+            Self::VecF32(v) => v.len() * std::mem::size_of::<f32>(),
+        }
     }
 
     /// Get a named attribute/component from this value.
@@ -286,15 +322,15 @@ impl Value {
         }
     }
 
-    /// Extract a component from a datetime value (stored as milliseconds since
+    /// Extract a component from a datetime value (stored as seconds since
     /// epoch).  Mirrors the C `DateTime_getComponent` in `datetime.c`.
     fn get_datetime_component(
-        timestamp_ms: i64,
+        timestamp_secs: i64,
         component: &str,
     ) -> Result<Self, String> {
         use chrono::{Datelike, TimeZone, Timelike, Utc};
 
-        let chrono::LocalResult::Single(dt) = Utc.timestamp_millis_opt(timestamp_ms) else {
+        let chrono::LocalResult::Single(dt) = Utc.timestamp_opt(timestamp_secs, 0) else {
             return Ok(Self::Null);
         };
 
@@ -334,7 +370,7 @@ impl Value {
                 .ok_or_else(|| "Invalid quarter start date".to_string())?;
             (dt.date_naive() - quarter_start.date_naive()).num_days() + 1
         } else if c.eq_ignore_ascii_case("millisecond") {
-            timestamp_ms.rem_euclid(1000)
+            0
         } else if c.eq_ignore_ascii_case("microsecond") || c.eq_ignore_ascii_case("nanosecond") {
             // microsecond/nanosecond precision not stored
             0
@@ -345,15 +381,15 @@ impl Value {
         Ok(Self::Int(val))
     }
 
-    /// Extract a component from a date value (stored as milliseconds since
+    /// Extract a component from a date value (stored as seconds since
     /// epoch at midnight UTC).  Mirrors the C `Date_getComponent` in `date.c`.
     fn get_date_component(
-        timestamp_ms: i64,
+        timestamp_secs: i64,
         component: &str,
     ) -> Result<Self, String> {
         use chrono::{Datelike, TimeZone, Utc};
 
-        let chrono::LocalResult::Single(dt) = Utc.timestamp_millis_opt(timestamp_ms) else {
+        let chrono::LocalResult::Single(dt) = Utc.timestamp_opt(timestamp_secs, 0) else {
             return Ok(Self::Null);
         };
 
@@ -392,16 +428,16 @@ impl Value {
         Ok(Self::Int(val))
     }
 
-    /// Extract a component from a time value (stored as milliseconds since
+    /// Extract a component from a time value (stored as seconds since
     /// epoch with a fixed base date).  Mirrors the C `Time_getComponent` in
     /// `time.c`.
     fn get_time_component(
-        timestamp_ms: i64,
+        timestamp_secs: i64,
         component: &str,
     ) -> Result<Self, String> {
         use chrono::{TimeZone, Timelike, Utc};
 
-        let chrono::LocalResult::Single(dt) = Utc.timestamp_millis_opt(timestamp_ms) else {
+        let chrono::LocalResult::Single(dt) = Utc.timestamp_opt(timestamp_secs, 0) else {
             return Ok(Self::Null);
         };
 
@@ -419,12 +455,12 @@ impl Value {
         Ok(Self::Int(val))
     }
 
-    /// Extract a component from a duration value (stored as milliseconds from
+    /// Extract a component from a duration value (stored as seconds from
     /// epoch).  Mirrors the C `Duration_getComponent` in `duration.c` which
     /// calls `duration_from_time_t_utc` to decompose the raw value back into
     /// calendar / clock fields.
     fn get_duration_component(
-        duration_ms: i64,
+        duration_secs: i64,
         component: &str,
     ) -> Result<Self, String> {
         use chrono::{Datelike, TimeZone, Utc};
@@ -447,7 +483,7 @@ impl Value {
             return Ok(Self::Float(0.0));
         }
 
-        let chrono::LocalResult::Single(dt) = Utc.timestamp_millis_opt(duration_ms) else {
+        let chrono::LocalResult::Single(dt) = Utc.timestamp_opt(duration_secs, 0) else {
             return Ok(Self::Null);
         };
 
@@ -488,11 +524,11 @@ impl Value {
             .single()
             .ok_or_else(|| {
                 format!(
-                    "Invalid anchor date for duration decomposition (duration_ms={duration_ms})"
+                    "Invalid anchor date for duration decomposition (duration_secs={duration_secs})"
                 )
             })?;
 
-        let remaining_secs = (duration_ms / 1000) - anchor.timestamp();
+        let remaining_secs = duration_secs - anchor.timestamp();
 
         let val: f64 = if c.eq_ignore_ascii_case("days") {
             (remaining_secs / 86400) as f64
@@ -507,6 +543,92 @@ impl Value {
 
         Ok(Self::Float(val))
     }
+}
+
+/// Add a duration (encoded as seconds-from-epoch offset) to a timestamp.
+/// Decomposes the duration into years, months, remaining seconds, applies them.
+fn add_duration_to_timestamp(
+    ts: i64,
+    dur_secs: i64,
+) -> Result<i64, String> {
+    use crate::runtime::functions::temporal::decompose_duration;
+    use chrono::{Datelike, TimeZone, Timelike, Utc};
+
+    let (years, months, remaining_secs) = decompose_duration(dur_secs)?;
+    let dt = Utc
+        .timestamp_opt(ts, 0)
+        .single()
+        .ok_or("Invalid timestamp")?;
+
+    let new_year = dt.year() + years;
+    let new_month_raw = dt.month() as i32 + months;
+    let adj_year = new_year + (new_month_raw - 1).div_euclid(12);
+    let adj_month = ((new_month_raw - 1).rem_euclid(12) + 1) as u32;
+    let max_day = days_in_month(adj_year, adj_month);
+    let day = dt.day().min(max_day);
+
+    let new_dt = Utc
+        .with_ymd_and_hms(
+            adj_year,
+            adj_month,
+            day,
+            dt.hour(),
+            dt.minute(),
+            dt.second(),
+        )
+        .single()
+        .ok_or("Invalid resulting date")?;
+
+    Ok(new_dt.timestamp() + remaining_secs)
+}
+
+/// Subtract a duration from a timestamp.
+fn sub_duration_from_timestamp(
+    ts: i64,
+    dur_secs: i64,
+) -> Result<i64, String> {
+    use crate::runtime::functions::temporal::decompose_duration;
+    use chrono::{Datelike, TimeZone, Timelike, Utc};
+
+    let (years, months, remaining_secs) = decompose_duration(dur_secs)?;
+    let dt = Utc
+        .timestamp_opt(ts, 0)
+        .single()
+        .ok_or("Invalid timestamp")?;
+
+    let new_year = dt.year() - years;
+    let new_month_raw = dt.month() as i32 - months;
+    let adj_year = new_year + (new_month_raw - 1).div_euclid(12);
+    let adj_month = ((new_month_raw - 1).rem_euclid(12) + 1) as u32;
+    let max_day = days_in_month(adj_year, adj_month);
+    let day = dt.day().min(max_day);
+
+    let new_dt = Utc
+        .with_ymd_and_hms(
+            adj_year,
+            adj_month,
+            day,
+            dt.hour(),
+            dt.minute(),
+            dt.second(),
+        )
+        .single()
+        .ok_or("Invalid resulting date")?;
+
+    Ok(new_dt.timestamp() - remaining_secs)
+}
+
+fn days_in_month(
+    year: i32,
+    month: u32,
+) -> u32 {
+    use chrono::{Datelike, NaiveDate};
+    if month == 12 {
+        NaiveDate::from_ymd_opt(year + 1, 1, 1)
+    } else {
+        NaiveDate::from_ymd_opt(year, month + 1, 1)
+    }
+    .map_or(30, |d| d.pred_opt().unwrap().day())
 }
 
 impl Hash for Value {
@@ -642,10 +764,36 @@ impl Add for Value {
                 }
                 Ok(Self::Map(Arc::new(map)))
             }
-            (Self::String(a), Self::String(b)) => Ok(Self::String(Arc::new(format!("{a}{b}")))),
-            (Self::String(s), Self::Int(i)) => Ok(Self::String(Arc::new(format!("{s}{i}")))),
-            (Self::String(s), Self::Float(f)) => Ok(Self::String(Arc::new(format!("{s}{f:.6}")))),
-            (Self::String(s), Self::Bool(b)) => Ok(Self::String(Arc::new(format!("{s}{b}")))),
+            (Self::String(a), Self::String(b)) => match Arc::try_unwrap(a) {
+                Ok(mut s) => {
+                    s.push_str(&b);
+                    Ok(Self::String(Arc::new(s)))
+                }
+                Err(arc) => Ok(Self::String(Arc::new(format!("{arc}{b}")))),
+            },
+            (Self::String(s), Self::Int(i)) => match Arc::try_unwrap(s) {
+                Ok(mut buf) => {
+                    use std::fmt::Write;
+                    let _ = write!(buf, "{i}");
+                    Ok(Self::String(Arc::new(buf)))
+                }
+                Err(arc) => Ok(Self::String(Arc::new(format!("{arc}{i}")))),
+            },
+            (Self::String(s), Self::Float(f)) => match Arc::try_unwrap(s) {
+                Ok(mut buf) => {
+                    use std::fmt::Write;
+                    let _ = write!(buf, "{f:.6}");
+                    Ok(Self::String(Arc::new(buf)))
+                }
+                Err(arc) => Ok(Self::String(Arc::new(format!("{arc}{f:.6}")))),
+            },
+            (Self::String(s), Self::Bool(b)) => match Arc::try_unwrap(s) {
+                Ok(mut buf) => {
+                    buf.push_str(if b { "true" } else { "false" });
+                    Ok(Self::String(Arc::new(buf)))
+                }
+                Err(arc) => Ok(Self::String(Arc::new(format!("{arc}{b}")))),
+            },
 
             (Self::Int(i), Self::String(s)) => Ok(Self::String(Arc::new(format!("{i}{s}")))),
             (Self::Float(f), Self::String(s)) => Ok(Self::String(Arc::new(format!("{f:.6}{s}")))),
@@ -653,6 +801,29 @@ impl Add for Value {
 
             (Self::Map(_), _) | (_, Self::Map(_)) => {
                 Err("Cannot merge a map with a non-map value".to_string())
+            }
+            // Duration + Duration: decompose both, add components
+            (Self::Duration(a), Self::Duration(b)) => {
+                use crate::runtime::functions::temporal::{
+                    construct_duration_secs, decompose_duration,
+                };
+                let (ya, ma, sa) = decompose_duration(a)?;
+                let (yb, mb, sb) = decompose_duration(b)?;
+                let total_months = i64::from(ya + yb) * 12 + i64::from(ma + mb);
+                let years = total_months / 12;
+                let months = total_months % 12;
+                let ts = construct_duration_secs(years, months, 0, 0, 0, 0, sa + sb)?;
+                Ok(Self::Duration(ts))
+            }
+            // Date/Datetime/Time + Duration and Duration + Date/Datetime/Time
+            (Self::Date(d), Self::Duration(dur)) | (Self::Duration(dur), Self::Date(d)) => {
+                Ok(Self::Date(add_duration_to_timestamp(d, dur)?))
+            }
+            (Self::Datetime(d), Self::Duration(dur)) | (Self::Duration(dur), Self::Datetime(d)) => {
+                Ok(Self::Datetime(add_duration_to_timestamp(d, dur)?))
+            }
+            (Self::Time(t), Self::Duration(dur)) | (Self::Duration(dur), Self::Time(t)) => {
+                Ok(Self::Time(add_duration_to_timestamp(t, dur)?))
             }
             (a, b) => Err(format!(
                 "Unexpected types for add operator ({}, {})",
@@ -676,6 +847,33 @@ impl Sub for Value {
             (Self::Float(a), Self::Float(b)) => Ok(Self::Float(a - b)),
             (Self::Float(a), Self::Int(b)) => Ok(Self::Float(a - b as f64)),
             (Self::Int(a), Self::Float(b)) => Ok(Self::Float(a as f64 - b)),
+            // Duration - Duration
+            (Self::Duration(a), Self::Duration(b)) => {
+                use crate::runtime::functions::temporal::{
+                    construct_duration_secs, decompose_duration,
+                };
+                let (ya, ma, sa) = decompose_duration(a)?;
+                let (yb, mb, sb) = decompose_duration(b)?;
+                let total_months = i64::from(ya - yb) * 12 + i64::from(ma - mb);
+                let years = total_months / 12;
+                let months = total_months % 12;
+                let ts = construct_duration_secs(years, months, 0, 0, 0, 0, sa - sb)?;
+                Ok(Self::Duration(ts))
+            }
+            // Date/Datetime/Time - Duration
+            (Self::Date(d), Self::Duration(dur)) => {
+                Ok(Self::Date(sub_duration_from_timestamp(d, dur)?))
+            }
+            (Self::Datetime(d), Self::Duration(dur)) => {
+                Ok(Self::Datetime(sub_duration_from_timestamp(d, dur)?))
+            }
+            (Self::Time(t), Self::Duration(dur)) => {
+                Ok(Self::Time(sub_duration_from_timestamp(t, dur)?))
+            }
+            // Duration - Date/Datetime/Time is not allowed
+            (Self::Duration(_), Self::Date(_) | Self::Datetime(_) | Self::Time(_)) => {
+                Err("Type mismatch: cannot subtract a temporal value from a duration".to_string())
+            }
             (a, b) => Err(format!(
                 "Unexpected types for sub operator ({}, {})",
                 a.name(),
@@ -812,6 +1010,15 @@ pub trait CompareValue {
     ) -> (Ordering, DisjointOrNull);
 }
 
+impl PartialEq for Value {
+    fn eq(
+        &self,
+        other: &Self,
+    ) -> bool {
+        self.compare_value(other).0 == Ordering::Equal
+    }
+}
+
 impl CompareValue for Value {
     fn compare_value(
         &self,
@@ -882,11 +1089,12 @@ impl ValueTypeOf for Value {
             | (Self::Int(_), Type::Int)
             | (Self::Float(_), Type::Float)
             | (Self::String(_), Type::String)
+            | (Self::Point(_), Type::Point)
+            | (Self::VecF32(_), Type::VecF32)
             | (Self::Map(_), Type::Map)
             | (Self::Node(_), Type::Node)
             | (Self::Relationship(_), Type::Relationship)
             | (Self::Path(_), Type::Path)
-            | (Self::Point(_), Type::Point)
             | (Self::Datetime(_), Type::Datetime)
             | (Self::Date(_), Type::Date)
             | (Self::Time(_), Type::Time)
@@ -933,38 +1141,38 @@ impl ValueGetType for Value {
 
 impl Value {
     #[must_use]
-    pub fn name(&self) -> String {
+    pub const fn name(&self) -> &'static str {
         match self {
-            Self::Null => String::from("Null"),
-            Self::Bool(_) => String::from("Boolean"),
-            Self::Int(_) => String::from("Integer"),
-            Self::Float(_) => String::from("Float"),
-            Self::String(_) => String::from("String"),
-            Self::List(_) => String::from("List"),
-            Self::Map(_) => String::from("Map"),
-            Self::Node(_) => String::from("Node"),
-            Self::Relationship(_) => String::from("Edge"),
-            Self::Path(_) => String::from("Path"),
-            Self::VecF32(_) => String::from("VecF32"),
-            Self::Point(_) => String::from("Point"),
-            Self::Datetime(_) => String::from("Datetime"),
-            Self::Date(_) => String::from("Date"),
-            Self::Time(_) => String::from("Time"),
-            Self::Duration(_) => String::from("Duration"),
+            Self::Null => "Null",
+            Self::Bool(_) => "Boolean",
+            Self::Int(_) => "Integer",
+            Self::Float(_) => "Float",
+            Self::String(_) => "String",
+            Self::List(_) => "List",
+            Self::Map(_) => "Map",
+            Self::Node(_) => "Node",
+            Self::Relationship(..) => "Relationship",
+            Self::Path(_) => "Path",
+            Self::VecF32(_) => "VecF32",
+            Self::Point(_) => "Point",
+            Self::Datetime(_) => "Datetime",
+            Self::Date(_) => "Date",
+            Self::Time(_) => "Time",
+            Self::Duration(_) => "Duration",
         }
     }
 
     /// Convert Value to JSON string representation
     pub fn to_json_string(
         &self,
-        runtime: &crate::runtime::runtime::Runtime,
+        runtime: &Runtime<'_>,
     ) -> String {
-        struct JsonWrapper<'a> {
+        struct JsonWrapper<'a, 'b> {
             value: &'a Value,
-            runtime: &'a crate::runtime::runtime::Runtime,
+            runtime: &'a Runtime<'b>,
         }
 
-        impl fmt::Display for JsonWrapper<'_> {
+        impl fmt::Display for JsonWrapper<'_, '_> {
             fn fmt(
                 &self,
                 f: &mut fmt::Formatter<'_>,
@@ -1076,7 +1284,7 @@ impl DisplayJson for Value {
     fn fmt_json(
         &self,
         f: &mut fmt::Formatter<'_>,
-        runtime: &crate::runtime::runtime::Runtime,
+        runtime: &Runtime<'_>,
     ) -> fmt::Result {
         match self {
             Self::Null => write!(f, "null"),
@@ -1114,11 +1322,10 @@ impl DisplayJson for Value {
             }
             Self::Node(id) => write_node_json(f, runtime, *id, true),
             Self::Relationship(rel) => {
-                let (rel_id, start_id, end_id) = **rel;
-                let rel_id_u64 = u64::from(rel_id);
-                let properties = runtime.get_relationship_attrs(rel_id);
+                let rel_id_u64 = u64::from(rel.0);
+                let properties = runtime.get_relationship_attrs(rel.0);
                 let type_name = runtime
-                    .get_relationship_type(rel_id)
+                    .get_relationship_type(rel.0)
                     .unwrap_or_else(|| Arc::new(String::new()));
 
                 write!(
@@ -1138,9 +1345,9 @@ impl DisplayJson for Value {
                 }
 
                 write!(f, r#"}},"start":"#)?;
-                write_node_json(f, runtime, start_id, false)?;
+                write_node_json(f, runtime, rel.1, false)?;
                 write!(f, r#","end":"#)?;
-                write_node_json(f, runtime, end_id, false)?;
+                write_node_json(f, runtime, rel.2, false)?;
                 write!(f, "}}")
             }
             Self::Path(values) => {
@@ -1209,7 +1416,7 @@ fn write_json_string(
 /// Write a node in JSON format with or without the "type" field
 fn write_node_json(
     f: &mut fmt::Formatter<'_>,
-    runtime: &crate::runtime::runtime::Runtime,
+    runtime: &Runtime,
     id: NodeId,
     include_type: bool,
 ) -> fmt::Result {
@@ -1365,7 +1572,20 @@ impl Value {
     /// Serializes this value to a byte vector.
     #[must_use]
     pub fn to_bytes(&self) -> Vec<u8> {
-        let mut buf = Vec::new();
+        let cap = match self {
+            Self::Null => 1,
+            Self::Bool(_) => 2,
+            Self::Int(_)
+            | Self::Float(_)
+            | Self::Datetime(_)
+            | Self::Date(_)
+            | Self::Time(_)
+            | Self::Duration(_) => 9,
+            Self::Point(_) => 17,
+            Self::String(s) => 5 + s.len(),
+            _ => 32,
+        };
+        let mut buf = Vec::with_capacity(cap);
         self.write_bytes(&mut buf);
         buf
     }

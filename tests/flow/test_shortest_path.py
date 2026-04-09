@@ -43,28 +43,28 @@ class testShortestPath(FlowTestsBase):
         try:
             self.graph.query(query)
             self.env.assertTrue(False)
-        except redis.exceptions.ResponseError as e:
+        except redis.ResponseError as e:
             self.env.assertContains("FalkorDB currently only supports shortestPaths in WITH or RETURN clauses", str(e))
 
         query = """MATCH (a {v: 1}), (b {v: 4}) RETURN shortestPath((a)-[*2..]->(b))"""
         try:
             self.graph.query(query)
             self.env.assertTrue(False)
-        except redis.exceptions.ResponseError as e:
+        except redis.ResponseError as e:
             self.env.assertContains("shortestPath does not support a minimal length different from 0 or 1", str(e))
 
         query = """MATCH (a {v: 1}), (b {v: 4}) RETURN shortestPath((a)-[]->()-[*]->(b))"""
         try:
             self.graph.query(query)
             self.env.assertTrue(False)
-        except redis.exceptions.ResponseError as e:
+        except redis.ResponseError as e:
             self.env.assertContains("shortestPath requires a path containing a single relationship", str(e))
 
         query = """MATCH (a {v: 1}), (b {v: 4}) RETURN shortestPath((a)-[* {weight: 4}]->(b))"""
         try:
             self.graph.query(query)
             self.env.assertTrue(False)
-        except redis.exceptions.ResponseError as e:
+        except redis.ResponseError as e:
             self.env.assertContains("filters on relationships in shortestPath", str(e))
 
         # Try iterating over an invalid relationship type
@@ -157,7 +157,7 @@ class testShortestPath(FlowTestsBase):
         query = """MATCH (a {v: 1}), (b {v: 4}) WHERE length(shortestPath((a)-[:E|:E2*]->())) > 0 RETURN a.v, b.v"""
         try:
             self.graph.query(query)
-        except redis.exceptions.ResponseError as e:
+        except redis.ResponseError as e:
             self.env.assertContains("A shortestPath requires bound nodes", str(e))
 
         # shortestPath requires bound nodes
@@ -172,6 +172,6 @@ class testShortestPath(FlowTestsBase):
             try:
                 self.graph.query(query)
                 self.env.assertTrue(False)
-            except redis.exceptions.ResponseError as e:
+            except redis.ResponseError as e:
                 self.env.assertContains("A shortestPath requires bound nodes", str(e))
 

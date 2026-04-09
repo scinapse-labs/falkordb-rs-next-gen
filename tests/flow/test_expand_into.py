@@ -100,7 +100,8 @@ class testExpandInto():
         query = "CREATE (:A), (:A:B), (:A:B:C)"
         self.graph.query(query)
 
-        # make sure expand into is utilize
+        # make sure multi-label scan is utilized (get_nodes intersects
+        # all label matrices, so ExpandInto is no longer needed)
         queries = ["MATCH (a:A:B:C) RETURN count(a)",
                    "MATCH (a:A:C:B) RETURN count(a)",
                    "MATCH (a:B:A:C) RETURN count(a)",
@@ -112,6 +113,41 @@ class testExpandInto():
             plan = str(self.graph.explain(q))
             result = self.graph.query(q)
             self.env.assertContains("Label Scan", plan)
-            self.env.assertContains("Expand Into", plan)
             self.env.assertEqual(1, result.result_set[0][0])
+
+    def test06_expand_into_reset_crash(self):
+        # crash: https://github.com/FalkorDB/FalkorDB/issues/1231
+
+        # run on an empty graph
+        self.graph.delete()
+
+        # populate graph
+        q = """
+        UNWIND range(0, 30) AS x
+        CREATE (d:Item { id: 1 })<-[:FromItem]-(de:ItemElement)<-[:ItemElement]-(e:Thing),
+               (d)<-[:FromItem]-(:ItemElement)-[:SubCategory]->(sc:SubCategory),
+               (de)-[:TextAssociated]->(t),
+               (de)-[:CrossItem]->(:Relation)-[:FromItem]->(:Item),
+               (d)<-[:FromItem]-(:ItemElement)-[:SubCategory]->(sc:SubCategory),
+               (de)-[:TextAssociated]->(t),
+               (de)-[:CrossItem]->(:Relation)-[:FromItem]->(:Item),
+               (d)<-[:FromItem]-(:ItemElement)-[:SubCategory]->(sc:SubCategory),
+               (de)-[:TextAssociated]->(t),
+               (de)-[:CrossItem]->(:Relation)-[:FromItem]->(:Item),
+               (d)<-[:FromItem]-(:ItemElement)-[:SubCategory]->(sc:SubCategory),
+               (de)-[:TextAssociated]->(t),
+               (de)-[:CrossItem]->(:Relation)-[:FromItem]->(:Item)"""
+
+        self.graph.query(q)
+
+
+        # used to crash due to uninitialized memory
+        for i in range(0, 10):
+            q = """
+            MATCH (d:Item {id: 1})<-[:FromItem]-(de:ItemElement)
+            OPTIONAL MATCH (d)<-[:FromItem]-(de:ItemElement)-[:SubCategory]->(sc:SubCategory)
+            WHERE (de:Component)
+            RETURN 2"""
+
+            self.graph.query(q)
 

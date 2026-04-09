@@ -275,7 +275,7 @@ class testForeachFlow():
 
         try:
             self.graph.query("FOREACH(i in [1, 2, 0, 3] | CREATE (n:N {v: 1/i}))")
-        except redis.exceptions.ResponseError as e:
+        except redis.ResponseError as e:
             self.env.assertContains("Division by zero", str(e))
 
         # assure that no nodes are left (undo-log was applied correctly)
@@ -290,7 +290,7 @@ class testForeachFlow():
                 CREATE (m:M {v: n.v})
             )"""
             )
-        except redis.exceptions.ResponseError as e:
+        except redis.ResponseError as e:
             self.env.assertContains("Invalid use of aggregating function 'collect'", str(e))
 
     def test08_complex(self):
@@ -425,7 +425,7 @@ class testForeachFlow():
         try:
             self.graph.query("FOREACH(i in [1] | CREATE (:M)) MATCH (m:M) RETURN m")
             self.env.assertTrue(False)
-        except redis.exceptions.ResponseError as e:
+        except redis.ResponseError as e:
             self.env.assertContains("A WITH clause is required to introduce MATCH after an updating clause.", str(e))
 
         try:
@@ -437,14 +437,14 @@ class testForeachFlow():
             RETURN x"""
             )
             self.env.assertTrue(False)
-        except redis.exceptions.ResponseError as e:
+        except redis.ResponseError as e:
             self.env.assertContains("A WITH clause is required to introduce UNWIND after an updating clause.", str(e))
 
         try:
             self.graph.query("FOREACH(i in [1] | CREATE (:M)) CALL db.labels() YIELD\
                 label RETURN label")
             self.env.assertTrue(False)
-        except redis.exceptions.ResponseError as e:
+        except redis.ResponseError as e:
             self.env.assertContains("A WITH clause is required to introduce CALL after an updating clause.", str(e))
 
     def test10_edge_manipulation(self):
@@ -617,14 +617,14 @@ class testForeachFlow():
         try:
             self.graph.query("FOREACH(n in li | CREATE (:N))")
             self.env.assertTrue(False)
-        except redis.exceptions.ResponseError as e:
+        except redis.ResponseError as e:
             self.env.assertContains("'li' not defined", str(e))
 
         # same check, when the list-var is the same as the list expression
         try:
             self.graph.query("FOREACH(n in n | CREATE (:N))")
             self.env.assertTrue(False)
-        except redis.exceptions.ResponseError as e:
+        except redis.ResponseError as e:
             self.env.assertContains("'n' not defined", str(e))
 
     def test15_foreach_and_index_scan(self):

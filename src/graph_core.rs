@@ -28,7 +28,7 @@
 //! queue guarded by `write_loop`.
 
 use crate::{
-    config::CONFIGURATION_IMPORT_FOLDER,
+    config::{CONFIGURATION_IMPORT_FOLDER, MAX_QUEUED_QUERIES, RESULTSET_SIZE, TIMEOUT_DEFAULT},
     reply::{reply_compact, reply_verbose},
 };
 use atomic_refcell::AtomicRefCell;
@@ -42,12 +42,12 @@ use graph::{
         mvcc_graph::MvccGraph,
     },
     planner::IR,
-    runtime::runtime::{Runtime, evaluate_param},
-    threadpool::spawn,
+    runtime::{eval::evaluate_param, pool::Pool, runtime::Runtime},
+    threadpool::{pending_count, spawn},
 };
 use orx_tree::Collection;
 use parking_lot::RwLock;
-use redis_module::{Context, raw};
+use redis_module::{Context, ContextFlags, RedisResult, RedisValue, raw};
 use std::{
     collections::HashMap,
     ffi::CString,
@@ -61,10 +61,12 @@ use std::{
 
 use crate::allocator::{current_thread_usage, disable_tracking, enable_tracking, reset_counter};
 
+type WriteMessage = (BlockedClient, Arc<String>, bool, bool, Arc<String>);
+
 pub struct ThreadedGraph {
     pub graph: MvccGraph,
-    pub sender: Tx<Array<(BlockedClient, Arc<String>, bool)>>,
-    pub receiver: Rx<Array<(BlockedClient, Arc<String>, bool)>>,
+    pub sender: Tx<Array<WriteMessage>>,
+    pub receiver: Rx<Array<WriteMessage>>,
     pub write_loop: AtomicBool,
 }
 
@@ -91,7 +93,7 @@ impl ThreadedGraph {
         query: &str,
         compact: bool,
         write: bool,
-    ) -> Result<bool, String> {
+    ) -> Result<(bool, bool), String> {
         let Plan {
             plan,
             cached,
@@ -114,26 +116,31 @@ impl ThreadedGraph {
                     "graph.RO_QUERY is to be executed only on read-only queries",
                 ));
             }
-            return Ok(is_write);
+            return Ok((is_write, cached));
         } else {
             self.graph.read()
         };
-        let mut runtime = Runtime::new(
+        let env_pool = Pool::new();
+        let runtime = Runtime::new(
             g,
             parameters,
-            write,
+            is_write,
             plan,
             false,
             (*CONFIGURATION_IMPORT_FOLDER.lock(ctx)).clone(),
+            &env_pool,
+            RESULTSET_SIZE.load(Ordering::Relaxed),
         );
         let mut result = runtime.query()?;
         result.stats.cached = cached;
         if compact {
-            reply_compact(ctx, &runtime, result);
+            reply_compact(ctx, &runtime, &result);
         } else {
-            reply_verbose(ctx, &runtime, result);
+            reply_verbose(ctx, &runtime, &result);
         }
-        Ok(is_write)
+        drop(result);
+        drop(runtime);
+        Ok((is_write, cached))
     }
 
     pub fn execute_query_write(
@@ -141,13 +148,12 @@ impl ThreadedGraph {
         ctx: &Context,
         query: &str,
         compact: bool,
+        first_cached: bool,
     ) -> Result<Arc<AtomicRefCell<Graph>>, String> {
         let Plan {
-            plan,
-            cached,
-            parameters,
-            ..
+            plan, parameters, ..
         } = self.graph.read().borrow().get_plan(query)?;
+        let cached = first_cached;
         let parameters = parameters
             .into_iter()
             .map(|(k, v)| Ok((k, evaluate_param(&v.root())?)))
@@ -157,20 +163,30 @@ impl ThreadedGraph {
             IR::Commit | IR::CreateIndex { .. } | IR::DropIndex { .. }
         )));
         let g = self.graph.write().unwrap();
-        let mut runtime = Runtime::new(
+        let env_pool = Pool::new();
+        let runtime = Runtime::new(
             g.clone(),
             parameters,
             true,
             plan,
             false,
             (*CONFIGURATION_IMPORT_FOLDER.lock(ctx)).clone(),
+            &env_pool,
+            RESULTSET_SIZE.load(Ordering::Relaxed),
         );
-        let mut result = runtime.query()?;
+        let mut result = match runtime.query() {
+            Ok(r) => r,
+            Err(err) => {
+                // Clean up dirty cache entries before the graph is dropped.
+                g.borrow_mut().rollback_cache();
+                return Err(err);
+            }
+        };
         result.stats.cached = cached;
         if compact {
-            reply_compact(ctx, &runtime, result);
+            reply_compact(ctx, &runtime, &result);
         } else {
-            reply_verbose(ctx, &runtime, result);
+            reply_verbose(ctx, &runtime, &result);
         }
         Ok(g)
     }
@@ -197,7 +213,28 @@ pub fn query_mut(
     compact: bool,
     write: bool,
     track_mem: bool,
-) {
+    key_name: Arc<String>,
+) -> RedisResult {
+    // Inside MULTI/EXEC: execute synchronously (blocking commands not allowed).
+    if ctx.get_flags().contains(ContextFlags::MULTI) {
+        return query_sync(ctx, graph, query, compact, write);
+    }
+
+    // Check pending queries limit before dispatching.
+    let max = MAX_QUEUED_QUERIES.load(Ordering::Relaxed) as usize;
+    if pending_count() >= max {
+        let bc = BlockedClient {
+            inner: unsafe { raw::RedisModule_BlockClient.unwrap()(ctx.ctx, None, None, None, 0) },
+        };
+        let err_ctx = unsafe { raw::RedisModule_GetThreadSafeContext.unwrap()(bc.inner) };
+        let err_ctx = Context::new(err_ctx);
+        let cerr = CString::new("Max pending queries exceeded").unwrap();
+        raw::reply_with_error(err_ctx.ctx, cerr.as_ptr());
+        drop(bc);
+        unsafe { raw::RedisModule_FreeThreadSafeContext.unwrap()(err_ctx.ctx) };
+        return Ok(RedisValue::NoReply);
+    }
+
     let bc = BlockedClient {
         inner: unsafe { raw::RedisModule_BlockClient.unwrap()(ctx.ctx, None, None, None, 0) },
     };
@@ -209,18 +246,39 @@ pub fn query_mut(
                 reset_counter();
                 enable_tracking();
             }
+            // Sync query timeout to UDF JS runtime
+            graph::udf::js_context::JS_TIMEOUT_MS
+                .store(TIMEOUT_DEFAULT.load(Ordering::Relaxed), Ordering::Relaxed);
+
             let g = graph.clone();
-            let graph = graph.clone();
-            let graph = graph.read();
+            let binding = graph.clone();
+            let graph = binding.read();
             let bc = bc;
             let ctx = unsafe { raw::RedisModule_GetThreadSafeContext.unwrap()(bc.inner) };
             let ctx = Context::new(ctx);
 
             let res = graph.execute_query(&ctx, &query, compact, write);
+
+            // Log memory tracking BEFORE freeing the context.
+            if track_mem {
+                let (allocated, deallocated) = current_thread_usage();
+                disable_tracking();
+                ctx.log(
+                    redis_module::logging::RedisLogLevel::Notice,
+                    &format!(
+                        "Allocated: {allocated} bytes, Deallocated: {deallocated} bytes, Net: {}",
+                        allocated as isize - deallocated as isize
+                    ),
+                );
+            }
+
             match res {
-                Ok(is_write) => {
+                Ok((is_write, cached)) => {
                     if is_write {
-                        graph.sender.send((bc, query, compact)).unwrap();
+                        graph
+                            .sender
+                            .send((bc, query, compact, cached, key_name))
+                            .unwrap();
                         drop(graph);
                         process_write_queued_query(&g);
                     } else {
@@ -235,20 +293,58 @@ pub fn query_mut(
                     unsafe { raw::RedisModule_FreeThreadSafeContext.unwrap()(ctx.ctx) };
                 }
             }
-            if track_mem {
-                let (allocated, deallocated) = current_thread_usage();
-                disable_tracking();
-                ctx.log(
-                    redis_module::logging::RedisLogLevel::Notice,
-                    &format!(
-                        "Allocated: {allocated} bytes, Deallocated: {deallocated} bytes, Net: {}",
-                        allocated as isize - deallocated as isize
-                    ),
-                );
-            }
         },
         None,
     );
+    Ok(RedisValue::NoReply)
+}
+
+/// Execute a query synchronously on the calling thread.
+/// Used when inside MULTI/EXEC where blocking is not allowed.
+fn query_sync(
+    ctx: &Context,
+    graph: &Arc<RwLock<ThreadedGraph>>,
+    query: &str,
+    compact: bool,
+    write: bool,
+) -> RedisResult {
+    // First pass: parse + detect if write, execute reads inline.
+    // Sync query timeout to UDF JS runtime
+    graph::udf::js_context::JS_TIMEOUT_MS
+        .store(TIMEOUT_DEFAULT.load(Ordering::Relaxed), Ordering::Relaxed);
+
+    let res = {
+        let g = graph.read();
+        g.execute_query(ctx, query, compact, write)
+    };
+    match res {
+        Ok((is_write, cached)) => {
+            if is_write {
+                // Write path: acquire exclusive lock and execute.
+                let mut g = graph.write();
+                let res = g.execute_query_write(ctx, query, compact, cached);
+                match res {
+                    Ok(new_graph) => {
+                        g.graph.commit(new_graph);
+                        // Flush dirty cache entries to fjall if over budget.
+                        let value = g.graph.read().borrow().maybe_flush_caches();
+                        if let Err(e) = value {
+                            eprintln!("FalkorDB: cache flush failed: {e}");
+                        }
+                    }
+                    Err(err) => {
+                        g.graph.rollback();
+                        return Err(redis_module::RedisError::String(err));
+                    }
+                }
+                drop(g);
+            }
+        }
+        Err(err) => {
+            return Err(redis_module::RedisError::String(err));
+        }
+    }
+    Ok(RedisValue::NoReply)
 }
 
 pub fn process_write_queued_query(graph: &Arc<RwLock<ThreadedGraph>>) {
@@ -259,15 +355,32 @@ pub fn process_write_queued_query(graph: &Arc<RwLock<ThreadedGraph>>) {
     {
         drop(g);
         let mut graph = graph.write();
-        while let Ok((bc, query, compact)) = { graph.receiver.try_recv() } {
+        while let Ok((bc, query, compact, cached, key_name)) = { graph.receiver.try_recv() } {
             let ctx = unsafe { raw::RedisModule_GetThreadSafeContext.unwrap()(bc.inner) };
             let ctx = Context::new(ctx);
-            let res = graph.execute_query_write(&ctx, &query, compact);
+            let res = graph.execute_query_write(&ctx, &query, compact, cached);
             match res {
                 Ok(g) => {
+                    // Signal the key as modified so WATCH gets triggered.
+                    unsafe {
+                        raw::RedisModule_ThreadSafeContextLock.unwrap()(ctx.ctx);
+                        let rstr = raw::RedisModule_CreateString.unwrap()(
+                            ctx.ctx,
+                            key_name.as_ptr().cast(),
+                            key_name.len(),
+                        );
+                        raw::RedisModule_SignalModifiedKey.unwrap()(ctx.ctx, rstr);
+                        raw::RedisModule_FreeString.unwrap()(ctx.ctx, rstr);
+                        raw::RedisModule_ThreadSafeContextUnlock.unwrap()(ctx.ctx);
+                        raw::RedisModule_FreeThreadSafeContext.unwrap()(ctx.ctx);
+                    };
                     drop(bc);
-                    unsafe { raw::RedisModule_FreeThreadSafeContext.unwrap()(ctx.ctx) };
                     graph.graph.commit(g);
+                    // Flush dirty cache entries to fjall if over budget.
+                    let value = graph.graph.read().borrow().maybe_flush_caches();
+                    if let Err(e) = value {
+                        eprintln!("FalkorDB: cache flush failed: {e}");
+                    }
                 }
                 Err(err) => {
                     let cerr = CString::new(err).unwrap();

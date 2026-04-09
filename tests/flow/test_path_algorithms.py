@@ -120,7 +120,7 @@ class testAllShortestPaths():
             try:
                 self.graph.query(query)
                 self.env.assertTrue(False)
-            except redis.exceptions.ResponseError as e:
+            except redis.ResponseError as e:
                 self.env.assertContains("sourceNode and targetNode are required", str(e))
 
         # all queries should produce a run-time errors
@@ -135,7 +135,7 @@ class testAllShortestPaths():
             try:
                 self.graph.query(query)
                 self.env.assertTrue(False)
-            except redis.exceptions.ResponseError as e:
+            except redis.ResponseError as e:
                 self.env.assertContains("sourceNode and targetNode must be of type Node", str(e))
 
         # all queries should produce a run-time errors
@@ -150,7 +150,7 @@ class testAllShortestPaths():
             try:
                 self.graph.query(query)
                 self.env.assertTrue(False)
-            except redis.exceptions.ResponseError as e:
+            except redis.ResponseError as e:
                 self.env.assertContains("relTypes must be array of strings", str(e))
 
         # all queries should produce a run-time errors
@@ -164,7 +164,7 @@ class testAllShortestPaths():
             try:
                 self.graph.query(query)
                 self.env.assertTrue(False)
-            except redis.exceptions.ResponseError as e:
+            except redis.ResponseError as e:
                 self.env.assertContains("relDirection values must be 'incoming', 'outgoing' or 'both'", str(e))
 
         query = """MATCH (n:L {v: 1}), (m:L {v: 5}) CALL algo.SPpaths({sourceNode: n, targetNode: m, maxLen: 'a'})"""
@@ -172,42 +172,42 @@ class testAllShortestPaths():
         try:
             self.graph.query(query)
             self.env.assertTrue(False)
-        except redis.exceptions.ResponseError as e:
+        except redis.ResponseError as e:
             self.env.assertContains("maxLen must be integer", str(e))
 
         query = """MATCH (n:L {v: 1}), (m:L {v: 5}) CALL algo.SPpaths({sourceNode: n, targetNode: m, weightProp: 1})"""
         try:
             self.graph.query(query)
             self.env.assertTrue(False)
-        except redis.exceptions.ResponseError as e:
+        except redis.ResponseError as e:
             self.env.assertContains("weightProp must be string", str(e))
 
         query = """MATCH (n:L {v: 1}), (m:L {v: 5}) CALL algo.SPpaths({sourceNode: n, targetNode: m, costProp: 1})"""
         try:
             self.graph.query(query)
             self.env.assertTrue(False)
-        except redis.exceptions.ResponseError as e:
+        except redis.ResponseError as e:
             self.env.assertContains("costProp must be string", str(e))
 
         query = """MATCH (n:L {v: 1}), (m:L {v: 5}) CALL algo.SPpaths({sourceNode: n, targetNode: m, maxCost: '1'})"""
         try:
             self.graph.query(query)
             self.env.assertTrue(False)
-        except redis.exceptions.ResponseError as e:
+        except redis.ResponseError as e:
             self.env.assertContains("maxCost must be numeric", str(e))
 
         query = """MATCH (n:L {v: 1}), (m:L {v: 5}) CALL algo.SPpaths({sourceNode: n, targetNode: m, pathCount: '1'})"""
         try:
             self.graph.query(query)
             self.env.assertTrue(False)
-        except redis.exceptions.ResponseError as e:
+        except redis.ResponseError as e:
             self.env.assertContains("pathCount must be integer", str(e))
 
         query = """MATCH (n:L {v: 1}), (m:L {v: 5}) CALL algo.SPpaths({sourceNode: n, targetNode: m, pathCount: -1})"""
         try:
             self.graph.query(query)
             self.env.assertTrue(False)
-        except redis.exceptions.ResponseError as e:
+        except redis.ResponseError as e:
             self.env.assertContains("pathCount must be a non-negative integer", str(e))
 
     def test01_SSpaths_validations(self):
@@ -216,7 +216,7 @@ class testAllShortestPaths():
         try:
             self.graph.query(query)
             self.env.assertTrue(False)
-        except redis.exceptions.ResponseError as e:
+        except redis.ResponseError as e:
             self.env.assertContains("sourceNode is required", str(e))
 
         query = """MATCH (n:L {v: 1}) CALL algo.SSpaths({sourceNode: 1})"""
@@ -224,7 +224,7 @@ class testAllShortestPaths():
         try:
             self.graph.query(query)
             self.env.assertTrue(False)
-        except redis.exceptions.ResponseError as e:
+        except redis.ResponseError as e:
             self.env.assertContains("sourceNode must be of type Node", str(e))
 
         # all queries should produce a run-time errors
@@ -239,7 +239,7 @@ class testAllShortestPaths():
             try:
                 self.graph.query(query)
                 self.env.assertTrue(False)
-            except redis.exceptions.ResponseError as e:
+            except redis.ResponseError as e:
                 self.env.assertContains("relTypes must be array of strings", str(e))
 
         # all queries should produce a run-time errors
@@ -253,7 +253,7 @@ class testAllShortestPaths():
             try:
                 self.graph.query(query)
                 self.env.assertTrue(False)
-            except redis.exceptions.ResponseError as e:
+            except redis.ResponseError as e:
                 self.env.assertContains("relDirection values must be 'incoming', 'outgoing' or 'both'", str(e))
 
         query = """MATCH (n:L {v: 1}), (m:L {v: 5}) CALL algo.SSpaths({sourceNode: n, maxLen: 'a'})"""
@@ -261,42 +261,42 @@ class testAllShortestPaths():
         try:
             self.graph.query(query)
             self.env.assertTrue(False)
-        except redis.exceptions.ResponseError as e:
+        except redis.ResponseError as e:
             self.env.assertContains("maxLen must be integer", str(e))
 
         query = """MATCH (n:L {v: 1}), (m:L {v: 5}) CALL algo.SSpaths({sourceNode: n, weightProp: 1})"""
         try:
             self.graph.query(query)
             self.env.assertTrue(False)
-        except redis.exceptions.ResponseError as e:
+        except redis.ResponseError as e:
             self.env.assertContains("weightProp must be string", str(e))
 
         query = """MATCH (n:L {v: 1}), (m:L {v: 5}) CALL algo.SSpaths({sourceNode: n, costProp: 1})"""
         try:
             self.graph.query(query)
             self.env.assertTrue(False)
-        except redis.exceptions.ResponseError as e:
+        except redis.ResponseError as e:
             self.env.assertContains("costProp must be string", str(e))
 
         query = """MATCH (n:L {v: 1}), (m:L {v: 5}) CALL algo.SSpaths({sourceNode: n, maxCost: '1'})"""
         try:
             self.graph.query(query)
             self.env.assertTrue(False)
-        except redis.exceptions.ResponseError as e:
+        except redis.ResponseError as e:
             self.env.assertContains("maxCost must be numeric", str(e))
 
         query = """MATCH (n:L {v: 1}), (m:L {v: 5}) CALL algo.SSpaths({sourceNode: n, pathCount: '1'})"""
         try:
             self.graph.query(query)
             self.env.assertTrue(False)
-        except redis.exceptions.ResponseError as e:
+        except redis.ResponseError as e:
             self.env.assertContains("pathCount must be integer", str(e))
 
         query = """MATCH (n:L {v: 1}), (m:L {v: 5}) CALL algo.SSpaths({sourceNode: n, pathCount: -1})"""
         try:
             self.graph.query(query)
             self.env.assertTrue(False)
-        except redis.exceptions.ResponseError as e:
+        except redis.ResponseError as e:
             self.env.assertContains("pathCount must be a non-negative integer", str(e))
 
     def sp_query(self, source, target, relTypes, maxLen, maxCost, pathCount, relDirection):
@@ -444,3 +444,67 @@ class testAllShortestPaths():
             self.env.assertEqual(len(result.result_set), 5)
             for i in range(0, 5):
                 self.env.assertContains(result.result_set[i], self.ss_paths)
+
+    def test08_fractional_weights(self):
+        # Regression test: path_cmp used to return (int)(weight_a - weight_b),
+        # truncating differences in the range (-1.0, 1.0) to 0 and treating
+        # paths with different fractional weights as equal, causing incorrect ordering.
+        # The fix uses (a > b) - (a < b) which correctly returns -1, 0, or 1.
+        g = self.db.select_graph("frac_weight_graph")
+
+        # Build a graph with two paths from A to C:
+        #   Path 1: (A) -[w=0.9]-> (C)                 total weight: 0.9
+        #   Path 2: (A) -[w=0.1]-> (B) -[w=0.1]-> (C)  total weight: 0.2
+        # Correct ordering: Path 2 (0.2) before Path 1 (0.9).
+        # Buggy behaviour: int(0.9 - 0.2) = int(0.7) = 0, treating them equal.
+        g.query("""
+            CREATE (a:FN {id: 'A'}),
+                   (b:FN {id: 'B'}),
+                   (c:FN {id: 'C'}),
+                   (a)-[:FR {weight: 0.9}]->(c),
+                   (a)-[:FR {weight: 0.1}]->(b),
+                   (b)-[:FR {weight: 0.1}]->(c)
+        """)
+
+        # SPpaths: both paths should be returned ordered by ascending weight
+        result = g.query("""
+            MATCH (src:FN {id: 'A'}), (dst:FN {id: 'C'})
+            CALL algo.SPpaths({
+                sourceNode: src,
+                targetNode: dst,
+                weightProp: 'weight',
+                maxLen: 3,
+                pathCount: 2
+            }) YIELD pathWeight
+            RETURN pathWeight
+            ORDER BY pathWeight DESC
+        """)
+
+        self.env.assertEqual(len(result.result_set), 2)
+        # first the heavier path (A->C, weight 0.9), then the lighter
+        # path (A->B->C, weight 0.2).
+        self.env.assertGreater(result.result_set[0][0], result.result_set[1][0])
+        self.env.assertAlmostEqual(result.result_set[0][0], 0.9, delta=1e-9)
+        self.env.assertAlmostEqual(result.result_set[1][0], 0.2, delta=1e-9)
+
+        # SSpaths: same graph, verify ordering for single-source paths.
+        # From A the three reachable paths are: A->B (0.1), A->B->C (0.2), A->C (0.9).
+        # With pathCount=2 the two lightest are A->B (0.1) and A->B->C (0.2).
+        # Their weight difference is 0.1 - a fractional value the old bug would
+        # truncate to 0, making them appear equal and breaking the heap order.
+        ss_result = g.query("""
+            MATCH (src:FN {id: 'A'})
+            CALL algo.SSpaths({
+                sourceNode: src,
+                weightProp: 'weight',
+                maxLen: 3,
+                pathCount: 2
+            }) YIELD pathWeight
+            RETURN pathWeight
+            ORDER BY pathWeight DESC
+        """)
+
+        self.env.assertEqual(len(ss_result.result_set), 2)
+        self.env.assertGreater(ss_result.result_set[0][0], ss_result.result_set[1][0])
+        self.env.assertAlmostEqual(ss_result.result_set[0][0], 0.2, delta=1e-9)
+        self.env.assertAlmostEqual(ss_result.result_set[1][0], 0.1, delta=1e-9)

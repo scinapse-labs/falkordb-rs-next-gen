@@ -54,7 +54,7 @@ class testQueryMemoryLimit():
                     self.env.assertContains("Query's mem consumption exceeded capacity", str(res))
                 else:
                     # make sure query did not throw an exception
-                    self.env.assertNotEqual(type(res), redis.exceptions.ResponseError)
+                    self.env.assertNotEqual(type(res), redis.ResponseError)
 
             # close the connection pool
             await pool.aclose()

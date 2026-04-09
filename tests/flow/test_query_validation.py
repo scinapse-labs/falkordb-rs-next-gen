@@ -20,7 +20,7 @@ class testQueryValidationFlow(FlowTestsBase):
         try:
             self.graph.query(query)
             self.env.assertTrue(False)
-        except redis.exceptions.ResponseError:
+        except redis.ResponseError:
             # Expecting an error.
             pass
 
@@ -29,7 +29,7 @@ class testQueryValidationFlow(FlowTestsBase):
         try:
             query = """MATCH (n) RETURN mAx(n.age)"""
             self.graph.query(query)
-        except redis.exceptions.ResponseError:
+        except redis.ResponseError:
             # function validation should be case insensitive.
             self.env.assertTrue(False)
     
@@ -38,7 +38,7 @@ class testQueryValidationFlow(FlowTestsBase):
             query = """CREATE (n:Person {age:32})-[]->(:person {age:30})"""
             self.graph.query(query)
             self.env.assertTrue(False)
-        except redis.exceptions.ResponseError:
+        except redis.ResponseError:
             # Expecting an error.
             pass
 
@@ -58,7 +58,7 @@ class testQueryValidationFlow(FlowTestsBase):
             query = """MATCH (a) RETURN e"""
             self.graph.query(query)
             assert(False)
-        except redis.exceptions.ResponseError:
+        except redis.ResponseError:
             # Expecting an error.
             pass
 
@@ -66,7 +66,7 @@ class testQueryValidationFlow(FlowTestsBase):
             query = """MATCH (a) RETURN a ORDER BY e"""
             self.graph.query(query)
             assert(False)
-        except redis.exceptions.ResponseError:
+        except redis.ResponseError:
             # Expecting an error.
             pass
 
@@ -74,7 +74,7 @@ class testQueryValidationFlow(FlowTestsBase):
             query = """MATCH (@anon_0) RETURN @anon_0"""
             self.graph.query(query)
             assert(False)
-        except redis.exceptions.ResponseError:
+        except redis.ResponseError:
             # Expecting an error.
             pass
 
@@ -83,7 +83,7 @@ class testQueryValidationFlow(FlowTestsBase):
             query = """MATCH (a) WHERE fake = true RETURN a"""
             self.graph.query(query)
             assert(False)
-        except redis.exceptions.ResponseError:
+        except redis.ResponseError:
             # Expecting an error.
             pass
 
@@ -92,7 +92,7 @@ class testQueryValidationFlow(FlowTestsBase):
             query = """MATCH (a) WITH e RETURN e"""
             self.graph.query(query)
             assert(False)
-        except redis.exceptions.ResponseError:
+        except redis.ResponseError:
             # Expecting an error.
             pass
 
@@ -101,7 +101,7 @@ class testQueryValidationFlow(FlowTestsBase):
             query = """MATCH (a) RETURN COUNT(DISTINCT *)"""
             self.graph.query(query)
             assert(False)
-        except redis.exceptions.ResponseError:
+        except redis.ResponseError:
             # Expecting an error.
             pass
 
@@ -110,7 +110,7 @@ class testQueryValidationFlow(FlowTestsBase):
             query = """MATCH (a) RETURN SUM(*)"""
             self.graph.query(query)
             assert(False)
-        except redis.exceptions.ResponseError:
+        except redis.ResponseError:
             # Expecting an error.
             pass
 
@@ -119,7 +119,7 @@ class testQueryValidationFlow(FlowTestsBase):
             query = """MATCH (a {name:$name}) RETURN a"""
             self.graph.query(query)
             assert(False)
-        except redis.exceptions.ResponseError:
+        except redis.ResponseError:
             # Expecting an error.
             pass
     
@@ -128,7 +128,7 @@ class testQueryValidationFlow(FlowTestsBase):
             query = """CYPHER name=({name:'a'}) MATCH (a {name:$name}) RETURN a"""
             self.graph.query(query)
             assert(False)
-        except redis.exceptions.ResponseError:
+        except redis.ResponseError:
             # Expecting an error.
             pass
 
@@ -137,7 +137,7 @@ class testQueryValidationFlow(FlowTestsBase):
             query = """MERGE (a) MATCH (a)-[]->(b) RETURN b"""
             self.graph.query(query)
             assert(False)
-        except redis.exceptions.ResponseError:
+        except redis.ResponseError:
             # Expecting an error.
             pass
 
@@ -146,7 +146,7 @@ class testQueryValidationFlow(FlowTestsBase):
             query = """MATCH (a)-[e]->(b) CREATE (a)-[e]->(b)"""
             self.graph.query(query)
             assert(False)
-        except redis.exceptions.ResponseError:
+        except redis.ResponseError:
             # Expecting an error.
             pass
 
@@ -156,7 +156,7 @@ class testQueryValidationFlow(FlowTestsBase):
             query= """MATCH x=()-[]->() RETURN x.name"""
             self.graph.query(query)
             assert(False)
-        except redis.exceptions.ResponseError:
+        except redis.ResponseError:
             # Expecting an error.
             pass
 
@@ -165,7 +165,7 @@ class testQueryValidationFlow(FlowTestsBase):
             query = """MATCH (a) where id(a) IN range(0) OR id(a) in range(1)"""
             self.graph.query(query)
             assert(False)
-        except redis.exceptions.ResponseError:
+        except redis.ResponseError:
             # Expecting an error.
             pass
 
@@ -175,7 +175,7 @@ class testQueryValidationFlow(FlowTestsBase):
             query = """CYPHER props={a:1,b:2} CREATE (a:A $props)"""
             self.graph.query(query)
             assert(False)
-        except redis.exceptions.ResponseError as e:
+        except redis.ResponseError as e:
             # Expecting an error.
             assert("Encountered unhandled type" in str(e))
             pass
@@ -186,7 +186,7 @@ class testQueryValidationFlow(FlowTestsBase):
         try:
             res = self.redis_con.execute_command("GRAPH.QUERY", "G")
             assert(False)
-        except redis.exceptions.ResponseError as e:
+        except redis.ResponseError as e:
             # Expecting an error.
             assert("wrong number of arguments" in str(e))
             pass
@@ -197,43 +197,45 @@ class testQueryValidationFlow(FlowTestsBase):
             query = """CREATE (:person{name:bar[1]})"""
             self.graph.query(query)
             assert(False)
-        except redis.exceptions.ResponseError as e:
+        except redis.ResponseError as e:
             # Expecting an error.
             assert("not defined" in str(e))
             pass
 
-    ## Comments should not affect query functionality.
-    #def test21_ignore_query_comments(self):
-    #    query = """MATCH (n)  // This is a comment
-    #               /* This is a block comment */
-    #               WHERE EXISTS(n.age)
-    #               RETURN n.age /* Also a block comment*/"""
-    #    actual_result = self.graph.query(query)
-    #    expected_result = [[34]]
-    #    self.env.assertEqual(actual_result.result_set, expected_result)
+        try:
+            query = """MATCH (a {val: undeclared}) RETURN a"""
+            self.graph.query(query)
+            assert(False)
+        except redis.ResponseError as e:
+            # Expecting an error.
+            assert("not defined" in str(e))
+            pass
 
-    #    query = """/* A block comment*/ MATCH (n)  // This is a comment
-    #            /* This is a block comment */
-    #            WHERE EXISTS(n.age)
-    #            RETURN n.age /* Also a block comment*/"""
-    #    actual_result = self.graph.query(query)
-    #    expected_result = [[34]]
-    #    self.env.assertEqual(actual_result.result_set, expected_result)
+        try:
+            query = """UNWIND [fake] AS ref RETURN ref"""
+            self.graph.query(query)
+            assert(False)
+        except redis.ResponseError as e:
+            # Expecting an error.
+            assert("not defined" in str(e))
+            pass
 
-    #    query = """// This is a comment
-    #            MATCH (n)  // This is a comment
-    #            /* This is a block comment */
-    #            WHERE EXISTS(n.age)
-    #            RETURN n.age /* Also a block comment*/"""
-    #    actual_result = self.graph.query(query)
-    #    expected_result = [[34]]
-    #    self.env.assertEqual(actual_result.result_set, expected_result)
+    def test19_invalid_cypher_options(self):
+        query = "EXPLAIN MATCH (p:president)-[:born]->(:state {name:'Hawaii'}) RETURN p"
+        try:
+            self.graph.query(query)
+            assert(False)
+        except:
+            # Expecting an error.
+            pass
 
-    #    query = """MATCH (n)  /* This is a block comment */ WHERE EXISTS(n.age)
-    #            RETURN n.age /* Also a block comment*/"""
-    #    actual_result = self.graph.query(query)
-    #    expected_result = [[34]]
-    #    self.env.assertEqual(actual_result.result_set, expected_result)
+        query = "PROFILE MATCH (p:president)-[:born]->(:state {name:'Hawaii'}) RETURN p"
+        try:
+            self.graph.query(query)
+            assert(False)
+        except:
+            # Expecting an error.
+            pass
 
         query = "CYPHER val=1 EXPLAIN MATCH (p:president)-[:born]->(:state {name:'Hawaii'}) RETURN p"
         try:
@@ -257,7 +259,7 @@ class testQueryValidationFlow(FlowTestsBase):
             query = """CREATE (:Endpoint)-[:R]-(:Endpoint)"""
             self.graph.query(query)
             assert(False)
-        except redis.exceptions.ResponseError as e:
+        except redis.ResponseError as e:
             # Expecting an error.
             assert("Only directed relationships" in str(e))
             pass
@@ -268,7 +270,7 @@ class testQueryValidationFlow(FlowTestsBase):
             query = """MATCH p=() WHERE p.name='value' RETURN p"""
             self.graph.query(query)
             assert(False)
-        except redis.exceptions.ResponseError as e:
+        except redis.ResponseError as e:
             # Expecting an error.
             assert("Type mismatch: expected Map, Node, Edge, Datetime, Date, Time, Duration, Null, or Point but was Path" in str(e))
             pass
@@ -313,7 +315,7 @@ class testQueryValidationFlow(FlowTestsBase):
             query = """CALL db.idx.fulltext.queryNodes(n, 'B') YIELD node RETURN node"""
             self.graph.query(query)
             assert(False)
-        except redis.exceptions.ResponseError as e:
+        except redis.ResponseError as e:
             # Expecting an error.
             assert("not defined" in str(e))
             pass
@@ -324,7 +326,7 @@ class testQueryValidationFlow(FlowTestsBase):
         #    query = """CALL db.idx.fulltext.queryNodes('A', 'B') YIELD node AS n RETURN node"""
         #    self.graph.query(query)
         #    assert(False)
-        #except redis.exceptions.ResponseError as e:
+        #except redis.ResponseError as e:
         #    # Expecting an error.
         #    assert("not defined" in str(e))
         #    pass
@@ -344,7 +346,7 @@ class testQueryValidationFlow(FlowTestsBase):
             query = """MATCH ({prop: reference}) MATCH (reference) RETURN *"""
             self.graph.query(query)
             assert(False)
-        except redis.exceptions.ResponseError as e:
+        except redis.ResponseError as e:
             # Expecting an error.
             assert("not defined" in str(e))
             pass
@@ -355,9 +357,10 @@ class testQueryValidationFlow(FlowTestsBase):
             query = """MATCH p1=(), (n), ({prop: p1.path_val}) RETURN *"""
             self.graph.query(query)
             assert(False)
-        except redis.exceptions.ResponseError as e:
+        except redis.ResponseError as e:
             # Expecting an error.
-           assert("Type mismatch: expected Map, Node, Edge, Datetime, Date, Time, Duration, Null, or Point but was Path" in str(e))
+            assert("Type mismatch: expected Map, Node, Edge, Datetime, Date, Time, Duration, Null, or Point but was Path" in str(e))
+            pass
 
     # invalid predicates should raise errors.
     def test26_invalid_filter_predicate(self):
@@ -377,7 +380,7 @@ class testQueryValidationFlow(FlowTestsBase):
             try:
                 self.graph.query(query)
                 assert(False)
-            except redis.exceptions.ResponseError as e:
+            except redis.ResponseError as e:
                 # Expecting an error.
                 assert("Expected boolean predicate" in str(e))
                 pass
@@ -390,7 +393,7 @@ class testQueryValidationFlow(FlowTestsBase):
             query = """MATCH (u) where u.v NOT NULL RETURN u"""
             self.graph.query(query)
             assert(False)
-        except redis.exceptions.ResponseError as e:
+        except redis.ResponseError as e:
             # Expecting an error.
             assert("Invalid usage of 'NOT' filter" in str(e))
             pass
@@ -400,7 +403,7 @@ class testQueryValidationFlow(FlowTestsBase):
             query = """MATCH (a) WHERE a RETURN a"""
             self.graph.query(query)
             assert(False)
-        except redis.exceptions.ResponseError as e:
+        except redis.ResponseError as e:
             assert("expected Boolean but was Node" in str(e))
             pass
 
@@ -408,7 +411,7 @@ class testQueryValidationFlow(FlowTestsBase):
             query = """MATCH (a) WHERE 1+rand() RETURN a"""
             self.graph.query(query)
             assert(False)
-        except redis.exceptions.ResponseError as e:
+        except redis.ResponseError as e:
             assert("expected Boolean but was Float" in str(e))
             pass
 
@@ -416,7 +419,7 @@ class testQueryValidationFlow(FlowTestsBase):
             query = """CYPHER p=3 WITH 1 AS a WHERE $p RETURN a"""
             self.graph.query(query)
             assert(False)
-        except redis.exceptions.ResponseError as e:
+        except redis.ResponseError as e:
             assert("expected Boolean but was Integer" in str(e))
             pass
 
@@ -434,7 +437,7 @@ class testQueryValidationFlow(FlowTestsBase):
         try:
             self.graph.query(query)
             assert(False)
-        except redis.exceptions.ResponseError as e:
+        except redis.ResponseError as e:
             # Expecting an error.
             assert("Encountered unhandled type" in str(e))
 
@@ -446,7 +449,7 @@ class testQueryValidationFlow(FlowTestsBase):
             try:
                 self.graph.query(q)
                 assert(False)
-            except redis.exceptions.ResponseError as e:
+            except redis.ResponseError as e:
                 # Expecting an error.
                 assert("Property values can only be of primitive types" in str(e))
                 pass
@@ -470,7 +473,7 @@ class testQueryValidationFlow(FlowTestsBase):
             try:
                 self.graph.query(q)
                 assert(False)
-            except redis.exceptions.ResponseError as e:
+            except redis.ResponseError as e:
                 # Expecting an error.
                 assert("Unexpected clause following RETURN" in str(e))
                 pass
@@ -481,7 +484,7 @@ class testQueryValidationFlow(FlowTestsBase):
             query = """CYPHER A=[a] RETURN 5"""
             self.graph.query(query)
             assert(False)
-        except redis.exceptions.ResponseError as e:
+        except redis.ResponseError as e:
             # expecting an error
             pass
 
@@ -491,7 +494,7 @@ class testQueryValidationFlow(FlowTestsBase):
             query = """CREATE (a:L {v: a.v})"""
             self.graph.query(query)
             assert(False)
-        except redis.exceptions.ResponseError as e:
+        except redis.ResponseError as e:
             # Expecting an error.
             self.env.assertContains("undefined attribute", str(e))
 
@@ -533,7 +536,7 @@ class testQueryValidationFlow(FlowTestsBase):
             try:
                 self.graph.query(q)
                 assert(False)
-            except redis.exceptions.ResponseError as e:
+            except redis.ResponseError as e:
                 pass
 
     def test38_return_star_union(self):
@@ -546,7 +549,7 @@ class testQueryValidationFlow(FlowTestsBase):
             try:
                 self.graph.query(q)
                 assert(False)
-            except redis.exceptions.ResponseError as e:
+            except redis.ResponseError as e:
                 self.env.assertContains("All sub queries in a UNION must have the same column names", str(e))
 
     def test39_non_single_statement_query(self):
@@ -558,7 +561,7 @@ class testQueryValidationFlow(FlowTestsBase):
             try:
                 self.graph.query(q)
                 assert(False)
-            except redis.exceptions.ResponseError as e:
+            except redis.ResponseError as e:
                 pass
         
         queries = ["MATCH (n) RETURN n; MATCH"]
@@ -566,7 +569,7 @@ class testQueryValidationFlow(FlowTestsBase):
             try:
                 self.graph.query(q)
                 assert(False)
-            except redis.exceptions.ResponseError as e:
+            except redis.ResponseError as e:
                 self.env.assertContains("query with more than one statement is not supported", str(e))
 
         queries = ["RETURN 1;",
@@ -584,7 +587,7 @@ class testQueryValidationFlow(FlowTestsBase):
             try:
                 self.graph.query(query)
                 self.env.assertTrue(False)
-            except redis.exceptions.ResponseError:
+            except redis.ResponseError:
                 pass
 
         # check that AST validation errors are handled correctly
@@ -599,7 +602,7 @@ class testQueryValidationFlow(FlowTestsBase):
             try:
                 self.graph.query(query)
                 self.env.assertTrue(False)
-            except redis.exceptions.ResponseError:
+            except redis.ResponseError:
                 pass
 
     # Test returning multiple occurrence of an expression.
@@ -615,7 +618,7 @@ class testQueryValidationFlow(FlowTestsBase):
             try:
                 self.graph.query(q)
                 assert(False)
-            except redis.exceptions.ResponseError as e:
+            except redis.ResponseError as e:
                 self.env.assertContains("Multiple result columns with the same name are not supported", str(e))
 
     # Test fail with unknown function.
@@ -632,7 +635,7 @@ class testQueryValidationFlow(FlowTestsBase):
             try:
                 self.graph.query(q)
                 assert(False)
-            except redis.exceptions.ResponseError as e:
+            except redis.ResponseError as e:
                 self.env.assertContains("Unknown function", str(e))
     
     # Variable length edges are not allowed in CREATE or MERGE clauses.
@@ -647,7 +650,7 @@ class testQueryValidationFlow(FlowTestsBase):
             try:
                 self.graph.query(q)
                 self.env.assertTrue(False)
-            except redis.exceptions.ResponseError as e:
+            except redis.ResponseError as e:
                 self.env.assertContains("Variable length relationships cannot be used in", str(e))
 
     def test44_undefined_variables(self):
@@ -668,7 +671,7 @@ class testQueryValidationFlow(FlowTestsBase):
             try:
                 self.graph.query(query)
                 self.env.assertTrue(False)
-            except redis.exceptions.ResponseError as e:
+            except redis.ResponseError as e:
                 # Expecting an error.
                 self.env.assertContains("'a' not defined", str(e))
 
@@ -686,7 +689,7 @@ class testQueryValidationFlow(FlowTestsBase):
             try:
                 self.graph.query(query)
                 self.env.assertTrue(False)
-            except redis.exceptions.ResponseError as e:
+            except redis.ResponseError as e:
                 # Expecting an error.
                 self.env.assertContains("'a' not defined", str(e))
 

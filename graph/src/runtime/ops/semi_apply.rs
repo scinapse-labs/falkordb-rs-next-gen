@@ -1,36 +1,50 @@
-//! Semi-apply operator — existence-based filtering via a sub-plan.
+//! Batch-mode semi-apply operator — existence-based filtering via a sub-plan.
 //!
-//! Implements `WHERE EXISTS { ... }` (semi-join) and
-//! `WHERE NOT EXISTS { ... }` (anti-semi-join). For each incoming row,
-//! runs the right sub-plan; if it produces at least one result the row
-//! is passed through (or filtered out for anti mode).
+//! Implements Cypher `WHERE EXISTS { ... }` (semi) and
+//! `WHERE NOT EXISTS { ... }` (anti-semi) patterns.
 //!
 //! ```text
-//!  left iter ──► env ──► right sub-plan(env)
-//!                              │
-//!                   ┌── has result? XOR is_anti ──┐
-//!                   │ pass                         │ fail
-//!                   ▼                              ▼
-//!               yield env                        skip
+//!  Input batch [row0, row1, row2]
+//!       │
+//!  stamp origin_row
+//!       │
+//!  ┌────▼─────────────┐
+//!  │ Right sub-plan    │  single instance, all rows at once
+//!  └────┬─────────────┘
+//!       │
+//!  collect matched origin_rows
+//!       │
+//!  ┌────▼──────────────────────────────────┐
+//!  │ Semi mode:  keep rows WITH matches    │
+//!  │ Anti mode:  keep rows WITHOUT matches │
+//!  └──────────────────────────────────────┘
 //! ```
+//!
+//! For each input batch, runs the right sub-plan once with all active rows as
+//! the argument batch. Uses `origin_row` on each output env to determine which
+//! input rows had matches, then builds a selection vector accordingly.
 
-use super::OpIter;
+use std::collections::HashSet;
+
 use crate::planner::IR;
-use crate::runtime::{env::Env, runtime::Runtime};
+use crate::runtime::{
+    batch::{Batch, BatchOp},
+    runtime::Runtime,
+};
 use orx_tree::{Dyn, NodeIdx, NodeRef};
 
 pub struct SemiApplyOp<'a> {
-    runtime: &'a Runtime,
-    pub iter: Box<OpIter<'a>>,
+    pub(crate) runtime: &'a Runtime<'a>,
+    pub(crate) child: Box<BatchOp<'a>>,
     is_anti: bool,
     right_child_idx: NodeIdx<Dyn<IR>>,
-    idx: NodeIdx<Dyn<IR>>,
+    pub(crate) idx: NodeIdx<Dyn<IR>>,
 }
 
 impl<'a> SemiApplyOp<'a> {
     pub fn new(
-        runtime: &'a Runtime,
-        iter: Box<OpIter<'a>>,
+        runtime: &'a Runtime<'a>,
+        child: Box<BatchOp<'a>>,
         is_anti: bool,
         idx: NodeIdx<Dyn<IR>>,
     ) -> Self {
@@ -38,7 +52,7 @@ impl<'a> SemiApplyOp<'a> {
 
         Self {
             runtime,
-            iter,
+            child,
             is_anti,
             right_child_idx,
             idx,
@@ -46,42 +60,62 @@ impl<'a> SemiApplyOp<'a> {
     }
 }
 
-impl Iterator for SemiApplyOp<'_> {
-    type Item = Result<Env, String>;
+impl<'a> Iterator for SemiApplyOp<'a> {
+    type Item = Result<Batch<'a>, String>;
 
     fn next(&mut self) -> Option<Self::Item> {
         loop {
-            let env = match self.iter.next()? {
-                Ok(env) => env,
-                Err(e) => {
-                    let result = Err(e);
-                    self.runtime.inspect_result(self.idx, &result);
-                    return Some(result);
-                }
+            let mut batch = match self.child.next()? {
+                Ok(b) => b,
+                Err(e) => return Some(Err(e)),
             };
-            let has_result = match self.runtime.run(self.right_child_idx) {
-                Ok(mut iter) => {
-                    iter.set_argument_env(&env);
-                    match iter.next() {
-                        Some(Ok(_)) => true,
-                        Some(Err(e)) => {
-                            let result = Err(e);
-                            self.runtime.inspect_result(self.idx, &result);
-                            return Some(result);
+
+            let active: Vec<usize> = batch.active_indices().collect();
+
+            // Build argument batch with origin_row stamped on each env.
+            let arg_envs: Vec<_> = active
+                .iter()
+                .enumerate()
+                .map(|(i, &row_idx)| {
+                    let mut e = batch.env_ref(row_idx).clone_pooled(self.runtime.env_pool);
+                    e.origin_row = i as u32;
+                    e
+                })
+                .collect();
+
+            // Create ONE subtree for all rows.
+            let mut subtree = match self.runtime.run_batch(self.right_child_idx) {
+                Ok(s) => s,
+                Err(e) => return Some(Err(e)),
+            };
+            subtree.set_argument_batch(Batch::from_envs(arg_envs));
+
+            // Collect which origin_rows produced at least one result.
+            let mut matched = HashSet::new();
+            for sub_result in subtree.by_ref() {
+                match sub_result {
+                    Ok(sub_batch) => {
+                        for env in sub_batch.active_env_iter() {
+                            matched.insert(env.origin_row);
                         }
-                        None => false,
                     }
+                    Err(e) => return Some(Err(e)),
                 }
-                Err(e) => {
-                    let result = Err(e);
-                    self.runtime.inspect_result(self.idx, &result);
-                    return Some(result);
+            }
+            drop(subtree);
+
+            // Build selection based on match/anti semantics.
+            let mut passing = Vec::new();
+            for (i, &row_idx) in active.iter().enumerate() {
+                let has_result = matched.contains(&(i as u32));
+                if has_result ^ self.is_anti {
+                    passing.push(row_idx as u16);
                 }
-            };
-            if has_result ^ self.is_anti {
-                let result = Ok(env);
-                self.runtime.inspect_result(self.idx, &result);
-                return Some(result);
+            }
+
+            if !passing.is_empty() {
+                batch.set_selection(passing);
+                return Some(Ok(batch));
             }
         }
     }

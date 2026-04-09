@@ -1,27 +1,67 @@
 //! Abstract Syntax Tree (AST) definitions for Cypher queries.
 //!
-//! This module defines the intermediate representation (IR) for parsed Cypher queries.
-//! The AST is produced by the parser ([`crate::parser::cypher`]) and consumed by the binder
-//! ([`crate::planner::binder`]) and planner ([`crate::planner`]).
+//! This module defines the intermediate representation (IR) for parsed Cypher
+//! queries. The AST is produced by the parser ([`crate::parser::cypher`]) and
+//! consumed by the binder ([`crate::planner::binder`]) and planner
+//! ([`crate::planner`]).
+//!
+//! ## Overall Structure
+//!
+//! A parsed Cypher query is a tree of `QueryIR` clause nodes, each of which
+//! may contain expression trees (`DynTree<ExprIR<TVar>>`) and graph pattern
+//! structures (`QueryGraph`):
+//!
+//! ```text
+//! QueryIR::Query
+//!  |-- QueryIR::Match
+//!  |     |-- QueryGraph
+//!  |     |     |-- QueryNode  ("n", labels: [Person])
+//!  |     |     |-- QueryNode  ("m", labels: [])
+//!  |     |     '-- QueryRelationship  ("r", types: [KNOWS], from: n, to: m)
+//!  |     '-- filter: DynTree<ExprIR>   (expression tree for WHERE clause)
+//!  |
+//!  '-- QueryIR::Return
+//!        '-- exprs: [("name", DynTree<ExprIR>)]
+//!                                |
+//!                           Property("name")
+//!                                |
+//!                           Variable("m")
+//! ```
 //!
 //! ## Key Types
 //!
-//! - [`Variable`]: A named or anonymous variable in a query
-//! - [`ExprIR`]: Expression nodes (literals, operators, function calls)
-//! - [`QueryIR`]: Query clause nodes (MATCH, CREATE, RETURN, etc.)
-//! - [`QueryGraph`]: Pattern graph structure with nodes, relationships, and paths
+//! - [`Variable`]: A named or anonymous variable with a unique binding ID
+//! - [`ExprIR`]: Expression nodes (literals, operators, function calls, etc.)
+//! - [`QueryIR`]: Query clause nodes (MATCH, CREATE, RETURN, WITH, etc.)
+//! - [`QueryGraph`]: Pattern graph structure containing nodes, relationships,
+//!   and named paths
+//! - [`QueryExpr`]: Type alias for `Arc<DynTree<ExprIR<TVar>>>` -- a
+//!   reference-counted expression tree
 //!
 //! ## Type Parameters
 //!
-//! AST types are generic over `TVar` (variable type) to support different stages:
-//! - `Arc<String>`: Raw AST before binding (variables are just names)
-//! - [`Variable`]: Bound AST with resolved variable IDs and types
+//! AST types are generic over `TVar` (variable type) to support two stages:
+//! - `Arc<String>`: Raw AST before binding -- variables are just names
+//!   (type alias: [`RawQueryIR`])
+//! - [`Variable`]: Bound AST with resolved variable IDs, scopes, and types
+//!   (type alias: [`BoundQueryIR`])
 //!
 //! ## Expression Trees
 //!
-//! Expressions are stored as trees using `DynTree<ExprIR<TVar>>` from `orx-tree`.
-//! Operators are internal nodes with operands as children, supporting arbitrary
-//! expression nesting.
+//! Expressions are stored as trees using `DynTree<ExprIR<TVar>>` from
+//! `orx-tree`. Operators are internal nodes with operands as children,
+//! supporting arbitrary expression nesting. For example, `a.age + b.age * 2`:
+//!
+//! ```text
+//!          Add
+//!         /   \
+//!   Property   Mul
+//!   ("age")   /   \
+//!     |    Property  Integer(2)
+//!  Var("a") ("age")
+//!              |
+//!           Var("b")
+//! ```
 
 use std::{collections::HashSet, fmt::Display, hash::Hash, sync::Arc};
 
@@ -183,9 +223,15 @@ pub enum ExprIR<TVar> {
     /// Function call with function definition
     FuncInvocation(Arc<GraphFn>),
     /// List quantifier (all/any/none/single)
-    Quantifier(QuantifierType, TVar),
+    Quantifier {
+        quantifier_type: QuantifierType,
+        var: TVar,
+    },
     /// List comprehension [x IN list | expr]
     ListComprehension(TVar),
+    /// Reduce expression: reduce(acc = init, var IN list | expr)
+    /// Children: [init_expr, list_expr, body_expr]
+    Reduce { accumulator: TVar, iterator: TVar },
     /// Pattern comprehension [(pattern) WHERE cond | expr]
     /// Stores the graph pattern for runtime traversal.
     /// Children: [where_condition, result_expression]
@@ -194,6 +240,15 @@ pub enum ExprIR<TVar> {
     Paren,
     /// Pattern predicate should be rewritten in planner
     Pattern(QueryGraph<Arc<String>, Arc<String>, TVar>),
+    /// shortestPath((a)-[*]->(b)) or allShortestPaths((a)-[*]->(b))
+    /// Children: [source_var_expr, dest_var_expr]
+    ShortestPath {
+        rel_types: Vec<Arc<String>>,
+        min_hops: u32,
+        max_hops: Option<u32>,
+        directed: bool,
+        all_paths: bool,
+    },
     /// Map projection: base { .prop, .*, key: expr, var }
     /// First child is the base expression, remaining children are projection items
     MapProjection,
@@ -241,17 +296,33 @@ impl<TVar: Display + std::fmt::Debug> Display for ExprIR<TVar> {
             Self::Distinct => write!(f, "distinct"),
             Self::Property(prop) => write!(f, "property({prop})"),
             Self::FuncInvocation(func) => write!(f, "{}()", func.name),
-            Self::Quantifier(quantifier_type, var) => {
+            Self::Quantifier {
+                quantifier_type,
+                var,
+            } => {
                 write!(f, "{quantifier_type} {var}")
             }
             Self::ListComprehension(var) => {
                 write!(f, "list comp({var})")
+            }
+            Self::Reduce {
+                accumulator,
+                iterator,
+            } => {
+                write!(f, "reduce({accumulator}, {iterator})")
             }
             Self::PatternComprehension(_) => {
                 write!(f, "pattern comp")
             }
             Self::Paren => write!(f, "()"),
             Self::Pattern(_) => write!(f, "<pattern>"),
+            Self::ShortestPath { all_paths, .. } => {
+                if *all_paths {
+                    write!(f, "allShortestPaths()")
+                } else {
+                    write!(f, "shortestPath()")
+                }
+            }
             Self::MapProjection => write!(f, "map_projection"),
         }
     }
@@ -289,6 +360,17 @@ pub trait SupportAggregation {
 }
 
 impl SupportAggregation for DynTree<ExprIR<Variable>> {
+    fn is_aggregation(&self) -> bool {
+        self.root().indices::<Dfs>().any(|idx| {
+            matches!(
+                self.node(idx).data(),
+                ExprIR::FuncInvocation(func) if func.is_aggregate()
+            )
+        })
+    }
+}
+
+impl SupportAggregation for DynTree<ExprIR<Arc<String>>> {
     fn is_aggregation(&self) -> bool {
         self.root().indices::<Dfs>().any(|idx| {
             matches!(
@@ -358,6 +440,19 @@ pub struct QueryRelationship<T, L, TVar> {
     pub bidirectional: bool,
     pub min_hops: Option<u32>,
     pub max_hops: Option<u32>,
+    pub all_shortest_paths: AllShortestPaths,
+}
+
+/// Whether this relationship is part of an allShortestPaths pattern,
+/// and if so, whether the result paths need to be reversed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AllShortestPaths {
+    /// Not an allShortestPaths pattern.
+    No,
+    /// allShortestPaths with edges in traversal order.
+    Forward,
+    /// allShortestPaths with edges reversed (incoming pattern like `(a)<-[*]-(b)`).
+    Reversed,
 }
 
 #[cfg_attr(tarpaulin, skip)]
@@ -368,21 +463,22 @@ impl<T: Display, L: Display, TVar: Display> Display for QueryRelationship<T, L, 
     ) -> std::fmt::Result {
         let direction = if self.bidirectional { "" } else { ">" };
         if self.types.is_empty() {
-            return write!(
+            write!(
                 f,
                 "({})-[{}]-{}({})",
                 self.from.alias, self.alias, direction, self.to.alias
-            );
+            )
+        } else {
+            write!(
+                f,
+                "({})-[{}:{}]-{}({})",
+                self.from.alias,
+                self.alias,
+                self.types.iter().join("|"),
+                direction,
+                self.to.alias
+            )
         }
-        write!(
-            f,
-            "({})-[{}:{}]-{}({})",
-            self.from.alias,
-            self.alias,
-            self.types.iter().join("|"),
-            direction,
-            self.to.alias
-        )
     }
 }
 
@@ -408,6 +504,7 @@ impl<T, L, TVar> QueryRelationship<T, L, TVar> {
             bidirectional,
             min_hops,
             max_hops,
+            all_shortest_paths: AllShortestPaths::No,
         }
     }
 }
@@ -490,6 +587,16 @@ impl<T, L, TVar: Clone + Hash + Eq> QueryGraph<T, L, TVar> {
         true
     }
 
+    pub fn replace_node(
+        &mut self,
+        alias: &TVar,
+        node: Arc<QueryNode<L, TVar>>,
+    ) {
+        if let Some(pos) = self.nodes.iter().position(|n| n.alias == *alias) {
+            self.nodes[pos] = node;
+        }
+    }
+
     pub fn add_relationship(
         &mut self,
         relationship: Arc<QueryRelationship<T, L, TVar>>,
@@ -531,9 +638,17 @@ impl<T, L, TVar: Clone + Hash + Eq> QueryGraph<T, L, TVar> {
         &self.nodes
     }
 
+    pub const fn nodes_mut(&mut self) -> &mut Vec<Arc<QueryNode<L, TVar>>> {
+        &mut self.nodes
+    }
+
     #[must_use]
     pub fn relationships(&self) -> &[Arc<QueryRelationship<T, L, TVar>>] {
         &self.relationships
+    }
+
+    pub const fn relationships_mut(&mut self) -> &mut Vec<Arc<QueryRelationship<T, L, TVar>>> {
+        &mut self.relationships
     }
 
     #[must_use]
@@ -546,7 +661,7 @@ impl<T, L> QueryGraph<T, L, Variable> {
     #[must_use]
     pub fn filter_visited(
         &self,
-        visited: &HashSet<u32>,
+        visited: &HashSet<(u32, u32)>,
     ) -> Self
     where
         T: Default,
@@ -554,17 +669,17 @@ impl<T, L> QueryGraph<T, L, Variable> {
     {
         let mut res = Self::default();
         for node in &self.nodes {
-            if !visited.contains(&node.alias.id) {
+            if !visited.contains(&(node.alias.id, node.alias.scope_id)) {
                 res.add_node(node.clone());
             }
         }
         for relationship in &self.relationships {
-            if !visited.contains(&relationship.alias.id) {
+            if !visited.contains(&(relationship.alias.id, relationship.alias.scope_id)) {
                 res.add_relationship(relationship.clone());
             }
         }
         for path in &self.paths {
-            if !visited.contains(&path.var.id) {
+            if !visited.contains(&(path.var.id, path.var.scope_id)) {
                 res.add_path(path.clone());
             }
         }
@@ -635,9 +750,13 @@ pub type QueryExpr<TVar> = Arc<DynTree<ExprIR<TVar>>>;
 #[derive(Clone, Debug)]
 pub enum SetItem<L, TVar> {
     /// Property assignment: `n.prop = value` (replace=true) or `n += {props}` (replace=false)
-    Attribute(QueryExpr<TVar>, QueryExpr<TVar>, bool),
+    Attribute {
+        target: QueryExpr<TVar>,
+        value: QueryExpr<TVar>,
+        replace: bool,
+    },
     /// Label assignment: `SET n:Label`
-    Label(TVar, OrderSet<L>),
+    Label { var: TVar, labels: OrderSet<L> },
 }
 
 #[cfg_attr(tarpaulin, skip)]
@@ -647,11 +766,15 @@ impl<L: Display + PartialEq, TVar: Display + std::fmt::Debug> Display for SetIte
         f: &mut std::fmt::Formatter<'_>,
     ) -> std::fmt::Result {
         match self {
-            Self::Attribute(target, value, replace) => {
+            Self::Attribute {
+                target,
+                value,
+                replace,
+            } => {
                 let op = if *replace { "=" } else { "+=" };
                 write!(f, "{target} {op} {value}")
             }
-            Self::Label(var, labels) => {
+            Self::Label { var, labels } => {
                 write!(f, "{var}:")?;
                 let mut first = true;
                 for i in 0..labels.len() {
@@ -674,12 +797,17 @@ impl<L: Display + PartialEq, TVar: Display + std::fmt::Debug> Display for SetIte
 #[derive(Debug)]
 pub enum QueryIR<TVar> {
     /// CALL procedure(args) YIELD outputs WHERE filter
-    Call(
-        Arc<GraphFn>,
-        Vec<QueryExpr<TVar>>,
-        Vec<TVar>,
-        Option<QueryExpr<TVar>>,
-    ),
+    /// The bool indicates whether YIELD was explicitly written (true) or default outputs are used (false).
+    /// yield_aliases stores the original field names when AS aliasing is used;
+    /// yields then holds the alias names (scope-visible).
+    Call {
+        func: Arc<GraphFn>,
+        args: Vec<QueryExpr<TVar>>,
+        yields: Vec<TVar>,
+        yield_aliases: Vec<Option<TVar>>,
+        filter: Option<QueryExpr<TVar>>,
+        explicit_yield: bool,
+    },
     /// MATCH pattern WHERE filter (optional flag for OPTIONAL MATCH)
     Match {
         pattern: QueryGraph<Arc<String>, Arc<String>, TVar>,
@@ -687,17 +815,23 @@ pub enum QueryIR<TVar> {
         optional: bool,
     },
     /// UNWIND list AS var
-    Unwind(QueryExpr<TVar>, TVar),
+    Unwind {
+        expr: QueryExpr<TVar>,
+        var: TVar,
+    },
     /// MERGE pattern ON CREATE SET ... ON MATCH SET ...
-    Merge(
-        QueryGraph<Arc<String>, Arc<String>, TVar>,
-        Vec<SetItem<Arc<String>, TVar>>,
-        Vec<SetItem<Arc<String>, TVar>>,
-    ),
+    Merge {
+        pattern: QueryGraph<Arc<String>, Arc<String>, TVar>,
+        on_create: Vec<SetItem<Arc<String>, TVar>>,
+        on_match: Vec<SetItem<Arc<String>, TVar>>,
+    },
     /// CREATE pattern
     Create(QueryGraph<Arc<String>, Arc<String>, TVar>),
     /// DELETE exprs (detach flag for DETACH DELETE)
-    Delete(Vec<QueryExpr<TVar>>, bool),
+    Delete {
+        exprs: Vec<QueryExpr<TVar>>,
+        detach: bool,
+    },
     /// SET items
     Set(Vec<SetItem<Arc<String>, TVar>>),
     /// REMOVE items (properties or labels)
@@ -745,9 +879,29 @@ pub enum QueryIR<TVar> {
         entity_type: EntityType,
     },
     /// UNION of multiple sub-query branches.
-    /// `bool` is true for UNION ALL (keep duplicates), false for UNION (deduplicate).
-    Union(Vec<Self>, bool),
-    Query(Vec<Self>, bool),
+    /// `all` is true for UNION ALL (keep duplicates), false for UNION (deduplicate).
+    Union {
+        branches: Vec<Self>,
+        all: bool,
+    },
+    Query {
+        clauses: Vec<Self>,
+        write: bool,
+    },
+    /// FOREACH(var IN list_expr | body_clauses)
+    ForEach {
+        list: QueryExpr<TVar>,
+        var: TVar,
+        body: Vec<Self>,
+    },
+    /// CALL { subquery_body }
+    /// is_returning = body ends with RETURN
+    /// remap = return remapping: (inner_var, outer_var) pairs
+    CallSubquery {
+        body: Box<Self>,
+        is_returning: bool,
+        remap: Vec<(TVar, TVar)>,
+    },
 }
 
 #[cfg_attr(tarpaulin, skip)]
@@ -757,7 +911,7 @@ impl<TVar: Display + std::fmt::Debug + Eq + Hash> Display for QueryIR<TVar> {
         f: &mut std::fmt::Formatter<'_>,
     ) -> std::fmt::Result {
         match self {
-            Self::Call(func, args, _, _) => {
+            Self::Call { func, args, .. } => {
                 writeln!(f, "{}():", func.name)?;
                 for arg in args {
                     write!(f, "{arg}")?;
@@ -765,13 +919,13 @@ impl<TVar: Display + std::fmt::Debug + Eq + Hash> Display for QueryIR<TVar> {
                 Ok(())
             }
             Self::Match { pattern, .. } => writeln!(f, "MATCH {pattern}"),
-            Self::Unwind(l, v) => {
-                writeln!(f, "UNWIND {v}:")?;
-                write!(f, "{l}")
+            Self::Unwind { expr, var } => {
+                writeln!(f, "UNWIND {var}:")?;
+                write!(f, "{expr}")
             }
-            Self::Merge(p, _, _) => writeln!(f, "MERGE {p}"),
+            Self::Merge { pattern, .. } => writeln!(f, "MERGE {pattern}"),
             Self::Create(p) => write!(f, "CREATE {p}"),
-            Self::Delete(exprs, _) => {
+            Self::Delete { exprs, .. } => {
                 writeln!(f, "DELETE:")?;
                 for expr in exprs {
                     write!(f, "{expr}")?;
@@ -832,13 +986,13 @@ impl<TVar: Display + std::fmt::Debug + Eq + Hash> Display for QueryIR<TVar> {
                     "DROP {index_type:?} {entity_type:?} INDEX ON :{label}({attrs:?})"
                 )
             }
-            Self::Query(qs, _) => {
-                for q in qs {
+            Self::Query { clauses, .. } => {
+                for q in clauses {
                     write!(f, "{q}")?;
                 }
                 Ok(())
             }
-            Self::Union(branches, all) => {
+            Self::Union { branches, all } => {
                 let keyword = if *all { "UNION ALL" } else { "UNION" };
                 for (i, branch) in branches.iter().enumerate() {
                     if i > 0 {
@@ -848,6 +1002,14 @@ impl<TVar: Display + std::fmt::Debug + Eq + Hash> Display for QueryIR<TVar> {
                 }
                 Ok(())
             }
+            Self::ForEach { list, var, body } => {
+                write!(f, "FOREACH({var} IN {list} | ")?;
+                for clause in body {
+                    write!(f, "{clause}")?;
+                }
+                write!(f, ")")
+            }
+            Self::CallSubquery { body, .. } => write!(f, "CALL {{ {body} }}"),
         }
     }
 }
@@ -868,7 +1030,11 @@ impl<TVar: Eq + Hash + Display> QueryIR<TVar> {
         TVar: 'a,
     {
         match self {
-            Self::Call(proc, args, _, _) => {
+            Self::Call {
+                func: proc,
+                args,
+                ..
+            } => {
                 if proc.name == "db.idx.fulltext.createNodeIndex" {
                     match args[0].root().data() {
                         ExprIR::String(_) => {}
@@ -901,14 +1067,18 @@ impl<TVar: Eq + Hash + Display> QueryIR<TVar> {
                         "Query cannot conclude with MATCH (must be a RETURN clause, an update clause, a procedure call or a non-returning subquery)",
                     )), |first| first.inner_validate(iter))
             }
-            Self::Unwind(_, _) => {
+            Self::Unwind { .. } => {
                 iter.next().map_or_else(|| Err(String::from(
                         "Query cannot conclude with UNWIND (must be a RETURN clause, an update clause, a procedure call or a non-returning subquery)",
                     )), |first| first.inner_validate(iter))
             }
-            Self::Merge(p, on_create_set_items, on_match_set_items) => {
-                Self::validate_inlined_properties(p)?;
-                for relationship in &p.relationships {
+            Self::Merge {
+                pattern,
+                on_create: on_create_set_items,
+                on_match: on_match_set_items,
+            } => {
+                Self::validate_inlined_properties(pattern)?;
+                for relationship in &pattern.relationships {
                     if relationship.types.len() != 1 {
                         return Err(String::from(
                             "Exactly one relationship type must be specified for each relation in a MERGE pattern.",
@@ -932,7 +1102,7 @@ impl<TVar: Eq + Hash + Display> QueryIR<TVar> {
                 iter.next()
                     .map_or(Ok(()), |first| first.inner_validate(iter))
             }
-            Self::Delete(_exprs, _) => {
+            Self::Delete { .. } => {
                 iter.next()
                     .map_or(Ok(()), |first| first.inner_validate(iter))
             }
@@ -964,12 +1134,12 @@ impl<TVar: Eq + Hash + Display> QueryIR<TVar> {
             Self::DropIndex { .. } => iter
                 .next()
                 .map_or(Ok(()), |first| first.inner_validate(iter)),
-            Self::Query(q, _) => {
-                let mut iter = q.iter();
+            Self::Query { clauses, .. } => {
+                let mut iter = clauses.iter();
                 let first = iter.next().ok_or("Error: empty query.")?;
                 first.inner_validate(iter)
             }
-            Self::Union(branches, _) => {
+            Self::Union { branches, .. } => {
                 let mut first_columns: Option<Vec<String>> = None;
                 for branch in branches {
                     branch.validate()?;
@@ -986,12 +1156,35 @@ impl<TVar: Eq + Hash + Display> QueryIR<TVar> {
                 }
                 Ok(())
             }
+            Self::ForEach { body, .. } => {
+                for clause in body {
+                    clause.validate()?;
+                }
+                iter.next()
+                    .map_or(Ok(()), |first| first.inner_validate(iter))
+            }
+            Self::CallSubquery {
+                body,
+                is_returning,
+                ..
+            } => {
+                body.validate()?;
+                if *is_returning {
+                    iter.next().map_or_else(
+                        || Err("Query cannot conclude with a returning subquery (must be a RETURN clause, an update clause, a procedure call or a non-returning subquery)".into()),
+                        |first| first.inner_validate(iter),
+                    )
+                } else {
+                    iter.next()
+                        .map_or(Ok(()), |first| first.inner_validate(iter))
+                }
+            }
         }
     }
 
     fn validate_set_items(items: &Vec<SetItem<Arc<String>, TVar>>) -> Result<(), String> {
         for item in items {
-            if let SetItem::Attribute(target, _, _) = item {
+            if let SetItem::Attribute { target, .. } = item {
                 if let ExprIR::Property(_) = target.root().data()
                     && let ExprIR::Variable(_) = target.root().child(0).data()
                 {
@@ -1031,14 +1224,21 @@ impl<TVar: Eq + Hash + Display> QueryIR<TVar> {
     /// Extracts RETURN (or CALL/YIELD) column names from a UNION branch
     /// for cross-branch validation.
     pub fn return_column_names(&self) -> Vec<String> {
-        if let Self::Query(clauses, _) = self {
+        if let Self::Query { clauses, .. } = self {
             for clause in clauses.iter().rev() {
                 match clause {
                     Self::Return { exprs, .. } => {
                         return exprs.iter().map(|(var, _)| var.to_string()).collect();
                     }
-                    Self::Call(_, _, vars, _) => {
-                        return vars.iter().map(ToString::to_string).collect();
+                    Self::Call { yields, .. } => {
+                        return yields.iter().map(ToString::to_string).collect();
+                    }
+                    Self::CallSubquery {
+                        body,
+                        is_returning: true,
+                        ..
+                    } => {
+                        return body.return_column_names();
                     }
                     _ => {}
                 }

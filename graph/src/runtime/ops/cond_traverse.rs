@@ -1,253 +1,484 @@
-//! Conditional traverse operator — expands single-hop relationships.
+//! Batch-mode conditional traverse operator — single-hop relationship expansion.
 //!
-//! For each incoming row, scans relationships matching the given type/label
-//! constraints and property filters. Supports both directed and bidirectional
-//! traversal patterns.
+//! For each active row in the input batch, extracts the source node and scans
+//! matching relationships, producing output rows with relationship and endpoint
+//! bindings.
 //!
 //! ```text
-//!  child iter ──► env (with bound src node)
-//!                     │
-//!       ┌─────────────┴─────────────┐
-//!       │  scan matching relations  │  (type filter, label filter, attr filter)
-//!       └─────────────┬─────────────┘
-//!                     │
-//!        for each (src, rel, dst):
-//!          env += {rel_alias: rel, from: src, to: dst}
-//!                     │
-//!                 yield Env ──► parent
+//!  Input batch (1 parent row with n=Node(5)):
+//!  ┌──────┐
+//!  │ n=5  │  ──expand_row──►  ┌─────────────────────┐
+//!  └──────┘                   │ n=5, r=Rel(1,5,7)   │
+//!                             │ n=5, r=Rel(2,5,9)   │
+//!                             │ ...                  │
+//!                             └─────────────────────┘
+//!                             (buffered in `pending`, drained to output batches)
 //! ```
 //!
-//! When `bidirectional` is set, the reverse direction is also scanned
-//! (skipping self-loops to avoid duplicates).
+//! ## State Machine
+//!
+//! The operator maintains three pieces of state across `next()` calls:
+//! - `current_batch` / `current_pos`: position within the current input batch
+//! - `pending`: VecDeque of already-expanded output rows awaiting emission
+//!
+//! Each `next()` drains pending rows, then continues expanding input rows
+//! until `BATCH_SIZE` output rows are collected or input is exhausted.
 
-use std::iter::empty;
+use std::collections::VecDeque;
 use std::sync::Arc;
 
-use super::OpIter;
-use crate::graph::graph::NodeId;
+use crate::graph::graph::Graph;
+use crate::graph::graphblas::matrix::Matrix;
 use crate::parser::ast::{QueryRelationship, Variable};
 use crate::planner::IR;
-use crate::runtime::{env::Env, runtime::Runtime, value::Value};
+use crate::runtime::eval::ExprEval;
+use crate::runtime::{
+    batch::{BATCH_SIZE, Batch, BatchOp},
+    env::Env,
+    runtime::Runtime,
+    value::Value,
+};
 use orx_tree::{Dyn, NodeIdx, NodeRef};
 
 pub struct CondTraverseOp<'a> {
-    runtime: &'a Runtime,
-    pub iter: Box<OpIter<'a>>,
-    current: Option<Box<dyn Iterator<Item = Result<Env, String>> + 'a>>,
+    pub(crate) runtime: &'a Runtime<'a>,
+    pub(crate) child: Box<BatchOp<'a>>,
     relationship_pattern: &'a QueryRelationship<Arc<String>, Arc<String>, Variable>,
-    idx: NodeIdx<Dyn<IR>>,
+    /// Buffered output rows from a partial expansion.
+    pending: VecDeque<Env<'a>>,
+    /// Current input batch being expanded (may span multiple output batches).
+    current_batch: Option<Batch<'a>>,
+    /// Index into active rows of the current batch.
+    current_pos: usize,
+    /// Whether to emit one row per edge (true) or collapse multi-edges into
+    /// one row per (src, dst) pair (false). Set by the planner based on
+    /// whether the edge is named or referenced in a named path.
+    emit_relationship: bool,
+    /// Alias IDs of sibling relationship variables in the same MATCH clause.
+    sibling_edges: &'a [u32],
+    /// When true, from/to have been swapped by the optimizer relative to the
+    /// edge direction in the graph. The scan labels and node assignments are
+    /// transposed accordingly.
+    transposed: bool,
+    pub(crate) idx: NodeIdx<Dyn<IR>>,
+    /// Cached forward relationship matrix (built once, reused per row).
+    fwd_matrix: Matrix,
+    /// Cached reverse relationship matrix (only for bidirectional patterns).
+    rev_matrix: Option<Matrix>,
+    /// For bidirectional anonymous-edge CTs, tracks (source, dest) pairs
+    /// already emitted to deduplicate rows that reach the same pair via
+    /// different intermediate nodes — matching C FalkorDB's matrix-multiply
+    /// semantics.
+    bidir_dedup: Option<std::cell::RefCell<std::collections::HashSet<(u64, u64)>>>,
+    /// When the child is also an anonymous bidir CT, stores the child's
+    /// from-alias so the dedup key uses the original scan source (not the
+    /// intermediate node).  When None, dedup uses this CT's own from-alias.
+    dedup_source_alias: Option<Variable>,
 }
 
 impl<'a> CondTraverseOp<'a> {
     pub fn new(
-        runtime: &'a Runtime,
-        iter: Box<OpIter<'a>>,
+        runtime: &'a Runtime<'a>,
+        child: Box<BatchOp<'a>>,
         relationship_pattern: &'a QueryRelationship<Arc<String>, Arc<String>, Variable>,
+        emit_relationship: bool,
+        sibling_edges: &'a [u32],
+        transposed: bool,
         idx: NodeIdx<Dyn<IR>>,
     ) -> Self {
+        let rp = relationship_pattern;
+        let g = runtime.g.borrow();
+
+        let (fwd_src_labels, fwd_dst_labels) = if transposed {
+            (&rp.to.labels, &rp.from.labels)
+        } else {
+            (&rp.from.labels, &rp.to.labels)
+        };
+        let fwd_matrix = g.build_relationship_matrix(&rp.types, fwd_src_labels, fwd_dst_labels);
+
+        let rev_matrix = if rp.bidirectional {
+            let (rev_src_labels, rev_dst_labels) = if transposed {
+                (&rp.from.labels, &rp.to.labels)
+            } else {
+                (&rp.to.labels, &rp.from.labels)
+            };
+            Some(g.build_relationship_matrix(&rp.types, rev_src_labels, rev_dst_labels))
+        } else {
+            None
+        };
+
+        drop(g);
+
+        // When this CT and its child CT are both anonymous bidirectional
+        // edges, enable cross-row (from, to) deduplication to replicate
+        // C FalkorDB's matrix-multiply semantics.  Use the child's
+        // from-alias as the dedup source so we deduplicate by
+        // (original_scan_source, final_destination).
+        //
+        // Only enable when the intermediate node (this CT's from-alias,
+        // which is the child CT's to-alias) is anonymous.  If the
+        // intermediate is a user-named variable it may be referenced by
+        // downstream operators (e.g. ExpandInto), so collapsing rows
+        // with different intermediate values would lose valid results.
+        let intermediate_is_anon = rp
+            .from
+            .alias
+            .name
+            .as_ref()
+            .is_some_and(|n| n.starts_with("_anon"));
+        let (bidir_dedup, dedup_source_alias) =
+            if !emit_relationship && rp.bidirectional && intermediate_is_anon {
+                if let BatchOp::CondTraverse(ref child_ct) = *child {
+                    if !child_ct.emit_relationship && child_ct.rev_matrix.is_some() {
+                        (
+                            Some(std::cell::RefCell::new(std::collections::HashSet::<(
+                                u64,
+                                u64,
+                            )>::new(
+                            ))),
+                            Some(child_ct.relationship_pattern.from.alias.clone()),
+                        )
+                    } else {
+                        (None, None)
+                    }
+                } else {
+                    (None, None)
+                }
+            } else {
+                (None, None)
+            };
+
         Self {
             runtime,
-            iter,
-            current: None,
+            child,
             relationship_pattern,
+            pending: VecDeque::new(),
+            current_batch: None,
+            current_pos: 0,
+            emit_relationship,
+            sibling_edges,
+            transposed,
             idx,
+            fwd_matrix,
+            rev_matrix,
+            bidir_dedup,
+            dedup_source_alias,
+        }
+    }
+
+    fn expand_row(
+        &self,
+        env: &Env<'a>,
+        out: &mut Vec<Env<'a>>,
+    ) -> Result<(), String> {
+        let runtime = self.runtime;
+        let rp = self.relationship_pattern;
+
+        let filter_attrs = ExprEval::from_runtime(runtime).eval(
+            &rp.attrs,
+            rp.attrs.root().idx(),
+            Some(env),
+            None,
+        )?;
+        let from_node_attrs = ExprEval::from_runtime(runtime).eval(
+            &rp.from.attrs,
+            rp.from.attrs.root().idx(),
+            Some(env),
+            None,
+        )?;
+        let to_node_attrs = ExprEval::from_runtime(runtime).eval(
+            &rp.to.attrs,
+            rp.to.attrs.root().idx(),
+            Some(env),
+            None,
+        )?;
+
+        let from_id = env.get(&rp.from.alias).and_then(|v| match v {
+            Value::Node(id) => Some(*id),
+            _ => None,
+        });
+        if from_id.is_none() && env.is_bound(&rp.from.alias) {
+            return Ok(());
+        }
+        let to_id = env.get(&rp.to.alias).and_then(|v| match v {
+            Value::Node(id) => Some(*id),
+            _ => None,
+        });
+        if to_id.is_none() && env.is_bound(&rp.to.alias) {
+            return Ok(());
+        }
+
+        let g = runtime.g.borrow();
+
+        let transposed = self.transposed;
+
+        // Map from_id/to_id to the matrix's src/dst dimensions.
+        let (fwd_src_id, fwd_dst_id) = if transposed {
+            (to_id, from_id)
+        } else {
+            (from_id, to_id)
+        };
+        // Iterate the cached forward matrix instead of rebuilding it.
+        let start = out.len();
+        Self::process_pairs(
+            Graph::iter_relationship_matrix(&self.fwd_matrix, fwd_src_id, fwd_dst_id),
+            transposed,
+            from_id,
+            to_id,
+            &from_node_attrs,
+            &to_node_attrs,
+            &filter_attrs,
+            &g,
+            rp,
+            env,
+            runtime,
+            out,
+            self.emit_relationship,
+            self.sibling_edges,
+        );
+
+        // Process reverse relationships for bidirectional patterns.
+        if let Some(ref rev_matrix) = self.rev_matrix {
+            let (rev_src_id, rev_dst_id) = if transposed {
+                (from_id, to_id)
+            } else {
+                (to_id, from_id)
+            };
+            Self::process_pairs(
+                Graph::iter_relationship_matrix(rev_matrix, rev_src_id, rev_dst_id)
+                    .filter(|(s, d)| s != d),
+                !transposed,
+                from_id,
+                to_id,
+                &from_node_attrs,
+                &to_node_attrs,
+                &filter_attrs,
+                &g,
+                rp,
+                env,
+                runtime,
+                out,
+                self.emit_relationship,
+                self.sibling_edges,
+            );
+        }
+
+        // When both this CT and its child are anonymous bidirectional,
+        // deduplicate output rows by (scan_source, final_dest) across
+        // expand_row calls — matching C FalkorDB's matrix-multiply semantics.
+        if let Some(ref dedup) = self.bidir_dedup {
+            let source_alias = self.dedup_source_alias.as_ref().unwrap();
+            let mut seen = dedup.borrow_mut();
+            let mut i = start;
+            while i < out.len() {
+                let key = {
+                    let f = out[i].get(source_alias);
+                    let t = out[i].get(&rp.to.alias);
+                    match (f, t) {
+                        (Some(Value::Node(fid)), Some(Value::Node(tid))) => {
+                            Some((u64::from(*fid), u64::from(*tid)))
+                        }
+                        _ => None,
+                    }
+                };
+                if let Some(k) = key
+                    && !seen.insert(k)
+                {
+                    out.swap_remove(i);
+                    continue;
+                }
+                i += 1;
+            }
+        }
+
+        drop(g);
+
+        Ok(())
+    }
+
+    /// Processes relationship pairs from an iterator without materializing them.
+    #[allow(clippy::too_many_arguments)]
+    fn process_pairs(
+        pairs: impl Iterator<Item = (crate::graph::graph::NodeId, crate::graph::graph::NodeId)>,
+        is_reverse: bool,
+        from_id: Option<crate::graph::graph::NodeId>,
+        to_id: Option<crate::graph::graph::NodeId>,
+        from_node_attrs: &Value,
+        to_node_attrs: &Value,
+        filter_attrs: &Value,
+        g: &crate::graph::graph::Graph,
+        rp: &QueryRelationship<Arc<String>, Arc<String>, Variable>,
+        env: &Env<'a>,
+        runtime: &'a Runtime<'a>,
+        out: &mut Vec<Env<'a>>,
+        emit_relationship: bool,
+        sibling_edges: &[u32],
+    ) {
+        for (src, dst) in pairs {
+            let (from_node, to_node) = if is_reverse { (dst, src) } else { (src, dst) };
+            if from_id.is_some() && from_id.unwrap() != from_node {
+                continue;
+            }
+            if to_id.is_some() && to_id.unwrap() != to_node {
+                continue;
+            }
+            // Check from node attrs
+            if let Value::Map(attrs) = from_node_attrs
+                && !attrs.is_empty()
+            {
+                let mut skip = false;
+                for (attr, avalue) in attrs.iter() {
+                    match g.get_node_attribute(from_node, attr) {
+                        Some(pvalue) if pvalue == *avalue => {}
+                        _ => {
+                            skip = true;
+                            break;
+                        }
+                    }
+                }
+                if skip {
+                    continue;
+                }
+            }
+            // Check to node attrs
+            if let Value::Map(attrs) = to_node_attrs
+                && !attrs.is_empty()
+            {
+                let mut skip = false;
+                for (attr, avalue) in attrs.iter() {
+                    match g.get_node_attribute(to_node, attr) {
+                        Some(pvalue) if pvalue == *avalue => {}
+                        _ => {
+                            skip = true;
+                            break;
+                        }
+                    }
+                }
+                if skip {
+                    continue;
+                }
+            }
+            // When emit_relationship is false (anonymous edge not in a named
+            // path) and there are no edge attribute filters, skip per-edge
+            // iteration and emit one row per (src, dst) pair.  The outer
+            // `get_relationships` iterator already returns unique matrix-level
+            // pairs, so one representative edge per pair is sufficient.
+            let has_edge_filter = matches!(filter_attrs, Value::Map(m) if !m.is_empty());
+            if !emit_relationship && !has_edge_filter {
+                if let Some(id) = g
+                    .get_src_dest_relationships(src, dst, &rp.types)
+                    .find(|id| !super::edge_already_used(env, *id, rp.alias.id, sibling_edges))
+                {
+                    let mut row = env.clone_pooled(runtime.env_pool);
+                    row.insert(&rp.alias, Value::Relationship(Box::new((id, src, dst))));
+                    row.insert(&rp.from.alias, Value::Node(from_node));
+                    row.insert(&rp.to.alias, Value::Node(to_node));
+                    out.push(row);
+                }
+                continue;
+            }
+
+            // Scan edges
+            for id in g.get_src_dest_relationships(src, dst, &rp.types) {
+                // Relationship uniqueness: skip edges already bound to other
+                // relationship variables in this MATCH clause.
+                if super::edge_already_used(env, id, rp.alias.id, sibling_edges) {
+                    continue;
+                }
+                if let Value::Map(filter_map) = filter_attrs
+                    && !filter_map.is_empty()
+                {
+                    let mut matches = true;
+                    for (attr, avalue) in filter_map.iter() {
+                        if let Some(pvalue) = g.get_relationship_attribute(id, attr) {
+                            if *avalue == pvalue {
+                                continue;
+                            }
+                            matches = false;
+                            break;
+                        }
+                        matches = false;
+                        break;
+                    }
+                    if !matches {
+                        continue;
+                    }
+                }
+                let mut row = env.clone_pooled(runtime.env_pool);
+                row.insert(&rp.alias, Value::Relationship(Box::new((id, src, dst))));
+                row.insert(&rp.from.alias, Value::Node(from_node));
+                row.insert(&rp.to.alias, Value::Node(to_node));
+                out.push(row);
+            }
         }
     }
 }
 
-impl Iterator for CondTraverseOp<'_> {
-    type Item = Result<Env, String>;
+impl<'a> Iterator for CondTraverseOp<'a> {
+    type Item = Result<Batch<'a>, String>;
 
-    #[allow(clippy::too_many_lines)]
     fn next(&mut self) -> Option<Self::Item> {
+        let mut envs = Vec::with_capacity(BATCH_SIZE);
+
+        // Drain leftover rows from previous call.
+        super::drain_pending(&mut self.pending, &mut envs);
+
         loop {
-            if let Some(ref mut current) = self.current {
-                if let Some(item) = current.next() {
-                    self.runtime.inspect_result(self.idx, &item);
-                    return Some(item);
-                }
-                self.current = None;
-            }
-            let vars = match self.iter.next()? {
-                Ok(vars) => vars,
-                Err(e) => {
-                    let result = Err(e);
-                    self.runtime.inspect_result(self.idx, &result);
-                    return Some(result);
-                }
-            };
-            let runtime = self.runtime;
-            let relationship_pattern = self.relationship_pattern;
-
-            let filter_attrs = match runtime.run_expr(
-                &relationship_pattern.attrs,
-                relationship_pattern.attrs.root().idx(),
-                &vars,
-                None,
-            ) {
-                Ok(v) => v,
-                Err(e) => {
-                    let result = Err(e);
-                    self.runtime.inspect_result(self.idx, &result);
-                    return Some(result);
-                }
-            };
-            let from_node_attrs = match runtime.run_expr(
-                &relationship_pattern.from.attrs,
-                relationship_pattern.from.attrs.root().idx(),
-                &vars,
-                None,
-            ) {
-                Ok(v) => v,
-                Err(e) => {
-                    let result = Err(e);
-                    self.runtime.inspect_result(self.idx, &result);
-                    return Some(result);
-                }
-            };
-            let to_node_attrs = match runtime.run_expr(
-                &relationship_pattern.to.attrs,
-                relationship_pattern.to.attrs.root().idx(),
-                &vars,
-                None,
-            ) {
-                Ok(v) => v,
-                Err(e) => {
-                    let result = Err(e);
-                    self.runtime.inspect_result(self.idx, &result);
-                    return Some(result);
-                }
-            };
-            let from_id = vars
-                .get(&relationship_pattern.from.alias)
-                .and_then(|v| match v {
-                    Value::Node(id) => Some(*id),
-                    _ => None,
-                });
-            if from_id.is_none() && vars.is_bound(&relationship_pattern.from.alias) {
-                self.current = Some(Box::new(empty()));
-                continue;
-            }
-            let to_id = vars
-                .get(&relationship_pattern.to.alias)
-                .and_then(|v| match v {
-                    Value::Node(id) => Some(*id),
-                    _ => None,
-                });
-            if to_id.is_none() && vars.is_bound(&relationship_pattern.to.alias) {
-                self.current = Some(Box::new(empty()));
-                continue;
+            if envs.len() >= BATCH_SIZE {
+                break;
             }
 
-            self.current = Some(Box::new(
-                Box::new(
-                    runtime
-                        .g
-                        .borrow()
-                        .get_relationships(
-                            &relationship_pattern.types,
-                            &relationship_pattern.from.labels,
-                            &relationship_pattern.to.labels,
-                        )
-                        .map(|(src, dst)| (src, dst, false)),
-                )
-                .chain(if relationship_pattern.bidirectional {
-                    // For bidirectional traversals, also scan the reverse direction
-                    // Skip self-loops (src == dst) as they are already included in the forward scan
-                    Box::new(
-                        runtime
-                            .g
-                            .borrow()
-                            .get_relationships(
-                                &relationship_pattern.types,
-                                &relationship_pattern.to.labels,
-                                &relationship_pattern.from.labels,
-                            )
-                            .filter(|(src, dst)| src != dst)
-                            .map(|(src, dst)| (src, dst, true)),
-                    ) as Box<dyn Iterator<Item = (NodeId, NodeId, bool)>>
-                } else {
-                    Box::new(empty())
-                })
-                .flat_map(move |(src, dst, is_reverse)| {
-                    let (from_node, to_node) = if is_reverse { (dst, src) } else { (src, dst) };
-                    if from_id.is_some() && from_id.unwrap() != from_node {
-                        return Box::new(empty()) as Box<dyn Iterator<Item = Result<Env, String>>>;
-                    }
-                    if to_id.is_some() && to_id.unwrap() != to_node {
-                        return Box::new(empty()) as Box<dyn Iterator<Item = Result<Env, String>>>;
-                    }
-                    // Check from node property attributes
-                    if let Value::Map(ref attrs) = from_node_attrs
-                        && !attrs.is_empty()
-                    {
-                        let g = runtime.g.borrow();
-                        for (attr, avalue) in attrs.iter() {
-                            match g.get_node_attribute(from_node, attr) {
-                                Some(pvalue) if pvalue == *avalue => {}
-                                _ => {
-                                    return Box::new(empty())
-                                        as Box<dyn Iterator<Item = Result<Env, String>>>;
-                                }
-                            }
+            // Get or fetch current batch.
+            if self.current_batch.is_none() {
+                match self.child.next() {
+                    Some(Ok(b)) => {
+                        self.current_batch = Some(b);
+                        self.current_pos = 0;
+                        // Reset bidirectional dedup for each new input batch so
+                        // that Apply/Optional scopes see fresh state.
+                        if let Some(ref dedup) = self.bidir_dedup {
+                            dedup.borrow_mut().clear();
                         }
                     }
-                    // Check to node property attributes
-                    if let Value::Map(ref attrs) = to_node_attrs
-                        && !attrs.is_empty()
-                    {
-                        let g = runtime.g.borrow();
-                        for (attr, avalue) in attrs.iter() {
-                            match g.get_node_attribute(to_node, attr) {
-                                Some(pvalue) if pvalue == *avalue => {}
-                                _ => {
-                                    return Box::new(empty())
-                                        as Box<dyn Iterator<Item = Result<Env, String>>>;
-                                }
-                            }
-                        }
+                    Some(Err(e)) => return Some(Err(e)),
+                    None => break,
+                }
+            }
+
+            {
+                let batch = self.current_batch.as_ref().unwrap();
+                let active: Vec<usize> = batch.active_indices().collect();
+
+                while self.current_pos < active.len() {
+                    let row_idx = active[self.current_pos];
+                    self.current_pos += 1;
+                    let env = batch.env_ref(row_idx);
+                    let mut expanded = Vec::new();
+                    if let Err(e) = self.expand_row(env, &mut expanded) {
+                        return Some(Err(e));
                     }
-                    let vars = vars.clone();
-                    let filter_attrs = filter_attrs.clone();
-                    Box::new(
-                        runtime
-                            .g
-                            .borrow()
-                            .get_src_dest_relationships(src, dst, &relationship_pattern.types)
-                            .filter(move |v| {
-                                if let Value::Map(filter_attrs) = &filter_attrs
-                                    && !filter_attrs.is_empty()
-                                {
-                                    let g = runtime.g.borrow();
-                                    for (attr, avalue) in filter_attrs.iter() {
-                                        if let Some(pvalue) = g.get_relationship_attribute(*v, attr)
-                                        {
-                                            if *avalue == pvalue {
-                                                continue;
-                                            }
-                                            return false;
-                                        }
-                                        return false;
-                                    }
-                                }
-                                true
-                            })
-                            .map(move |id| {
-                                let mut vars = vars.clone();
-                                vars.insert(
-                                    &relationship_pattern.alias,
-                                    Value::Relationship(Box::new((id, src, dst))),
-                                );
-                                vars.insert(
-                                    &relationship_pattern.from.alias,
-                                    Value::Node(from_node),
-                                );
-                                vars.insert(&relationship_pattern.to.alias, Value::Node(to_node));
-                                Ok(vars)
-                            }),
-                    ) as Box<dyn Iterator<Item = Result<Env, String>>>
-                }),
-            ));
+                    self.pending.extend(expanded);
+
+                    if self.pending.len() >= BATCH_SIZE {
+                        break;
+                    }
+                }
+            }
+
+            super::drain_pending(&mut self.pending, &mut envs);
+
+            // Check if batch is exhausted.
+            if let Some(ref batch) = self.current_batch
+                && self.current_pos >= batch.active_len()
+            {
+                self.current_batch = None;
+            }
+        }
+
+        if envs.is_empty() {
+            None
+        } else {
+            Some(Ok(Batch::from_envs(envs)))
         }
     }
 }

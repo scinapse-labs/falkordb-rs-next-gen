@@ -8,18 +8,26 @@
 //!
 //! ```text
 //! Redis Main Thread                Thread Pool
-//!       │                              │
-//!   GRAPH.QUERY ───spawn()───→  [Worker 1] → execute query
-//!       │                       [Worker 2]
+//!       |                              |
+//!   GRAPH.QUERY ───spawn()───>  [Worker 1] -> execute query
+//!       |                       [Worker 2]
 //!   (continues)                 [Worker N]
-//!       │                              │
-//!   BlockedClient ←────────────── result
+//!       |                              |
+//!   BlockedClient <────────────── result
 //! ```
 //!
-//! ## Thread Affinity
+//! ## Scheduling
 //!
-//! Jobs can optionally specify a worker index for affinity (useful when
-//! a query needs to run on the same thread as related work).
+//! Each worker has its own bounded SPSC (single-producer, single-consumer)
+//! channel. When a job is dispatched without a specific worker index, the
+//! pool picks the worker with the shortest queue (or the first empty one),
+//! spreading load across threads. When an explicit index is provided, the
+//! job is pinned to that worker (modulo worker count) for thread affinity.
+//!
+//! ## Initialization
+//!
+//! The pool is stored in a global `OnceCell` and must be initialized once
+//! via [`init_thread_pool`] before any calls to [`spawn`].
 
 use std::thread::{self, JoinHandle};
 
@@ -80,6 +88,12 @@ impl ThreadPool {
         };
         sender.send(Box::new(job)).unwrap();
     }
+    pub fn pending_count(&self) -> usize {
+        self.sender
+            .iter()
+            .map(crossfire::BlockingTxTrait::len)
+            .sum()
+    }
 }
 
 static GLOBAL_THREAD_POOL: OnceCell<ThreadPool> = OnceCell::new();
@@ -91,6 +105,25 @@ pub fn spawn<F>(
     F: FnOnce() + Send + 'static,
 {
     GLOBAL_THREAD_POOL
-        .get_or_init(|| ThreadPool::new(num_cpus::get()))
+        .get()
+        .expect("Thread pool not initialized")
         .spawn(job, idx);
+}
+
+/// Get the total number of pending jobs across all worker channels.
+pub fn pending_count() -> usize {
+    GLOBAL_THREAD_POOL
+        .get()
+        .expect("Thread pool not initialized")
+        .pending_count()
+}
+
+/// Initialize the global thread pool with a specific size.
+/// Must be called before any `spawn` calls. Returns `Ok(())` if the pool
+/// was successfully initialized, or `Err(())` if it was already initialized.
+#[allow(clippy::result_unit_err)]
+pub fn init_thread_pool(size: usize) -> Result<(), ()> {
+    GLOBAL_THREAD_POOL
+        .set(ThreadPool::new(size))
+        .map_err(|_| ())
 }

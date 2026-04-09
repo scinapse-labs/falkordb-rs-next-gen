@@ -109,7 +109,7 @@ class testACL():
             # try to use GRAPH.ACL to change the global admin
             v = self.db.execute_command("GRAPH.ACL", "SETUSER", "default", "-@all")
             self.env.assertTrue(False, "should not be able to change the global admin")
-        except redis.exceptions.ResponseError as e:
+        except redis.ResponseError as e:
             self.env.assertTrue("FAILED" in str(e))
         finally:
             self.db.execute_command("AUTH", "default", "pass")
@@ -125,7 +125,7 @@ class testACL():
             # try to use GRAPH.ACL to read the global admin
             v = self.db.execute_command("GRAPH.ACL", "GETUSER", "default")
             self.env.assertTrue(False, "should not be able to get the global admin")
-        except redis.exceptions.ResponseError as e:
+        except redis.ResponseError as e:
             self.env.assertTrue("FAILED" in str(e))
         finally:
             self.db.execute_command("AUTH", "default", "pass")
@@ -193,7 +193,7 @@ class testACL():
             # try to use add ACL to myself using GRAPH.ACL
             v = self.db.execute_command("GRAPH.ACL", "SETUSER")
             self.env.assertTrue(False, "should throw arity error")
-        except redis.exceptions.ResponseError as e:
+        except redis.ResponseError as e:
             self.env.assertTrue("wrong number of arguments" in str(e))
         finally:
             self.db.execute_command("AUTH", "default", "pass")
@@ -204,7 +204,7 @@ class testACL():
             # try to use add ACL to myself using GRAPH.ACL
             v = self.db.execute_command("GRAPH.ACL", "GETUSER")
             self.env.assertTrue(False, "should throw arity error")
-        except redis.exceptions.ResponseError as e:
+        except redis.ResponseError as e:
             self.env.assertTrue("wrong number of arguments" in str(e))
         finally:
             self.db.execute_command("AUTH", "default", "pass")
@@ -215,7 +215,7 @@ class testACL():
             # try to use add ACL to myself using GRAPH.ACL
             v = self.db.execute_command("GRAPH.ACL", "SAVE" , "EXTRA_ARG")
             self.env.assertTrue(False, "should throw arity error")
-        except redis.exceptions.ResponseError as e:
+        except redis.ResponseError as e:
             self.env.assertTrue("wrong number of arguments" in str(e))
         finally:
             self.db.execute_command("AUTH", "default", "pass")
@@ -226,7 +226,7 @@ class testACL():
             # try to use add ACL to myself using GRAPH.ACL
             v = self.db.execute_command("GRAPH.ACL", "FOO")
             self.env.assertTrue(False, "should throw Unknown command")
-        except redis.exceptions.ResponseError as e:
+        except redis.ResponseError as e:
             self.env.assertTrue("Unknown command" in str(e))
         finally:
             self.db.execute_command("AUTH", "default", "pass")
@@ -238,13 +238,13 @@ class testACL():
         try:
            v = self.db.execute_command("GRAPH.PASSWORD", "ADD")  
            self.env.assertTrue(False, "should throw arity error")
-        except redis.exceptions.ResponseError as e:
+        except redis.ResponseError as e:
             self.env.assertContains("wrong number of arguments", str(e))    
         ## unknown command
         try:
            v = self.db.execute_command("GRAPH.PASSWORD", "FOO", "BAR")  
            self.env.assertTrue(False, "should throw unknown command error")
-        except redis.exceptions.ResponseError as e:
+        except redis.ResponseError as e:
            self.env.assertContains("Unknown sub-command", str(e))    
         
     def test101_add_password(self):
@@ -266,5 +266,5 @@ class testACL():
         try:
             v = self.db.execute_command("AUTH", "falkordb-user", "foo")
             self.env.assertTrue(False, "should not be able to authenticate")
-        except redis.exceptions.AuthenticationError as e:
+        except redis.AuthenticationError as e:
             self.env.assertTrue(True)   

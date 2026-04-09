@@ -1,3 +1,6 @@
+// Dependency version duplicates are from transitive dependencies.
+#![allow(clippy::multiple_crate_versions)]
+
 use std::collections::HashMap;
 
 use graph::{
@@ -6,10 +9,7 @@ use graph::{
         graphblas::{GrB_Mode, GrB_init},
         mvcc_graph::MvccGraph,
     },
-    runtime::{
-        functions::init_functions,
-        runtime::{Runtime, evaluate_param},
-    },
+    runtime::{eval::evaluate_param, functions::init_functions, pool::Pool, runtime::Runtime},
 };
 
 #[macro_use]
@@ -36,7 +36,17 @@ fn main() {
             else {
                 return;
             };
-            let mut runtime = Runtime::new(g.read(), parameters, true, plan, false, String::new());
+            let pool = Pool::new();
+            let runtime = Runtime::new(
+                g.read(),
+                parameters,
+                true,
+                plan,
+                false,
+                String::new(),
+                &pool,
+                -1,
+            );
             let _ = runtime.query();
         }
     });

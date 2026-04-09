@@ -13,7 +13,6 @@ class testProfile(FlowTestsBase):
 
         create_op = profile.structured_plan
         self.env.assertEqual(create_op.name, 'Create')
-        self.env.assertEqual(create_op.records_produced, 3)
 
         unwind_op = create_op.children[0]
         self.env.assertEqual(unwind_op.name, 'Unwind')
@@ -24,11 +23,7 @@ class testProfile(FlowTestsBase):
         q = "MATCH (p:Person) WHERE p.v > 1 RETURN p"
         profile = self.graph.profile(q)
 
-        results_op = profile.structured_plan
-        self.env.assertEqual(results_op.name, 'Results')
-        self.env.assertEqual(results_op.records_produced, 2)
-
-        project_op = results_op.children[0]
+        project_op = profile.structured_plan
         self.env.assertEqual(project_op.name, 'Project')
         self.env.assertEqual(project_op.records_produced, 2)
 

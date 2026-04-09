@@ -1,5 +1,8 @@
 use std::fs;
 
+// Suppress too_many_lines: this build script handles multiple platform/configuration
+// cases and splitting it would reduce clarity.
+#[allow(clippy::too_many_lines)]
 fn main() {
     #[cfg(target_os = "macos")]
     {
@@ -10,6 +13,7 @@ fn main() {
     #[cfg(target_os = "linux")]
     {
         // Common libomp install locations when building RediSearch/VecSim with LLVM.
+        println!("cargo:rustc-link-search=/usr/lib/llvm-22/lib");
         println!("cargo:rustc-link-search=/usr/lib/llvm-21/lib");
         println!("cargo:rustc-link-search=/usr/lib/llvm-20/lib");
     }
@@ -18,6 +22,14 @@ fn main() {
 
     println!("cargo:rustc-link-search=/usr/local/lib");
     println!("cargo:rustc-link-lib=static=graphblas");
+
+    // LAGraph static libraries
+    let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap();
+    let lagraph_dir = std::path::Path::new(&manifest_dir).join("../lagraph_lib");
+    println!("cargo:rustc-link-search=native={}", lagraph_dir.display());
+    println!("cargo:rustc-link-search=native=/data/lagraph_lib");
+    println!("cargo:rustc-link-lib=static=lagraph");
+    println!("cargo:rustc-link-lib=static=lagraphx");
 
     // VecSim/RediSearch are built with a C++ toolchain.
     // - macOS uses libc++ / libc++abi

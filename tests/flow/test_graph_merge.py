@@ -496,7 +496,7 @@ class testGraphMergeFlow():
             query = """MATCH p=() MERGE () ON MATCH SET p.prop4 = 5"""
             self.graph.query(query)
             assert(False)
-        except redis.exceptions.ResponseError as e:
+        except redis.ResponseError as e:
             self.env.assertContains("Type mismatch", str(e))
             self.env.assertContains("Path", str(e))
 
@@ -506,7 +506,7 @@ class testGraphMergeFlow():
             query = """MERGE (n {v: NULL})"""
             self.graph.query(query)
             assert(False)
-        except redis.exceptions.ResponseError as e:
+        except redis.ResponseError as e:
             # Expecting an error.
             self.env.assertContains("Cannot merge node using null property value", str(e))
             pass
@@ -521,7 +521,7 @@ class testGraphMergeFlow():
             query = """MERGE (a:L {v: a.v})"""
             self.graph.query(query)
             assert(False)
-        except redis.exceptions.ResponseError as e:
+        except redis.ResponseError as e:
             # Expecting an error.
             self.env.assertContains("'a' not defined", str(e))
 
@@ -619,7 +619,7 @@ class testGraphMergeFlow():
         query = """MERGE ()-[:R2]->(a:L1)-[:R1]->(a:L2) RETURN *"""
         try:
             self.graph.explain(query)
-        except redis.exceptions.ResponseError as e:
+        except redis.ResponseError as e:
             # Expecting an error.
             assert("can't be redeclared in a MERGE clause" in str(e))
 
@@ -701,3 +701,13 @@ class testGraphMergeFlow():
         res = self.graph.query(q).result_set[0][0]
         self.env.assertEqual(res, 2)
 
+    def test36_reset_index(self):
+        self.graph.delete()
+
+        self.graph.query("CREATE INDEX FOR (n:N) ON(n.v)")
+
+        res = self.graph.query("""UNWIND range(1, 10) AS x
+                            MERGE (cv:N {v: toString(x % 2)})
+                            ON CREATE SET
+                              cv.x = x""")
+        self.env.assertEqual(res.nodes_created, 2)

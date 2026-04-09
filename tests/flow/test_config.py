@@ -2,7 +2,7 @@ import os
 from common import *
 
 GRAPH_ID = "config"
-NUMBER_OF_CONFIGURATIONS = 19 # number of configurations available
+NUMBER_OF_CONFIGURATIONS = 22 # number of configurations available
 
 class testConfig(FlowTestsBase):
     def __init__(self):
@@ -44,7 +44,10 @@ class testConfig(FlowTestsBase):
                 ("EFFECTS_THRESHOLD", 300),
                 ("BOLT_PORT", 65535),
                 ("DELAY_INDEXING", 0),
-                ("IMPORT_FOLDER", "/var/lib/FalkorDB/import/")
+                ("IMPORT_FOLDER", "/var/lib/FalkorDB/import/"),
+                ("TEMP_FOLDER", "/tmp"),
+                ("JS_HEAP_SIZE", 256 * 1024 * 1024),
+                ("JS_STACK_SIZE", 1024 * 1024)
         ]
 
         for i, config in enumerate(response):
@@ -67,7 +70,7 @@ class testConfig(FlowTestsBase):
         try:
             self.db.config_get(fake_config_name)
             assert(False)
-        except redis.exceptions.ResponseError as e:
+        except redis.ResponseError as e:
             # Expecting an error.
             assert("Unknown configuration field" in str(e))
             pass
@@ -119,7 +122,7 @@ class testConfig(FlowTestsBase):
             # a runtime configuration, expecting this command to fail
             response = self.redis_con.execute_command("GRAPH.CONFIG SET QUERY_MEM_CAPACITY 150 THREAD_COUNT 40")
             assert(False)
-        except redis.exceptions.ResponseError as e:
+        except redis.ResponseError as e:
             # Expecting an error.
             assert("This configuration parameter cannot be set at run-time" in str(e))
 
@@ -128,7 +131,7 @@ class testConfig(FlowTestsBase):
             # configuration, expecting this command to fail
             response = self.redis_con.execute_command("GRAPH.CONFIG SET QUERY_MEM_CAPACITY 150 FAKE_CONFIG_NAME 40")
             assert(False)
-        except redis.exceptions.ResponseError as e:
+        except redis.ResponseError as e:
             # Expecting an error.
             assert("Unknown configuration field" in str(e))
 
@@ -137,7 +140,7 @@ class testConfig(FlowTestsBase):
             # MAX_QUEUED_QUERIES, expecting this command to fail
             response = self.redis_con.execute_command("GRAPH.CONFIG SET QUERY_MEM_CAPACITY 150 MAX_QUEUED_QUERIES -1")
             assert(False)
-        except redis.exceptions.ResponseError as e:
+        except redis.ResponseError as e:
             # Expecting an error.
             assert("Failed to set config value" in str(e))
 
@@ -153,7 +156,7 @@ class testConfig(FlowTestsBase):
         try:
             self.db.config_set(fake_config_name, " 5")
             assert(False)
-        except redis.exceptions.ResponseError as e:
+        except redis.ResponseError as e:
             # Expecting an error.
             assert("Unknown configuration field" in str(e))
             pass
@@ -165,7 +168,7 @@ class testConfig(FlowTestsBase):
         try:
             response = self.redis_con.execute_command("GRAPH.CONFIG DREP " + config_name + " 3")
             assert(False)
-        except redis.exceptions.ResponseError as e:
+        except redis.ResponseError as e:
             assert("Unknown subcommand for GRAPH.CONFIG" in str(e))
             pass
 
@@ -253,6 +256,20 @@ class testConfig(FlowTestsBase):
         expected_response = 0
         self.env.assertEqual(response, expected_response)
 
+        response = self.db.config_set("JS_HEAP_SIZE", 256 * 1024 * 1024)
+        self.env.assertEqual(response, "OK")
+
+        response = self.db.config_get("JS_HEAP_SIZE")
+        expected_response = 256 * 1024 * 1024
+        self.env.assertEqual(response, expected_response)
+
+        response = self.db.config_set("JS_STACK_SIZE", 1024 * 1024)
+        self.env.assertEqual(response, "OK")
+
+        response = self.db.config_get("JS_STACK_SIZE")
+        expected_response = 1024 * 1024
+        self.env.assertEqual(response, expected_response)
+
     def test09_set_invalid_values(self):
         # The run-time configurations supported by RedisGraph are:
         # MAX_QUEUED_QUERIES
@@ -267,7 +284,7 @@ class testConfig(FlowTestsBase):
             # MAX_QUEUED_QUERIES must be a positive value
             self.db.config_set("MAX_QUEUED_QUERIES", 0)
             assert(False)
-        except redis.exceptions.ResponseError as e:
+        except redis.ResponseError as e:
             assert("Failed to set config value MAX_QUEUED_QUERIES to 0" in str(e))
             pass
 
@@ -277,7 +294,7 @@ class testConfig(FlowTestsBase):
             try:
                 self.db.config_set(f"{config}", -1)
                 assert(False)
-            except redis.exceptions.ResponseError as e:
+            except redis.ResponseError as e:
                 assert("Failed to set config value %s to -1" % config in str(e))
                 pass
 
@@ -287,7 +304,7 @@ class testConfig(FlowTestsBase):
             try:
                 self.db.config_set(config, "invalid")
                 assert(False)
-            except redis.exceptions.ResponseError as e:
+            except redis.ResponseError as e:
                 assert(("Failed to set config value %s to invalid" % config) in str(e))
 
     def test10_set_get_vkey_max_entity_count(self):
@@ -325,3 +342,153 @@ class testConfig(FlowTestsBase):
         creation_buffer_size = self.db.config_get("NODE_CREATION_BUFFER")
         expected_response = 1024
         self.env.assertEqual(creation_buffer_size, expected_response)
+
+import stat
+import shutil
+import tempfile
+
+class testConfigTempFolder:
+    def __init__(self):
+        self.env, self.db = Env()
+        if SANITIZER:
+            self.env.skip()
+
+    def teardown_method(self):
+        if hasattr(self, 'conn'):
+            self.conn.shutdown()
+
+    def set_temp_folder(self, path):
+        module_args = f"TEMP_FOLDER {path}"
+        self.env, self.db = Env(moduleArgs=module_args, enableDebugCommand=True)
+
+        self.conn = self.env.getConnection()
+
+    def test_01_temp_folder_is_file(self):
+        # try setting TEMP_FOLDER to a file
+        # expecting config update to fail
+        fd, file_path = tempfile.mkstemp()
+        os.close(fd)
+
+        # try updating TEMP_FOLDER
+        try:
+            self.set_temp_folder(file_path)
+            # setting TEMP_FOLDER to a file should have failed
+            self.env.assertFalse(True)
+        except Exception:
+            pass
+
+    def test_02_temp_folder_not_exist(self):
+        # try setting TEMP_FOLDER to a non existing folder
+        # expecting config update to fail
+
+        # make sure path doesn't exists
+        non_existent = "/tmp/falkordb_nonexistent_dir"
+        if os.path.exists(non_existent):
+            shutil.rmtree(non_existent)
+
+        # try updating TEMP_FOLDER
+        try:
+            self.set_temp_folder(non_existent)
+            self.env.assertFalse(True)
+        except Exception:
+            pass
+
+    def test_03_temp_folder_no_permission(self):
+        # try setting TEMP_FOLDER to a folder which we can't write to
+        # expecting config update to fail, as write access is mandatory
+
+        # create a temp folder with no write access
+        no_perm_dir = tempfile.mkdtemp()
+        os.chmod(no_perm_dir, stat.S_IREAD)
+
+        # check if directory is truly unwritable
+        if os.access(no_perm_dir, os.W_OK):
+            env, _ = Env(enableDebugCommand=True)
+            env.skip()
+
+        # try updating TEMP_FOLDER
+        try:
+            self.set_temp_folder(no_perm_dir)
+            # setting TEMP_FOLDER to a non writeable folder should have failed
+            self.env.assertFalse(True)
+        except Exception:
+            pass
+        finally:
+            # clean up
+            os.chmod(no_perm_dir, stat.S_IWUSR | stat.S_IREAD | stat.S_IXUSR)
+            shutil.rmtree(no_perm_dir)
+
+    def test_04_temp_folder_exists_success(self):
+        # try setting TEMP_FOLDER to a valid folder
+        # expecting config update to succeed
+
+        valid_dir = tempfile.mkdtemp()
+
+        try:
+            self.set_temp_folder(valid_dir)
+            self.env.assertEqual(self.db.config_get("TEMP_FOLDER"), valid_dir)
+        finally:
+            # clean up
+            shutil.rmtree(valid_dir)
+
+class testLoadTimeConfig(FlowTestsBase):
+    """
+    Test suite for validating FalkorDB load-time configuration defaults.
+
+    Inherits from FlowTestsBase to leverage shared test environment setup
+    and assertion utilities.
+    """
+
+    def __init__(self):
+        """
+        Initialize the test class.
+
+        Note: super().__init__() must be called to ensure FlowTestsBase
+        performs any required setup (e.g. connecting to the test environment).
+        """
+        super().__init__()
+
+    def test01_loadtime_config(self):
+        """
+        Verify that FalkorDB starts with the expected default configuration values.
+
+        Constructs a module argument string from the known defaults, launches
+        a FalkorDB environment with those arguments, then asserts that each
+        config key returns the expected value via `config_get`.
+
+        Defaults tested:
+            - CACHE_SIZE:              25
+            - VKEY_MAX_ENTITY_COUNT:   100000
+            - CMD_INFO:                True
+            - DELAY_INDEXING:          False
+            - IMPORT_FOLDER:           /var/lib/FalkorDB/import/
+            - TEMP_FOLDER:             /tmp
+            - JS_HEAP_SIZE:            268435456  (256 MB)
+            - JS_STACK_SIZE:           1048576    (1 MB)
+        """
+
+        defaults = [
+            ("CACHE_SIZE",            25),
+            ("VKEY_MAX_ENTITY_COUNT", 100000),
+            ("CMD_INFO",              "yes"),
+            ("DELAY_INDEXING",        "no"),
+            ("IMPORT_FOLDER",         "/var/lib/FalkorDB/import/"),
+            ("TEMP_FOLDER",           "/tmp"),
+            ("JS_HEAP_SIZE",          268435456),
+            ("JS_STACK_SIZE",         1048576),
+        ]
+
+        loadtime_args = " ".join(str(token) for pair in defaults for token in pair)
+        print (f"loadtime_args: {loadtime_args}")
+
+        env, db = Env(moduleArgs=loadtime_args)
+
+        for name, val in defaults:
+            if val == "yes":
+                val = True
+
+            elif val == "no":
+                val = False
+
+            env.assertEqual(db.config_get(name), val)
+

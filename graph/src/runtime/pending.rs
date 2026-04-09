@@ -34,13 +34,7 @@ use crate::{
         graph::{Graph, LabelId, NodeId, RelationshipId},
         graphblas::matrix::{Matrix, New, Remove, Set, Size},
     },
-    runtime::{
-        functions::Type,
-        ordermap::OrderMap,
-        orderset::OrderSet,
-        runtime::QueryStatistics,
-        value::{Value, ValueTypeOf},
-    },
+    runtime::{ordermap::OrderMap, orderset::OrderSet, runtime::QueryStatistics, value::Value},
 };
 
 /// A relationship waiting to be created.
@@ -65,6 +59,42 @@ impl PendingRelationship {
     }
 }
 
+const INVALID_PROPERTY_MSG: &str =
+    "Property values can only be of primitive types or arrays of primitive types";
+
+fn is_valid_property(
+    value: &Value,
+    allow_null: bool,
+) -> bool {
+    match value {
+        Value::Null => allow_null,
+        Value::Bool(_)
+        | Value::Int(_)
+        | Value::Float(_)
+        | Value::String(_)
+        | Value::Point(_)
+        | Value::VecF32(_) => true,
+        Value::List(items) => items.iter().all(|v| is_valid_property(v, false)),
+        _ => false,
+    }
+}
+
+/// Validate that a value is a valid node property type.
+fn validate_node_property(value: &Value) -> Result<(), String> {
+    if !is_valid_property(value, true) {
+        return Err(INVALID_PROPERTY_MSG.into());
+    }
+    Ok(())
+}
+
+/// Validate that a value is a valid relationship property type.
+fn validate_relationship_property(value: &Value) -> Result<(), String> {
+    if !is_valid_property(value, true) {
+        return Err(INVALID_PROPERTY_MSG.into());
+    }
+    Ok(())
+}
+
 /// Accumulated write operations for deferred application.
 ///
 /// All mutations during query execution are collected here and applied
@@ -77,7 +107,7 @@ pub struct Pending {
     /// Nodes to be deleted
     deleted_nodes: RoaringTreemap,
     /// Relationships to be deleted (edge_id, src, dst)
-    deleted_relationships: OrderSet<(RelationshipId, NodeId, NodeId)>,
+    deleted_relationships: HashMap<RelationshipId, (NodeId, NodeId)>,
     /// Property updates for nodes
     set_nodes_attrs: HashMap<u64, OrderMap<Arc<String>, Value>>,
     /// Property updates for relationships
@@ -105,7 +135,7 @@ impl Pending {
             created_nodes: RoaringTreemap::new(),
             created_relationships: HashMap::new(),
             deleted_nodes: RoaringTreemap::new(),
-            deleted_relationships: OrderSet::default(),
+            deleted_relationships: HashMap::new(),
             set_nodes_attrs: HashMap::new(),
             set_relationships_attrs: HashMap::new(),
             set_node_labels: Matrix::new(0, 0),
@@ -125,18 +155,26 @@ impl Pending {
             .resize(node_cap, labels_count as u64);
     }
 
-    pub fn created_node(
+    pub fn created_nodes(
         &mut self,
-        id: NodeId,
+        ids: &[NodeId],
     ) {
-        self.created_nodes.insert(id.into());
-        let mut cap = self.set_node_labels.nrows();
-        if cap <= u64::from(id) {
-            while cap <= u64::from(id) {
-                cap *= 2;
+        let max_id = ids.iter().map(|id| u64::from(*id)).max();
+        for id in ids {
+            self.created_nodes.insert((*id).into());
+        }
+        if let Some(max_id) = max_id {
+            let mut cap = self.set_node_labels.nrows();
+            if cap <= max_id {
+                if cap == 0 {
+                    cap = 1;
+                }
+                while cap <= max_id {
+                    cap *= 2;
+                }
+                self.set_node_labels
+                    .resize(cap, self.set_node_labels.ncols());
             }
-            self.set_node_labels
-                .resize(cap, self.set_node_labels.ncols());
         }
     }
 
@@ -146,30 +184,7 @@ impl Pending {
         attrs: OrderMap<Arc<String>, Value>,
     ) -> Result<(), String> {
         for (_, value) in attrs.iter() {
-            if value
-                .value_of_type(&Type::Union(vec![
-                    Type::Bool,
-                    Type::Int,
-                    Type::Float,
-                    Type::String,
-                    Type::Point,
-                    Type::VecF32,
-                    Type::Null,
-                    Type::List(Box::new(Type::Union(vec![
-                        Type::Bool,
-                        Type::Int,
-                        Type::Float,
-                        Type::String,
-                        Type::Point,
-                        Type::VecF32,
-                    ]))),
-                ]))
-                .is_some()
-            {
-                return Err(
-                    "Property values can only be of primitive types or arrays of primitive types",
-                )?;
-            }
+            validate_node_property(value)?;
         }
         self.set_nodes_attrs.insert(id.into(), attrs);
         Ok(())
@@ -181,30 +196,7 @@ impl Pending {
         key: Arc<String>,
         value: Value,
     ) -> Result<(), String> {
-        if value
-            .value_of_type(&Type::Union(vec![
-                Type::Bool,
-                Type::Int,
-                Type::Float,
-                Type::String,
-                Type::Point,
-                Type::VecF32,
-                Type::Null,
-                Type::List(Box::new(Type::Union(vec![
-                    Type::Bool,
-                    Type::Int,
-                    Type::Float,
-                    Type::String,
-                    Type::Point,
-                    Type::VecF32,
-                ]))),
-            ]))
-            .is_some()
-        {
-            return Err(
-                "Property values can only be of primitive types or arrays of primitive types",
-            )?;
-        }
+        validate_node_property(&value)?;
         self.set_nodes_attrs
             .entry(id.into())
             .or_default()
@@ -237,7 +229,7 @@ impl Pending {
     ) {
         if let Some(added) = self.set_nodes_attrs.get(&id.into()) {
             for (key, value) in added.iter() {
-                if *value == Value::Null {
+                if matches!(value, Value::Null) {
                     attrs.remove(key);
                 } else {
                     attrs.insert(key.clone(), value.clone());
@@ -254,6 +246,19 @@ impl Pending {
         for label in labels.iter() {
             self.set_node_labels
                 .set(id.into(), usize::from(*label) as u64, true);
+        }
+    }
+
+    pub fn set_nodes_labels(
+        &mut self,
+        ids: &[NodeId],
+        labels: &OrderSet<LabelId>,
+    ) {
+        for id in ids {
+            for label in labels.iter() {
+                self.set_node_labels
+                    .set((*id).into(), usize::from(*label) as u64, true);
+            }
         }
     }
 
@@ -293,15 +298,84 @@ impl Pending {
         self.deleted_nodes.insert(id.into());
     }
 
-    pub fn created_relationship(
+    /// Delete a pending-created node: mark it deleted, collect its labels and attrs,
+    /// and also mark any pending-created relationships connected to it for deletion.
+    /// Returns (label_ids, attrs, connected_pending_rels).
+    pub fn delete_pending_node(
         &mut self,
-        id: RelationshipId,
-        from: NodeId,
-        to: NodeId,
-        type_name: Arc<String>,
+        id: NodeId,
+    ) -> (
+        OrderSet<LabelId>,
+        OrderMap<Arc<String>, Value>,
+        Vec<(RelationshipId, NodeId, NodeId)>,
     ) {
-        self.created_relationships
-            .insert(id, PendingRelationship::new(from, to, type_name));
+        self.created_nodes.remove(id.into());
+        // Collect pending labels
+        let mut label_ids = OrderSet::default();
+        self.update_node_labels(id, &mut label_ids);
+        for label in label_ids.iter() {
+            self.set_node_labels
+                .remove(id.into(), usize::from(*label) as u64);
+        }
+
+        // Collect pending attrs
+        let attrs = self.set_nodes_attrs.remove(&id.into()).unwrap_or_default();
+
+        // Find pending-created relationships connected to this node
+        let rels: Vec<_> = self
+            .created_relationships
+            .iter()
+            .filter(|(_, r)| r.from == id || r.to == id)
+            .map(|(rid, r)| (*rid, r.from, r.to))
+            .collect();
+
+        for (rel_id, _, _) in &rels {
+            self.created_relationships.remove(rel_id);
+        }
+
+        (label_ids, attrs, rels)
+    }
+
+    /// Remove and return all pending-created relationships incident on the
+    /// given node, along with their staged attributes. Also cleans up
+    /// `set_relationships_attrs` and `deleted_relationships` entries for
+    /// each removed relationship so that commit() has no stale state.
+    pub fn remove_pending_relationships_for_node(
+        &mut self,
+        id: NodeId,
+    ) -> Vec<(
+        RelationshipId,
+        NodeId,
+        NodeId,
+        Arc<String>,
+        Option<OrderMap<Arc<String>, Value>>,
+    )> {
+        let rels: Vec<_> = self
+            .created_relationships
+            .iter()
+            .filter(|(_, r)| r.from == id || r.to == id)
+            .map(|(rid, r)| (*rid, r.from, r.to, r.type_name.clone()))
+            .collect();
+
+        let mut result = Vec::with_capacity(rels.len());
+        for (rel_id, from, to, type_name) in rels {
+            self.created_relationships.remove(&rel_id);
+            let attrs = self.set_relationships_attrs.remove(&rel_id.into());
+            self.deleted_relationships.remove(&rel_id);
+            result.push((rel_id, from, to, type_name, attrs));
+        }
+
+        result
+    }
+
+    pub fn created_relationships(
+        &mut self,
+        rels: Vec<(RelationshipId, NodeId, NodeId, Arc<String>)>,
+    ) {
+        for (id, from, to, type_name) in rels {
+            self.created_relationships
+                .insert(id, PendingRelationship::new(from, to, type_name));
+        }
     }
 
     pub fn set_relationship_attributes(
@@ -310,27 +384,7 @@ impl Pending {
         attrs: OrderMap<Arc<String>, Value>,
     ) -> Result<(), String> {
         for (_, value) in attrs.iter() {
-            if value
-                .value_of_type(&Type::Union(vec![
-                    Type::Bool,
-                    Type::Int,
-                    Type::Float,
-                    Type::String,
-                    Type::Null,
-                    Type::Point,
-                    Type::List(Box::new(Type::Union(vec![
-                        Type::Bool,
-                        Type::Int,
-                        Type::Float,
-                        Type::String,
-                    ]))),
-                ]))
-                .is_some()
-            {
-                return Err(
-                    "Property values can only be of primitive types or arrays of primitive types",
-                )?;
-            }
+            validate_relationship_property(value)?;
         }
         self.set_relationships_attrs.insert(id.into(), attrs);
         Ok(())
@@ -342,26 +396,7 @@ impl Pending {
         key: Arc<String>,
         value: Value,
     ) -> Result<(), String> {
-        if value
-            .value_of_type(&Type::Union(vec![
-                Type::Bool,
-                Type::Int,
-                Type::Float,
-                Type::String,
-                Type::Null,
-                Type::List(Box::new(Type::Union(vec![
-                    Type::Bool,
-                    Type::Int,
-                    Type::Float,
-                    Type::String,
-                ]))),
-            ]))
-            .is_some()
-        {
-            return Err(
-                "Property values can only be of primitive types or arrays of primitive types",
-            )?;
-        }
+        validate_relationship_property(&value)?;
         self.set_relationships_attrs
             .entry(id.into())
             .or_default()
@@ -387,7 +422,7 @@ impl Pending {
     ) {
         if let Some(added) = self.set_relationships_attrs.get(&id.into()) {
             for (key, value) in added.iter() {
-                if *value == Value::Null {
+                if matches!(value, Value::Null) {
                     attrs.remove(key);
                 } else {
                     attrs.insert(key.clone(), value.clone());
@@ -402,7 +437,7 @@ impl Pending {
         from: NodeId,
         to: NodeId,
     ) {
-        self.deleted_relationships.insert((id, from, to));
+        self.deleted_relationships.insert(id, (from, to));
     }
 
     #[must_use]
@@ -424,6 +459,14 @@ impl Pending {
     }
 
     #[must_use]
+    pub fn is_relationship_created(
+        &self,
+        id: RelationshipId,
+    ) -> bool {
+        self.created_relationships.contains_key(&id)
+    }
+
+    #[must_use]
     pub fn is_node_deleted(
         &self,
         id: NodeId,
@@ -438,7 +481,79 @@ impl Pending {
         from: NodeId,
         to: NodeId,
     ) -> bool {
-        self.deleted_relationships.contains(&(id, from, to))
+        self.deleted_relationships
+            .get(&id)
+            .is_some_and(|(from_id, to_id)| *from_id == from && *to_id == to)
+    }
+
+    /// Count pending-created relationships whose destination is `node_id` and
+    /// whose type name matches one of `types` (or all if `types` is empty).
+    #[must_use]
+    pub fn pending_indegree(
+        &self,
+        node_id: NodeId,
+        types: &[Arc<String>],
+    ) -> usize {
+        self.created_relationships
+            .values()
+            .filter(|r| r.to == node_id && (types.is_empty() || types.contains(&r.type_name)))
+            .count()
+    }
+
+    /// Count pending-created relationships whose source is `node_id` and
+    /// whose type name matches one of `types` (or all if `types` is empty).
+    #[must_use]
+    pub fn pending_outdegree(
+        &self,
+        node_id: NodeId,
+        types: &[Arc<String>],
+    ) -> usize {
+        self.created_relationships
+            .values()
+            .filter(|r| r.from == node_id && (types.is_empty() || types.contains(&r.type_name)))
+            .count()
+    }
+
+    /// Count pending-deleted relationships whose destination is `node_id` and
+    /// whose type name matches one of `types` (or all if `types` is empty).
+    /// Requires access to the graph to resolve relationship type IDs.
+    #[must_use]
+    pub fn pending_deleted_indegree(
+        &self,
+        node_id: NodeId,
+        types: &[Arc<String>],
+        g: &Graph,
+    ) -> usize {
+        self.deleted_relationships
+            .iter()
+            .filter(|(rel_id, (_from, to))| {
+                *to == node_id
+                    && (types.is_empty()
+                        || g.get_type(g.get_relationship_type_id(**rel_id))
+                            .is_some_and(|t| types.contains(&t)))
+            })
+            .count()
+    }
+
+    /// Count pending-deleted relationships whose source is `node_id` and
+    /// whose type name matches one of `types` (or all if `types` is empty).
+    /// Requires access to the graph to resolve relationship type IDs.
+    #[must_use]
+    pub fn pending_deleted_outdegree(
+        &self,
+        node_id: NodeId,
+        types: &[Arc<String>],
+        g: &Graph,
+    ) -> usize {
+        self.deleted_relationships
+            .iter()
+            .filter(|(rel_id, (from, _to))| {
+                *from == node_id
+                    && (types.is_empty()
+                        || g.get_type(g.get_relationship_type_id(**rel_id))
+                            .is_some_and(|t| types.contains(&t)))
+            })
+            .count()
     }
 
     pub fn commit(
@@ -509,13 +624,17 @@ impl Pending {
         }
         if !self.deleted_relationships.is_empty() {
             stats.borrow_mut().relationships_deleted += self.deleted_relationships.len();
-            g.borrow_mut()
-                .delete_relationships(self.deleted_relationships.clone())?;
-            self.deleted_relationships.clear();
+            let rels = std::mem::take(&mut self.deleted_relationships);
+            g.borrow_mut().delete_relationships(rels)?;
         }
-        g.borrow_mut().commit_attrs();
-        g.borrow_mut()
-            .commit_index(&mut self.index_add_docs, &mut self.index_remove_docs);
+        // Commit attribute changes and indexes after all deletions have been
+        // applied. This ensures relationship_attrs.remove() pending_deletes
+        // (staged by delete_relationships) are included in commit_attrs().
+        {
+            let mut g = g.borrow_mut();
+            g.commit_attrs()?;
+            g.commit_index(&mut self.index_add_docs, &mut self.index_remove_docs);
+        }
         Ok(())
     }
 }

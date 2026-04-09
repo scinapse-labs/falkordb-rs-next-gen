@@ -23,18 +23,19 @@ name = "falkordb"
 
 [dependencies]
 atomic_refcell = "0.1.13"
-crossfire = "3.1.5"
+crossfire = "3.1.7"
 graph = { path = "graph", version = "0.1.0" }
 lazy_static = "1.5.0"
-parking_lot = "0.12"
+parking_lot = "0.12.5"
 redis-module = { git = "https://github.com/AviAvni/redismodule-rs", branch = "master" }
 ryu = "1.0.23"
 orx-tree = "2.2.0"
-pyroscope = { version = "1.0.2", optional = true }
-pyroscope_pprofrs = { version = "0.2.10", optional = true }
 
 [build-dependencies]
 redis-module-macros = { git = "https://github.com/AviAvni/redismodule-rs", branch = "master" }
+
+[profile.dev]
+opt-level = 2
 
 [profile.release]
 codegen-units = 1
@@ -43,5 +44,4 @@ lto = true
 # strip = false
 
 [features]
-pyro = ["pyroscope", "pyroscope_pprofrs"]
 fuzz = []

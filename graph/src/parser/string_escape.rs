@@ -1,7 +1,39 @@
 //! Cypher-compliant string escape and unescape functions.
 //!
-//! This module provides functions to handle escape sequences in Cypher string literals,
-//! maintaining strict behavioral parity with the C reference implementation in FalkorDB.
+//! This module provides functions to handle escape sequences in Cypher string
+//! literals, maintaining strict behavioral parity with the C reference
+//! implementation in FalkorDB.
+//!
+//! ## Usage in the Parser
+//!
+//! The lexer ([`crate::parser::lexer`]) calls [`cypher_unescape`] when it
+//! encounters a string literal token (single- or double-quoted). The result
+//! is stored as the unescaped `Token::String` value in the token stream.
+//!
+//! The reverse function [`cypher_escape`] is used when serializing values
+//! back to Cypher-safe string representations (e.g., in EXPLAIN output or
+//! error messages).
+//!
+//! ## Supported Escape Sequences
+//!
+//! ```text
+//!  Sequence   Character        ASCII
+//!  --------   ---------        -----
+//!  \a         bell/alert       0x07
+//!  \b         backspace        0x08
+//!  \f         form feed        0x0C
+//!  \n         newline          0x0A
+//!  \r         carriage return  0x0D
+//!  \t         horizontal tab   0x09
+//!  \v         vertical tab     0x0B
+//!  \\         backslash        0x5C
+//!  \'         single quote     0x27
+//!  \"         double quote     0x22
+//!  \?         question mark    0x3F
+//! ```
+//!
+//! Unrecognized escape sequences (e.g., `\x`, `\z`) are preserved as-is:
+//! both the backslash and the following character are kept in the output.
 
 /// Unescapes a Cypher string literal.
 ///
@@ -54,6 +86,30 @@ pub fn cypher_unescape(input: &str) -> Result<String, String> {
                 Some('\'') => result.push('\''),      // Single quote
                 Some('"') => result.push('"'),        // Double quote
                 Some('?') => result.push('?'),        // Question mark
+                Some('u') => {
+                    // \uXXXX - 4-digit hex Unicode escape
+                    let hex: String = chars.by_ref().take(4).collect();
+                    if hex.len() != 4 {
+                        return Err(format!("Invalid unicode escape: \\u{hex}"));
+                    }
+                    let code = u32::from_str_radix(&hex, 16)
+                        .map_err(|_| format!("Invalid unicode escape: \\u{hex}"))?;
+                    let c = char::from_u32(code)
+                        .ok_or_else(|| format!("Invalid unicode code point: \\u{hex}"))?;
+                    result.push(c);
+                }
+                Some('U') => {
+                    // \UXXXXXXXX - 8-digit hex Unicode escape
+                    let hex: String = chars.by_ref().take(8).collect();
+                    if hex.len() != 8 {
+                        return Err(format!("Invalid unicode escape: \\U{hex}"));
+                    }
+                    let code = u32::from_str_radix(&hex, 16)
+                        .map_err(|_| format!("Invalid unicode escape: \\U{hex}"))?;
+                    let c = char::from_u32(code)
+                        .ok_or_else(|| format!("Invalid unicode code point: \\U{hex}"))?;
+                    result.push(c);
+                }
                 Some(other) => {
                     // Unrecognized escape sequence - keep as-is
                     result.push('\\');

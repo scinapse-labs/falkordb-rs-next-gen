@@ -27,6 +27,7 @@ pub mod memory;
 pub mod query;
 pub mod record;
 pub mod ro_query;
+pub mod udf;
 
 pub use config_cmd::graph_config;
 pub use delete::graph_delete;
@@ -36,6 +37,7 @@ pub use memory::graph_memory;
 pub use query::graph_query;
 pub use record::graph_record;
 pub use ro_query::graph_ro_query;
+pub use udf::graph_udf;
 
 pub const EMPTY_KEY_ERR: RedisResult =
     Err(RedisError::Str("ERR Invalid graph operation on empty key"));

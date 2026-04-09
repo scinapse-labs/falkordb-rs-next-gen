@@ -1,32 +1,196 @@
-//! `GRAPH.MEMORY` command handler.
+//! `GRAPH.MEMORY USAGE` command handler.
 //!
-//! Returns memory usage, in bytes, for a specific graph key.
+//! Reports detailed per-component memory usage for a graph key, returned in
+//! megabytes (integer division, matching the FalkorDB C implementation).
 //!
-//! The value comes from graph internals (`memory_usage`) and includes in-memory
-//! graph structures currently tracked by the graph implementation.
+//! ## Syntax
+//! ```text
+//! GRAPH.MEMORY USAGE <key> [SAMPLES <count>]
+//! ```
+//!
+//! `SAMPLES` controls how many attribute entries are sampled to estimate
+//! storage size (default: 100). Higher values give more accurate estimates
+//! at the cost of longer computation.
+//!
+//! ## Response structure
+//! A flat array of 9 key-value pairs (18 elements total):
+//!
+//! ```text
+//! [ "total_graph_sz_mb",                          <int>,
+//!   "label_matrices_sz_mb",                       <int>,
+//!   "relation_matrices_sz_mb",                    <int>,
+//!   "amortized_node_block_sz_mb",                 <int>,
+//!   "amortized_node_attributes_by_label_sz_mb",   [label, mb, ...],
+//!   "amortized_unlabeled_nodes_attributes_sz_mb", <int>,
+//!   "amortized_edge_block_sz_mb",                 <int>,
+//!   "amortized_edge_attributes_by_type_sz_mb",    [type, mb, ...],
+//!   "indices_sz_mb",                              <int> ]
+//! ```
+//!
+//! The `total_graph_sz_mb` value is the sum of all other MB-rounded
+//! components, which avoids truncation discrepancies when clients verify
+//! the total against the individual parts.
 
 use crate::{graph_core::ThreadedGraph, redis_type::GRAPH_TYPE};
 use parking_lot::RwLock;
 use redis_module::{Context, NextArg, RedisError, RedisResult, RedisString, RedisValue};
 use std::sync::Arc;
 
+const MB: usize = 1 << 20;
+
+#[allow(clippy::too_many_lines)]
 pub fn graph_memory(
     ctx: &Context,
     args: Vec<RedisString>,
 ) -> RedisResult {
+    // GRAPH.MEMORY USAGE <key> [SAMPLES <count>]
+    // args[0] = "GRAPH.MEMORY"
     let mut args = args.into_iter().skip(1);
-    if args.len() != 1 {
+    let arg_count = args.len();
+
+    // Must have 2 or 4 remaining args: USAGE <key> [SAMPLES <n>]
+    if arg_count != 2 && arg_count != 4 {
         return Err(RedisError::WrongArity);
     }
 
-    let key = args.next_arg()?;
-    let key = ctx.open_key(&key);
+    // First arg must be "USAGE"
+    let subcmd = args.next_arg()?;
+    if !subcmd.to_string_lossy().eq_ignore_ascii_case("USAGE") {
+        return Err(RedisError::Str(
+            "ERR unknown subcommand. Try GRAPH.MEMORY USAGE <key> [SAMPLES <count>]",
+        ));
+    }
+
+    let key_name = args.next_arg()?;
+
+    // Parse optional SAMPLES <count>
+    let samples: usize = if arg_count == 4 {
+        let samples_kw = args.next_arg()?;
+        if !samples_kw.to_string_lossy().eq_ignore_ascii_case("SAMPLES") {
+            return Err(RedisError::Str("ERR expected SAMPLES keyword"));
+        }
+        let count_str = args.next_arg()?;
+        let count_s = count_str.to_string_lossy();
+        // Reject negative values (starts with '-')
+        if count_s.starts_with('-') {
+            return Err(RedisError::Str(
+                "ERR SAMPLES count must be a positive integer",
+            ));
+        }
+        let count = count_s
+            .parse::<usize>()
+            .map_err(|_| RedisError::Str("ERR SAMPLES count must be a positive integer"))?;
+        if count == 0 {
+            return Err(RedisError::Str(
+                "ERR SAMPLES count must be a positive integer",
+            ));
+        }
+        count
+    } else {
+        100
+    };
+
+    let key = ctx.open_key(&key_name);
 
     let g = key
         .get_value::<Arc<RwLock<ThreadedGraph>>>(&GRAPH_TYPE)?
         .ok_or(RedisError::Str("Graph does not exist"))?;
 
-    Ok(RedisValue::Integer(
-        g.read().graph.read().borrow().memory_usage() as i64,
-    ))
+    let report = g.read().graph.read().borrow().memory_usage_report(samples);
+
+    // Convert each component to MB using integer division, then compute total
+    // as the sum of MB-rounded values (matches the C implementation, avoiding
+    // truncation discrepancies in the test assertion).
+    let label_matrices_mb = (report.label_matrices_sz / MB) as i64;
+    let relation_matrices_mb = (report.relation_matrices_sz / MB) as i64;
+    let node_block_mb = (report.node_block_storage_sz / MB) as i64;
+    let unlabeled_node_attr_mb = (report.unlabeled_node_attr_sz / MB) as i64;
+    let edge_block_mb = (report.edge_block_storage_sz / MB) as i64;
+    let indices_mb = (report.indices_sz / MB) as i64;
+
+    let mut node_attr_by_label_mb: Vec<(String, i64)> = Vec::new();
+    let mut node_attr_sum_mb: i64 = 0;
+    for (name, sz) in &report.node_attr_by_label {
+        let mb = (*sz / MB) as i64;
+        node_attr_sum_mb += mb;
+        node_attr_by_label_mb.push((name.as_str().to_owned(), mb));
+    }
+
+    let mut edge_attr_by_type_mb: Vec<(String, i64)> = Vec::new();
+    let mut edge_attr_sum_mb: i64 = 0;
+    for (name, sz) in &report.edge_attr_by_type {
+        let mb = (*sz / MB) as i64;
+        edge_attr_sum_mb += mb;
+        edge_attr_by_type_mb.push((name.as_str().to_owned(), mb));
+    }
+
+    let total_mb = indices_mb
+        + node_block_mb
+        + unlabeled_node_attr_mb
+        + edge_block_mb
+        + label_matrices_mb
+        + node_attr_sum_mb
+        + edge_attr_sum_mb
+        + relation_matrices_mb;
+
+    // Build a flat array: [key, value, key, value, ...] (9 pairs = 18 elements)
+    let mut out = Vec::with_capacity(18);
+
+    // 1. total_graph_sz_mb
+    out.push(RedisValue::SimpleString("total_graph_sz_mb".into()));
+    out.push(RedisValue::Integer(total_mb));
+
+    // 2. label_matrices_sz_mb
+    out.push(RedisValue::SimpleString("label_matrices_sz_mb".into()));
+    out.push(RedisValue::Integer(label_matrices_mb));
+
+    // 3. relation_matrices_sz_mb
+    out.push(RedisValue::SimpleString("relation_matrices_sz_mb".into()));
+    out.push(RedisValue::Integer(relation_matrices_mb));
+
+    // 4. amortized_node_block_sz_mb
+    out.push(RedisValue::SimpleString(
+        "amortized_node_block_sz_mb".into(),
+    ));
+    out.push(RedisValue::Integer(node_block_mb));
+
+    // 5. amortized_node_attributes_by_label_sz_mb (nested flat map)
+    out.push(RedisValue::SimpleString(
+        "amortized_node_attributes_by_label_sz_mb".into(),
+    ));
+    let mut label_attrs = Vec::new();
+    for (name, mb) in &node_attr_by_label_mb {
+        label_attrs.push(RedisValue::SimpleString(name.clone()));
+        label_attrs.push(RedisValue::Integer(*mb));
+    }
+    out.push(RedisValue::Array(label_attrs));
+
+    // 6. amortized_unlabeled_nodes_attributes_sz_mb
+    out.push(RedisValue::SimpleString(
+        "amortized_unlabeled_nodes_attributes_sz_mb".into(),
+    ));
+    out.push(RedisValue::Integer(unlabeled_node_attr_mb));
+
+    // 7. amortized_edge_block_sz_mb
+    out.push(RedisValue::SimpleString(
+        "amortized_edge_block_sz_mb".into(),
+    ));
+    out.push(RedisValue::Integer(edge_block_mb));
+
+    // 8. amortized_edge_attributes_by_type_sz_mb (nested flat map)
+    out.push(RedisValue::SimpleString(
+        "amortized_edge_attributes_by_type_sz_mb".into(),
+    ));
+    let mut type_attrs = Vec::new();
+    for (name, mb) in &edge_attr_by_type_mb {
+        type_attrs.push(RedisValue::SimpleString(name.clone()));
+        type_attrs.push(RedisValue::Integer(*mb));
+    }
+    out.push(RedisValue::Array(type_attrs));
+
+    // 9. indices_sz_mb
+    out.push(RedisValue::SimpleString("indices_sz_mb".into()));
+    out.push(RedisValue::Integer(indices_mb));
+
+    Ok(RedisValue::Array(out))
 }

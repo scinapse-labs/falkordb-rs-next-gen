@@ -1,40 +1,51 @@
-//! Set operator — updates properties and labels on nodes/relationships.
+//! Batch-mode set operator — updates properties and labels on nodes/relationships.
 //!
-//! Implements Cypher `SET n.prop = value`, `SET n = {map}`, `SET n:Label`,
-//! and `SET n += {map}`. Supports property-level updates, full entity
-//! replacement, and label assignment. Label strings are lazily resolved
-//! to `LabelId`s on the first row. Changes are recorded in the pending
-//! batch for later commit.
+//! For each active row in each input batch, resolves set items (lazily on
+//! first row) and calls `Runtime::set` to record property/label changes
+//! in the pending batch.
+//!
+//! Supports three SET forms:
+//! - `SET n.prop = expr` — set a single property
+//! - `SET n = expr` / `SET n += expr` — replace or merge all properties
+//! - `SET n:Label` — add a label to a node
+//!
+//! Property changes are skipped when the new value equals the existing
+//! value (change-detection optimization).
 
 use std::sync::Arc;
 
 use once_cell::unsync::OnceCell;
 
-use super::OpIter;
 use crate::graph::graph::LabelId;
 use crate::parser::ast::{ExprIR, SetItem, Variable};
 use crate::planner::IR;
-use crate::runtime::{env::Env, runtime::Runtime, value::Value};
+use crate::runtime::eval::ExprEval;
+use crate::runtime::{
+    batch::{Batch, BatchOp},
+    env::Env,
+    runtime::Runtime,
+    value::Value,
+};
 use orx_tree::{Dyn, NodeIdx, NodeRef};
 
 pub struct SetOp<'a> {
-    runtime: &'a Runtime,
-    pub iter: Box<OpIter<'a>>,
+    pub(crate) runtime: &'a Runtime<'a>,
+    pub(crate) child: Box<BatchOp<'a>>,
     items: &'a [SetItem<Arc<String>, Variable>],
     resolved_items: OnceCell<Vec<SetItem<LabelId, Variable>>>,
-    idx: NodeIdx<Dyn<IR>>,
+    pub(crate) idx: NodeIdx<Dyn<IR>>,
 }
 
 impl<'a> SetOp<'a> {
     pub const fn new(
-        runtime: &'a Runtime,
-        iter: Box<OpIter<'a>>,
+        runtime: &'a Runtime<'a>,
+        child: Box<BatchOp<'a>>,
         items: &'a [SetItem<Arc<String>, Variable>],
         idx: NodeIdx<Dyn<IR>>,
     ) -> Self {
         Self {
             runtime,
-            iter,
+            child,
             items,
             resolved_items: OnceCell::new(),
             idx,
@@ -42,30 +53,43 @@ impl<'a> SetOp<'a> {
     }
 }
 
-impl Iterator for SetOp<'_> {
-    type Item = Result<Env, String>;
+impl<'a> Iterator for SetOp<'a> {
+    type Item = Result<Batch<'a>, String>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let result = match self.iter.next()? {
-            Ok(vars) => {
-                let resolved = self.resolved_items.get_or_init(|| {
-                    let items = self.runtime.resolve_set_items(self.items);
-                    self.runtime.pending.borrow_mut().resize(
-                        self.runtime.g.borrow().node_cap(),
-                        self.runtime.g.borrow().labels_count(),
-                    );
-                    items
-                });
-                self.runtime.set(resolved, &vars).map(|()| vars)
-            }
-            Err(e) => Err(e),
+        let batch = match self.child.next()? {
+            Ok(b) => b,
+            Err(e) => return Some(Err(e)),
         };
-        self.runtime.inspect_result(self.idx, &result);
-        Some(result)
+
+        let resolved = self.resolved_items.get_or_init(|| {
+            let items = self.runtime.resolve_set_items(self.items);
+            self.runtime.pending.borrow_mut().resize(
+                self.runtime.g.borrow().node_cap(),
+                self.runtime.g.borrow().labels_count(),
+            );
+            items
+        });
+        if let Err(e) = self.runtime.set_batch(resolved, &batch) {
+            return Some(Err(e));
+        }
+
+        Some(Ok(batch))
     }
 }
+impl Runtime<'_> {
+    pub fn set_batch(
+        &self,
+        items: &Vec<SetItem<LabelId, Variable>>,
+        batch: &Batch<'_>,
+    ) -> Result<(), String> {
+        for row in batch.active_indices() {
+            let env = batch.env_ref(row);
+            self.set(items, env)?;
+        }
+        Ok(())
+    }
 
-impl Runtime {
     pub fn resolve_set_items(
         &self,
         items: &[SetItem<Arc<String>, Variable>],
@@ -73,16 +97,22 @@ impl Runtime {
         items
             .iter()
             .map(|item| match item {
-                SetItem::Label(var, labels) => SetItem::Label(
-                    var.clone(),
-                    labels
+                SetItem::Label { var, labels } => SetItem::Label {
+                    var: var.clone(),
+                    labels: labels
                         .iter()
                         .map(|l| self.g.borrow_mut().get_label_id_mut(l.as_str()))
                         .collect(),
-                ),
-                SetItem::Attribute(entity, value, replace) => {
-                    SetItem::Attribute(entity.clone(), value.clone(), *replace)
-                }
+                },
+                SetItem::Attribute {
+                    target: entity,
+                    value,
+                    replace,
+                } => SetItem::Attribute {
+                    target: entity.clone(),
+                    value: value.clone(),
+                    replace: *replace,
+                },
             })
             .collect()
     }
@@ -91,12 +121,21 @@ impl Runtime {
     pub fn set(
         &self,
         items: &Vec<SetItem<LabelId, Variable>>,
-        vars: &Env,
+        vars: &Env<'_>,
     ) -> Result<(), String> {
         for item in items {
             match item {
-                SetItem::Attribute(entity, value, replace) => {
-                    let run_expr = self.run_expr(value, value.root().idx(), vars, None)?;
+                SetItem::Attribute {
+                    target: entity,
+                    value,
+                    replace,
+                } => {
+                    let run_expr = ExprEval::from_runtime(self).eval(
+                        value,
+                        value.root().idx(),
+                        Some(vars),
+                        None,
+                    )?;
                     let (entity, attr) = match entity.root().data() {
                         ExprIR::Variable(name) => {
                             let entity = vars
@@ -106,11 +145,20 @@ impl Runtime {
                             (entity, None)
                         }
                         ExprIR::Property(property) => (
-                            self.run_expr(entity, entity.root().child(0).idx(), vars, None)?,
+                            {
+                                let this = &self;
+                                let idx = entity.root().child(0).idx();
+                                crate::runtime::eval::ExprEval::from_runtime(this).eval(
+                                    entity,
+                                    idx,
+                                    Some(vars),
+                                    None,
+                                )
+                            }?,
                             Some(property),
                         ),
                         _ => {
-                            unreachable!();
+                            unreachable!("set target must be Variable or Property");
                         }
                     };
                     match entity {
@@ -147,6 +195,11 @@ impl Runtime {
                                             }
                                         }
                                         for (key, value) in map.iter() {
+                                            if let Some(v) = self.get_node_attribute(id, key)
+                                                && v == *value
+                                            {
+                                                continue;
+                                            }
                                             self.pending.borrow_mut().set_node_attribute(
                                                 id,
                                                 key.clone(),
@@ -155,8 +208,11 @@ impl Runtime {
                                         }
                                     }
                                     Value::Node(tid) => {
+                                        if tid == id {
+                                            continue;
+                                        }
                                         let g = self.g.borrow();
-                                        let attrs = self.get_node_attrs(tid);
+                                        let attrs: Vec<_> = self.get_node_attrs(tid).collect();
                                         if *replace {
                                             for key in g.get_node_attrs(id) {
                                                 self.pending.borrow_mut().set_node_attribute(
@@ -167,6 +223,11 @@ impl Runtime {
                                             }
                                         }
                                         for (key, value) in attrs {
+                                            if let Some(v) = self.get_node_attribute(id, &key)
+                                                && v == value
+                                            {
+                                                continue;
+                                            }
                                             self.pending
                                                 .borrow_mut()
                                                 .set_node_attribute(id, key, value)?;
@@ -174,7 +235,8 @@ impl Runtime {
                                     }
                                     Value::Relationship(rel) => {
                                         let g = self.g.borrow();
-                                        let attrs = self.get_relationship_attrs(rel.0);
+                                        let attrs: Vec<_> =
+                                            self.get_relationship_attrs(rel.0).collect();
                                         if *replace {
                                             for key in g.get_node_attrs(id) {
                                                 self.pending.borrow_mut().set_node_attribute(
@@ -185,6 +247,11 @@ impl Runtime {
                                             }
                                         }
                                         for (key, value) in attrs {
+                                            if let Some(v) = self.get_node_attribute(id, &key)
+                                                && v == value
+                                            {
+                                                continue;
+                                            }
                                             self.pending
                                                 .borrow_mut()
                                                 .set_node_attribute(id, key, value)?;
@@ -234,6 +301,12 @@ impl Runtime {
                                             }
                                         }
                                         for (key, value) in map.iter() {
+                                            if let Some(v) =
+                                                self.get_relationship_attribute(target_rel.0, key)
+                                                && v == *value
+                                            {
+                                                continue;
+                                            }
                                             self.pending.borrow_mut().set_relationship_attribute(
                                                 target_rel.0,
                                                 key.clone(),
@@ -243,7 +316,7 @@ impl Runtime {
                                     }
                                     Value::Node(sid) => {
                                         let g = self.g.borrow();
-                                        let attrs = self.get_node_attrs(sid);
+                                        let attrs: Vec<_> = self.get_node_attrs(sid).collect();
                                         if *replace {
                                             for key in g.get_relationship_attrs(target_rel.0) {
                                                 self.pending
@@ -256,6 +329,12 @@ impl Runtime {
                                             }
                                         }
                                         for (key, value) in attrs {
+                                            if let Some(v) =
+                                                self.get_relationship_attribute(target_rel.0, &key)
+                                                && v == value
+                                            {
+                                                continue;
+                                            }
                                             self.pending.borrow_mut().set_relationship_attribute(
                                                 target_rel.0,
                                                 key,
@@ -264,8 +343,12 @@ impl Runtime {
                                         }
                                     }
                                     Value::Relationship(source_rel) => {
+                                        if source_rel.0 == target_rel.0 {
+                                            continue;
+                                        }
                                         let g = self.g.borrow();
-                                        let attrs = self.get_relationship_attrs(source_rel.0);
+                                        let attrs: Vec<_> =
+                                            self.get_relationship_attrs(source_rel.0).collect();
                                         if *replace {
                                             for key in g.get_relationship_attrs(target_rel.0) {
                                                 self.pending
@@ -278,6 +361,12 @@ impl Runtime {
                                             }
                                         }
                                         for (key, value) in attrs {
+                                            if let Some(v) =
+                                                self.get_relationship_attribute(target_rel.0, &key)
+                                                && v == value
+                                            {
+                                                continue;
+                                            }
                                             self.pending.borrow_mut().set_relationship_attribute(
                                                 target_rel.0,
                                                 key,
@@ -296,7 +385,10 @@ impl Runtime {
                         _ => {}
                     }
                 }
-                SetItem::Label(entity, labels) => {
+                SetItem::Label {
+                    var: entity,
+                    labels,
+                } => {
                     let run_expr = vars.get(entity);
                     match run_expr {
                         Some(Value::Node(id)) => {
@@ -312,7 +404,7 @@ impl Runtime {
                         _ => {
                             return Err(format!(
                                 "Type mismatch: expected Node but was {}",
-                                run_expr.map_or_else(|| "undefined".to_string(), Value::name)
+                                run_expr.map_or_else(|| "undefined", Value::name)
                             ));
                         }
                     }

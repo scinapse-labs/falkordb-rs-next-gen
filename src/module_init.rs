@@ -22,23 +22,23 @@
 //! Any hard failure during critical init steps returns `Status::Err` so Redis
 //! can reject loading an incomplete module.
 
+use crate::config::{
+    CONFIGURATION_JS_HEAP_SIZE, CONFIGURATION_JS_STACK_SIZE, CONFIGURATION_TEMP_FOLDER,
+    OMP_THREAD_COUNT, get_thread_count,
+};
 use graph::{
     graph::graphblas::matrix::init,
     index::redisearch::{REDISEARCH_INIT_LIBRARY, RediSearch_Init},
-    runtime::functions::init_functions,
+    runtime::functions::{init_functions, init_udf_functions},
+    threadpool::init_thread_pool,
+    udf,
 };
-#[cfg(feature = "pyro")]
-use pyroscope::PyroscopeAgent;
-#[cfg(feature = "pyro")]
-use pyroscope_pprofrs::{PprofConfig, pprof_backend};
 use redis_module::{
     Context, REDISMODULE_OK, RedisModule_Alloc, RedisModule_Calloc, RedisModule_Free,
     RedisModule_Realloc, RedisModule_SubscribeToServerEvent, RedisModuleCtx, RedisModuleEvent,
     Status,
 };
-#[cfg(feature = "pyro")]
-use std::mem;
-use std::{os::raw::c_int, os::raw::c_void};
+use std::{os::raw::c_int, os::raw::c_void, panic};
 
 /// Redis event ID for FlushDB event (database flush/clear).
 #[allow(non_upper_case_globals)]
@@ -48,15 +48,10 @@ pub fn graph_init(
     ctx: &Context,
     _: &Vec<redis_module::RedisString>,
 ) -> Status {
-    #[cfg(feature = "pyro")]
-    {
-        let agent = PyroscopeAgent::builder("http://localhost:4040", "falkordb")
-            .backend(pprof_backend(PprofConfig::new().sample_rate(100)))
-            .build()
-            .unwrap();
-        let agent_running = agent.start().unwrap();
-        mem::forget(agent_running);
-    }
+    panic::set_hook(Box::new(|info| {
+        eprintln!("FalkorDB panic: {info}");
+        std::process::exit(1);
+    }));
     unsafe {
         let result = RediSearch_Init(ctx.ctx.cast(), REDISEARCH_INIT_LIBRARY as c_int);
         if result == REDISMODULE_OK as c_int {
@@ -79,9 +74,45 @@ pub fn graph_init(
         debug_assert_eq!(res, REDISMODULE_OK as c_int);
     }
     match init_functions() {
-        Ok(()) => Status::Ok,
-        Err(_) => Status::Err,
+        Ok(()) => {}
+        Err(_) => return Status::Err,
     }
+    init_udf_functions();
+    udf::init_udf_repo();
+
+    // Sync JS config values to atomics accessible without Redis GIL
+    {
+        let heap_size = *CONFIGURATION_JS_HEAP_SIZE.lock(ctx);
+        let stack_size = *CONFIGURATION_JS_STACK_SIZE.lock(ctx);
+        graph::udf::js_context::JS_HEAP_SIZE.store(heap_size, std::sync::atomic::Ordering::Relaxed);
+        graph::udf::js_context::JS_STACK_SIZE
+            .store(stack_size, std::sync::atomic::Ordering::Relaxed);
+    }
+    // Validate TEMP_FOLDER: must be an existing writable directory.
+    {
+        let tf_guard = CONFIGURATION_TEMP_FOLDER.lock(ctx);
+        let tf = tf_guard.as_str();
+        let path = std::path::Path::new(tf);
+        if !path.is_dir() {
+            ctx.log_warning(&format!("TEMP_FOLDER '{tf}' is not a valid directory"));
+            return Status::Err;
+        }
+        // Check write access by attempting to create a temp file.
+        let test_path = path.join(".falkordb_temp_test");
+        if std::fs::File::create(&test_path).is_ok() {
+            let _ = std::fs::remove_file(&test_path);
+        } else {
+            ctx.log_warning(&format!("TEMP_FOLDER '{tf}' is not writable"));
+            return Status::Err;
+        }
+    }
+
+    // Initialize the thread pool with the configured thread count.
+    // THREAD_COUNT may come from module args (parsed by redis_module macro).
+    let tc = get_thread_count(ctx) as usize;
+    let _ = init_thread_pool(tc);
+    OMP_THREAD_COUNT.store(tc as i64, std::sync::atomic::Ordering::Relaxed);
+    Status::Ok
 }
 
 const unsafe extern "C" fn on_flush(

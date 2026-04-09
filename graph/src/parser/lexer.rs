@@ -1,21 +1,67 @@
 //! Cypher lexer and token definitions.
 //!
-//! This module contains the lexical analysis layer used by the Cypher parser.
-//! It converts an input query string into a token stream and provides:
-//! - [`Keyword`]: recognized Cypher keywords
-//! - [`Token`]: lexical token variants
-//! - [`Lexer`]: cursor-based tokenizer with lookahead via `current()`
+//! This module implements the lexical analysis (tokenization) layer for the
+//! Cypher query parser. It converts a raw query string into a stream of
+//! [`Token`] values that the recursive descent parser in
+//! [`crate::parser::cypher`] consumes.
 //!
-//! The lexer also handles:
-//! - comments and whitespace skipping
-//! - string unescaping
-//! - numeric literal parsing and validation
+//! ## Architecture
+//!
+//! The [`Lexer`] is cursor-based with single-token lookahead:
+//!
+//! ```text
+//!  Input string: "MATCH (n:Person) WHERE n.age > 30"
+//!                  ^pos
+//!                  |
+//!            cached_current = Token::IdentifierOrKeyword { ident: "MATCH", keyword: Some(Match) }
+//!
+//!  After lexer.next():
+//!                       ^pos
+//!                       |
+//!            cached_current = Token::LParen
+//! ```
+//!
+//! - `current()` returns the lookahead token without advancing.
+//! - `next()` advances past the current token and caches the next one.
+//! - Whitespace and comments (`// ...` and `/* ... */`) are skipped
+//!   automatically between tokens.
+//!
+//! ## Token Categories
+//!
+//! ```text
+//!  Token
+//!   |-- Literals:          Integer(i64), Float(f64), String(Arc<String>)
+//!   |-- Identifiers:       IdentifierOrKeyword { ident, keyword }
+//!   |-- Parameters:        Parameter(String)          -- $param or $`param`
+//!   |-- Delimiters:        LParen, RParen, LBrace, RBrace, LBracket, RBracket
+//!   |-- Operators:         Plus, Dash, Star, Slash, Modulo, Power, Equal,
+//!   |                      NotEqual, LessThan, LessThanOrEqual, GreaterThan,
+//!   |                      GreaterThanOrEqual, PlusEqual, RegexMatches
+//!   |-- Punctuation:       Comma, Colon, Dot, DotDot, Pipe, Semicolon
+//!   '-- Sentinel:          EndOfFile
+//! ```
+//!
+//! Identifiers and keywords share the `IdentifierOrKeyword` variant. A
+//! compile-time perfect-hash map (`phf`) resolves keywords in O(1); if the
+//! identifier does not match a keyword, `keyword` is `None`.
+//!
+//! ## Numeric Literals
+//!
+//! The lexer supports decimal, hexadecimal (`0x`), octal (`0o` or leading `0`),
+//! binary (`0b`), and floating-point literals with optional scientific notation
+//! (`1.5e10`, `3E-4`). Overflow is detected and reported as an error.
+//!
+//! ## String Literals
+//!
+//! Single-quoted (`'...'`) and double-quoted (`"..."`) strings are supported.
+//! Escape sequences within strings are handled by
+//! [`crate::parser::string_escape::cypher_unescape`].
 
 use crate::parser::string_escape::cypher_unescape;
 use std::sync::Arc;
 use std::{num::IntErrorKind, str::Chars};
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub enum Keyword {
     Call,
     Yield,
@@ -66,21 +112,24 @@ pub enum Keyword {
     Csv,
     Headers,
     From,
-    Delimiter,
+    Fieldterminator,
     Drop,
     Index,
     Fulltext,
     Vector,
     Options,
     For,
+    Foreach,
     On,
     Union,
 }
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum Token {
-    Ident(Arc<String>),
-    Keyword(Keyword, Arc<String>),
+    IdentifierOrKeyword {
+        ident: Arc<String>,
+        keyword: Option<Keyword>,
+    },
     Parameter(String),
     Integer(i64),
     Float(f64),
@@ -120,7 +169,7 @@ impl std::fmt::Display for Token {
         f: &mut std::fmt::Formatter,
     ) -> std::fmt::Result {
         match self {
-            Self::Ident(s) | Self::Keyword(_, s) => write!(f, "'{s}'"),
+            Self::IdentifierOrKeyword { ident: s, .. } => write!(f, "'{s}'"),
             Self::Parameter(s) => write!(f, "${s}"),
             Self::Integer(i) => write!(f, "{i}"),
             Self::Float(fl) => write!(f, "{fl}"),
@@ -156,66 +205,67 @@ impl std::fmt::Display for Token {
     }
 }
 
-const KEYWORDS: &[(&str, Keyword)] = &[
-    ("CALL", Keyword::Call),
-    ("YIELD", Keyword::Yield),
-    ("OPTIONAL", Keyword::Optional),
-    ("MATCH", Keyword::Match),
-    ("UNWIND", Keyword::Unwind),
-    ("MERGE", Keyword::Merge),
-    ("CREATE", Keyword::Create),
-    ("DETACH", Keyword::Detach),
-    ("DELETE", Keyword::Delete),
-    ("SET", Keyword::Set),
-    ("REMOVE", Keyword::Remove),
-    ("WHERE", Keyword::Where),
-    ("WITH", Keyword::With),
-    ("RETURN", Keyword::Return),
-    ("AS", Keyword::As),
-    ("NULL", Keyword::Null),
-    ("OR", Keyword::Or),
-    ("XOR", Keyword::Xor),
-    ("AND", Keyword::And),
-    ("NOT", Keyword::Not),
-    ("IS", Keyword::Is),
-    ("IN", Keyword::In),
-    ("STARTS", Keyword::Starts),
-    ("ENDS", Keyword::Ends),
-    ("CONTAINS", Keyword::Contains),
-    ("TRUE", Keyword::True),
-    ("FALSE", Keyword::False),
-    ("CASE", Keyword::Case),
-    ("WHEN", Keyword::When),
-    ("THEN", Keyword::Then),
-    ("ELSE", Keyword::Else),
-    ("END", Keyword::End),
-    ("ALL", Keyword::All),
-    ("ANY", Keyword::Any),
-    ("NONE", Keyword::None),
-    ("SINGLE", Keyword::Single),
-    ("DISTINCT", Keyword::Distinct),
-    ("ORDER", Keyword::Order),
-    ("BY", Keyword::By),
-    ("ASC", Keyword::Asc),
-    ("ASCENDING", Keyword::Ascending),
-    ("DESC", Keyword::Desc),
-    ("DESCENDING", Keyword::Descending),
-    ("SKIP", Keyword::Skip),
-    ("LIMIT", Keyword::Limit),
-    ("LOAD", Keyword::Load),
-    ("CSV", Keyword::Csv),
-    ("HEADERS", Keyword::Headers),
-    ("FROM", Keyword::From),
-    ("DELIMITER", Keyword::Delimiter),
-    ("DROP", Keyword::Drop),
-    ("INDEX", Keyword::Index),
-    ("FULLTEXT", Keyword::Fulltext),
-    ("VECTOR", Keyword::Vector),
-    ("OPTIONS", Keyword::Options),
-    ("FOR", Keyword::For),
-    ("ON", Keyword::On),
-    ("UNION", Keyword::Union),
-];
+static KEYWORD_MAP: phf::Map<&'static str, Keyword> = phf::phf_map! {
+    "CALL" => Keyword::Call,
+    "YIELD" => Keyword::Yield,
+    "OPTIONAL" => Keyword::Optional,
+    "MATCH" => Keyword::Match,
+    "UNWIND" => Keyword::Unwind,
+    "MERGE" => Keyword::Merge,
+    "CREATE" => Keyword::Create,
+    "DETACH" => Keyword::Detach,
+    "DELETE" => Keyword::Delete,
+    "SET" => Keyword::Set,
+    "REMOVE" => Keyword::Remove,
+    "WHERE" => Keyword::Where,
+    "WITH" => Keyword::With,
+    "RETURN" => Keyword::Return,
+    "AS" => Keyword::As,
+    "NULL" => Keyword::Null,
+    "OR" => Keyword::Or,
+    "XOR" => Keyword::Xor,
+    "AND" => Keyword::And,
+    "NOT" => Keyword::Not,
+    "IS" => Keyword::Is,
+    "IN" => Keyword::In,
+    "STARTS" => Keyword::Starts,
+    "ENDS" => Keyword::Ends,
+    "CONTAINS" => Keyword::Contains,
+    "TRUE" => Keyword::True,
+    "FALSE" => Keyword::False,
+    "CASE" => Keyword::Case,
+    "WHEN" => Keyword::When,
+    "THEN" => Keyword::Then,
+    "ELSE" => Keyword::Else,
+    "END" => Keyword::End,
+    "ALL" => Keyword::All,
+    "ANY" => Keyword::Any,
+    "NONE" => Keyword::None,
+    "SINGLE" => Keyword::Single,
+    "DISTINCT" => Keyword::Distinct,
+    "ORDER" => Keyword::Order,
+    "BY" => Keyword::By,
+    "ASC" => Keyword::Asc,
+    "ASCENDING" => Keyword::Ascending,
+    "DESC" => Keyword::Desc,
+    "DESCENDING" => Keyword::Descending,
+    "SKIP" => Keyword::Skip,
+    "LIMIT" => Keyword::Limit,
+    "LOAD" => Keyword::Load,
+    "CSV" => Keyword::Csv,
+    "HEADERS" => Keyword::Headers,
+    "FROM" => Keyword::From,
+    "FIELDTERMINATOR" => Keyword::Fieldterminator,
+    "DROP" => Keyword::Drop,
+    "INDEX" => Keyword::Index,
+    "FULLTEXT" => Keyword::Fulltext,
+    "VECTOR" => Keyword::Vector,
+    "OPTIONS" => Keyword::Options,
+    "FOR" => Keyword::For,
+    "FOREACH" => Keyword::Foreach,
+    "ON" => Keyword::On,
+    "UNION" => Keyword::Union,
+};
 
 const MIN_I64: [&str; 5] = [
     "0b1000000000000000000000000000000000000000000000000000000000000000", // binary
@@ -232,6 +282,7 @@ pub struct Lexer<'a> {
 }
 
 impl<'a> Lexer<'a> {
+    #[must_use]
     pub fn new(str: &'a str) -> Self {
         Self {
             str,
@@ -247,6 +298,7 @@ impl<'a> Lexer<'a> {
         self.cached_current = Self::get_token(self.str, pos);
     }
 
+    #[must_use]
     pub fn pos(
         &self,
         before_whitespaces: bool,
@@ -270,45 +322,34 @@ impl<'a> Lexer<'a> {
             if next == Some('/') {
                 len += 1;
                 next = chars.next();
-                if next.is_none() {
+                let Some(c) = next else {
                     break;
-                }
-                len += 1;
-                if next == Some('/') {
+                };
+                len += c.len_utf8();
+                if c == '/' {
                     next = chars.next();
-                    loop {
-                        if next.is_none() {
-                            break;
-                        }
-                        len += 1;
-                        if next == Some('\n') {
+                    while let Some(c) = next {
+                        len += c.len_utf8();
+                        if c == '\n' {
                             next = chars.next();
                             break;
                         }
                         next = chars.next();
                     }
-                } else if next == Some('*') {
-                    next = chars.next();
-                    loop {
-                        if next.is_none() {
-                            break;
-                        }
-                        while next == Some('*') {
+                } else if c == '*' {
+                    for c in chars.by_ref() {
+                        if c == '*' {
                             len += 1;
-                            next = chars.next();
+                            continue;
                         }
-                        if next.is_none() {
+                        len += c.len_utf8();
+                        if c == '/' {
                             break;
                         }
-                        len += 1;
-                        if next == Some('/') {
-                            next = chars.next();
-                            break;
-                        }
-                        next = chars.next();
                     }
+                    next = chars.next();
                 } else {
-                    len -= 2;
+                    len -= 1 + c.len_utf8();
                     break;
                 }
                 continue;
@@ -326,6 +367,7 @@ impl<'a> Lexer<'a> {
             .map_err(|e| e.0.clone())
     }
 
+    #[must_use]
     pub fn current_str(&self) -> &str {
         let pos = self.pos(false);
         &self.str[pos..pos + self.cached_current.as_ref().map_or(0, |t| t.1)]
@@ -376,72 +418,8 @@ impl<'a> Lexer<'a> {
                     _ => Ok((Token::Dot, 1)),
                 },
                 '|' => Ok((Token::Pipe, 1)),
-                '\'' => {
-                    let mut len = 1;
-                    let mut end = false;
-                    while let Some(c) = chars.next() {
-                        if c == '\\' {
-                            match chars.next() {
-                                Some(c) => {
-                                    len += c.len_utf8();
-                                }
-                                None => {
-                                    return Err((
-                                        format!(
-                                            "Invalid escape sequence in string at pos: {}",
-                                            pos + len
-                                        ),
-                                        len + 1,
-                                    ));
-                                }
-                            }
-                        } else if c == '\'' {
-                            end = true;
-                            break;
-                        }
-                        len += c.len_utf8();
-                    }
-                    if !end {
-                        return Err((format!("Unterminated string starting at pos: {pos}"), len));
-                    }
-                    match cypher_unescape(&str[pos + 1..pos + len]) {
-                        Ok(unescaped) => Ok((Token::String(Arc::new(unescaped)), len + 1)),
-                        Err(e) => Err((format!("{e} at pos: {pos}"), len + 1)),
-                    }
-                }
-                '\"' => {
-                    let mut len = 1;
-                    let mut end = false;
-                    while let Some(c) = chars.next() {
-                        if c == '\\' {
-                            match chars.next() {
-                                Some(c) => {
-                                    len += c.len_utf8();
-                                }
-                                None => {
-                                    return Err((
-                                        format!(
-                                            "Invalid escape sequence in string at pos: {}",
-                                            pos + len
-                                        ),
-                                        len + 1,
-                                    ));
-                                }
-                            }
-                        } else if c == '\"' {
-                            end = true;
-                            break;
-                        }
-                        len += c.len_utf8();
-                    }
-                    if !end {
-                        return Err((format!("Unterminated string starting at pos: {pos}"), len));
-                    }
-                    match cypher_unescape(&str[pos + 1..pos + len]) {
-                        Ok(unescaped) => Ok((Token::String(Arc::new(unescaped)), len + 1)),
-                        Err(e) => Err((format!("{e} at pos: {pos}"), len + 1)),
-                    }
-                }
+                '\'' => Self::lex_string_literal(str, chars, pos, '\''),
+                '\"' => Self::lex_string_literal(str, chars, pos, '\"'),
                 d @ '0'..='9' => Self::lex_numeric(str, chars, pos, d, 1),
                 '$' => {
                     let mut len = 1;
@@ -450,11 +428,19 @@ impl<'a> Lexer<'a> {
                     };
                     let id = if first == '`' {
                         len += 1;
+                        let mut end = false;
                         for ch in chars {
                             len += 1;
                             if ch == '`' {
+                                end = true;
                                 break;
                             }
+                        }
+                        if !end {
+                            return Err((
+                                format!("Unterminated backtick-quoted parameter at pos: {pos}"),
+                                len,
+                            ));
                         }
                         &str[pos + 2..pos + len - 1]
                     } else if let 'a'..='z' | 'A'..='Z' | '0'..='9' | '_' = first {
@@ -475,18 +461,25 @@ impl<'a> Lexer<'a> {
                         len += 1;
                     }
 
-                    let token = KEYWORDS
-                        .iter()
-                        .find(|&other| str[pos..pos + len].eq_ignore_ascii_case(other.0))
-                        .map_or_else(
-                            || Token::Ident(Arc::new(String::from(&str[pos..pos + len]))),
-                            |o| {
-                                Token::Keyword(
-                                    o.1.clone(),
-                                    Arc::new(String::from(&str[pos..pos + len])),
-                                )
-                            },
-                        );
+                    let ident = &str[pos..pos + len];
+                    // Keyword lookup: the char match above guarantees ASCII,
+                    // so uppercase in-place on a stack buffer and probe the
+                    // compile-time perfect-hash map.
+                    let keyword = if len <= 32 {
+                        let mut buf = [0u8; 32];
+                        buf[..len].copy_from_slice(ident.as_bytes());
+                        buf[..len].make_ascii_uppercase();
+                        // SAFETY: source was ASCII (guaranteed by the char
+                        // match), make_ascii_uppercase preserves ASCII.
+                        let upper = unsafe { std::str::from_utf8_unchecked(&buf[..len]) };
+                        KEYWORD_MAP.get(upper).cloned()
+                    } else {
+                        None
+                    };
+                    let token = Token::IdentifierOrKeyword {
+                        ident: Arc::new(String::from(ident)),
+                        keyword,
+                    };
                     Ok((token, len))
                 }
                 '`' => {
@@ -503,13 +496,55 @@ impl<'a> Lexer<'a> {
                         return Err((String::from(&str[pos..pos + len]), len));
                     }
                     let id = &str[pos + 1..pos + len];
-                    Ok((Token::Ident(Arc::new(String::from(id))), len + 1))
+                    Ok((
+                        Token::IdentifierOrKeyword {
+                            ident: Arc::new(String::from(id)),
+                            keyword: None,
+                        },
+                        len + 1,
+                    ))
                 }
                 ';' => Ok((Token::Semicolon, 1)),
                 _ => Err((format!("Invalid input at pos: {pos} at char {char}"), 0)),
             };
         }
         Ok((Token::EndOfFile, 0))
+    }
+
+    fn lex_string_literal(
+        str: &'a str,
+        mut chars: Chars,
+        pos: usize,
+        quote: char,
+    ) -> Result<(Token, usize), (String, usize)> {
+        let mut len = 1;
+        let mut end = false;
+        while let Some(c) = chars.next() {
+            if c == '\\' {
+                match chars.next() {
+                    Some(c) => {
+                        len += c.len_utf8();
+                    }
+                    None => {
+                        return Err((
+                            format!("Invalid escape sequence in string at pos: {}", pos + len),
+                            len + 1,
+                        ));
+                    }
+                }
+            } else if c == quote {
+                end = true;
+                break;
+            }
+            len += c.len_utf8();
+        }
+        if !end {
+            return Err((format!("Unterminated string starting at pos: {pos}"), len));
+        }
+        match cypher_unescape(&str[pos + 1..pos + len]) {
+            Ok(unescaped) => Ok((Token::String(Arc::new(unescaped)), len + 1)),
+            Err(e) => Err((format!("{e} at pos: {pos}"), len + 1)),
+        }
     }
 
     #[allow(clippy::too_many_lines)]
@@ -722,6 +757,7 @@ impl<'a> Lexer<'a> {
         )
     }
 
+    #[must_use]
     pub fn format_error(
         &self,
         err: &str,

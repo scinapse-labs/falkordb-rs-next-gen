@@ -1,9 +1,32 @@
 //! `GRAPH.LIST` command handler.
 //!
-//! Lists graph keys by scanning Redis keys of native type `graphdata`.
+//! Lists all graph keys currently stored in the Redis instance by scanning
+//! for keys of native type `graphdata`.
 //!
-//! Implementation loops over `SCAN` cursors until completion and aggregates
-//! only keys matching the graph native type filter.
+//! ## Syntax
+//! ```text
+//! GRAPH.LIST
+//! ```
+//!
+//! ## How it works
+//! The handler iterates over `SCAN` cursors with a `TYPE graphdata` filter
+//! until the cursor returns to `"0"`, accumulating matching key names into
+//! a single array response.
+//!
+//! ```text
+//! SCAN 0 TYPE graphdata
+//!   |
+//!   +--> cursor=17, [key1, key2]  --+
+//!   |                                |  accumulate
+//! SCAN 17 TYPE graphdata             |
+//!   |                                |
+//!   +--> cursor=0,  [key3]       --+
+//!   |                                |
+//!   +--> done, return [key1, key2, key3]
+//! ```
+//!
+//! No arguments are accepted beyond the command name itself; extra arguments
+//! result in a `WrongArity` error.
 
 use redis_module::{Context, RedisError, RedisResult, RedisString, RedisValue};
 

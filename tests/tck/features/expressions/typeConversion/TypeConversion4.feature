@@ -41,7 +41,6 @@ Feature: TypeConversion4 - To String
       | '42' |
     And no side effects
 
-  @skip
   Scenario: [2] `toString()` handling boolean literal
     Given any graph
     When executing query:
@@ -80,7 +79,6 @@ Feature: TypeConversion4 - To String
       | 'true'              |
     And no side effects
 
-  @skip
   Scenario: [5] `toString()` should work on Any type
     Given any graph
     When executing query:

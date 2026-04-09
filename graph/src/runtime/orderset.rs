@@ -112,7 +112,9 @@ impl<T: PartialEq> OrderSet<T> {
 
 impl<T: PartialEq> FromIterator<T> for OrderSet<T> {
     fn from_iter<I: IntoIterator<Item = T>>(iter: I) -> Self {
-        Self::from_vec(iter.into_iter().collect())
+        let mut set = Self::default();
+        set.extend(iter);
+        set
     }
 }
 

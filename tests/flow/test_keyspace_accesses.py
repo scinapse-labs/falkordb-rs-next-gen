@@ -35,9 +35,9 @@ class testKeyspaceAccesses(FlowTestsBase):
             query = """MATCH (n) RETURN noneExistingFunc(n.age) AS cast"""
             self.graph.query(query)
             assert(False)
-        except redis.exceptions.ResponseError as e:
+        except redis.ResponseError as e:
             # Expecting an error.
-            assert("WRONGTYPE" in str(e))
+            assert("WRONGTYPE" in str(e) or "Existing key has wrong Redis type" in str(e))
             pass
 
     # Fail gracefully on attempting a graph deletion of an empty key.
@@ -46,7 +46,7 @@ class testKeyspaceAccesses(FlowTestsBase):
         try:
             self.graph.delete()
             assert(False)
-        except redis.exceptions.ResponseError as e:
+        except redis.ResponseError as e:
             # Expecting an error.
             assert("empty key" in str(e))
             pass

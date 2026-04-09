@@ -1,80 +1,120 @@
-//! Delete operator — marks nodes and relationships for deletion.
+//! Batch-mode delete operator — marks nodes and relationships for deletion.
 //!
-//! Implements Cypher `DELETE n` / `DETACH DELETE n`. For each incoming row,
-//! evaluates the delete expressions and records deletions in the pending
-//! batch. Node deletions cascade: all connected relationships are also
-//! marked for deletion. Deleted entity metadata (labels, attributes) is
-//! captured for statistics reporting.
+//! For each active row in each input batch, evaluates the delete expressions
+//! and records deletions in the pending batch.
 //!
 //! ```text
-//!  child iter ──► env
-//!                  │
-//!    ┌─────────────┴──────────────┐
-//!    │  for each delete expr:     │
-//!    │    Node(id)  ──► delete    │──► also delete connected relationships
-//!    │    Rel(id)   ──► delete    │
-//!    │    Path(vs)  ──► recurse   │
-//!    └─────────────┬──────────────┘
-//!                  │
-//!              yield Env ──► parent
+//!  Input batch
+//!       │
+//!  ┌────▼──────────────────────────────────────┐
+//!  │ For each delete expr:                      │
+//!  │   fast path: simple Variable ──► read_columns (bulk)
+//!  │   slow path: complex expr   ──► eval per row       │
+//!  │                                                     │
+//!  │ Node deletion cascades:                             │
+//!  │   mark all connected relationships for deletion     │
+//!  │   mark the node itself for deletion                 │
+//!  │                                                     │
+//!  │ Relationship deletion:                              │
+//!  │   mark the single relationship for deletion         │
+//!  └────┬──────────────────────────────────────┘
+//!       │
+//!  output batch (unchanged, mutations in Pending)
 //! ```
 
-use super::OpIter;
-use crate::parser::ast::{QueryExpr, Variable};
+use crate::parser::ast::{ExprIR, QueryExpr, Variable};
 use crate::planner::IR;
+use crate::runtime::eval::ExprEval;
 use crate::runtime::{
-    env::Env,
+    batch::{Batch, BatchOp},
     runtime::Runtime,
     value::{DeletedNode, DeletedRelationship, Value},
 };
 use orx_tree::{Dyn, NodeIdx, NodeRef};
 
 pub struct DeleteOp<'a> {
-    runtime: &'a Runtime,
-    pub iter: Box<OpIter<'a>>,
+    pub(crate) runtime: &'a Runtime<'a>,
+    pub(crate) child: Box<BatchOp<'a>>,
     trees: &'a Vec<QueryExpr<Variable>>,
-    idx: NodeIdx<Dyn<IR>>,
+    pub(crate) idx: NodeIdx<Dyn<IR>>,
 }
 
 impl<'a> DeleteOp<'a> {
     pub const fn new(
-        runtime: &'a Runtime,
-        iter: Box<OpIter<'a>>,
+        runtime: &'a Runtime<'a>,
+        child: Box<BatchOp<'a>>,
         trees: &'a Vec<QueryExpr<Variable>>,
         idx: NodeIdx<Dyn<IR>>,
     ) -> Self {
         Self {
             runtime,
-            iter,
+            child,
             trees,
             idx,
         }
     }
 }
 
-impl Iterator for DeleteOp<'_> {
-    type Item = Result<Env, String>;
+impl<'a> Iterator for DeleteOp<'a> {
+    type Item = Result<Batch<'a>, String>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let result = match self.iter.next()? {
-            Ok(vars) => self.runtime.delete(self.trees, &vars).map(|()| vars),
-            Err(e) => Err(e),
+        let batch = match self.child.next()? {
+            Ok(b) => b,
+            Err(e) => return Some(Err(e)),
         };
-        self.runtime.inspect_result(self.idx, &result);
-        Some(result)
+
+        if let Err(e) = self.runtime.delete_batch(self.trees, &batch) {
+            return Some(Err(e));
+        }
+
+        Some(Ok(batch))
     }
 }
-
-impl Runtime {
-    pub fn delete(
+impl Runtime<'_> {
+    pub fn delete_batch(
         &self,
         trees: &Vec<QueryExpr<Variable>>,
-        vars: &Env,
+        batch: &Batch<'_>,
     ) -> Result<(), String> {
+        // Partition trees: collect var IDs for simple variable references (fast path),
+        // and keep references to non-variable trees (slow path).
+        let mut var_ids = Vec::new();
+        let mut expr_trees = Vec::new();
+
         for tree in trees {
-            let value = self.run_expr(tree, tree.root().idx(), vars, None)?;
-            self.delete_entity(&value)?;
+            match tree.root().data() {
+                ExprIR::Variable(var) => var_ids.push(var.id),
+                _ => expr_trees.push(tree),
+            }
         }
+
+        // Fast path: read all simple variable columns at once, no env needed
+        if !var_ids.is_empty() {
+            let rows = batch.read_columns(&var_ids);
+            for row in rows {
+                for val in row {
+                    self.delete_entity(val)?;
+                }
+            }
+        }
+
+        // Slow path: evaluate remaining expression trees via env_ref
+        if !expr_trees.is_empty() {
+            for row in batch.active_indices() {
+                let env = batch.env_ref(row);
+                for tree in &expr_trees {
+                    let value = ExprEval::from_runtime(self).eval(
+                        tree,
+                        tree.root().idx(),
+                        Some(env),
+                        None,
+                    )?;
+                    self.delete_entity(&value)?;
+                }
+            }
+        }
+
         Ok(())
     }
 
@@ -85,11 +125,47 @@ impl Runtime {
         match value {
             Value::Node(id) => {
                 let id = *id;
-                if !self.g.borrow().is_node_deleted(id) {
-                    for (src, dest, id) in self.g.borrow().get_node_relationships(id) {
+                if self.pending.borrow().is_node_deleted(id) {
+                    // Already pending deletion, nothing to do
+                } else if self.pending.borrow().is_node_created(id) {
+                    // Node was created in this transaction but not yet committed.
+                    let (label_ids, attrs, pending_rels) =
+                        self.pending.borrow_mut().delete_pending_node(id);
+                    // Return the node ID and relationship IDs to the graph for reuse.
+                    self.g.borrow_mut().return_node_id(id);
+                    for (rel_id, _, _) in &pending_rels {
+                        self.g.borrow_mut().return_relationship_id(*rel_id);
+                    }
+                    self.deleted_nodes.borrow_mut().insert(
+                        id,
+                        DeletedNode::new(
+                            label_ids.into_iter().collect(),
+                            attrs.into_iter().collect(),
+                        ),
+                    );
+                } else if !self.g.borrow().is_node_deleted(id) {
+                    // Cascade-delete committed relationships
+                    for (src, dest, rel_id) in self.g.borrow().get_node_relationships(id) {
+                        let type_name = self.get_relationship_type(rel_id).unwrap();
+                        let attrs = self.get_relationship_attrs(rel_id).collect();
                         self.pending
                             .borrow_mut()
-                            .deleted_relationship(id, src, dest);
+                            .deleted_relationship(rel_id, src, dest);
+                        self.deleted_relationships
+                            .borrow_mut()
+                            .insert(rel_id, DeletedRelationship::new(type_name, attrs));
+                    }
+                    // Cascade-delete pending-created relationships incident on this node
+                    let pending_rels = self
+                        .pending
+                        .borrow_mut()
+                        .remove_pending_relationships_for_node(id);
+                    for (rel_id, _src, _dest, type_name, attrs) in pending_rels {
+                        let attrs = attrs.unwrap_or_default();
+                        self.g.borrow_mut().return_relationship_id(rel_id);
+                        self.deleted_relationships
+                            .borrow_mut()
+                            .insert(rel_id, DeletedRelationship::new(type_name, attrs));
                     }
                     self.pending.borrow_mut().deleted_node(id);
                     let labels = self.g.borrow().get_node_label_ids(id).collect();
@@ -101,15 +177,23 @@ impl Runtime {
             }
             Value::Relationship(rel) => {
                 let (rel_id, src, dest) = **rel;
-                if !self.g.borrow().is_relationship_deleted(rel_id) {
+                if self
+                    .pending
+                    .borrow()
+                    .is_relationship_deleted(rel_id, src, dest)
+                {
+                    // Already pending deletion, nothing to do
+                } else if !self.g.borrow().is_relationship_deleted(rel_id) {
+                    // Snapshot attrs BEFORE marking as deleted so pending data
+                    // is still accessible via get_relationship_attrs.
+                    let type_name = self.get_relationship_type(rel_id).unwrap();
+                    let attrs = self.get_relationship_attrs(rel_id).collect();
                     self.pending
                         .borrow_mut()
                         .deleted_relationship(rel_id, src, dest);
-                    let type_id = self.g.borrow().get_relationship_type_id(rel_id);
-                    let attrs = self.get_relationship_attrs(rel_id).collect();
                     self.deleted_relationships
                         .borrow_mut()
-                        .insert(rel_id, DeletedRelationship::new(type_id, attrs));
+                        .insert(rel_id, DeletedRelationship::new(type_name, attrs));
                 }
             }
             Value::Path(values) => {

@@ -56,7 +56,7 @@ class testOpeningNode():
         q = "UNWIND range(0, 5) AS x CREATE (:A)"
         self.graph.query(q)
 
-        # expecting B to open the traversal 
+        # expecting B to open the traversal
         for q in queries:
             plan = str(self.graph.explain(q))
             self.env.assertContains("Node By Label Scan | (b:B)", plan)

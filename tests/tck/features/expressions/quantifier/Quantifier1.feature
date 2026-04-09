@@ -190,7 +190,6 @@ Feature: Quantifier1 - None quantifier
       | [{a: 2, b: 5}, {a: 2, b: 5}, {a: 2, b: 5}] | x.a = 2   | false  |
       | [{a: 4}, {a: 4}, {a: 4}]                   | x.a = 2   | true   |
 
-  @skip #fixme
   Scenario: [8] None quantifier on list containing nodes
     Given an empty graph
     And having executed:
@@ -237,7 +236,6 @@ Feature: Quantifier1 - None quantifier
       | [(:B {name: 'b'}), (:B {name: 'b'}), (:B {name: 'b'})] | true   |
     And no side effects
 
-  @skip #fixme
   Scenario: [9] None quantifier on list containing relationships
     Given an empty graph
     And having executed:

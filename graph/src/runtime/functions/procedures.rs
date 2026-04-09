@@ -1,4 +1,25 @@
-//! CALL procedures – `db.labels`, `db.indexes`, full-text helpers, etc.
+//! Database introspection and management procedures.
+//!
+//! These are invoked via Cypher `CALL` statements and return result
+//! sets (lists of maps).  Each procedure is registered with
+//! `FnType::Procedure(yields)` so the binder knows which columns the
+//! `YIELD` clause can reference.
+//!
+//! ```text
+//!  Cypher procedure                         Yields                          Notes
+//! ──────────────────────────────────────────────────────────────────────────────────
+//!  db.labels()                              {label}                         all node labels
+//!  db.relationshiptypes()                   {relationshipType}              all rel types
+//!  db.propertykeys()                        {propertyKey}                   all property keys
+//!  db.indexes()                             {label, properties, types, ..}  index catalog
+//!  db.meta.stats()                          {labels, relTypes, nodeCount,.. } graph statistics
+//!  db.idx.fulltext.createNodeIndex(map)     (none)                          write procedure
+//!  db.idx.fulltext.queryNodes(label, query) {node, score}                   not yet supported
+//! ```
+//!
+//! Read-only procedures are registered with `write = false`; the
+//! full-text index creation procedure uses the `write procedure:`
+//! macro arm so it can be used inside write queries.
 
 #![allow(clippy::unnecessary_wraps)]
 
@@ -162,6 +183,45 @@ pub fn register(funcs: &mut Functions) {
                     )
                     .collect(),
             )))
+        }
+    );
+
+    // ── db.meta.stats ─────────────────────────────────────────────────
+    cypher_fn!(funcs, "db.meta.stats",
+        args: [],
+        ret: Type::Any,
+        procedure: ["labels", "relTypes", "relCount", "nodeCount", "labelCount", "relTypeCount", "propertyKeyCount"],
+        fn db_meta_stats(runtime, _args) {
+            let g = runtime.g.borrow();
+
+            // Build labels map: label_name -> node count for that label
+            let mut labels_map = OrderMap::default();
+            for (idx, name) in g.get_labels().iter().enumerate() {
+                labels_map.insert(
+                    name.clone(),
+                    Value::Int(g.label_node_count_by_idx(idx) as i64),
+                );
+            }
+
+            // Build relTypes map: type_name -> edge count for that type
+            let mut rel_types_map = OrderMap::default();
+            for (idx, name) in g.get_types().iter().enumerate() {
+                rel_types_map.insert(
+                    name.clone(),
+                    Value::Int(g.type_edge_count(idx) as i64),
+                );
+            }
+
+            let mut row = OrderMap::default();
+            row.insert(Arc::new(String::from("labels")), Value::Map(Arc::new(labels_map)));
+            row.insert(Arc::new(String::from("relTypes")), Value::Map(Arc::new(rel_types_map)));
+            row.insert(Arc::new(String::from("relCount")), Value::Int(g.relationship_count() as i64));
+            row.insert(Arc::new(String::from("nodeCount")), Value::Int(g.node_count() as i64));
+            row.insert(Arc::new(String::from("labelCount")), Value::Int(g.get_labels().len() as i64));
+            row.insert(Arc::new(String::from("relTypeCount")), Value::Int(g.get_types().len() as i64));
+            row.insert(Arc::new(String::from("propertyKeyCount")), Value::Int(g.property_key_count() as i64));
+
+            Ok(Value::List(Arc::new(thin_vec![Value::Map(Arc::new(row))])))
         }
     );
 

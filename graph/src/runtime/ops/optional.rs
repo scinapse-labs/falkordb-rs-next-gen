@@ -1,39 +1,82 @@
-//! Optional operator — implements Cypher `OPTIONAL MATCH` semantics.
+//! Batch-mode optional operator — implements OPTIONAL MATCH semantics.
 //!
-//! Executes a sub-plan for each incoming row. If the sub-plan produces
-//! results, they are yielded as-is. If it produces no results, a single
-//! fallback row is emitted with the specified variables set to `NULL`.
+//! For each input batch, runs the sub-plan once with all active rows as a
+//! multi-row argument batch. Uses `origin_row` on output envs to track which
+//! input rows had results. For input rows with no results, emits a fallback
+//! row with the specified variables set to NULL.
 //!
 //! ```text
-//!  child iter ──► env ──► run sub-plan
-//!                              │
-//!                   ┌── has results? ──┐
-//!                   │ yes              │ no
-//!                   ▼                  ▼
-//!             yield results     yield env + NULLs
+//!  Input batch [row0, row1, row2]
+//!       │
+//!  stamp origin_row
+//!       │
+//!  ┌────▼─────────────┐
+//!  │ Sub-plan          │  single instance, all rows at once
+//!  └────┬─────────────┘
+//!       │
+//!  results with origin_row tags
+//!       │
+//!  ┌────▼──────────────────────────────────────────┐
+//!  │ row0 matched? ──► yes: emit sub-plan results  │
+//!  │ row1 matched? ──► no:  emit row1 + NULLs      │
+//!  │ row2 matched? ──► yes: emit sub-plan results  │
+//!  └───────────────────────────────────────────────┘
 //! ```
+//!
+//! Falls back to per-row sub-plan execution when the sub-plan contains blocking
+//! operators (Aggregate) that accumulate state across all rows.
 
-use super::OpIter;
+use std::collections::{HashSet, VecDeque};
+
 use crate::parser::ast::Variable;
-use crate::planner::IR;
-use crate::runtime::{env::Env, runtime::Runtime, value::Value};
+use crate::planner::{IR, subtree_contains};
+use crate::runtime::{
+    batch::{BATCH_SIZE, Batch, BatchOp},
+    env::Env,
+    runtime::Runtime,
+    value::Value,
+};
 use orx_tree::{Dyn, NodeIdx, NodeRef};
 
-pub struct OptionalOp<'a> {
-    runtime: &'a Runtime,
-    pub iter: Box<OpIter<'a>>,
-    current: Option<Box<OpIter<'a>>>,
+/// Active batched sub-plan for all rows from one input batch.
+struct ActiveSubPlan<'a> {
+    /// Saved input envs for fallback (indexed by origin_row).
+    input_envs: Vec<Env<'a>>,
+    /// The single sub-plan iterator producing result batches for all input rows.
+    subtree: BatchOp<'a>,
+    /// Tracks which origin_rows have produced at least one result.
+    matched_origins: HashSet<u32>,
+    /// Partially consumed sub-batch and position within it.
+    current_batch: Option<(Batch<'a>, usize)>,
+    /// Index into `input_envs` for resuming fallback emission.
+    fallback_index: Option<usize>,
+}
+
+/// Per-row sub-plan state (used when batching is not possible).
+struct PendingOptional<'a> {
+    env: Env<'a>,
+    subtree: BatchOp<'a>,
     had_result: bool,
-    fallback_env: Env,
+    current_batch: Option<(Batch<'a>, usize)>,
+}
+
+pub struct OptionalOp<'a> {
+    pub(crate) runtime: &'a Runtime<'a>,
+    pub(crate) child: Box<BatchOp<'a>>,
     vars: &'a [Variable],
     optional_child_idx: NodeIdx<Dyn<IR>>,
-    idx: NodeIdx<Dyn<IR>>,
+    /// Batched mode state.
+    active: Option<Box<ActiveSubPlan<'a>>>,
+    /// Per-row mode state.
+    pending: VecDeque<PendingOptional<'a>>,
+    can_batch: bool,
+    pub(crate) idx: NodeIdx<Dyn<IR>>,
 }
 
 impl<'a> OptionalOp<'a> {
     pub fn new(
-        runtime: &'a Runtime,
-        iter: Box<OpIter<'a>>,
+        runtime: &'a Runtime<'a>,
+        child: Box<BatchOp<'a>>,
         vars: &'a [Variable],
         idx: NodeIdx<Dyn<IR>>,
     ) -> Self {
@@ -42,61 +85,248 @@ impl<'a> OptionalOp<'a> {
         } else {
             runtime.plan.node(idx).child(1).idx()
         };
+
+        let can_batch = !subtree_contains(&runtime.plan, optional_child_idx, |ir| {
+            matches!(ir, IR::Aggregate { .. } | IR::CartesianProduct)
+        });
+
         Self {
             runtime,
-            iter,
-            current: None,
-            had_result: false,
-            fallback_env: Env::default(),
+            child,
             vars,
             optional_child_idx,
+            active: None,
+            pending: VecDeque::new(),
+            can_batch,
             idx,
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Batched mode helpers
+    // -----------------------------------------------------------------------
+
+    fn drain_active(
+        &mut self,
+        envs: &mut Vec<Env<'a>>,
+    ) -> Result<(), String> {
+        while envs.len() < BATCH_SIZE {
+            let Some(ref mut plan) = self.active else {
+                break;
+            };
+
+            // Resume draining a partially consumed sub-batch.
+            if let Some((ref batch, ref mut pos)) = plan.current_batch {
+                let active: Vec<usize> = batch.active_indices().collect();
+                while *pos < active.len() && envs.len() < BATCH_SIZE {
+                    let env = batch.env_ref(active[*pos]);
+                    plan.matched_origins.insert(env.origin_row);
+                    envs.push(env.clone_pooled(self.runtime.env_pool));
+                    *pos += 1;
+                }
+                if *pos >= active.len() {
+                    plan.current_batch = None;
+                } else {
+                    return Ok(());
+                }
+                continue;
+            }
+
+            // Resume emitting fallback rows for unmatched origins.
+            if let Some(ref mut fb_idx) = plan.fallback_index {
+                while *fb_idx < plan.input_envs.len() && envs.len() < BATCH_SIZE {
+                    if !plan.matched_origins.contains(&(*fb_idx as u32)) {
+                        let mut fallback =
+                            plan.input_envs[*fb_idx].clone_pooled(self.runtime.env_pool);
+                        for v in self.vars {
+                            fallback.insert(v, Value::Null);
+                        }
+                        envs.push(fallback);
+                    }
+                    *fb_idx += 1;
+                }
+                if *fb_idx >= plan.input_envs.len() {
+                    self.active = None;
+                    break;
+                }
+                return Ok(());
+            }
+
+            match plan.subtree.next() {
+                Some(Ok(sub_batch)) => {
+                    plan.current_batch = Some((sub_batch, 0));
+                }
+                Some(Err(e)) => return Err(e),
+                None => {
+                    plan.fallback_index = Some(0);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn next_batched(&mut self) -> Option<Result<Batch<'a>, String>> {
+        let mut envs = Vec::with_capacity(BATCH_SIZE);
+
+        if let Err(e) = self.drain_active(&mut envs) {
+            return Some(Err(e));
+        }
+
+        while envs.len() < BATCH_SIZE {
+            if self.active.is_some() {
+                if let Err(e) = self.drain_active(&mut envs) {
+                    return Some(Err(e));
+                }
+                continue;
+            }
+
+            let batch = match self.child.next() {
+                Some(Ok(b)) => b,
+                Some(Err(e)) => return Some(Err(e)),
+                None => break,
+            };
+
+            let input_envs: Vec<Env<'a>> = batch
+                .active_env_iter()
+                .enumerate()
+                .map(|(i, env)| {
+                    let mut e = env.clone_pooled(self.runtime.env_pool);
+                    e.origin_row = i as u32;
+                    e
+                })
+                .collect();
+
+            let arg_envs: Vec<Env<'a>> = input_envs
+                .iter()
+                .map(|e| e.clone_pooled(self.runtime.env_pool))
+                .collect();
+
+            let mut subtree = match self.runtime.run_batch(self.optional_child_idx) {
+                Ok(s) => s,
+                Err(e) => return Some(Err(e)),
+            };
+            subtree.set_argument_batch(Batch::from_envs(arg_envs));
+
+            self.active = Some(Box::new(ActiveSubPlan {
+                input_envs,
+                subtree,
+                matched_origins: HashSet::new(),
+                current_batch: None,
+                fallback_index: None,
+            }));
+
+            if let Err(e) = self.drain_active(&mut envs) {
+                return Some(Err(e));
+            }
+        }
+
+        if envs.is_empty() {
+            None
+        } else {
+            Some(Ok(Batch::from_envs(envs)))
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Per-row mode helpers (fallback for sub-plans with Aggregate)
+    // -----------------------------------------------------------------------
+
+    fn drain_pending(
+        &mut self,
+        envs: &mut Vec<Env<'a>>,
+    ) -> Result<(), String> {
+        while envs.len() < BATCH_SIZE {
+            let Some(p) = self.pending.front_mut() else {
+                break;
+            };
+
+            if let Some((batch, pos)) = &mut p.current_batch {
+                let active: Vec<usize> = batch.active_indices().collect();
+                while *pos < active.len() && envs.len() < BATCH_SIZE {
+                    let row = batch.env_ref(active[*pos]);
+                    p.had_result = true;
+                    envs.push(row.clone_pooled(self.runtime.env_pool));
+                    *pos += 1;
+                }
+                if *pos >= active.len() {
+                    p.current_batch = None;
+                } else {
+                    return Ok(());
+                }
+            }
+
+            match p.subtree.next() {
+                Some(Ok(sub_batch)) => {
+                    p.current_batch = Some((sub_batch, 0));
+                }
+                Some(Err(e)) => return Err(e),
+                None => {
+                    if !p.had_result {
+                        let mut fallback = p.env.clone_pooled(self.runtime.env_pool);
+                        for v in self.vars {
+                            fallback.insert(v, Value::Null);
+                        }
+                        envs.push(fallback);
+                    }
+                    self.pending.pop_front();
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn next_per_row(&mut self) -> Option<Result<Batch<'a>, String>> {
+        let mut envs = Vec::with_capacity(BATCH_SIZE);
+
+        if let Err(e) = self.drain_pending(&mut envs) {
+            return Some(Err(e));
+        }
+
+        while envs.len() < BATCH_SIZE {
+            let batch = match self.child.next() {
+                Some(Ok(b)) => b,
+                Some(Err(e)) => return Some(Err(e)),
+                None => break,
+            };
+
+            for env in batch.active_env_iter() {
+                let mut subtree = match self.runtime.run_batch(self.optional_child_idx) {
+                    Ok(iter) => iter,
+                    Err(e) => return Some(Err(e)),
+                };
+                subtree.set_argument_batch(Batch::from_envs(vec![
+                    env.clone_pooled(self.runtime.env_pool),
+                ]));
+
+                self.pending.push_back(PendingOptional {
+                    env: env.clone_pooled(self.runtime.env_pool),
+                    subtree,
+                    had_result: false,
+                    current_batch: None,
+                });
+            }
+
+            if let Err(e) = self.drain_pending(&mut envs) {
+                return Some(Err(e));
+            }
+        }
+
+        if envs.is_empty() {
+            None
+        } else {
+            Some(Ok(Batch::from_envs(envs)))
         }
     }
 }
 
-impl Iterator for OptionalOp<'_> {
-    type Item = Result<Env, String>;
+impl<'a> Iterator for OptionalOp<'a> {
+    type Item = Result<Batch<'a>, String>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        loop {
-            if let Some(ref mut current) = self.current {
-                if let Some(item) = current.next() {
-                    self.had_result = true;
-                    self.runtime.inspect_result(self.idx, &item);
-                    return Some(item);
-                }
-
-                self.current = None;
-                if !self.had_result {
-                    let result = Ok(self.fallback_env.clone());
-                    self.runtime.inspect_result(self.idx, &result);
-                    return Some(result);
-                }
-            }
-            let env = match self.iter.next()? {
-                Ok(env) => env,
-                Err(e) => {
-                    let result = Err(e);
-                    self.runtime.inspect_result(self.idx, &result);
-                    return Some(result);
-                }
-            };
-            self.fallback_env = env.clone();
-            for v in self.vars {
-                self.fallback_env.insert(v, Value::Null);
-            }
-            let mut subtree = match self.runtime.run(self.optional_child_idx) {
-                Ok(iter) => iter,
-                Err(e) => {
-                    let result = Err(e);
-                    self.runtime.inspect_result(self.idx, &result);
-                    return Some(result);
-                }
-            };
-            subtree.set_argument_env(&env);
-            self.current = Some(Box::new(subtree));
-            self.had_result = false;
+        if self.can_batch {
+            self.next_batched()
+        } else {
+            self.next_per_row()
         }
     }
 }

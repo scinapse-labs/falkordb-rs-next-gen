@@ -140,7 +140,7 @@ macro_rules! cypher_fn {
             $fn_name,
             false,
             vec![$($arg),*],
-            FnType::Aggregation($init, None),
+            FnType::Aggregation { initial: $init, finalizer: None },
             $ret,
         );
     };
@@ -166,7 +166,7 @@ macro_rules! cypher_fn {
             $fn_name,
             false,
             vec![$($arg),*],
-            FnType::Aggregation($init, Some(Box::new($finalizer))),
+            FnType::Aggregation { initial: $init, finalizer: Some(Box::new($finalizer)) },
             $ret,
         );
     };
@@ -248,6 +248,7 @@ macro_rules! cypher_fn {
 }
 
 mod aggregation;
+mod algo_procedures;
 mod conversion;
 mod entity;
 mod internal;
@@ -257,6 +258,7 @@ mod path;
 mod procedures;
 mod spatial;
 mod string;
+pub mod temporal;
 mod trig;
 
 pub use math::apply_pow;
@@ -265,16 +267,20 @@ use crate::runtime::{
     runtime::Runtime,
     value::{Value, ValueTypeOf},
 };
+use parking_lot::RwLock;
 use std::{
     borrow::Borrow,
     collections::HashMap,
     fmt::{Debug, Display},
-    sync::{Arc, OnceLock},
+    sync::{
+        Arc, OnceLock,
+        atomic::{AtomicU64, Ordering},
+    },
 };
 use thin_vec::ThinVec;
 
-/// Function pointer type for runtime function implementations.
-type RuntimeFn = fn(&Runtime, ThinVec<Value>) -> Result<Value, String>;
+/// Function type for runtime function implementations.
+type RuntimeFn = Arc<dyn Fn(&Runtime, ThinVec<Value>) -> Result<Value, String> + Send + Sync>;
 
 /// Classification of function types.
 pub enum FnType {
@@ -285,7 +291,12 @@ pub enum FnType {
     /// Procedure that returns a result set (e.g., `db.labels()`)
     Procedure(Vec<String>),
     /// Aggregation function with initial value and optional finalizer
-    Aggregation(Value, Option<Box<dyn Fn(Value) -> Value>>),
+    Aggregation {
+        initial: Value,
+        finalizer: Option<Box<dyn Fn(Value) -> Value + Send + Sync>>,
+    },
+    /// User-defined function routed through the UDF bridge
+    Udf,
 }
 
 #[cfg_attr(tarpaulin, skip)]
@@ -298,7 +309,8 @@ impl Debug for FnType {
             Self::Function => write!(f, "Function"),
             Self::Internal => write!(f, "Internal"),
             Self::Procedure(_) => write!(f, "Procedure"),
-            Self::Aggregation(_, _) => write!(f, "Aggregation"),
+            Self::Aggregation { .. } => write!(f, "Aggregation"),
+            Self::Udf => write!(f, "Udf"),
         }
     }
 }
@@ -313,7 +325,8 @@ impl PartialEq for FnType {
             (Self::Function, Self::Function)
                 | (Self::Internal, Self::Internal)
                 | (Self::Procedure(_), Self::Procedure(_))
-                | (Self::Aggregation(_, _), Self::Aggregation(_, _))
+                | (Self::Aggregation { .. }, Self::Aggregation { .. })
+                | (Self::Udf, Self::Udf)
         )
     }
 }
@@ -352,6 +365,36 @@ impl Type {
             Self::Bool | Self::Null | Self::Any => true,
             Self::Union(types) => types.iter().any(Self::can_return_boolean),
             Self::Optional(inner) => inner.can_return_boolean(),
+            _ => false,
+        }
+    }
+
+    #[must_use]
+    pub fn can_return_entity(&self) -> bool {
+        match self {
+            Self::Node | Self::Relationship | Self::Path | Self::Any => true,
+            Self::Union(types) => types.iter().any(Self::can_return_entity),
+            Self::Optional(inner) => inner.can_return_entity(),
+            _ => false,
+        }
+    }
+
+    /// Check if a statically known type is compatible with an expected type.
+    #[must_use]
+    pub fn is_compatible_with(
+        &self,
+        expected: &Self,
+    ) -> bool {
+        match (self, expected) {
+            // Unknown types are always compatible at compile time.
+            // Null is always compatible (functions accept nullable args).
+            (Self::Any | Self::Null, _) | (_, Self::Any) => true,
+            // Same concrete type.
+            _ if self == expected => true,
+            // Union: compatible if any variant matches.
+            (_, Self::Union(types)) => types.iter().any(|t| self.is_compatible_with(t)),
+            // Optional: compatible with inner type.
+            (_, Self::Optional(inner)) => self.is_compatible_with(inner),
             _ => false,
         }
     }
@@ -410,7 +453,6 @@ pub enum FnArguments {
     VarLength(Type),
 }
 
-#[derive(Debug)]
 pub struct GraphFn {
     pub name: String,
     pub func: RuntimeFn,
@@ -420,11 +462,26 @@ pub struct GraphFn {
     pub ret_type: Type,
 }
 
+impl Debug for GraphFn {
+    fn fmt(
+        &self,
+        f: &mut std::fmt::Formatter<'_>,
+    ) -> std::fmt::Result {
+        f.debug_struct("GraphFn")
+            .field("name", &self.name)
+            .field("write", &self.write)
+            .field("args_type", &self.args_type)
+            .field("fn_type", &self.fn_type)
+            .field("ret_type", &self.ret_type)
+            .finish_non_exhaustive()
+    }
+}
+
 impl GraphFn {
     #[must_use]
     pub fn new(
         name: &str,
-        func: RuntimeFn,
+        func: fn(&Runtime, ThinVec<Value>) -> Result<Value, String>,
         write: bool,
         args_type: FnArguments,
         fn_type: FnType,
@@ -432,7 +489,7 @@ impl GraphFn {
     ) -> Self {
         Self {
             name: String::from(name),
-            func,
+            func: Arc::new(func),
             write,
             args_type,
             fn_type,
@@ -441,8 +498,23 @@ impl GraphFn {
     }
 
     #[must_use]
+    pub fn new_udf(name: &str) -> Self {
+        let udf_name = name.to_string();
+        Self {
+            name: String::from(name),
+            func: Arc::new(move |rt, args| {
+                crate::udf::js_context::call_udf_bridge(&udf_name, rt, &args)
+            }),
+            write: false,
+            args_type: FnArguments::VarLength(Type::Any),
+            fn_type: FnType::Udf,
+            ret_type: Type::Any,
+        }
+    }
+
+    #[must_use]
     pub const fn is_aggregate(&self) -> bool {
-        matches!(self.fn_type, FnType::Aggregation(_, _))
+        matches!(self.fn_type, FnType::Aggregation { .. })
     }
 
     pub fn validate(
@@ -520,7 +592,7 @@ impl GraphFn {
         if self.name.to_lowercase().starts_with("percentile") {
             // percentile is at index 1 (after the value argument)
             if args.len() >= 2 {
-                if args[1] == Value::Null {
+                if matches!(args[1], Value::Null) {
                     return Err("Type mismatch: expected Integer or Float but was Null".to_string());
                 }
                 let percentile = args[1].get_numeric();
@@ -553,7 +625,7 @@ impl Functions {
     pub fn add(
         &mut self,
         name: &str,
-        func: RuntimeFn,
+        func: fn(&Runtime, ThinVec<Value>) -> Result<Value, String>,
         write: bool,
         args_type: Vec<Type>,
         fn_type: FnType,
@@ -578,7 +650,7 @@ impl Functions {
     pub fn add_var_len(
         &mut self,
         name: &str,
-        func: RuntimeFn,
+        func: fn(&Runtime, ThinVec<Value>) -> Result<Value, String>,
         write: bool,
         arg_type: Type,
         fn_type: FnType,
@@ -605,16 +677,24 @@ impl Functions {
         name: &str,
         fn_type: &FnType,
     ) -> Result<Arc<GraphFn>, String> {
-        self.functions
-            .get(name.to_lowercase().as_str())
-            .and_then(|graph_fn| {
-                if &graph_fn.fn_type == fn_type {
-                    Some(graph_fn.clone())
-                } else {
-                    None
-                }
-            })
-            .ok_or_else(|| format!("Unknown function '{name}'"))
+        let lower = name.to_lowercase();
+        // Try built-in functions first
+        if let Some(graph_fn) = self.functions.get(lower.as_str())
+            && &graph_fn.fn_type == fn_type
+        {
+            return Ok(graph_fn.clone());
+        }
+        // Fall back to dynamic UDF registry (only for scalar/UDF function lookups,
+        // not for Procedure or Aggregation which have distinct semantics).
+        if matches!(fn_type, FnType::Function | FnType::Udf)
+            && let Some(reg) = UDF_FUNCTIONS.get()
+        {
+            let guard = reg.read();
+            if let Some(graph_fn) = guard.get(lower.as_str()) {
+                return Ok(graph_fn.clone());
+            }
+        }
+        Err(format!("Unknown function '{name}'"))
     }
 
     #[must_use]
@@ -624,11 +704,23 @@ impl Functions {
     ) -> bool {
         self.functions
             .get(name)
-            .is_some_and(|graph_fn| matches!(graph_fn.fn_type, FnType::Aggregation(_, _)))
+            .is_some_and(|graph_fn| matches!(graph_fn.fn_type, FnType::Aggregation { .. }))
     }
 }
 
 static FUNCTIONS: OnceLock<Functions> = OnceLock::new();
+
+/// Dynamic UDF function registry, separate from built-in functions.
+static UDF_FUNCTIONS: OnceLock<RwLock<HashMap<String, Arc<GraphFn>>>> = OnceLock::new();
+
+/// Global version counter for UDF changes. Incremented on register/unregister/flush.
+/// Used to invalidate query plan caches.
+static UDF_VERSION: AtomicU64 = AtomicU64::new(0);
+
+/// Get the current UDF version (for plan cache invalidation).
+pub fn udf_version() -> u64 {
+    UDF_VERSION.load(Ordering::Acquire)
+}
 
 pub fn init_functions() -> Result<(), Functions> {
     let mut funcs = Functions::new();
@@ -641,11 +733,45 @@ pub fn init_functions() -> Result<(), Functions> {
     list::register(&mut funcs);
     aggregation::register(&mut funcs);
     spatial::register(&mut funcs);
+    temporal::register(&mut funcs);
     path::register(&mut funcs);
     internal::register(&mut funcs);
     procedures::register(&mut funcs);
+    algo_procedures::register(&mut funcs);
 
     FUNCTIONS.set(funcs)
+}
+
+/// Initialize the dynamic UDF function registry.
+pub fn init_udf_functions() {
+    let _ = UDF_FUNCTIONS.set(RwLock::new(HashMap::new()));
+}
+
+/// Register a UDF in the dynamic registry.
+pub fn register_udf(
+    name: &str,
+    func: Arc<GraphFn>,
+) {
+    if let Some(reg) = UDF_FUNCTIONS.get() {
+        reg.write().insert(name.to_lowercase(), func);
+        UDF_VERSION.fetch_add(1, Ordering::Release);
+    }
+}
+
+/// Unregister a UDF from the dynamic registry.
+pub fn unregister_udf(name: &str) {
+    if let Some(reg) = UDF_FUNCTIONS.get() {
+        reg.write().remove(&name.to_lowercase());
+        UDF_VERSION.fetch_add(1, Ordering::Release);
+    }
+}
+
+/// Remove all UDFs from the dynamic registry.
+pub fn flush_udfs() {
+    if let Some(reg) = UDF_FUNCTIONS.get() {
+        reg.write().clear();
+        UDF_VERSION.fetch_add(1, Ordering::Release);
+    }
 }
 
 pub fn get_functions() -> &'static Functions {

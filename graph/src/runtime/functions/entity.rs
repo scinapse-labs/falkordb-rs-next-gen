@@ -27,6 +27,8 @@
 #![allow(clippy::unnecessary_wraps)]
 
 use super::{FnType, Functions, Type};
+use crate::graph::graph::NodeId;
+use crate::runtime::value::ValueGetType;
 use crate::runtime::{runtime::Runtime, value::Value};
 use std::sync::Arc;
 use thin_vec::ThinVec;
@@ -261,4 +263,121 @@ pub fn register(funcs: &mut Functions) {
             }
         }
     );
+
+    cypher_fn!(funcs, "indegree",
+        var_arg: Type::Any,
+        ret: Type::Union(vec![Type::Int, Type::Null]),
+        fn indegree(runtime, args) {
+            let (id, types) = parse_degree_args("indegree", args)?;
+            id.map_or_else(|| Ok(Value::Null), |id| {
+                    let count = if types.is_empty() {
+                        runtime.get_node_indegree(id)
+                    } else {
+                        runtime.get_node_indegree_by_type(id, &types)
+                    };
+                    Ok(Value::Int(count as i64))
+                })
+        }
+    );
+
+    cypher_fn!(funcs, "outdegree",
+        var_arg: Type::Any,
+        ret: Type::Union(vec![Type::Int, Type::Null]),
+        fn outdegree(runtime, args) {
+            let (id, types) = parse_degree_args("outdegree", args)?;
+            id.map_or_else(|| Ok(Value::Null), |id| {
+                    let count = if types.is_empty() {
+                        runtime.get_node_outdegree(id)
+                    } else {
+                        runtime.get_node_outdegree_by_type(id, &types)
+                    };
+                    Ok(Value::Int(count as i64))
+                })
+        }
+    );
+}
+
+/// Parse arguments for indegree/outdegree functions.
+///
+/// Accepted call signatures:
+///   degree(node)                          → all types
+///   degree(node, `type1`, `type2`, ...)   → filter by string varargs
+///   degree(node, [`type1`, `type2`])      → filter by list of strings
+fn parse_degree_args(
+    fn_name: &str,
+    args: ThinVec<Value>,
+) -> Result<(Option<NodeId>, Vec<Arc<String>>), String> {
+    if args.is_empty() {
+        return Err(format!(
+            "Received 0 arguments to function '{fn_name}', expected at least 1"
+        ));
+    }
+
+    let mut iter = args.into_iter();
+    let node = iter.next().unwrap();
+
+    let id = match node {
+        Value::Node(id) => Some(id),
+        Value::Null => None,
+        other => {
+            return Err(format!(
+                "Type mismatch: expected Node but was {:?}",
+                other.get_type()
+            ));
+        }
+    };
+
+    let rest: ThinVec<Value> = iter.collect();
+    if rest.is_empty() {
+        return Ok((id, Vec::new()));
+    }
+
+    // Single list argument: degree(node, ['type1', 'type2'])
+    if rest.len() == 1 {
+        if let Value::List(ref list) = rest[0] {
+            let mut types = Vec::with_capacity(list.len());
+            for v in list.iter() {
+                match v {
+                    Value::String(s) => {
+                        if !types.contains(s) {
+                            types.push(s.clone());
+                        }
+                    }
+                    other => {
+                        return Err(format!(
+                            "Type mismatch: expected String but was {:?}",
+                            other.get_type()
+                        ));
+                    }
+                }
+            }
+            return Ok((id, types));
+        }
+    } else if matches!(rest[0], Value::List(_)) {
+        // List followed by extra args: wrong argument count
+        return Err(format!(
+            "Received {} arguments to function '{fn_name}', expected at most 2",
+            rest.len() + 1
+        ));
+    }
+
+    // Varargs of strings: degree(node, 'type1', 'type2', ...)
+    let mut types = Vec::with_capacity(rest.len());
+    for v in rest {
+        match v {
+            Value::String(s) => {
+                if !types.contains(&s) {
+                    types.push(s);
+                }
+            }
+            other => {
+                return Err(format!(
+                    "Type mismatch: expected String but was {:?}",
+                    other.get_type()
+                ));
+            }
+        }
+    }
+
+    Ok((id, types))
 }

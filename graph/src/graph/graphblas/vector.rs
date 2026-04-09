@@ -1,14 +1,37 @@
-//! Sparse vector operations using GraphBLAS.
+//! Safe Rust wrapper around GraphBLAS boolean sparse vectors.
 //!
-//! This module wraps GraphBLAS sparse vectors, used for:
-//! - Storing node membership in labels (label → vector of node IDs)
-//! - Intermediate results in graph algorithms
-//! - Filtering operations
+//! This module provides [`Vector<T>`], which wraps `GrB_Vector` from the
+//! SuiteSparse:GraphBLAS C library. Currently only `Vector<bool>` is
+//! implemented, used to represent sets of node IDs efficiently.
 //!
-//! ## GraphBLAS Vectors
+//! ## Use Cases
 //!
-//! Like matrices, vectors use sparse storage and count toward Redis memory.
-//! Boolean vectors are used to represent sets of node IDs efficiently.
+//! - **Label membership**: each label maps to a boolean vector where index `i`
+//!   is `true` if node `i` has that label.
+//! - **Intermediate results**: graph algorithms use vectors to track visited
+//!   nodes, frontier sets, etc.
+//! - **Filtering**: a vector can mask matrix operations to restrict results
+//!   to a subset of nodes.
+//!
+//! ## Sparse Storage
+//!
+//! Like matrices, only non-zero entries are stored. A vector representing
+//! 3 nodes out of a million only uses memory for those 3 entries.
+//!
+//! ```text
+//!   GrB_Vector (boolean, sparse)
+//!
+//!   Logical view:        Stored entries:
+//!   Index: 0 1 2 3 4       1 -> true
+//!          . T . T .        3 -> true
+//!
+//!   size = 5, nvals = 2
+//! ```
+//!
+//! ## Iterator
+//!
+//! [`Iter<bool>`] traverses all set entries, yielding their indices.
+//! It uses `GxB_Vector_Iterator` internally and is consumed once.
 
 use std::{
     marker::PhantomData,

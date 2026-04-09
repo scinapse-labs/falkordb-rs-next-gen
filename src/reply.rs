@@ -32,7 +32,7 @@ use std::os::raw::c_char;
 #[allow(clippy::too_many_lines)]
 pub fn reply_compact_value(
     ctx: &Context,
-    runtime: &Runtime,
+    runtime: &Runtime<'_>,
     r: &Value,
 ) {
     match r {
@@ -115,7 +115,7 @@ pub fn reply_compact_value(
                 }
             } else {
                 let bg = runtime.g.borrow();
-                raw::reply_with_array(ctx.ctx, raw::REDISMODULE_POSTPONED_LEN as _);
+                raw::reply_with_array(ctx.ctx, i64::from(raw::REDISMODULE_POSTPONED_LEN));
                 let labels_len = bg
                     .get_node_label_ids(*id)
                     .inspect(|label| {
@@ -126,7 +126,7 @@ pub fn reply_compact_value(
                     raw::RedisModule_ReplySetArrayLength.unwrap()(ctx.ctx, labels_len as _);
                 }
 
-                raw::reply_with_array(ctx.ctx, raw::REDISMODULE_POSTPONED_LEN as _);
+                raw::reply_with_array(ctx.ctx, i64::from(raw::REDISMODULE_POSTPONED_LEN));
                 let attrs_len = bg
                     .get_node_all_attrs_by_id(*id)
                     .inspect(|(key, value)| {
@@ -135,45 +135,52 @@ pub fn reply_compact_value(
                         reply_compact_value(ctx, runtime, value);
                     })
                     .count();
+                drop(bg);
                 unsafe {
                     raw::RedisModule_ReplySetArrayLength.unwrap()(ctx.ctx, attrs_len as _);
                 }
             }
         }
         Value::Relationship(rel) => {
+            let (rel_id, rel_src, rel_dst) = (&rel.0, &rel.1, &rel.2);
             raw::reply_with_long_long(ctx.ctx, 7);
             raw::reply_with_array(ctx.ctx, 5);
-            raw::reply_with_long_long(ctx.ctx, u64::from(rel.0) as _);
+            raw::reply_with_long_long(ctx.ctx, u64::from(*rel_id) as _);
             let dr = runtime.deleted_relationships.borrow();
-            if let Some(x) = dr.get(&rel.0) {
-                raw::reply_with_long_long(ctx.ctx, usize::from(x.type_id) as _);
-                raw::reply_with_long_long(ctx.ctx, u64::from(rel.1) as _);
-                raw::reply_with_long_long(ctx.ctx, u64::from(rel.2) as _);
-                raw::reply_with_array(ctx.ctx, x.attrs.len() as _);
+            if let Some(x) = dr.get(rel_id) {
                 let bg = runtime.g.borrow();
+                let type_id = bg.get_type_id(&x.type_name).unwrap();
+                raw::reply_with_long_long(ctx.ctx, usize::from(type_id) as _);
+                raw::reply_with_long_long(ctx.ctx, u64::from(*rel_src) as _);
+                raw::reply_with_long_long(ctx.ctx, u64::from(*rel_dst) as _);
+                let node_attr_offset = bg.node_attribute_count();
+                raw::reply_with_array(ctx.ctx, x.attrs.len() as _);
                 for (key, value) in x.attrs.iter() {
                     raw::reply_with_array(ctx.ctx, 3);
                     let key = bg.get_relationship_attribute_id(key).unwrap();
-                    raw::reply_with_long_long(ctx.ctx, key as _);
+                    raw::reply_with_long_long(ctx.ctx, (key + node_attr_offset) as _);
                     reply_compact_value(ctx, runtime, value);
                 }
+                drop(bg);
             } else {
                 let bg = runtime.g.borrow();
                 raw::reply_with_long_long(
                     ctx.ctx,
-                    usize::from(bg.get_relationship_type_id(rel.0)) as _,
+                    usize::from(bg.get_relationship_type_id(*rel_id)) as _,
                 );
-                raw::reply_with_long_long(ctx.ctx, u64::from(rel.1) as _);
-                raw::reply_with_long_long(ctx.ctx, u64::from(rel.2) as _);
-                raw::reply_with_array(ctx.ctx, raw::REDISMODULE_POSTPONED_LEN as _);
+                raw::reply_with_long_long(ctx.ctx, u64::from(*rel_src) as _);
+                raw::reply_with_long_long(ctx.ctx, u64::from(*rel_dst) as _);
+                let node_attr_offset = bg.node_attribute_count() as i64;
+                raw::reply_with_array(ctx.ctx, i64::from(raw::REDISMODULE_POSTPONED_LEN));
                 let attrs_len = bg
-                    .get_relationship_all_attrs_by_id(rel.0)
+                    .get_relationship_all_attrs_by_id(*rel_id)
                     .inspect(|(key, value)| {
                         raw::reply_with_array(ctx.ctx, 3);
-                        raw::reply_with_long_long(ctx.ctx, *key as _);
+                        raw::reply_with_long_long(ctx.ctx, i64::from(*key) + node_attr_offset);
                         reply_compact_value(ctx, runtime, value);
                     })
                     .count();
+                drop(bg);
                 unsafe {
                     raw::RedisModule_ReplySetArrayLength.unwrap()(ctx.ctx, attrs_len as _);
                 }
@@ -254,7 +261,7 @@ pub fn reply_compact_value(
 #[allow(clippy::too_many_lines)]
 pub fn reply_verbose_value(
     ctx: &Context,
-    runtime: &Runtime,
+    runtime: &Runtime<'_>,
     r: &Value,
 ) {
     match r {
@@ -351,7 +358,7 @@ pub fn reply_verbose_value(
                     reply_verbose_value(ctx, runtime, value);
                 }
             } else {
-                raw::reply_with_array(ctx.ctx, raw::REDISMODULE_POSTPONED_LEN as _);
+                raw::reply_with_array(ctx.ctx, i64::from(raw::REDISMODULE_POSTPONED_LEN));
                 let labels_len = bg
                     .get_node_labels(*id)
                     .inspect(|label| {
@@ -366,7 +373,7 @@ pub fn reply_verbose_value(
                     raw::RedisModule_ReplySetArrayLength.unwrap()(ctx.ctx, labels_len as _);
                 }
 
-                raw::reply_with_array(ctx.ctx, raw::REDISMODULE_POSTPONED_LEN as _);
+                raw::reply_with_array(ctx.ctx, i64::from(raw::REDISMODULE_POSTPONED_LEN));
                 let attrs_len = bg
                     .get_node_all_attrs(*id)
                     .inspect(|(key, value)| {
@@ -379,19 +386,23 @@ pub fn reply_verbose_value(
                         reply_verbose_value(ctx, runtime, value);
                     })
                     .count();
+                drop(bg);
                 unsafe {
                     raw::RedisModule_ReplySetArrayLength.unwrap()(ctx.ctx, attrs_len as _);
                 }
             }
         }
         Value::Relationship(rel) => {
+            let (rel_id, rel_src, rel_dst) = (&rel.0, &rel.1, &rel.2);
             raw::reply_with_array(ctx.ctx, 5);
-            raw::reply_with_long_long(ctx.ctx, u64::from(rel.0) as _);
+            raw::reply_with_long_long(ctx.ctx, u64::from(*rel_id) as _);
             let dr = runtime.deleted_relationships.borrow();
-            if let Some(x) = dr.get(&rel.0) {
-                raw::reply_with_long_long(ctx.ctx, usize::from(x.type_id) as _);
-                raw::reply_with_long_long(ctx.ctx, u64::from(rel.1) as _);
-                raw::reply_with_long_long(ctx.ctx, u64::from(rel.2) as _);
+            if let Some(x) = dr.get(rel_id) {
+                let bg = runtime.g.borrow();
+                let type_id = bg.get_type_id(&x.type_name).unwrap();
+                raw::reply_with_long_long(ctx.ctx, usize::from(type_id) as _);
+                raw::reply_with_long_long(ctx.ctx, u64::from(*rel_src) as _);
+                raw::reply_with_long_long(ctx.ctx, u64::from(*rel_dst) as _);
                 raw::reply_with_array(ctx.ctx, x.attrs.len() as _);
                 for (key, value) in x.attrs.iter() {
                     raw::reply_with_array(ctx.ctx, 2);
@@ -404,13 +415,13 @@ pub fn reply_verbose_value(
                 }
             } else {
                 let bg = runtime.g.borrow();
-                let rel_type = bg.get_relationship_type_id(rel.0);
+                let rel_type = bg.get_relationship_type_id(*rel_id);
                 raw::reply_with_long_long(ctx.ctx, usize::from(rel_type) as _);
-                raw::reply_with_long_long(ctx.ctx, u64::from(rel.1) as _);
-                raw::reply_with_long_long(ctx.ctx, u64::from(rel.2) as _);
-                raw::reply_with_array(ctx.ctx, raw::REDISMODULE_POSTPONED_LEN as _);
+                raw::reply_with_long_long(ctx.ctx, u64::from(*rel_src) as _);
+                raw::reply_with_long_long(ctx.ctx, u64::from(*rel_dst) as _);
+                raw::reply_with_array(ctx.ctx, i64::from(raw::REDISMODULE_POSTPONED_LEN));
                 let attrs_len = bg
-                    .get_relationship_all_attrs(rel.0)
+                    .get_relationship_all_attrs(*rel_id)
                     .inspect(|(key, value)| {
                         raw::reply_with_array(ctx.ctx, 2);
                         raw::reply_with_string_buffer(
@@ -421,6 +432,7 @@ pub fn reply_verbose_value(
                         reply_verbose_value(ctx, runtime, value);
                     })
                     .count();
+                drop(bg);
                 unsafe {
                     raw::RedisModule_ReplySetArrayLength.unwrap()(ctx.ctx, attrs_len as _);
                 }
@@ -542,10 +554,10 @@ pub fn reply_stats(
     raw::reply_with_string_buffer(ctx.ctx, str.as_ptr().cast::<c_char>(), str.len());
 }
 
-pub fn reply_verbose(
+fn reply_result<const COMPACT: bool>(
     ctx: &Context,
-    runtime: &Runtime,
-    result: ResultSummary,
+    runtime: &Runtime<'_>,
+    result: &ResultSummary<'_>,
 ) {
     raw::reply_with_array(ctx.ctx, 3);
     raw::reply_with_array(ctx.ctx, runtime.return_names.len() as _);
@@ -558,39 +570,40 @@ pub fn reply_verbose(
             name.as_str().len(),
         );
     }
-    raw::reply_with_array(ctx.ctx, result.result.len() as _);
-    for row in result.result {
-        raw::reply_with_array(ctx.ctx, runtime.return_names.len() as _);
-        for name in &runtime.return_names {
-            reply_verbose_value(ctx, runtime, row.get(name).unwrap());
+    let total: usize = result
+        .result
+        .iter()
+        .map(graph::runtime::batch::Batch::active_len)
+        .sum();
+    raw::reply_with_array(ctx.ctx, total as _);
+    for batch in &result.result {
+        for row in batch.active_env_iter() {
+            raw::reply_with_array(ctx.ctx, runtime.return_names.len() as _);
+            for name in &runtime.return_names {
+                if COMPACT {
+                    raw::reply_with_array(ctx.ctx, 2);
+                    reply_compact_value(ctx, runtime, row.get(name).unwrap());
+                } else {
+                    reply_verbose_value(ctx, runtime, row.get(name).unwrap());
+                }
+            }
         }
     }
     reply_stats(ctx, &result.stats, runtime.g.borrow().version);
 }
 
+pub fn reply_verbose(
+    ctx: &Context,
+    runtime: &Runtime<'_>,
+    result: &ResultSummary<'_>,
+) {
+    reply_result::<false>(ctx, runtime, result);
+}
+
 pub fn reply_compact(
     ctx: &Context,
-    runtime: &Runtime,
-    result: ResultSummary,
+    runtime: &Runtime<'_>,
+    result: &ResultSummary<'_>,
 ) {
-    raw::reply_with_array(ctx.ctx, 3);
-    raw::reply_with_array(ctx.ctx, runtime.return_names.len() as _);
-    for name in &runtime.return_names {
-        raw::reply_with_array(ctx.ctx, 2);
-        raw::reply_with_long_long(ctx.ctx, 1);
-        raw::reply_with_string_buffer(
-            ctx.ctx,
-            name.as_str().as_ptr().cast::<c_char>(),
-            name.as_str().len(),
-        );
-    }
-    raw::reply_with_array(ctx.ctx, result.result.len() as _);
-    for row in result.result {
-        raw::reply_with_array(ctx.ctx, runtime.return_names.len() as _);
-        for name in &runtime.return_names {
-            raw::reply_with_array(ctx.ctx, 2);
-            reply_compact_value(ctx, runtime, row.get(name).unwrap());
-        }
-    }
-    reply_stats(ctx, &result.stats, runtime.g.borrow().version);
+    reply_result::<true>(ctx, runtime, result);
 }

@@ -21,7 +21,7 @@ use crate::{
     redis_type::GRAPH_TYPE,
 };
 use parking_lot::RwLock;
-use redis_module::{Context, NextArg, RedisResult, RedisString, RedisValue};
+use redis_module::{Context, NextArg, RedisResult, RedisString};
 use std::sync::Arc;
 
 pub fn graph_ro_query(
@@ -41,10 +41,10 @@ pub fn graph_ro_query(
         }
     }
 
+    let key_name = Arc::new(key.to_string());
     let key = ctx.open_key(&key);
 
     (key.get_value::<Arc<RwLock<ThreadedGraph>>>(&GRAPH_TYPE)?).map_or(EMPTY_KEY_ERR, |graph| {
-        query_mut(ctx, graph, query, compact, false, track_memory);
-        RedisResult::Ok(RedisValue::NoReply)
+        query_mut(ctx, graph, query, compact, false, track_memory, key_name)
     })
 }

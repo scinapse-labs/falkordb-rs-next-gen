@@ -1,26 +1,59 @@
-//! Tensor storage for multi-edges between node pairs.
+//! 3D sparse tensor for multi-edge relationship storage.
 //!
-//! This module provides [`Tensor`], which extends the matrix model to support
-//! multiple edges between the same pair of nodes. While the adjacency matrix
-//! only records edge existence, the tensor stores individual edge IDs.
+//! This module provides [`Tensor`], which extends the adjacency matrix model
+//! to support multiple edges of the same type between the same pair of nodes.
+//! While a plain adjacency matrix can only record whether an edge exists,
+//! the tensor stores individual edge IDs so that each edge can carry its own
+//! properties.
 //!
-//! ## Structure
+//! ## Internal Structure
+//!
+//! A tensor is composed of three [`VersionedMatrix`] instances:
 //!
 //! ```text
-//! Tensor
-//!    ├── m: Forward adjacency (src → dst exists?)
-//!    ├── mt: Backward adjacency (dst → src exists?)
-//!    └── me: Edge matrix ((src,dst) → edge_id)
+//!   Tensor
+//!     |
+//!     |-- m  (forward adjacency)      src --> dst  (boolean)
+//!     |-- mt (backward adjacency)     dst --> src  (boolean)
+//!     |-- me (edge ID storage)        compound_key --> edge_id  (boolean)
+//!
+//!   Forward matrix (m):        Backward matrix (mt):
+//!     dst: 0  1  2               src: 0  1  2
+//!   src 0 [ .  T  . ]         dst 0 [ .  .  . ]
+//!       1 [ .  .  . ]             1 [ T  .  T ]
+//!       2 [ .  T  . ]             2 [ .  .  . ]
+//!
+//!   Edges: 0->1 (id=5), 0->1 (id=9), 2->1 (id=7)
 //! ```
 //!
-//! The `me` matrix uses a compound key `(src << 32 | dst)` as the row index,
-//! allowing multiple edge IDs to be stored for the same node pair.
+//! ## Compound Key Encoding
+//!
+//! The edge matrix `me` stores edge IDs using a compound row key that packs
+//! both source and destination node IDs into a single u64:
+//!
+//! ```text
+//!   row = (src << 32) | dst
+//!
+//!   Example: edge from node 3 to node 7
+//!     row = (3 << 32) | 7 = 0x0000_0003_0000_0007
+//!
+//!   me[row, edge_id] = true
+//! ```
+//!
+//! This encoding allows multiple edge IDs per (src, dst) pair by storing
+//! each edge ID as a separate column in the same row.
+//!
+//! ## Iteration
+//!
+//! [`Iter`] walks the forward (or backward) adjacency matrix and, for each
+//! (src, dst) pair found, looks up all edge IDs from `me`. It yields
+//! `(src, dst, edge_id)` triples.
 //!
 //! ## Use Case
 //!
 //! In property graphs, multiple edges of the same type can connect two nodes.
-//! For example: two "KNOWS" relationships between the same people with
-//! different "since" dates.
+//! For example, two "TRANSFERRED" relationships between the same bank accounts
+//! with different amounts and dates.
 
 use super::{
     matrix::{Dup, New, Remove, Set, Size},
@@ -82,9 +115,9 @@ impl Tensor {
 
     pub fn remove_all(
         &mut self,
-        rels: Vec<(u64, u64, u64)>,
+        rels: &Vec<(u64, u64, u64)>,
     ) {
-        for (id, src, dest) in &rels {
+        for (id, src, dest) in rels {
             self.me.remove(src << 32 | dest, *id);
         }
         for (_, src, dest) in rels {
@@ -94,8 +127,8 @@ impl Tensor {
                 .next()
                 .is_none()
             {
-                self.m.remove(src, dest);
-                self.mt.remove(dest, src);
+                self.m.remove(*src, *dest);
+                self.mt.remove(*dest, *src);
             }
         }
     }
@@ -121,6 +154,12 @@ impl Tensor {
     #[must_use]
     pub const fn matrix(&self) -> &VersionedMatrix {
         &self.m
+    }
+
+    /// Total number of edges (including multi-edges between the same node pair).
+    #[must_use]
+    pub fn edge_count(&self) -> u64 {
+        self.me.nvals()
     }
 
     #[must_use]
