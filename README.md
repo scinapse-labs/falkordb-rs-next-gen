@@ -31,25 +31,31 @@ cargo build
 
 #### Dependencies:
 
-GraphBLAS & RediSearch must be built and installed before building this project.
+GraphBLAS, LAGraph, and RediSearch must be built and installed before building this project.
 
 - building [GraphBLAS](https://github.com/DrTimothyAldenDavis/GraphBLAS.git)
 
 ```bash
-  ./graphblas.sh
-``
+./graphblas.sh
+```
 
 or
 
 ```bash
-  make static CMAKE_OPTIONS='-DGRAPHBLAS_COMPACT=1 -DCMAKE_POSITION_INDEPENDENT_CODE=on'
-  sudo make install
+make static CMAKE_OPTIONS='-DGRAPHBLAS_COMPACT=1 -DCMAKE_POSITION_INDEPENDENT_CODE=on'
+sudo make install
+```
+
+- building [LAGraph](https://github.com/GraphBLAS/LAGraph.git)
+
+```bash
+./lagraph.sh
 ```
 
 - building [RediSearch](https://github.com/RediSearch/RediSearch.git)
 
 ```bash
-  ./redisearch.sh
+./redisearch.sh
 ```
 
 - pytest - create virtualenv and install tests/requirements.txt
@@ -57,14 +63,21 @@ or
 The virtual environment should be activated before running tests.
 
 ```bash
-  python3 -m venv venv
-  source venv/bin/activate
-  pip install -r  tests/requirements.txt
+python3 -m venv venv
+source venv/bin/activate
+pip install -r tests/requirements.txt
 ```
 
 ### Testing
 
-- run e2e tests with `pytest tests/test_e2e.py tests/test_functions.py -vv`
+- run unit tests with `cargo test -p graph`
+
+- run e2e and function tests with `pytest tests/test_e2e.py tests/test_functions.py -vv`
+
+- run MVCC and concurrency tests with `pytest tests/test_mvcc.py tests/test_concurrency.py -vv`
+
+- run flow tests with `./flow.sh`
+
 - run tck tests with `pytest tests/tck/test_tck.py -s`
 
 There is an option to run only part of the TCK tests and stop on the first fail
@@ -78,7 +91,5 @@ To run all passing TCK tests use:
 ```bash
 TCK_DONE=tck_done.txt pytest tests/tck/test_tck.py -s
 ```
-
-- run unit tests with `cargo test -p graph`
 
 - [benchmark](https://falkordb.github.io/falkordb-rs-next-gen/dev/bench/)
