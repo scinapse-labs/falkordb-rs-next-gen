@@ -30,7 +30,7 @@ parking_lot = "0.12.5"
 phf = { version = "0.13", features = ["macros"] }
 quick_cache = "0.6.21"
 orx-tree = "2.2.0"
-rand = "0.10.0"
+rand = "0.10.1"
 regex = "1.12.3"
 rquickjs = { version = "0.11", features = ["bindgen", "classes", "macro", "parallel"] }
 ureq = { version = "3.3.0", default-features = false, features = ["rustls"] }
